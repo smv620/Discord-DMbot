@@ -579,7 +579,12 @@ export interface ImportSpeaker {
 export interface ImportPreviewFile {
   name: string;
   format: string | null;
-  /** "unreadable", "too_big", "not_txt" or "empty"; null when the file can be used. */
+  /** Why the file or doc can't be used, or null when it can. One of the codes the import API
+   * returns: from the reader (`unreadable`, `unknown_format`, `no_speaker_names`), from the file
+   * (`not_txt`, `too_big`, `empty`, `too_many_lines`, `too_many_speakers`) or from a Google Doc
+   * link (`not_a_google_doc`, `repeated_link`, `doc_not_shared`, `doc_too_big`, `doc_unreachable`).
+   * Each has plain words in `importPage.fileError`; test/import-error-codes.test.ts keeps the three
+   * lists (core, this comment and those words) in step. */
   error: string | null;
   suggestedDate: string | null;
   lineCount: number;
@@ -1002,6 +1007,13 @@ interface NameAnswer {
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
+/** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
+interface WebAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error?: string | null;
+  edge?: WebEdge | null;
+  removed?: boolean;
+}
 
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
@@ -1537,6 +1549,24 @@ export function httpApi(
     return asFile ? response.blob() : response.json();
   }
 
+  /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
+   * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
+   * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
+  async function waitForAnswer(path: string): Promise<WebAnswer> {
+    for (let i = 0; i < NAME_POLLS; i++) {
+      let got: WebAnswer | null = null;
+      try {
+        got = (await call("GET", path)) as WebAnswer;
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "signed-out") throw error;
+      }
+      if (got?.state === "done") return got;
+      if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+      if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+    }
+    throw new ApiError("still-waiting");
+  }
+
   const url = async (path: string, body?: unknown): Promise<string> =>
     ((await call("POST", path, body)) as { url: string }).url;
 
@@ -1948,17 +1978,31 @@ export function httpApi(
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
     },
+    // A DM's reveal is queued for the bot like every other edit (202 {answer}); a name is answered at
+    // the All names answers, a connection at the web's own (#2405).
     webReveal: async (ref, target) => {
-      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/reveal`, target);
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/web/reveal`, target)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const where = target.kind === "name" ? "all-names" : "web";
+      await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
     },
+    // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
     changeWebLink: async (ref, change) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/web/links`;
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
+      let queued: { answer: string };
       if (change.action === "add") {
         const { action: _action, ...body } = change;
-        return (await call("POST", base, body)) as WebEdge;
+        queued = (await call("POST", `${base}/links`, body)) as { answer: string };
+      } else {
+        const { id, ...body } = change;
+        queued = (await call("POST", `${base}/links/${encodeURIComponent(id)}`, body)) as {
+          answer: string;
+        };
       }
-      const { id, ...body } = change;
-      return (await call("POST", `${base}/${encodeURIComponent(id)}`, body)) as WebEdge | { removed: true };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
+      return got.removed || !got.edge ? { removed: true } : got.edge;
     },
     importProgress: async (ref, importId) =>
       (await call(

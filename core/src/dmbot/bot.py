@@ -5579,7 +5579,10 @@ class DMBot(commands.AutoShardedBot):
         if table is not None:  # first: nothing awaited stands between a delete and its line going
             for message_id in payload.message_ids:
                 table.unsaved.drop_message(message_id)
-        # (a message the cache knows had no picture has no reply to look for)
+        if self.map_notes is not None and payload.guild_id is not None:
+            for message_id in payload.message_ids:
+                await self._forget_map_notes(payload.guild_id, message_id)
+        # last: it reads the chat (a message the cache knows had no picture has no reply to find)
         plain = {m.id for m in payload.cached_messages if not m.attachments}
         self._track(
             self._forget_image_replies(
@@ -5587,9 +5590,6 @@ class DMBot(commands.AutoShardedBot):
             ),
             "picture-replies",
         )
-        if self.map_notes is not None and payload.guild_id is not None:
-            for message_id in payload.message_ids:
-                await self._forget_map_notes(payload.guild_id, message_id)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
@@ -5599,7 +5599,9 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:  # first: nothing awaited stands between a delete and its line going
             table.unsaved.drop_message(payload.message_id)
-        cached = payload.cached_message
+        if self.map_notes is not None and payload.guild_id is not None:
+            await self._forget_map_notes(payload.guild_id, payload.message_id)
+        cached = payload.cached_message  # last: the reply look-up reads the chat
         if cached is None or cached.attachments:  # (one the cache knows had no picture: no reply)
             self._track(
                 self._forget_image_replies(
@@ -5607,8 +5609,6 @@ class DMBot(commands.AutoShardedBot):
                 ),
                 "picture-replies",
             )
-        if self.map_notes is not None and payload.guild_id is not None:
-            await self._forget_map_notes(payload.guild_id, payload.message_id)
 
     async def _forget_map_notes(self, guild_id: int, message_id: int) -> None:
         """A deleted picture takes the map notes made from it (#2450)."""
