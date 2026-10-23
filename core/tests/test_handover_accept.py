@@ -8,10 +8,13 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import psycopg
 
 from dmbot.campaigns import CampaignStore
+from dmbot.schema import WEB_ROLE
 from dmbot.web import grants, sessions
 from dmbot.web.discord import DiscordUser
+from tests.pg import SUPERUSER_URL
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_api import ALICE, GORRAK, QUILLON, THURSDAY
@@ -303,6 +306,41 @@ class Plans(LinkBase):
         look = (await self.post(bob, "look", token=token)).json()
         self.assertEqual((look["canAccept"], look["why"]), (True, None))
 
+    async def test_a_free_listed_account_with_a_priced_plan_can_and_without_one_cannot(
+        self,
+    ) -> None:
+        from dmbot import entitlements
+
+        entitlements.configure_free_users([BOB.id])
+        self.addCleanup(entitlements.configure_free_users, ())
+        token = await self.link()
+        bob = await self.bob()
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (False, "no_plan"))  # free list alone
+        await self.give_plan(BOB.id, cap=2)
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (True, None))
+        got = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual(got.status_code, 200, got.text)
+
+    async def test_the_owner_hears_of_a_decline_on_the_website(self) -> None:
+        # The door announces the answer, as every answer made on the website does (#737).
+        import psycopg
+
+        from tests.pg import TEST_URL
+
+        token = await self.link()
+        bob = await self.bob()
+        async with await psycopg.AsyncConnection.connect(TEST_URL, autocommit=True) as listener:
+            await listener.execute("LISTEN dmbot_handover_decided")
+            got = await self.post(bob, "decline", token=token)
+            self.assertEqual(got.status_code, 200, got.text)
+            seen = []
+            async for note in listener.notifies(timeout=5, stop_after=1):
+                seen.append(note.payload)
+        [row] = await self.offers()
+        self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])
+
 
 class Moving(LinkBase):
     """Slice C1 (#2532): accepting for another server records the wish and claims the link in one
@@ -315,6 +353,16 @@ class Moving(LinkBase):
         patcher = patch("dmbot.web.handover_accept.MOVES_ARE_RUN", True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # The move door is not granted to the website until the bot's move exists (C2): the test
+        # grants it itself, as a build that has the mover will.
+        admin = await psycopg.AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
+        try:
+            await admin.execute(
+                f"GRANT EXECUTE ON FUNCTION {self.schema}.dmbot_handover_request_move"
+                f"(BIGINT, BIGINT, TEXT, TEXT, BIGINT) TO {WEB_ROLE}"
+            )
+        finally:
+            await admin.close()
         await self.give_plan(BOB.id)
         async with self.db.guild(QUILLON.id) as conn:  # DMbot is installed in Quillon's Corner
             await conn.execute(
@@ -419,3 +467,32 @@ class Moving(LinkBase):
             got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
         self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_server"))
         self.assertEqual((await self.row())["to_user_id"], 0)
+
+    async def test_a_server_they_are_in_but_do_not_manage_is_refused_and_nothing_is_claimed(
+        self,
+    ) -> None:
+        async with self.db.guild(GORRAK.id) as conn:  # DMbot is installed there
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_at, via) VALUES (%s, %s, 'link')",
+                (GORRAK.id, self.now),
+            )
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, GORRAK)
+        got = await self.post(bob, "accept", token=token, serverId=str(GORRAK.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_server"))
+        self.assertEqual((await self.row())["to_user_id"], 0)
+
+    async def test_a_pending_move_cannot_be_looked_at_answered_or_declined_underneath(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((await self.post(bob, "look", token=token)).json(), {"status": "ended"})
+        same = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual((same.status_code, same.json()["error"]), (409, "ended"))
+        declined = await self.post(bob, "decline", token=token)
+        self.assertEqual((declined.status_code, declined.json()["error"]), (409, "ended"))
+        row = await self.row()  # the claim and the wish are untouched
+        self.assertEqual(
+            (row["status"], row["to_user_id"], row["move_to_guild_id"]),
+            ("open", BOB.id, QUILLON.id),
+        )

@@ -174,8 +174,11 @@ async def accept(
     guild_id, offer_id, _secret = link
     target = _as_server(server_id)
     mine = {g.id for g in session.guilds}
+    managed = {g.id for g in session.guilds if g.manage}
     elsewhere = target is not None and target != guild_id
     if target is None or target not in mine or (elsewhere and not MOVES_ARE_RUN):
+        return "bad_server", None
+    if elsewhere and target not in managed:  # the page lists only servers the person manages
         return "bad_server", None
     offer = await _open(db, session, link, claim=False)
     if offer is None:
