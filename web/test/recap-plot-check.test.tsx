@@ -78,11 +78,12 @@ describe("the plot check", () => {
     expect(calls(api, "answerPlotIssue")[0]).toContain('"kind":"fine","note":"Mara took it back."');
   });
 
-  it("Fix the recap sends the words to the fix box and records the answer", async () => {
+  it("Fix the recap sends only the recap's sentence to the fix box, and answers nothing yet", async () => {
     const { api, fix } = await open();
     fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.fix, 1) }));
-    expect(fix).toHaveBeenCalledWith(w.fixPrefill("Ulfgar died in session 6.", "Ulfgar opened the gate."));
-    await waitFor(() => expect(calls(api, "answerPlotIssue")[0]).toContain('"kind":"fix"'));
+    expect(fix).toHaveBeenCalledWith(w.fixPrefill("Ulfgar opened the gate.", 6));
+    expect(await screen.findByText(w.fixed)).toBeTruthy();
+    expect(calls(api, "answerPlotIssue")).toHaveLength(0);
   });
 
   it("saves a suggested note only on Save, and Not that saves nothing", async () => {

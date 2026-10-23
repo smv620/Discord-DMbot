@@ -40,6 +40,7 @@ export default function RecapPlotCheck({
   const [talking, setTalking] = useState<string | null>(null);
   const [noting, setNoting] = useState<string | null>(null);
   const [said, setSaid] = useState("");
+  const [fixedFor, setFixedFor] = useState<Set<string>>(new Set());
   const firstText = useRef(text);
   const changed = useRef(false); // the text changed since the last finished check
   const looks = useRef(0);
@@ -141,7 +142,7 @@ export default function RecapPlotCheck({
   const answer = (issue: PlotIssue, kind: PlotAnswerKind, note?: string) =>
     run(issue.id, async () => {
       keep(await api.answerPlotIssue!(refId, issue.id, note ? { kind, note } : { kind }));
-      setSaid(words.saved);
+      setSaid(words.saved(Math.max(open - (issue.answer === null ? 1 : 0), 0)));
     });
 
   return (
@@ -168,9 +169,12 @@ export default function RecapPlotCheck({
                 noting={noting === issue.id}
                 onAnswer={(kind, note) => void answer(issue, kind, note)}
                 onFix={() => {
-                  onFix(words.fixPrefill(issue.reason, issue.sentenceText));
-                  void answer(issue, "fix");
+                  // Only the recap's own sentence goes to the box, never DMbot's reason: the DM says what
+                  // should change. Nothing is answered until the recap is sent and checked again.
+                  onFix(words.fixPrefill(issue.sentenceText, issue.source.session));
+                  setFixedFor((was) => new Set(was).add(issue.id));
                 }}
+                fixedAsked={fixedFor.has(issue.id)}
                 onTalk={(on) => setTalking(on ? issue.id : null)}
                 onNote={(on) => setNoting(on ? issue.id : null)}
                 api={api}
@@ -206,6 +210,7 @@ function Issue({
   noting,
   onAnswer,
   onFix,
+  fixedAsked,
   onTalk,
   onNote,
   api,
@@ -220,6 +225,7 @@ function Issue({
   noting: boolean;
   onAnswer: (kind: PlotAnswerKind, note?: string) => void;
   onFix: () => void;
+  fixedAsked: boolean;
   onTalk: (on: boolean) => void;
   onNote: (on: boolean) => void;
   api: AccountApi;
@@ -286,7 +292,7 @@ function Issue({
         </p>
       ) : null}
       <div class="row">
-        <button type="button" class="button secondary" disabled={busy} aria-label={words.answerFor(words.answers.fix, n)} onClick={onFix}>
+        <button type="button" class="button secondary" aria-label={words.answerFor(words.answers.fix, n)} onClick={onFix}>
           {words.answers.fix}
         </button>
         <button
@@ -317,7 +323,7 @@ function Issue({
           {words.answers.leave}
         </button>
       </div>
-      {issue.answer?.kind === "fix" && <p class="small muted">{words.fixed}</p>}
+      {fixedAsked && <p class="small muted">{words.fixed}</p>}
       {noting && (
         <div class="stack">
           <label class="field">

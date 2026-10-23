@@ -65,7 +65,7 @@ it("puts Fix the recap's words in the box under Tell DMbot what to fix, and send
   await screen.findByRole("heading", { name: w.heading });
   fireEvent.click(within(screen.getAllByRole("group")[0]!).getByRole("button", { name: w.answerFor(w.answers.fix, 1) }));
   const box = (await screen.findByLabelText("What should change?")) as HTMLTextAreaElement;
-  await waitFor(() => expect(box.value).toContain("Ulfgar died in session 6."));
+  await waitFor(() => expect(box.value).toContain("Ulfgar opened the gate."));
   expect((api as unknown as { calls: string[] }).calls.filter((c) => c.startsWith("sendFix"))).toHaveLength(0);
 });
 
