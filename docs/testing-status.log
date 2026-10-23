@@ -9,6 +9,7 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 READY TO DEPLOY (merged into development, not on the server yet; dev1 deploys)
 ------------------------------------------------------------------------------
+- CloudDev, 2026-10-23: import progress in the one shared shape (#2564, PR #2571, migration 0217: columns and a trigger, no row changes). Deploy with the bot stopped, after the backup; bot before web-api. An import that is mid-way when 0217 runs has no last-moved time yet (it reads as its import time), so it may show "stalled" until its next step: check the page after the next cleaning chunk.
 - Supervisor, 2026-10-21 19:0x UTC: STEP C, for the owner's import test (#2261). Steps A and B are live (364ed24c, 15:47).
   Deploy development at or after the merge of #2286 (WebDev, the Import page opens per server). That brings:
   the 📥 Import sessions button (#2268), imports for chosen servers (#2267), the recap split with the fixed
