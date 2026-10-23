@@ -3182,6 +3182,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_homebrew_campaigns", "dmbot_web_homebrew_campaigns(BIGINT)"),
     # An NPC's page and a person's own private notes on it, for any member of the server (#2265).
     ("dmbot_web_npc_page", "dmbot_web_npc_page(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_peek", "dmbot_web_peek(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_npc_note_put", "dmbot_web_npc_note_put(BIGINT, TEXT, TEXT, TEXT)"),
     ("dmbot_web_npc_notes_mine", "dmbot_web_npc_notes_mine(BIGINT, TEXT)"),
     ("dmbot_web_npc_notes_delete", "dmbot_web_npc_notes_delete(BIGINT, TEXT)"),
@@ -10548,6 +10549,158 @@ SHARED_RECAP_SESSION = """
     $do$;
 """
 
+# Players View / Full View on the relationship web, and the peek notice (#2404, slice 1).
+# The web API says which view it wants through a transaction setting (`dmbot.web_view`: 'players'
+# or 'full'; nothing means the person's own: full for a DM, players for anyone else). The door
+# re-checks it every time, so the setting only ever asks for less than the person has, or for a
+# peek the campaign's DM-screen visibility allows ('peek' or 'open'); a peek under 'private' is
+# refused ('peek_off'). A DM in Players View sees exactly what a player sees, and cannot edit.
+# `web_peeks` holds the once-for-each-visit notice the bot posts on the DM screen ("<name> peeked
+# at the relationship web"); a visit is one website sign-in. Isolated per server, gone with the
+# campaign, never read by the website's role except through the peek door, and left out of backups.
+WEB_GRAPH_VIEWS = (
+    """
+    CREATE TABLE web_peeks (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        visit       TEXT NOT NULL CHECK (char_length(visit) BETWEEN 1 AND 100),
+        name        TEXT NOT NULL CHECK (char_length(name) <= 100),
+        created_at  BIGINT NOT NULL,
+        posted_at   BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, user_id, visit),
+        FOREIGN KEY (guild_id, campaign_id) REFERENCES campaigns (guild_id, id)
+            ON DELETE CASCADE
+    );
+    CREATE INDEX web_peeks_waiting ON web_peeks (guild_id, created_at) WHERE posted_at IS NULL;
+    """
+    + _isolate("web_peeks")
+    + r"""
+    -- Note a peek: the caller's name and visit, once. Internal (no grant): the peek door and the
+    -- graph door call it, so a full view is never given to a player without the DM being told,
+    -- whichever way it was asked for. TRUE the first time for this visit.
+    CREATE FUNCTION dmbot_web_peek_note(g BIGINT, c TEXT, v TEXT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        who TEXT;
+        added INT;
+    BEGIN
+        IF v IS NULL OR v = '' OR char_length(v) > 100 THEN
+            RETURN NULL;
+        END IF;
+        SELECT left(COALESCE(
+                   NULLIF(btrim(regexp_replace(display_name, '[[:space:]]+', ' ', 'g')), ''),
+                   'Someone'), 100) INTO who
+            FROM web_users WHERE user_id = dmbot_current_user();
+        INSERT INTO web_peeks (guild_id, campaign_id, user_id, visit, name, created_at)
+            VALUES (g, c, dmbot_current_user(), v, COALESCE(who, 'Someone'),
+                    floor(extract(epoch FROM clock_timestamp()))::BIGINT)
+            ON CONFLICT DO NOTHING;
+        GET DIAGNOSTICS added = ROW_COUNT;
+        RETURN added > 0;
+    END
+    $fn$;
+
+    -- Peeked: the caller (not a DM of the campaign) opens the full view for this visit. 'ok' with
+    -- `noted` true the first time for this visit; 'peek_off' under a private DM screen. NULL when
+    -- the caller is not in the server or there is no such campaign.
+    CREATE FUNCTION dmbot_web_peek(g BIGINT, c TEXT, v TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        vis TEXT;
+        noted BOOLEAN;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT dm_screen_visibility INTO vis FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF EXISTS (SELECT 1 FROM campaign_dms d WHERE d.guild_id = g AND d.campaign_id = c
+                                                  AND d.user_id = dmbot_current_user()) THEN
+            RETURN jsonb_build_object('status', 'ok', 'noted', false);  -- the DM needs no notice
+        END IF;
+        IF vis NOT IN ('peek', 'open') THEN
+            RETURN jsonb_build_object('status', 'peek_off');
+        END IF;
+        noted := dmbot_web_peek_note(g, c, v);
+        IF noted IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_visit');
+        END IF;
+        RETURN jsonb_build_object('status', 'ok', 'noted', noted);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_peek(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_peek_note(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_peek(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_peek_note(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    """
+)
+
+_VIEW_STEPS = (
+    # (old, new, how many times the old text is in the door)
+    (
+        "        is_dm BOOLEAN;\n        vis TEXT[];",
+        "        is_dm BOOLEAN;\n        sees_all BOOLEAN;\n        wanted TEXT;\n"
+        "        screen TEXT;\n        vis TEXT[];",
+        1,
+    ),
+    (
+        "                           AND d.user_id = dmbot_current_user());\n        vis := ARRAY(",
+        """                           AND d.user_id = dmbot_current_user());
+        SELECT dm_screen_visibility INTO screen FROM campaigns WHERE guild_id = g AND id = c;
+        wanted := COALESCE(NULLIF(current_setting('dmbot.web_view', true), ''),
+                           CASE WHEN is_dm THEN 'full' ELSE 'players' END);
+        -- A DM sees everything unless they asked for Players View; anyone else sees the players'
+        -- view unless they asked to peek and the DM screen lets them.
+        sees_all := wanted = 'full' AND (is_dm OR screen IN ('peek', 'open'));
+        IF wanted = 'full' AND NOT sees_all THEN
+            RETURN jsonb_build_object('status', 'peek_off');
+        END IF;
+        -- A player's full view is a peek, however it was asked for: the DM is told once for this
+        -- visit (the visit is the API's `dmbot.web_visit`); with none, the peek is refused.
+        IF sees_all AND NOT is_dm
+           AND dmbot_web_peek_note(g, c, current_setting('dmbot.web_visit', true)) IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_visit');
+        END IF;
+        vis := ARRAY(""",
+        1,
+    ),
+    ("AND (is_dm OR (NOT e.audience_limited", "AND (sees_all OR (NOT e.audience_limited", 1),
+    (
+        "              AND (is_dm OR (" + _PARTY_KNOWS_R,
+        "              AND (sees_all OR (" + _PARTY_KNOWS_R,
+        1,
+    ),
+    (
+        "'canEdit', is_dm,",
+        "'canEdit', is_dm AND sees_all, 'seesAll', sees_all,\n"
+        "                                      'view',\n"
+        "                                      CASE WHEN sees_all THEN 'full' ELSE 'players' END,\n"
+        "                                      'visibility', screen,\n"
+        "                                      'canPeek', is_dm OR screen IN ('peek', 'open'),",
+        2,
+    ),
+    ("'secret', CASE WHEN is_dm THEN EXISTS (", "'secret', CASE WHEN sees_all THEN EXISTS (", 1),
+)
+_door = WEB_GRAPH_PARTY
+for _old, _new, _times in _VIEW_STEPS:
+    assert _door.count(_old) == _times, _old
+    _door = _door.replace(_old, _new)
+WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
+
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -10965,6 +11118,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
+    ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
@@ -11043,6 +11197,7 @@ ISOLATED_TABLES = (
     "recap_name_checks",
     "name_answers",
     "name_actions",
+    "web_peeks",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

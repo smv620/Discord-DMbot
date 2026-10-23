@@ -284,10 +284,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     // For anyone but a DM the label is rebuilt from the known connections, so a secret one's words can
     // never ride along on the line even if the API sent them.
     .map((e) => {
-      if (showAll) return e;
+      // A pin is the DM's alone: dropped for a player who peeks, and in the players' view.
+      if (showAll && canEdit) return e;
+      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, ...l }) => l) };
       const links = e.links
         .filter((l) => !l.secret && l.revealed !== false)
-        .map(({ belief, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
+        .map(({ belief, pinned: _pinned, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
@@ -610,6 +612,7 @@ function LinkRow({
         {words.linkText(a, b, link.words, link.direction)}
         {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
+      {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {link.belief && (
         <p class="small">
           {link.belief.status} · {words.confidence(Math.round(link.belief.confidence * 100))}
@@ -652,12 +655,26 @@ function LinkRow({
             >
               {link.secret ? words.makeKnownShort : words.makeSecretShort}
             </button>
+            <button
+              type="button"
+              class="button secondary"
+              aria-label={link.pinned ? words.unpinLabel(n) : words.pinLabel(n)}
+              onClick={() =>
+                void run(
+                  { action: "pin", id: link.id, pinned: !link.pinned },
+                  link.pinned ? words.unpinnedDone : words.pinnedDone,
+                )
+              }
+            >
+              {link.pinned ? words.unpin : words.pin}
+            </button>
             {!asking && (
               <button type="button" class="button secondary" aria-label={words.removeLink(n)} onClick={() => setAsking(true)}>
                 {words.removeShort}
               </button>
             )}
           </div>
+          <p class="small muted">{words.pinHint}</p>
           {asking && (
             <div class="row" role="group" aria-label={words.removeShort}>
               <span>{words.removeAsk(a, b)}</span>
@@ -703,8 +720,9 @@ function AddLink({ edge, act }: { edge: WebEdge; act: (change: WebLinkChange, ok
         {words.addWords}
         <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
       </label>
-      <label class="check">
-        <input type="checkbox" checked={secret} onChange={(e) => setSecret((e.target as HTMLInputElement).checked)} /> {words.addSecret}
+      <label class="choice">
+        <input type="checkbox" checked={secret} onChange={(e) => setSecret((e.target as HTMLInputElement).checked)} />
+        <span>{words.addSecret}</span>
       </label>
       <button type="submit" class="button">
         {words.addButton}

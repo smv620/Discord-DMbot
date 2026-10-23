@@ -390,6 +390,35 @@ export function mockRecaps(): Recap[] {
       triesLeft: 2,
       canDrop: false,
     },
+    // Written but unchecked for 3 days (#2297): the draft to read, one sentence marked.
+    {
+      ...base,
+      ref: "200000000000000001.cmp9.1789000000",
+      campaign: "The Quiet Choir",
+      share: { on: false, path: null },
+      sessionAt: 1789000000,
+      status: "draft",
+      state: "prose",
+      working: true,
+      waitingForCheck: true,
+      title: "",
+      text: "",
+      summary: "",
+      housekeeping: [],
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      triesLeft: 2,
+      canDrop: true,
+      uncheckedSince: 1788000000,
+      uncheckedDraft: [
+        "The party reached the river at dusk.",
+        "Mira kept quiet because she feared the ferryman.",
+        "They crossed after he asked for a story.",
+      ],
+      uncheckedSentences: [2],
+      canApproveUnchecked: true,
+    },
   ];
 }
 
@@ -468,6 +497,7 @@ interface WebState {
     direction: WebLink["direction"];
     revealed?: boolean;
     belief?: WebLink["belief"];
+    pinned?: boolean;
   }[];
   nextLink: number;
 }
@@ -497,6 +527,9 @@ function startWeb(big: boolean): WebState {
   // Not revealed to the players yet (#2405): two names and one connection that comes from a backstory.
   for (const i of [3, 8]) if (nodes[i]) nodes[i]!.revealed = false;
   const byId = (id: string) => links.find((l) => l.id === id);
+  // One connection the DM pinned as 100% truth (#2448).
+  const l2 = byId("l2");
+  if (l2) l2.pinned = true;
   const l4 = byId("l4");
   if (l4) l4.revealed = false;
   // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
@@ -545,7 +578,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
    * if every one is secret and the viewer may see them). */
-  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean): WebEdge[] => {
+  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean, pins = false): WebEdge[] => {
     const pairs = new Map<string, WebState["links"]>();
     for (const l of links) {
       if (l.secret && !dm) continue;
@@ -566,6 +599,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           secret: l.secret,
           direction: l.direction,
           ...(full ? { revealed: l.revealed !== false } : {}),
+          // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
+          ...(pins && l.pinned ? { pinned: true } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };
@@ -614,7 +649,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ? { ...current(n), revealed: n.revealed !== false }
           : { id: n.id, name: current(n).name, kind: current(n).kind },
       );
-    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all);
+    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
     return {
       center: centre,
       nodes,
@@ -696,6 +731,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const r = await find(ref);
       if (!r.canEdit) throw new ApiError("not-editable");
       Object.assign(r, { summary, text: summary, housekeeping });
+      return { ...r };
+    },
+    async approveUnchecked(ref) {
+      calls.push(`approveUnchecked:${ref}`);
+      const r = await find(ref);
+      if (!r.canApproveUnchecked) throw new ApiError("not-allowed");
+      // As the bot would: the draft is finished as it stands, to edit and approve as usual.
+      const text = (r.uncheckedDraft ?? []).join(" ");
+      Object.assign(r, {
+        working: false, waitingForCheck: false, state: "ready", text, summary: text, title: "Session recap",
+        canEdit: true, canPost: true, canTryAgain: true, uncheckedSince: 0, uncheckedDraft: [],
+        uncheckedSentences: [], canApproveUnchecked: false,
+        approval: { approved: false, choice: "", approvedAt: null, canApprove: true },
+      });
       return { ...r };
     },
     async approveRecap(ref, choice, options) {
@@ -910,7 +959,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
       const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true);
+        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
         return found[0] ?? { removed: true };
       };
       if (change.action === "add") {
@@ -926,6 +975,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         link.words = change.words.trim();
       } else if (change.action === "secret") {
         link.secret = change.secret;
+      } else if (change.action === "pin") {
+        link.pinned = change.pinned;
       } else {
         if (change.confirm !== true) throw new ApiError("needs-confirm");
         state.links.splice(state.links.indexOf(link), 1);
