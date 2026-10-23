@@ -927,6 +927,8 @@ class SidebarService:
     ) -> None:
         """The question and DMbot's in-game answer, in the raw transcript only. A player's
         question is a Table Q line, the DM's a DM Sidebar line (#1187)."""
+        if self.host.sidebar_paused(table.guild_id, user_id):
+            return  # off the record: the question is answered, but nothing of it is stored (#2466)
         ref = uuid.uuid4().hex[:6]  # the reply says which question it answers
         stt = self.host.sidebar_stt() if via not in (VIA_TYPED, VIA_TABLE_CHAT, VIA_CHAT) else ""
         kind = SIDEBAR_TABLE_QUESTION if not _is_dm(table, user_id) else SIDEBAR_QUESTION

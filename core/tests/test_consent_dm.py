@@ -739,6 +739,15 @@ class ConsentDMTests(DatabaseTest):
         await self.consent.grant(GUILD, PLAYER)  # and agreeing again is a fresh start
         assert self.consent.has_consent(GUILD, PLAYER)
 
+    async def test_a_stop_cancels_the_pause_timer_so_nobody_is_said_to_be_back(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        self.table.dmbchat_channel_id = 555
+        await self.bot.pause_recording(GUILD, PLAYER, 5)
+        assert (GUILD, PLAYER) in self.bot.off_the_record._timers
+        self.bot.stop_recording(GUILD, PLAYER)
+        assert (GUILD, PLAYER) not in self.bot.off_the_record._timers
+        assert not any("is back on the record" in text for _, text in self.posts)
+
     async def test_a_website_stop_during_a_pause_is_still_seen(self) -> None:
         from dmbot.consent_site import SiteStops
 

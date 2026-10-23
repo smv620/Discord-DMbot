@@ -20,6 +20,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.consent import ConsentStore
 
@@ -91,6 +92,7 @@ class OffTheRecord:
         name_of: Callable[[int, int], str],
         listening: Callable[[int], bool],
         drop: Callable[[int, int | None], None] = lambda guild_id, user_id: None,
+        save: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
         wall: Callable[[], float] = time.time,
     ) -> None:
         self._consent = consent
@@ -99,6 +101,7 @@ class OffTheRecord:
         self._name_of = name_of
         self._listening = listening
         self._drop = drop  # forget what the person is saying right now (None: everyone)
+        self._save = save  # keep the pauses with the saved session, so a restart keeps them
         self._wall = wall
         self._timers: dict[tuple[int, int], asyncio.Task[None]] = {}
 
@@ -116,6 +119,16 @@ class OffTheRecord:
         except Exception as exc:
             log.error("Couldn't tell the table about a pause (%s)", type(exc).__name__)
             return False
+
+    async def _keep(self, guild_id: int) -> None:
+        """Save the pauses as they stand. A failure is logged: the pause holds in memory, and the
+        next change saves again."""
+        if self._save is None:
+            return
+        try:
+            await self._save(guild_id, self._consent.snapshot(guild_id))
+        except Exception as exc:
+            log.error("Couldn't save the pauses with the session (%s)", type(exc).__name__)
 
     def _until(self, minutes: int | None) -> int | None:
         return None if minutes is None else int(self._wall() + minutes * 60)
@@ -137,19 +150,24 @@ class OffTheRecord:
             if user_id == 0:
                 self._consent.resume_table(guild_id)
                 await self._back_table(guild_id)
-            elif not self._consent.is_paused(guild_id, user_id):
-                await self._back_person(guild_id, user_id)
+            else:
+                # (resumed whatever the clocks say: a timer a hair early must not leave them off)
+                self._consent.resume(guild_id, user_id)
+                if self._consent.agreed_now(guild_id, user_id):  # not someone who just stopped
+                    await self._back_person(guild_id, user_id)
         except asyncio.CancelledError:
             return
         except Exception as exc:
             log.error("A pause's timer failed (%s)", type(exc).__name__)
 
     async def _back_person(self, guild_id: int, user_id: int) -> None:
+        await self._keep(guild_id)
         await self._tell_ears(guild_id)
         if not self._consent.table_paused(guild_id):  # the table is still on its break
             await self._tell_table(guild_id, said_back(self._name_of(guild_id, user_id)))
 
     async def _back_table(self, guild_id: int) -> None:
+        await self._keep(guild_id)
         await self._tell_ears(guild_id)
         await self._tell_table(guild_id, TABLE_BACK)
 
@@ -167,6 +185,7 @@ class OffTheRecord:
         )  # (nothing is captured from here on: the allowlist follows at once)
         self._drop(guild_id, user_id)
         self._arm((guild_id, user_id), minutes)
+        await self._keep(guild_id)
         await self._tell_ears(guild_id)
         told = await self._tell_table(guild_id, said_off(self._name_of(guild_id, user_id), minutes))
         log.info("Off the record: a person paused for %s", minutes)
@@ -192,6 +211,7 @@ class OffTheRecord:
         self._consent.pause_table(guild_id, None if minutes is None else minutes * 60)
         self._drop(guild_id, None)
         self._arm((guild_id, 0), minutes)
+        await self._keep(guild_id)
         await self._tell_ears(guild_id)
         told = await self._tell_table(guild_id, TABLE_OFF)
         log.info("Off the record: the table paused for %s", minutes)
@@ -205,6 +225,44 @@ class OffTheRecord:
             return False
         await self._back_table(guild_id)
         return True
+
+    def forget(self, guild_id: int, user_id: int) -> None:
+        """This person stopped (here or on the website): their pause and its timer go with it, so
+        nothing is said about them coming back."""
+        timer = self._timers.pop((guild_id, user_id), None)
+        if timer is not None:
+            timer.cancel()
+
+    async def restore(self, guild_id: int, saved: dict[str, Any]) -> None:
+        """After a restart that resumes the session, before anyone's audio is let in: put the
+        saved pauses back (those not run out) and arm their timers for the time left."""
+        back = self._consent.restore(guild_id, saved)
+        now_c = self._consent._clock()
+        for who in back:
+            ends = (
+                self._consent._table_paused[guild_id][0]
+                if who == 0
+                else self._consent.paused_until(guild_id, who)
+            )
+            if ends is not None:
+                self._rearm((guild_id, who), max(0.0, ends - now_c))
+        if back:
+            log.info("Off the record: %d pause(s) kept across a restart", len(back))
+
+    def _rearm(self, key: tuple[int, int], seconds: float) -> None:
+        old = self._timers.pop(key, None)
+        if old is not None:
+            old.cancel()
+        self._timers[key] = asyncio.create_task(self._after(key, seconds))
+
+    async def say_expired(self, guild_id: int, saved: dict[str, Any]) -> None:
+        """Pauses that ran out while DMbot was down: the table is told they are back."""
+        now = self._wall()
+        for user, end in dict(saved.get("people") or {}).items():
+            if end is not None and end <= now and self._consent.agreed_now(guild_id, int(user)):
+                await self._tell_table(guild_id, said_back(self._name_of(guild_id, int(user))))
+        if "table" in saved and saved["table"] is not None and saved["table"] <= now:
+            await self._tell_table(guild_id, TABLE_BACK)
 
     def end_session(self, guild_id: int) -> None:
         """The listening session is over: every pause ends with it, quietly."""

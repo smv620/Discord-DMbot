@@ -52,6 +52,7 @@ KEEP_LABEL = "Keep recording"
 PAUSE_LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I resume"}
 PAUSE_ASK = "⏸️ How long should DMbot stop recording you? Only you. Others are still recorded."
 ALREADY_BACK = "You're already on the record."
+RESUMED_AFTER_BREAK = "▶️ You're back on when the table's break ends."
 CLOSE_LABEL = "Close"
 # Test recordings (#1019): only in a server listed in DMBOT_TEST_RECORDING_GUILDS.
 TEST_VOICE_LABEL = "Save my voice for tests"
@@ -476,6 +477,8 @@ class ConsentActions(Protocol):
     async def resume_recording(self, guild_id: int, user_id: int) -> bool: ...
 
     def is_paused(self, guild_id: int, user_id: int) -> bool: ...
+
+    def table_is_paused(self, guild_id: int) -> bool: ...
 
 
 def _test_voice_state(actions: ConsentActions, guild_id: int, user_id: int) -> str | None:
@@ -1121,10 +1124,13 @@ class ResumeButton(
                 await interaction.response.send_message(NOT_HERE, ephemeral=True)
                 return
             await interaction.response.defer()
-            was = await _actions(interaction).resume_recording(self.guild_id, interaction.user.id)
-            await interaction.edit_original_response(
-                content=resumed_text() if was else ALREADY_BACK, view=None
-            )
+            actions = _actions(interaction)
+            was = await actions.resume_recording(self.guild_id, interaction.user.id)
+            if was and actions.table_is_paused(self.guild_id):  # the DM's break is still on
+                text = RESUMED_AFTER_BREAK
+            else:
+                text = resumed_text() if was else ALREADY_BACK
+            await interaction.edit_original_response(content=text, view=None)
 
 
 def pause_choices_view(guild_id: int) -> discord.ui.View:

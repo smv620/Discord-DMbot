@@ -101,9 +101,10 @@ class FakeHost:
     guide_asked: list[int] = field(default_factory=list)
     guide_raises: bool = False
     guide_withdraws: bool = False  # consent goes while the answer is being made
+    paused: set[int] = field(default_factory=set)  # off the record (#2466)
 
     def sidebar_paused(self, guild_id: int, user_id: int) -> bool:
-        return False
+        return user_id in self.paused
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
@@ -224,6 +225,15 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(question_line.text, "find if you need line of sight for Fireball")
         self.assertEqual((answer_line.user_id, answer_line.sidebar), (DM, SIDEBAR_ANSWER))
         self.assertEqual(answer_line.heard, FakeAnswer().text)
+
+    async def test_a_paused_dms_typed_question_is_answered_but_nothing_is_stored(self) -> None:
+        """Off the record (#2466): a question to DMbot is a deliberate act and is answered, but no
+        line of it reaches the transcript."""
+        self.host.paused.add(DM)
+        message = dm_message(content="find if you need line of sight for Fire ball")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [FakeAnswer().text])
+        self.assertEqual(self.host.saved, [])
 
     async def test_every_line_records_where_it_came_from(self) -> None:
         await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))

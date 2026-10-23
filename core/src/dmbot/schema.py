@@ -10695,6 +10695,14 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
+SESSION_PAUSES = """
+    -- Off the record (#2466): the pauses that are on, kept with the saved session so a restart
+    -- that resumes the session resumes them too. {"people": {"<user id>": <ends at, Unix seconds
+    -- or null for until resumed>}, "table": <ends at or null>}. A new column with a default, so no
+    -- row changes; the session's row already holds this server's data only.
+    ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -10904,6 +10912,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
+    ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

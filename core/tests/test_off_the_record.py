@@ -92,6 +92,103 @@ class ThePause(unittest.TestCase):
         self.assertTrue(self.consent.has_consent(2, ALICE))
 
 
+class TheRestart(unittest.IsolatedAsyncioTestCase):
+    """A restart that resumes the session keeps the pauses (#2466): saved with the session, put back
+    before ears hears anyone, their timers armed for the time left."""
+
+    async def asyncSetUp(self) -> None:
+        self.clock = Clock()
+        self.wall = Clock()
+        self.wall.now = 50_000.0
+        self.said: list[str] = []
+        self.saved: list[dict[str, Any]] = []
+
+        def build() -> tuple[ConsentStore, OffTheRecord]:
+            consent = ConsentStore(cast(Any, None), clock=self.clock, wall=self.wall)
+            consent._store(G, frozenset({ALICE, BOB, DM}))
+
+            async def push(guild: int) -> None:
+                return None
+
+            async def say(guild: int, text: str) -> bool:
+                self.said.append(text)
+                return True
+
+            async def save(guild: int, paused: dict[str, Any]) -> None:
+                self.saved.append(paused)
+
+            return consent, OffTheRecord(
+                consent,
+                push=push,
+                say=say,
+                name_of=lambda guild, user: {ALICE: "Alice", BOB: "Bob", DM: "Dana"}[user],
+                listening=lambda guild: True,
+                save=save,
+                wall=self.wall,
+            )
+
+        self.build = build
+
+    async def test_pauses_are_saved_and_come_back_with_the_time_left(self) -> None:
+        _, otr = self.build()
+        await otr.pause(G, ALICE, 15)
+        await otr.pause(G, BOB, None)
+        await otr.pause_table(G, 5)
+        saved = self.saved[-1]
+        self.assertEqual(saved["people"], {str(ALICE): 50_900, str(BOB): None})
+        self.assertEqual(saved["table"], 50_300)
+        otr.end_session(G)  # (the old process is gone)
+        self.clock.now += 100  # a restart takes a while
+        self.wall.now += 100
+        consent2, otr2 = self.build()
+        await otr2.restore(G, saved)
+        self.assertEqual(consent2.consenting_now(G), frozenset())  # the table's break is on
+        self.assertTrue(consent2.table_paused(G))
+        self.assertTrue(consent2.is_paused(G, ALICE))
+        self.assertTrue(consent2.is_paused(G, BOB))
+        self.assertEqual(consent2.paused_until(G, ALICE), self.clock.now + 800)  # 15 min - 100 s
+        self.assertEqual(set(otr2._timers), {(G, ALICE), (G, 0)})  # a timer for each with an end
+        otr2.end_session(G)
+
+    async def test_a_pause_that_ran_out_while_down_is_not_restored_and_the_table_is_told(
+        self,
+    ) -> None:
+        _, otr = self.build()
+        await otr.pause(G, ALICE, 5)
+        saved = self.saved[-1]
+        otr.end_session(G)
+        self.wall.now += 600
+        self.clock.now += 600
+        consent2, otr2 = self.build()
+        await otr2.restore(G, saved)
+        self.assertTrue(consent2.has_consent(G, ALICE))  # recorded again: it ended
+        await otr2.say_expired(G, saved)
+        self.assertEqual(self.said[-1], said_back("Alice"))
+
+    async def test_a_person_who_stopped_is_not_restored_and_a_stop_cancels_the_timer(self) -> None:
+        consent, otr = self.build()
+        await otr.pause(G, ALICE, 5)
+        saved = self.saved[-1]
+        otr.forget(G, ALICE)  # Stop recording me
+        consent.stop_now(G, ALICE)
+        self.assertEqual(otr._timers, {})
+        said = len(self.said)
+        self.clock.now += 400
+        await asyncio.sleep(0)
+        self.assertEqual(len(self.said), said)  # nobody says she is back on the record
+        consent3 = ConsentStore(cast(Any, None), clock=self.clock, wall=self.wall)
+        consent3._store(G, frozenset({BOB, DM}))  # she is not in the list any more
+        self.assertEqual(consent3.restore(G, saved), [])
+
+    async def test_the_timer_that_fires_a_hair_early_still_resumes(self) -> None:
+        consent, otr = self.build()
+        await otr.pause(G, ALICE, 5)
+        self.clock.now += 299.9999  # the sleep returned just before the deadline
+        await otr._after((G, ALICE), 0)
+        self.assertTrue(consent.has_consent(G, ALICE))
+        self.assertEqual(self.said[-1], said_back("Alice"))
+
+
 class TheService(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.clock = Clock()

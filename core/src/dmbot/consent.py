@@ -35,7 +35,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from dmbot.db import Conn, Database
 
@@ -82,12 +82,14 @@ class ConsentStore:
         *,
         outside: str | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall: Callable[[], float] = time.time,
     ) -> None:
         """`outside`: the outside engine (deepgram, cloud) the server sends voices to, or
         None for local Whisper. Then only yeses given for that engine count. `clock`: what a
         pause counts its minutes on (monotonic seconds)."""
         self._db = db
         self._clock = clock
+        self._wall = wall  # what a saved pause counts its end on (it must outlive a restart)
         # Off the record (#2466): server → person → when it ends (None: until they resume).
         self._paused: dict[int, dict[int, float | None]] = {}
         # The whole table, paused by a DM: server → (ends at or None) while it is on.
@@ -266,6 +268,55 @@ class ConsentStore:
 
     def paused_people(self, guild_id: int) -> list[int]:
         return [u for u in list(self._paused.get(guild_id, {})) if self.is_paused(guild_id, u)]
+
+    async def agreed(self, guild_id: int) -> frozenset[int]:
+        """Everyone who agreed here, paused or not (loaded if need be). For the checks that ask
+        "did they agree?", not "is DMbot recording them now?": a pause is not a refusal."""
+        return await self._agreed(guild_id)
+
+    def snapshot(self, guild_id: int) -> dict[str, Any]:
+        """The pauses of this server, to save with its session: when each ends in Unix seconds
+        (None: until resumed). People who are not paused any more are left out."""
+        now_c, now_w = self._clock(), self._wall()
+
+        def end(ends: float | None) -> float | None:
+            return None if ends is None else round(now_w + (ends - now_c))
+
+        out: dict[str, Any] = {}
+        people = {str(u): end(self._paused[guild_id][u]) for u in self.paused_people(guild_id)}
+        if people:
+            out["people"] = people
+        if self.table_paused(guild_id):
+            out["table"] = end(self._table_paused[guild_id][0])
+        return out
+
+    def restore(self, guild_id: int, saved: dict[str, Any]) -> list[int]:
+        """Put saved pauses back after a restart, before anyone's audio is let in. A pause whose
+        time ran out meanwhile is not restored. Returns the people (0: the table) whose pause is
+        back, with their time left in `remaining`."""
+        back: list[int] = []
+        now_c, now_w = self._clock(), self._wall()
+
+        def left(end: object) -> tuple[bool, float | None]:
+            if end is None:
+                return True, None
+            if isinstance(end, int | float) and end > now_w:
+                return True, float(end) - now_w
+            return False, None
+
+        for user, end in dict(saved.get("people") or {}).items():
+            ok, seconds = left(end)
+            if ok and int(user) in self._cache.get(guild_id, frozenset()):
+                self._paused.setdefault(guild_id, {})[int(user)] = (
+                    None if seconds is None else now_c + seconds
+                )
+                back.append(int(user))
+        if "table" in saved:
+            ok, seconds = left(saved["table"])
+            if ok:
+                self._table_paused[guild_id] = (None if seconds is None else now_c + seconds,)
+                back.append(0)
+        return back
 
     def end_session(self, guild_id: int) -> None:
         """The listening session is over: every pause ends with it."""

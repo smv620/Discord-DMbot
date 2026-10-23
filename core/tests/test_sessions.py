@@ -364,6 +364,30 @@ class SaveAndResume(SessionTests):
     def screen_posts(self) -> list[str]:
         return [t for cid, t in self.posts if cid == SCREEN]
 
+    async def test_a_pause_is_saved_with_the_session_and_a_restart_keeps_it(self) -> None:
+        """Off the record (#2466): after a restart the person is still not recorded, before their
+        audio is let in, and a stop or a new session clears it."""
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        await self.start()
+        self.bot.tables[GUILD].dmbchat_channel_id = 555
+        done = await self.bot.pause_recording(GUILD, PLAYER, 15)
+        assert done.ok
+        saved = await self.sessions.get(GUILD)
+        assert saved is not None
+        self.assertEqual(list(saved.paused["people"]), [str(PLAYER)])
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertFalse(bot.consent.has_consent(GUILD, PLAYER))  # still off the record
+        self.assertTrue(bot.consent.has_consent(GUILD, DM))
+        allowlists = [json.loads(m)["userIds"] for m in self.ears.sent if '"allowlist"' in m]
+        self.assertNotIn(str(PLAYER), allowlists[0])  # the first list ears gets leaves them out
+        self.assertIn(str(DM), allowlists[0])
+        await self.sessions.save(saved)  # a new session in its place starts with no pauses
+        again = await self.sessions.get(GUILD)
+        assert again is not None
+        self.assertEqual(again.paused, {})
+
     async def test_start_saves_and_stop_forgets(self) -> None:
         await self.start()
         saved = await self.sessions.get(GUILD)
