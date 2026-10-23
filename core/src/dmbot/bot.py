@@ -4501,7 +4501,9 @@ class DMBot(commands.AutoShardedBot):
         if (
             text is not None
             and asks_off_record(text)
-            and self.consent.agreed_now(table.guild_id, author.id)  # (paused again: a new 5)
+            and self.consent.agreed_now(
+                table.guild_id, author.id
+            )  # paused or not: it only asks for a pause
         ):
             self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
         elif text is not None:
