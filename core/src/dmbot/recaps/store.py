@@ -878,12 +878,20 @@ class RecapStore:
         action: str,
         *,
         require_approved: bool = False,
+        require_current: bool = False,
     ) -> bool:
         """The DM's choice made on the DM screen (#1455), the same two moves the website's page
         makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
-        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
+        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready.
+        `require_current`: only if the DM's approval is of the text as it is now, in the same
+        statement (an edit after approving, or a draft never approved, posts nothing)."""
         if action == "post":
             sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+            if require_current:  # an approval of other words than these ends here, in SQL
+                sql += (
+                    " AND approved_hash = encode(sha256(convert_to("
+                    "title || E'\\n' || summary, 'UTF8')), 'hex')"
+                )
             if require_approved:  # the text as it is now is the text the DM approved, in SQL
                 sql += (
                     " AND approved_hash = encode(sha256(convert_to("

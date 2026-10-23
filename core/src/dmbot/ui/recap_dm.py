@@ -243,6 +243,32 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             for f in audio:
                 f.close()
 
+    async def _refused_for_problems(
+        self, interaction: discord.Interaction, bot: Any, campaign: Any, job: Any
+    ) -> bool:
+        """The checks every approval makes, whichever button it comes from (the Approve buttons
+        and a Yes on a draft that is not approved yet): the cues and the secret names. True: it
+        found problems, told the DM what and where to fix them, and nothing is to be approved."""
+        problems = await bot.recap_approval_problems(campaign, job)
+        if not problems:
+            return False
+        shown = problems[:MAX_SHOWN]
+        more = len(problems) - len(shown)
+        tail = f"\n…and {more} more." if more > 0 else ""
+        words = cues.allowed_words()
+        await _tell(
+            interaction,
+            f"{CUES_FIRST}\n"
+            + "\n".join(f"• {p}" for p in shown)
+            + tail
+            + "\n\nMoods go in 《 》: "
+            + ", ".join(words["moods"])
+            + ".\nPacing goes in (( )): "
+            + ", ".join(words["pacing"])
+            + ".\nEdit the text on your recap page, then press Approve again.",
+        )
+        return True
+
     async def _approve(
         self, interaction: discord.Interaction, bot: Any, campaign: Any, job: Any
     ) -> None:
@@ -250,23 +276,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         secret names again, so a choice taken from an old message approves nothing the text no
         longer earns. Counts only in the log, never the text."""
         expected = approval.text_hash(job.title, job.summary)  # the text the checks below read
-        problems = await bot.recap_approval_problems(campaign, job)
-        if problems:
-            shown = problems[:MAX_SHOWN]
-            more = len(problems) - len(shown)
-            tail = f"\n…and {more} more." if more > 0 else ""
-            words = cues.allowed_words()
-            await _tell(
-                interaction,
-                f"{CUES_FIRST}\n"
-                + "\n".join(f"• {p}" for p in shown)
-                + tail
-                + "\n\nMoods go in 《 》: "
-                + ", ".join(words["moods"])
-                + ".\nPacing goes in (( )): "
-                + ", ".join(words["pacing"])
-                + ".\nEdit the text on your recap page, then press Approve again.",
-            )
+        if await self._refused_for_problems(interaction, bot, campaign, job):
             return
         if bot.settings.plot_check_on and await bot.recaps.plot_open(
             campaign.guild_id, campaign.id, self.session_at
@@ -357,6 +367,13 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         #2122): it goes through the same approval as the Approve buttons, so the version is kept
         and PlotBot's open points hold it."""
         if not job.approved:
+            campaign = await bot.campaigns.get(gid, cid)
+            if campaign is None or await self._refused_for_problems(
+                interaction, bot, campaign, job
+            ):
+                if campaign is None:
+                    await _tell(interaction, GONE)
+                return
             if not await bot.recaps.approve(
                 gid,
                 cid,
@@ -374,8 +391,8 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 else:
                     await _tell(interaction, DECIDED)
                 return
-        elif not await bot.recaps.decide(gid, cid, self.session_at, "post"):
-            await _tell(interaction, DECIDED)
+        elif not await bot.recaps.decide(gid, cid, self.session_at, "post", require_current=True):
+            await _tell(interaction, DECIDED)  # (or the text changed since the DM approved it)
             return
         await self._sent(interaction, bot, gid, cid)
 
