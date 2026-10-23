@@ -433,6 +433,30 @@ class TypedInTheCleanedVersion(unittest.TestCase):
         self.assertNotIn("my cat", head.split("\n\n", 1)[1])
 
 
+class ImageLines(unittest.TestCase):
+    """#2450: a described picture is tagged (image) in both versions, with its own note."""
+
+    def render(self, version: str, lines: list[Line]) -> str:
+        return export.render("X", session(), lines, {MIA: "Mia"}, version=version)
+
+    def test_tagged_in_both_versions_with_a_note_that_the_picture_is_not_kept(self) -> None:
+        lines = [dataclasses.replace(line(5, MIA, "a picture: a map"), typed=True, image=True)]
+        for version in (export.AS_HEARD, export.CLEANED):
+            text = self.render(version, lines)
+            self.assertIn("[0:00:05] (Mia) (image): a picture: a map", text)
+            self.assertIn(export.IMAGE_NOTE, text)
+            self.assertNotIn(export.TYPED_NOTE, text)  # no typed line, so no typed note
+
+    def test_both_notes_when_both_kinds_are_there(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "a picture: a map"), typed=True, image=True),
+            dataclasses.replace(line(6, MIA, "hello"), typed=True),
+        ]
+        text = self.render(export.AS_HEARD, lines)
+        self.assertIn(export.IMAGE_NOTE, text)
+        self.assertIn(export.TYPED_NOTE, text)
+
+
 class DmSidebarLines(unittest.TestCase):
     """The DM's question and DMbot's answer (#935, #933): in the as-heard file for everyone
     who can read transcripts, with where each came from; never in the cleaned one."""

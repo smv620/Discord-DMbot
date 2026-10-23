@@ -3184,6 +3184,35 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     never read.
   - **Consent:** the consent message says DMbot also reads images posted in the table chat, so the consent
     terms version goes up and everyone is asked again.
+  - *Built, part 1 (CloudDev, 2026-10-23, #2450): the reading, not yet wired to the chat.* The AI client can
+    be sent an image with a request (`ai.Image`; bytes sent once, never stored or logged). `dmbot.images` holds
+    the prompts (the image is **data**: writing in it is only described, never obeyed), the answer's shape check
+    and length caps (a description of at most 400 characters, a picture of text's words up to 1,500, at most 40
+    places), the check that an attachment link is Discord's own file host over https (`cdn.discordapp.com`,
+    `media.discordapp.net`, no look-alikes, no sign-in part), and the guarded fetch (`fetch(..., images=True)`:
+    pictures only, redirects kept to Discord's hosts) up to **3,932,160 bytes (about 3.75 MB): the AI service takes 5 MB once the image is base64-encoded, which adds a third** (the plan said
+    about 10 MB; a larger image is refused in plain words and noted as not described), with the type taken from the file's first bytes
+    and not from its name. `read` makes one fast call for the description; a map is read again by the careful
+    model for its places and layout. Nothing in the bot calls it yet: part 2 (table-chat wiring, the transcript
+    line, the day's limit and the consent terms bump, together, so nothing is read before people agree), part 3
+    (the map table for MapBot) and part 4 (the text reply and ✏️ Fix) follow.
+  - *Built, part 2 (CloudDev, 2026-10-23, #2450): the table chat reads pictures.* Off unless the backend switch
+    `DMBOT_TABLE_IMAGES` is on, 40 pictures per campaign per day (`DMBOT_TABLE_IMAGES_PER_DAY`). Only a message from
+    someone who agreed, in the table's chat while listening, never a bot or webhook, has its attachments (up to 4,
+    each up to 3.75 MB (what encodes to the AI service's 5 MB), by what Discord says the file is) looked at; the poster's consent is checked before anything
+    is fetched and again before every download and every AI call (a person who presses Stop meanwhile gets no
+    line), and the campaign's plan must have AI. Each becomes a line tagged `(image)` in the raw and cleaned
+    transcripts (a map says "a map"; a picture of text carries its words), or "a picture was posted (not
+    described)" past the day's limit or when the picture could not be read. A described picture is a **record
+    only**: its names count as said, but it never runs a clock phrase, a house rule, the sidebar or the off-topic
+    filter. The day's count is a row per campaign and day in the database (`image_day_use`, a count only, deleted
+    with the campaign), so the limit holds across restarts; the log holds counts only.
+  - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
+    that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
+    yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the
+    website's `pictures` promise, privacy page, help and features lines) is a separate PR that merges only on the
+    owner's word. The website's transcript view still tags these lines "(typed)" until its database functions
+    learn the flag (follow-up).
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
@@ -4560,6 +4589,17 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     and the step it's on (the last check, then posting). It updates by itself until it ends: "Posted to your
     table" with a link to the message in Discord, or what went wrong and what to do next. Leaving and coming
     back shows the same clock, counted from when it started.
+  - *Built on Discord (CloudDev, 2026-10-23, #2420):* a new recap line on the DM screen has the same three
+    buttons in the page's words (**✅ Approve and post text only**, **🎙️ Approve and make audio to review**,
+    **📋 Approve but don't post**), **📝 Review the recap** (the link to that recap's page, or **Read it** with
+    no website address) and **Share a recap**. They go through the same store move as the page
+    (`RecapStore.approve`, which takes `post` to approve and hand it to the bot in one statement), so a
+    recap approved on either shows as approved on the other. The audio button asks voice-over, music or
+    both (text only is the other two buttons); where audio can't be made it is greyed and the line says
+    why ("not set up" is specific; the plan and the month's allowance say "isn't available for this
+    campaign right now", because every DM sees the line and a co-DM is never told the owner's plan).
+    "Not this one" is no longer offered on a new line; it still answers on a line already sent. Cue
+    problems, secret names and who is recorded are checked on every press, as before.
 - **Every recap says which session it is** (owner, 2026-10-22). Wherever a recap is read (the DM's recap
   page, the list of recaps, and the shared recap page), its heading line names the campaign, the session
   number, the day it was played and how long it lasted: "**<Campaign>** · Session 4 · Played Tuesday 21

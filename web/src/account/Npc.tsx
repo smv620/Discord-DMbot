@@ -89,7 +89,7 @@ export default function Npc({ api, path }: { api: AccountApi; path: string }) {
     page.alsoCalled.length === 0 && page.groups.length === 0 && page.ties.length === 0;
   return (
     <div class="stack npc-page">
-      <CampaignNav api={api} campaignRef={where.ref} page="names" />
+      <CampaignNav api={api} campaignRef={where.ref} page="names" label={page.name} />
       <section class="stack" aria-labelledby="npc-name">
         <h2 id="npc-name">{page.name}</h2>
         <p class="muted">{words.kindOf(page.kind)}</p>

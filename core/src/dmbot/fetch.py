@@ -68,6 +68,13 @@ _TYPES = {
     "text/html": ".html",
     "application/xhtml+xml": ".html",
 }
+# What an image fetch (#2450) accepts: the picture types the AI reads, by Content-Type.
+_IMAGE_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 _ENDINGS = (".pdf", ".docx", ".xlsx", ".doc", ".txt", ".md", ".csv", ".html", ".htm")
 
 
@@ -284,7 +291,9 @@ class Fetched:
     filename: str  # an ending text_of reads it by: "link.pdf", "link.html", ...
 
 
-def _ending(resp: aiohttp.ClientResponse, url: yarl.URL) -> str | None:
+def _ending(resp: aiohttp.ClientResponse, url: yarl.URL, images: bool = False) -> str | None:
+    if images:  # a picture fetch takes pictures only, by what the host says it is
+        return _IMAGE_TYPES.get(resp.content_type.casefold())
     kind = _TYPES.get(resp.content_type.casefold())
     if kind:
         return kind
@@ -306,9 +315,11 @@ async def fetch(
     *,
     max_bytes: int | None = None,
     stay_on: tuple[str, ...] = (),
+    images: bool = False,
 ) -> Fetched:
     """The file or page behind a link. Raises LinkError in plain words for anything that
-    goes wrong (never another error, and never with the link in it)."""
+    goes wrong (never another error, and never with the link in it). `images` (#2450): the link
+    must be a picture (png, jpeg, webp or gif); nothing else is taken."""
     target = direct_url(link)
     hosts = [target.host or ""]
     timeout = aiohttp.ClientTimeout(total=TIMEOUT_S)
@@ -336,7 +347,7 @@ async def fetch(
                             ):
                                 raise Unreachable(UNREACHABLE)
                             continue
-                        return await _read(resp, target, hosts, max_bytes)
+                        return await _read(resp, target, hosts, max_bytes, images)
                 raise NotShared(NOT_SHARED)  # a redirect loop is usually a sign-in page
     except LinkError:
         raise
@@ -347,14 +358,18 @@ async def fetch(
 
 
 async def _read(
-    resp: aiohttp.ClientResponse, url: yarl.URL, hosts: list[str], max_bytes: int | None = None
+    resp: aiohttp.ClientResponse,
+    url: yarl.URL,
+    hosts: list[str],
+    max_bytes: int | None = None,
+    images: bool = False,
 ) -> Fetched:
     max_bytes = MAX_BYTES if max_bytes is None else max_bytes  # read now: tests move the limit
     if resp.status in (401, 403, 404, 410):
         raise NotShared(NOT_SHARED)
     if resp.status != 200:
         raise Unreachable(UNREACHABLE)
-    ending = _ending(resp, url)
+    ending = _ending(resp, url, images)
     if ending is None:
         raise LinkError(WRONG_TYPE)
     if sign_in_page(ending, url, *hosts):

@@ -45,6 +45,7 @@ from dmbot import (
     features,
     fightbot,
     hours,
+    images,
     install,
     mail,
     owner_presence,
@@ -245,6 +246,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
+from dmbot.image_desk import ImageDesk, ImageUseStore
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -472,7 +474,7 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
-from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
+from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
@@ -517,6 +519,7 @@ PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
 SOUND_CLOSE = 0.6
 # ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
 SOUND_LENGTH_GAP = 1
+DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
 SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
@@ -1406,6 +1409,19 @@ class DMBot(commands.AutoShardedBot):
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
+            else None
+        )
+        # Pictures posted in the table chat (#2450): off unless the backend switch is on.
+        # Messages deleted lately, so a picture still being described when its poster deletes it
+        # is not written down afterwards (#2450); id → when.
+        self._deleted_messages: dict[int, float] = {}
+        self.image_desk: ImageDesk | None = (
+            ImageDesk(
+                self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
+                self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE_MAP], Feature.IMAGE_MAP),
+                per_day=settings.table_images_per_day,
+            )
+            if self.ai_client and settings.table_images_on
             else None
         )
         self.audio_ai = (
@@ -2679,15 +2695,23 @@ class DMBot(commands.AutoShardedBot):
                 campaign = await self.campaigns.get(gid, cid)
                 if campaign is None or not campaign.recaps_text:
                     return
+                why = await self.recap_audio_why(gid, cid)
                 for session_at, title in await self.recaps.waiting_drafts(gid, cid):
                     if self.tables.get(gid) is not table:
                         return  # the session ended meanwhile
                     shown = discord.utils.escape_markdown(title)
+                    site = self.settings.site_url
                     await self.post(
                         table.screen_channel_id,
                         f"📜 Last session's recap is still waiting: **{shown}**. "
-                        "Nothing has gone to the players.",
-                        view=ready_view(cid, session_at, self.settings.site_url),
+                        "Nothing has gone to the players." + (f"\n{AUDIO_WHY[why]}" if why else ""),
+                        view=ready_view(
+                            cid,
+                            session_at,
+                            site,
+                            page_link(site, gid, cid, session_at) if site else "",
+                            audio_off=bool(why),
+                        ),
                         remember=("recap", cid, session_at),
                     )
             except Exception:
@@ -5200,48 +5224,119 @@ class DMBot(commands.AutoShardedBot):
             or getattr(message, "interaction_metadata", None) is not None
         ):
             return
-        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
-        if text is None or not self.consent.has_consent(table.guild_id, author.id):
-            return
-        self._deliver_typed(
-            table, author.id, text, int(message.created_at.timestamp() * 1000), message.id
+        if not self.consent.has_consent(table.guild_id, author.id):
+            return  # nothing of a message, picture or words, is read for someone who didn't agree
+        start_ms = int(message.created_at.timestamp() * 1000)
+        links = (
+            self._image_links(message)
+            if self.image_desk is not None
+            and self.consent.has_image_consent(table.guild_id, author.id)
+            else []
         )
+        if links:
+            self._track(
+                self._hear_images(table, author.id, start_ms, message.id, links), "table-images"
+            )
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
+        if text is None:
+            return
+        self._deliver_typed(table, author.id, text, start_ms, message.id)
+
+    @staticmethod
+    def _image_links(message: discord.Message) -> list[str]:
+        """The links of the pictures on a message: by what Discord says the file is, within the
+        size DMbot reads. Only links; the pictures are fetched later, after the plan check."""
+        return [
+            a.url
+            for a in message.attachments
+            if (a.content_type or "").startswith("image/") and a.size <= images.MAX_BYTES
+        ][: images.MAX_PER_MESSAGE]
+
+    async def _hear_images(
+        self, table: Table, user_id: int, start_ms: int, message_id: int, links: list[str]
+    ) -> None:
+        """A picture in the table chat becomes an (image) line (#2450). Nothing is fetched or sent
+        to the AI unless the poster agreed, the campaign's plan has AI and the day's limit is not
+        used; consent is checked again after the slow steps, so someone who stopped meanwhile
+        gets no line. The picture is read once and kept nowhere."""
+        desk, gid, cid = self.image_desk, table.guild_id, table.campaign_id
+
+        def still_ok() -> bool:
+            # Asked before every download and AI call: the yes must be to wording that mentions
+            # pictures (IMAGE_TERMS_VERSION), still given, the session still going, and the
+            # message still there.
+            return (
+                self._still_recorded(table, user_id)
+                and self.consent.has_image_consent(gid, user_id)
+                and message_id not in self._deleted_messages
+            )
+
+        if desk is None or cid is None or not still_ok():
+            return
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
+        reads = await desk.describe(gid, cid, links, still_ok)
+        if not still_ok():
+            return
+        for n, read in enumerate(reads):
+            self._deliver_typed(
+                table,
+                user_id,
+                images.line_text(read),
+                start_ms + n,
+                message_id,
+                image=True,
+            )
 
     def _deliver_typed(
-        self, table: Table, user_id: int, text: str, start_ms: int, message_id: int = 0
+        self,
+        table: Table,
+        user_id: int,
+        text: str,
+        start_ms: int,
+        message_id: int = 0,
+        *,
+        image: bool = False,
     ) -> None:
         """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
         audio check. In the transcript it is tagged (typed), in both versions; typing clearly not
         about the game goes through the same off-topic filter as talk and is left out of the
-        cleaned version (#2447, item 6)."""
-        if asks_off_record(text):  # the line is not kept; they are off the record (#2466)
+        cleaned version (#2447, item 6). A described picture (`image`) is only ever a record: its
+        words are data from the AI about a stranger's file, so they reach the names scan and the
+        transcript but never run a clock phrase, a house rule, the sidebar, the topic filter or
+        the off-the-record words."""
+        if not image and asks_off_record(text):  # the line is not kept; off the record (#2466)
             self._wake_off_the_record(table.guild_id, user_id)
             return
         now = time.monotonic()
         table.idle.activity(now)  # typed chat at the table is not silence (#2034)
-        listeners = table.typed_rate.allow(user_id, now)
+        listeners = True if image else table.typed_rate.allow(user_id, now)  # (the day limits it)
         if not listeners and table.typed_rate.should_log(now):
             # No text, no names: only that it happened (#1154).
             log.info("Typed chat: a flood of lines; extra lines skip the listeners")
         names_said = 0
         if listeners:
-            table.vocabulary.note(user_id, text)
+            if not image:  # a description's words are not the poster's own talk
+                table.vocabulary.note(user_id, text)
             if table.name_lookup is not None:
                 named = mentions(table.name_lookup, text)
                 names_said = len(named)
-                table.scene.note(named, user_id, now)
+                if not image:
+                    table.scene.note(named, user_id, now)
                 table.heard_counts.update((entity_id, user_id) for entity_id in named)
-            self._act_on_line(table, user_id, text, typed=True)
+            if not image:
+                self._act_on_line(table, user_id, text, typed=True)
         if self.transcripts is not None:
             table.unsaved.add(
-                Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
+                Line(start_ms, user_id, text, text, typed=True, image=image, message_id=message_id)
             )
-            if listeners and self._topic_holds(table, text, names_said):
+            if listeners and not image and self._topic_holds(table, text, names_said):
                 # Its words already reached the names scan above; the label only decides whether
                 # the cleaned transcript shows the line (no `held` entry: nothing to put back).
                 self._topic_wait(table, user_id, start_ms, text, 0.0, typed=True)
-        if not listeners:
+        if not listeners or image:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
@@ -5273,6 +5368,7 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
             for message_id in payload.message_ids:
+                self._note_deleted(message_id)
                 table.unsaved.drop_message(message_id)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
@@ -5280,7 +5376,16 @@ class DMBot(commands.AutoShardedBot):
         already saved stays in the raw transcript, as PLAN says."""
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
+            self._note_deleted(payload.message_id)
             table.unsaved.drop_message(payload.message_id)
+
+    def _note_deleted(self, message_id: int) -> None:
+        """Remember a deleted message for a few minutes (a picture takes seconds to describe)."""
+        now = time.monotonic()
+        self._deleted_messages = {
+            m: t for m, t in self._deleted_messages.items() if now - t < DELETED_KEPT_S
+        }
+        self._deleted_messages[message_id] = now
 
     def after_chat_change(self, campaign: Campaign) -> None:
         """A running session reads typed chat from now on as the DM just set it (#1118)."""
@@ -9038,6 +9143,14 @@ class DMBot(commands.AutoShardedBot):
                     f"Read and approve this recap on your recap page first{where}. "
                     "Nothing was shared.",
                 )
+            if job.audio_choice != "text":
+                # Approved for narration or music: it is posted after the audio is made and
+                # reviewed, never by Share, so say what to do instead of a failure that can't mend.
+                return (
+                    None,
+                    "This recap is waiting for its narration. Review it on your recap page, "
+                    f"then share{where}. Nothing was shared.",
+                )
             # The approval is checked again in SQL, in the same statement that moves it on, so a
             # text edited since the check above cannot slip through; of two presses, one wins.
             if await store.decide(gid, cid, session_at, "post", require_approved=True):
@@ -9099,6 +9212,17 @@ class DMBot(commands.AutoShardedBot):
     async def _recap_allowance(self, gid: int, cid: str, *, audio: bool) -> str | None:
         """The month's count against the allowance. Free access and grants are not limited. On
         refusal the DM screen says so, with the day the next one is."""
+        message = await self._recap_refusal(gid, cid, audio=audio)
+        if message is None:
+            return None
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is not None and campaign.dm_screen_channel_id is not None:
+            await self.post(campaign.dm_screen_channel_id, f"📜 Recap: {message}")
+        return message
+
+    async def _recap_refusal(self, gid: int, cid: str, *, audio: bool) -> str | None:
+        """The same check with no side effects: the refusal's words, or None when one more is
+        allowed. The greyed audio button asks this, so asking never posts to the DM screen."""
         if self.recaps is None:
             raise RuntimeError("no recap store")
         campaign = await self.campaigns.get(gid, cid)
@@ -9118,10 +9242,7 @@ class DMBot(commands.AutoShardedBot):
         )
         if count < limit:
             return None
-        message = recap_allowance.audio_refusal(now) if audio else recap_allowance.text_refusal(now)
-        if campaign.dm_screen_channel_id is not None:
-            await self.post(campaign.dm_screen_channel_id, f"📜 Recap: {message}")
-        return message
+        return recap_allowance.audio_refusal(now) if audio else recap_allowance.text_refusal(now)
 
     async def recap_audio_switched(self, gid: int, cid: str, job: Job) -> bool:
         """The DM's own choice to have the narration and music (#1421); it can only turn the
@@ -9149,6 +9270,26 @@ class DMBot(commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't tell whether spoken recaps are part of the plan")
         return PlanFacts(text, audio, how)
+
+    async def recap_audio_why(self, gid: int, cid: str) -> str:
+        """Why audio can't be made for this campaign's recaps now (#2420), for the greyed button:
+        "not_set_up" (this server has no narration, or the DM switched it off), "unavailable" (the
+        plan has none, or the month's is used up: a co-DM is never told the owner's plan, #1470),
+        or "" when it can be made. The audio step checks all of it again before any paid call."""
+        if not self.settings.recap_audio_on:
+            return "not_set_up"
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not campaign.recaps_audio:
+            return "not_set_up"
+        if not await self.plan_allows("recap_audio", gid, campaign, fail_open=False):
+            return "unavailable"
+        try:
+            if await self._recap_refusal(gid, cid, audio=True) is not None:
+                return "unavailable"
+        except Exception:  # not told: the button stays off rather than promise what may not come
+            log.exception("Recap: couldn't read the audio allowance")
+            return "unavailable"
+        return ""
 
     async def recap_audio_allowed(self, gid: int, cid: str, job: Job) -> bool:
         campaign = await self.campaigns.get(gid, cid)
@@ -9204,10 +9345,17 @@ class DMBot(commands.AutoShardedBot):
         )
         if campaign is not None and campaign.dm_screen_channel_id is not None:
             if job.state == "ready":
+                try:
+                    why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
+                except Exception:  # the recap still goes up, with the button off
+                    log.exception("Recap: couldn't tell why audio is off")
+                    why = "unavailable"
                 await self.post(
                     campaign.dm_screen_channel_id,
-                    ready_text(job.title, link),
-                    view=ready_view(cid, job.session_at, self.settings.site_url),
+                    ready_text(job.title, link, AUDIO_WHY[why] if why else ""),
+                    view=ready_view(
+                        cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)
+                    ),
                     remember=("recap", cid, job.session_at),
                 )
             elif not campaign.recaps_email:
@@ -12622,6 +12770,8 @@ async def run(settings: Settings) -> None:
             backstory_links=BackstoryLinks(db),
         )
         bot.house_wins = WinsStore(db)
+        if bot.image_desk is not None:  # the day's count lives in the database (#2450)
+            bot.image_desk.counter = ImageUseStore(db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)
