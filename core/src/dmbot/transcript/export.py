@@ -50,8 +50,8 @@ DMBOT_NAME = "DMbot"
 TABLE_Q_NAME = "Table Q"  # a player's question to DMbot (#1187), apart from the DM's sidebar
 TYPED_TAG = "(typed)"
 TYPED_NOTE = (
-    "(typed) lines were typed in the table's chat, not said. They are left out of the Cleaned "
-    "version."
+    "(typed) lines were typed in the table's chat, not said. Typing clearly not about the game "
+    "is left out of the Cleaned version."
 )
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. A person marked "
@@ -123,6 +123,12 @@ def distinct_names(names: Mapping[int, str | None]) -> dict[int, Label]:
     return out
 
 
+def _hidden_typing(line: Line) -> bool:
+    """Typed chat clearly not about the game: left out of the Cleaned version, as talk like it is
+    (#2447, item 6)."""
+    return line.typed and line.topic == OFF_TOPIC
+
+
 def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
     """The people a file of this version names, in the order each first speaks in it. DMbot's own
     answers are not a person; the cleaned version leaves out typed chat and sidebar lines, so
@@ -133,7 +139,7 @@ def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
     for line in sorted(lines, key=lambda x: x.started_ms):
         if line.sidebar and line.sidebar not in QUESTION_KINDS:
             continue
-        if version == CLEANED and (line.sidebar or line.typed):
+        if version == CLEANED and (line.sidebar or _hidden_typing(line)):
             continue
         if line.user_id not in order:
             order.append(line.user_id)
@@ -301,7 +307,9 @@ def render(
     # what was said.
     typed_lines = [line for line in everything if line.typed and not line.sidebar]
     table_lines = [line for line in everything if not line.sidebar and not line.typed]
-    shown_typed = typed_lines if version == AS_HEARD else []
+    shown_typed = (
+        typed_lines if version == AS_HEARD else [x for x in typed_lines if not _hidden_typing(x)]
+    )
     shown_sidebar = [line for line in everything if line.sidebar] if version == AS_HEARD else []
     spoken = [
         Spoken(
@@ -340,7 +348,7 @@ def render(
         timed.append((line.started_ms, f"[{when}] ({asker}) {tag}: {said}"))
     for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
         when = clock((line.started_ms - start_ms) / 1000)
-        said = " ".join(line.heard.split())
+        said = " ".join((line.text if version == CLEANED else line.heard).split())
         who = label(
             when,
             person(line.user_id),

@@ -125,8 +125,10 @@ class Render(unittest.TestCase):
         ]
         self.assertEqual(export.speaker_order(lines, export.AS_HEARD), [MIA, DEE, 3])
         self.assertEqual(
-            export.speaker_order(lines, export.CLEANED), [DEE, MIA]
-        )  # typed or asked: not listed
+            export.speaker_order(lines, export.CLEANED), [MIA, DEE]
+        )  # typed chat is in the cleaned version now (#2447); asking DMbot is not
+        hidden = [dataclasses.replace(lines[0], topic="off_topic"), *lines[1:]]
+        self.assertEqual(export.speaker_order(hidden, export.CLEANED), [DEE, MIA])
 
     def test_two_people_with_one_name_tell_apart_and_keep_the_mark(self) -> None:
         names = export.distinct_names({MIA: "Sam", DEE: "sam", 3: "Sam", 4: "Ann"})

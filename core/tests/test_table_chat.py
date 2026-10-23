@@ -413,6 +413,42 @@ class AtTheTableTyped(AtTheTable):
         await asyncio.gather(*list(self.bot._asking))
         self.assertEqual(len(posts), 2)
 
+    async def test_typed_chat_goes_through_the_off_topic_filter_but_its_words_are_not_held(
+        self,
+    ) -> None:
+        """#2447, item 6: a typed line not plainly about the game waits for a label like talk; the
+        label is saved on the line, and nothing is held back from the names scan or the words."""
+        from unittest.mock import patch
+
+        from dmbot import bot as bot_module
+
+        self.bot.topic_ai = cast(Any, object())
+        await self.hear(message("did you watch the football last night", author=PLAYER))
+        (waiting,) = self.live.topics.lines
+        self.assertEqual(self.live.held, {})  # (its words already reached the scan, once)
+        reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+        with patch.object(bot_module, "classify", AsyncMock(return_value=(["off_topic"], reply))):
+            await self.bot._label_topics(self.live, self.live.topics.take())
+        (saved,) = [x for x in self.live.unsaved.lines() if x.typed]
+        self.assertEqual((saved.topic, saved.user_id), ("off_topic", waiting.speaker))
+        cleaned = export.render(
+            "Alpha", self.session(), [saved], {PLAYER: "Mia"}, version=export.CLEANED
+        )
+        self.assertNotIn("football", cleaned)
+
+    async def test_typed_chat_plainly_about_the_game_is_never_held_for_a_label(self) -> None:
+        self.bot.topic_ai = cast(Any, object())
+        await self.hear(message("we take a long rest", author=PLAYER))
+        self.assertEqual(list(self.live.topics.lines), [])
+
+    def session(self) -> Any:
+        session = MagicMock(spec=TranscriptSession)
+        session.started_at = 1_000
+        session.ended_at = None
+        session.number = 1
+        session.engines = []
+        return session
+
     async def test_a_purge_takes_back_the_unsaved_lines_it_deletes(self) -> None:
         msgs = [message(f"line {i}", author=PLAYER) for i in range(4)]
         for m in msgs:
@@ -447,7 +483,7 @@ class AtTheTableTyped(AtTheTable):
 
 
 class Transcript(unittest.TestCase):
-    def test_typed_lines_are_tagged_in_the_raw_transcript_and_absent_from_the_cleaned(self) -> None:
+    def test_typed_lines_are_tagged_in_both_transcripts(self) -> None:
         session = MagicMock(spec=TranscriptSession)
         session.started_at = 1_000
         session.ended_at = None
@@ -462,8 +498,7 @@ class Transcript(unittest.TestCase):
         cleaned = export.render("Alpha", session, lines, names, version=export.CLEANED)
         self.assertIn("(Dee) (typed): we take a long rest", raw)
         self.assertIn("Hello there", raw)
-        self.assertNotIn("we take a long rest", cleaned)
-        self.assertNotIn("(typed)", cleaned.split("\n\n", 1)[1])
+        self.assertIn("(Dee) (typed): we take a long rest", cleaned)  # #2447, item 6
         self.assertIn("Hello there", cleaned)
 
 
