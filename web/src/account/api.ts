@@ -579,7 +579,12 @@ export interface ImportSpeaker {
 export interface ImportPreviewFile {
   name: string;
   format: string | null;
-  /** "unreadable", "too_big", "not_txt" or "empty"; null when the file can be used. */
+  /** Why the file or doc can't be used, or null when it can. One of the codes the import API
+   * returns: from the reader (`unreadable`, `unknown_format`, `no_speaker_names`), from the file
+   * (`not_txt`, `too_big`, `empty`, `too_many_lines`, `too_many_speakers`) or from a Google Doc
+   * link (`not_a_google_doc`, `repeated_link`, `doc_not_shared`, `doc_too_big`, `doc_unreachable`).
+   * Each has plain words in `importPage.fileError`; test/import-error-codes.test.ts keeps the three
+   * lists (core, this comment and those words) in step. */
   error: string | null;
   suggestedDate: string | null;
   lineCount: number;
