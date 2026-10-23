@@ -4279,8 +4279,37 @@ text signed off by the owner on 2026-10-11 (#922, #1077):** campaigns outlive a 
 account (120 days unless another DM takes them over), rights requests by email answered
 within 30 days, no claim about how the database is encrypted, and the owner's own "Our
 responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4. The Discord app
-stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
-the site is account, plan, campaigns, invite and marketing.
+stays private until the rest of #498 is done and the owner says go. *(Replaced 2026-10-23, see
+"Everything on the website" below: settings no longer stay in Discord only.)*
+
+**Everything on the website except picking Discord channels (owner, 2026-10-23; Supervisor's details
+marked).** A DM manages every campaign from the website as fully as from Discord.
+1. **Every campaign of the account, from any server.** My Account lists every campaign the DMbot
+   account owns, whichever server it runs in, **including servers the person can no longer open in
+   Discord** (left, removed, server deleted, DMbot removed from it). *Why:* today the site shows only
+   campaigns in servers the person shares with DMbot, so a campaign in a lost server can't be deleted or
+   saved.
+2. **Delete from the website.** The same rule as Discord (above, "Who may delete a campaign"): the plan
+   holder only, not during a session, one warning, the campaign's name typed, and the backup offered
+   first. *(Supervisor:)* when DMbot can't reach the server any more, the page says its Discord channels
+   can't be removed and stay until the server's owner deletes them; everything DMbot stores goes.
+3. **Everything else a DM can do for a campaign in Discord has a website way**, using the same checks
+   in the same code (never a second copy of a rule): settings, the DMs and co-DMs, hand-over, backups
+   (download and load), transcripts (read, download, Delete my transcripts), backstory and session
+   uploads, names and NPC notes, house rules, homebrew, optional rules, shared rule sets, sheets,
+   recaps, story memory, and the person's own Stop recording me.
+4. **What stays in Discord only:** picking the campaign's Discord channels (DM screen, table chat,
+   voice channel, NPC list), because only Discord shows them, and what happens live at the table
+   (starting and stopping a session, the voice buttons during play).
+5. *(Supervisor:)* **Who sees what on the website.** The campaign's owner (the DMbot account) sees and
+   manages it from anywhere, as in point 1. A co-DM sees it while they are still in its server, the same
+   as in Discord, so a server's admins removing someone ends their access. A player sees what they
+   could see in that server (transcripts, the DM screen as its visibility allows) while they are in it.
+   Isolation is unchanged: one campaign at a time, never data from another.
+6. *(Supervisor, build order):* first the account-wide list and Delete (#2554 core, #2555 website),
+   then a written table of every Discord campaign action with its website status (the parity list,
+   #2554), then each missing group in that order of use. A new Discord campaign action ships with its
+   website way, or with a held line on the parity list saying when.
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
 (`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
