@@ -49,19 +49,11 @@ class Talking(PlotBase):
                     self.one.id,
                     mid,
                     self.issue_id,
-                    user or (await self.me_id()),
+                    user or ALICE.id,
                     json.dumps(list(proposals)),
                 ),
             )
         return mid
-
-    async def me_id(self) -> int:
-        async with self.db.guild(THURSDAY.id) as conn:
-            cur = await conn.execute("SELECT user_id FROM plot_chat LIMIT 1")
-            row = await cur.fetchone()
-            if row:
-                return int(row["user_id"])
-        return int(ALICE.id)
 
     def proposal(self, pid: str = "p1", state: str = "open") -> dict[str, Any]:
         return {
@@ -102,6 +94,59 @@ class Talking(PlotBase):
         self.assertEqual((again.status_code, again.json()["error"]), (409, "busy"))
         await self.bot_reply()
         self.assertEqual((await self.say("And one more thing.")).status_code, 200)
+
+    async def test_a_message_the_bot_never_answered_is_given_up_after_ten_minutes(self) -> None:
+        await self.say()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE plot_chat SET created_at = created_at - 700")
+        again = await self.say("Are you there?")
+        self.assertEqual(again.status_code, 200, again.text)
+        first, second = await self.messages()
+        self.assertEqual((first["state"], first["error"]), ("failed", "timed_out"))
+        self.assertEqual(second["state"], "waiting")
+
+    async def test_save_on_a_proposal_after_the_text_changed_is_stale(self) -> None:
+        await self.say()
+        await self.bot_reply(self.proposal())
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="A different recap.")
+        got = await self.client.post(self.url("proposals/p1"), json={"action": "save"})
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "stale"))
+        # Not that still closes it: it writes nothing, whatever the text
+        no = await self.client.post(self.url("proposals/p1"), json={"action": "decline"})
+        self.assertEqual(no.status_code, 200)
+
+    async def test_a_co_dm_cannot_press_the_other_dms_proposal(self) -> None:
+        await self.say()
+        await self.bot_reply(self.proposal())
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_dms (guild_id, campaign_id, user_id) VALUES (%s, %s, %s)",
+                (THURSDAY.id, self.one.id, BOB.id),
+            )
+        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        other = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url=API, headers=HEADERS
+        )
+        other.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        try:
+            got = await other.post(self.url("proposals/p1"), json={"action": "save"})
+            self.assertEqual(got.status_code, 404)
+        finally:
+            await other.aclose()
+        self.assertEqual((await self.messages())[-1]["proposals"][0]["state"], "open")
+
+    async def test_the_hash_the_door_uses_is_the_texts_own(self) -> None:
+        # (the door compares the issue's hash with the recap's: a fresh issue is not stale)
+        await self.say()
+        await self.bot_reply(self.proposal())
+        got = await self.client.post(self.url("proposals/p1"), json={"action": "save"})
+        self.assertEqual(got.status_code, 200, got.text)
+
+    async def test_too_many_proposals_in_one_message_are_refused_by_the_table(self) -> None:
+        import psycopg.errors as pg_errors
+
+        with self.assertRaises(pg_errors.CheckViolation):
+            await self.bot_reply(*[self.proposal(f"p{n}") for n in range(7)])
 
     async def test_a_talk_has_a_limit(self) -> None:
         for n in range(15):
@@ -197,6 +242,8 @@ class Talking(PlotBase):
         await self.say("A private thought.")
         page = (await self.plot()).text
         self.assertNotIn("private thought", page)
+        self.assertNotIn("private thought", (await self.client.get(f"/me/recaps/{self.ref}")).text)
+        self.assertNotIn("private thought", (await self.client.get("/me/recaps")).text)
 
     async def test_the_website_role_cannot_read_the_table(self) -> None:
         import psycopg

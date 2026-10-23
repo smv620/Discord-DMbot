@@ -4760,7 +4760,9 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     re-checking later recaps that name the same people, follow.
   - *Built, #2123 slice 1 (CloudDev, 2026-10-23): the talk, website side.* Migration 0211 adds `plot_chat` (per campaign
     and server, row-level security, gone with the campaign, left out of backups) and three website doors: send (a DM
-    of the campaign; at most 1,000 characters; one waiting at a time; at most 15 of the DM's messages on an issue),
+    of the campaign; at most 1,000 characters; one waiting at a time, and one the bot never answered is given up after
+    ten minutes; at most 15 of the DM's messages on an issue, which belongs to one text of the recap, so a changed text
+    starts afresh),
     read, and Save / Not that on one of PlotBot's proposals. The website has no AI key, so the message is queued and the
     bot answers on a second row (slice 2), as for the typed notes of #2113. A DM reads only their own talk (a co-DM's is
     not theirs); it is never in a transcript or on a public link and never logged. Routes `POST/GET

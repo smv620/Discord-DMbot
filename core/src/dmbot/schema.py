@@ -12075,7 +12075,8 @@ PLOT_CHAT = (
         state       TEXT NOT NULL DEFAULT 'done'
             CHECK (state IN ('waiting', 'working', 'done', 'failed')),
         error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
-        proposals   JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(proposals) = 'array'),
+        proposals   JSONB NOT NULL DEFAULT '[]'
+            CHECK (jsonb_typeof(proposals) = 'array' AND jsonb_array_length(proposals) <= 6),
         created_at  BIGINT NOT NULL,
         claimed_at  BIGINT NOT NULL DEFAULT 0,
         PRIMARY KEY (guild_id, campaign_id, id)
@@ -12121,6 +12122,11 @@ PLOT_CHAT = (
                                    'hex') THEN
             RETURN jsonb_build_object('status', 'stale');
         END IF;
+        -- A message the bot never answered (it was off, or died) is given up after ten minutes,
+        -- so the DM is never stuck behind it.
+        UPDATE plot_chat SET state = 'failed', error = 'timed_out'
+            WHERE guild_id = g AND campaign_id = c AND user_id = dmbot_current_user()
+              AND role = 'dm' AND state IN ('waiting', 'working') AND created_at < now_s - 600;
         -- One at a time, and a bounded talk: PlotBot is quick, not a chat room.
         IF EXISTS (SELECT 1 FROM plot_chat m
                    WHERE m.guild_id = g AND m.campaign_id = c AND m.issue_id = p_issue
@@ -12200,6 +12206,18 @@ PLOT_CHAT = (
         IF NOT m.proposals @> jsonb_build_array(
                 jsonb_build_object('id', p_prop, 'state', 'open')) THEN
             RETURN 'done_already';
+        END IF;
+        -- A proposal is about the words PlotBot read: if the recap changed since, the page
+        -- reloads and a new check has its own issues.
+        IF p_action = 'save' AND NOT EXISTS (
+                SELECT 1 FROM recap_jobs j JOIN plot_issues i
+                    ON i.guild_id = j.guild_id AND i.campaign_id = j.campaign_id
+                    AND i.session_at = j.session_at
+                WHERE j.guild_id = g AND j.campaign_id = c AND j.session_at = at_
+                    AND i.id = p_issue
+                    AND i.text_hash = encode(sha256(convert_to(j.title || E'\n' || j.summary,
+                                                               'UTF8')), 'hex')) THEN
+            RETURN 'stale';
         END IF;
         want := CASE p_action WHEN 'save' THEN 'saving' ELSE 'declined' END;
         UPDATE plot_chat SET proposals = (

@@ -155,6 +155,8 @@ async def answer_proposal(
             raise RecapError("bad_answer")
         if outcome == "done_already":
             raise RecapError("not_allowed")
+        if outcome == "stale":
+            raise RecapError("stale")
         if outcome != "ok":
             raise RecapError("not_found")
         cur = await conn.execute(
