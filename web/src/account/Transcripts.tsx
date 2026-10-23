@@ -351,6 +351,34 @@ function Download({
 
 /** The transcript's lines, the first page the API gave and "Show more" for the next ones. Nothing
  * is said unless there is more. */
+/** The moment asked for in the address, `#t=<milliseconds since the session began>` (#2402), or
+ * null. Anything that is not a plain whole number is no moment. */
+export function momentFromHash(hash: string): number | null {
+  const match = /^#t=(\d{1,10})$/.exec(hash);
+  return match ? Number(match[1]) : null;
+}
+
+/** Seconds since the session began, read from a line's own "[0:00:12]" start, or null for a line
+ * with none (a note). */
+export function lineOffsetSeconds(line: string): number | null {
+  const match = /^\[(\d+):(\d{2}):(\d{2})\]/.exec(line);
+  return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : null;
+}
+
+/** The line that began at or just before the moment: the last one whose start is not after it. Null
+ * when no line starts that early, or when the loaded lines may stop before the moment is reached
+ * (`more`): the caller loads the next page and asks again. */
+export function lineAtMoment(lines: string[], ms: number, more: boolean): number | null {
+  let found: number | null = null;
+  for (const [i, line] of lines.entries()) {
+    const at = lineOffsetSeconds(line);
+    if (at === null) continue;
+    if (at * 1000 > ms) return found;
+    found = i;
+  }
+  return more ? null : found;
+}
+
 function Lines({
   api,
   campaignRef,
@@ -380,6 +408,18 @@ function Lines({
       busy.current = false;
     }
   }
+  // A link can ask for a moment (#2402, the Check names card). Pages are loaded one after another until
+  // the line is reached, then it is marked and scrolled into view; no moment behaves as before.
+  const moment = typeof window === "undefined" ? null : momentFromHash(window.location.hash);
+  const marked = moment === null ? null : lineAtMoment(lines, moment, next !== null);
+  const markedRef = useRef<HTMLLIElement | null>(null);
+  useEffect(() => {
+    if (moment !== null && marked === null && next !== null && state === "idle") void more();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moment, marked, next, state]);
+  useEffect(() => {
+    if (marked !== null) markedRef.current?.scrollIntoView?.({ block: "center" });
+  }, [marked]);
   if (lines.length === 0)
     return (
       <p class="panel" role="status">
@@ -390,7 +430,12 @@ function Lines({
     <>
       <ul class="transcript-lines" aria-label={text.sessionTitle(view.number)}>
         {lines.map((line, i) => (
-          <li key={i}>{line}</li>
+          <li
+            key={i}
+            {...(i === marked ? { ref: markedRef, class: "moment", "aria-current": "location" as const } : {})}
+          >
+            {line}
+          </li>
         ))}
       </ul>
       {next !== null && (
