@@ -668,7 +668,7 @@ class ConsentDMTests(DatabaseTest):
         assert [button(b).label for b in view.children] == [
             "5 minutes",
             "15 minutes",
-            "Until I press Resume",
+            "Until I resume",
         ]
         pick = self.button_press(PLAYER)
         await c.OffRecordForButton(GUILD, 5).callback(pick)
@@ -727,6 +727,49 @@ class ConsentDMTests(DatabaseTest):
         back = self.button_press(DM, self.guild)
         await tp.ResumeTableButton(self.table.campaign_id).callback(back)
         assert sorted(self.allowlists()[-1]) == sorted([str(PLAYER), str(DM)])
+
+    async def test_stop_recording_me_while_off_the_record_ends_it_and_tells_the_dm(self) -> None:
+        await self.consent.grant(GUILD, PLAYER)
+        await self.bot.pause_recording(GUILD, PLAYER, None)
+        before = len(self.posts)
+        await self.bot.withdraw_consent(GUILD, PLAYER)
+        assert not self.consent.agreed_now(GUILD, PLAYER)
+        assert not self.consent.is_paused(GUILD, PLAYER)  # a stop is final: no pause carries over
+        assert len(self.posts) > before  # the DM screen is told they stopped
+        await self.consent.grant(GUILD, PLAYER)  # and agreeing again is a fresh start
+        assert self.consent.has_consent(GUILD, PLAYER)
+
+    async def test_a_website_stop_during_a_pause_is_still_seen(self) -> None:
+        from dmbot.consent_site import SiteStops
+
+        await self.consent.grant(GUILD, PLAYER)
+        await self.bot.pause_recording(GUILD, PLAYER, None)
+        stopped: list[int] = []
+
+        async def stop(guild_id: int, user_id: int) -> None:
+            stopped.append(user_id)
+
+        site = SiteStops(
+            is_ours=lambda guild_id: True,
+            consent=self.consent,
+            stop=stop,
+            spawn=lambda work, name: asyncio.ensure_future(work),
+        )
+        async with self.db.guild(GUILD) as conn:  # the website deletes the row
+            await conn.execute("DELETE FROM consent WHERE guild_id = %s", (GUILD,))
+        await site.recheck(GUILD)
+        assert stopped == [PLAYER]
+
+    async def test_the_table_pause_button_offers_resume_while_it_lasts(self) -> None:
+        from dmbot.dm_screen import table_pause as tp
+
+        await self.consent.grant(GUILD, DM)
+        self.table.campaign_id = "ab" * 16
+        await self.bot.off_the_record.pause_table(GUILD, None)
+        press = self.button_press(DM, self.guild)
+        await tp.PauseTableButton(self.table.campaign_id).callback(press)
+        ids = custom_ids(press.response.send_message.await_args.kwargs["view"])
+        assert ids == [f"dmbot:tableresume:{self.table.campaign_id}"]
 
     async def test_the_dm_can_still_ask_the_sidebar_while_off_the_record(self) -> None:
         await self.consent.grant(GUILD, DM)

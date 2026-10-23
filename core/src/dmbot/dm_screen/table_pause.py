@@ -18,12 +18,12 @@ import discord
 
 from dmbot.dm_screen import messages
 from dmbot.mentions import NO_PINGS
-from dmbot.off_the_record import CHOICES, paused_text
+from dmbot.off_the_record import CHOICES, NOT_TOLD, table_paused_text
 
 _ID = r"(?P<campaign>[0-9a-f]{32})"
-LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I press Resume"}
+LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I resume"}
 ASK = "⏸️ How long should the table be off the record? Nobody is recorded while it is."
-ONLY_DMS = "Only a DM of this campaign can pause the table."
+ONLY_DMS = "Only a DM of this campaign can pause the table. You can pause your own recording."
 BACK = "▶️ The table is back on the record."
 ALREADY = "The table is already on the record."
 
@@ -39,6 +39,10 @@ def _table(interaction: discord.Interaction, campaign_id: str) -> Any | None:
     if table is None or table.campaign_id != campaign_id:
         return None
     return table if table.is_dm(interaction.user.id) else None
+
+
+def table_guild(interaction: discord.Interaction) -> int:
+    return interaction.guild.id if interaction.guild is not None else 0
 
 
 class PauseTableButton(
@@ -67,6 +71,14 @@ class PauseTableButton(
             await interaction.response.send_message(ONLY_DMS, ephemeral=True)
             return
         view = discord.ui.View(timeout=None)
+        bot: Any = interaction.client
+        if bot.consent.table_paused(table_guild(interaction)):
+            # already off the record: the way back is here, not only in the message that paused it
+            view.add_item(ResumeTableButton(self.campaign_id))
+            await interaction.response.send_message(
+                "⏸️ The table is off the record now.", view=view, ephemeral=True
+            )
+            return
         for minutes in CHOICES:
             view.add_item(PauseTableForButton(self.campaign_id, minutes))
         await interaction.response.send_message(
@@ -111,8 +123,7 @@ class PauseTableForButton(
         view = discord.ui.View(timeout=None)
         view.add_item(ResumeTableButton(self.campaign_id))
         await interaction.edit_original_response(
-            content=paused_text(done.until).replace("recording you", "recording the table"),
-            view=view,
+            content=table_paused_text(done.until) + ("" if done.told else NOT_TOLD), view=view
         )
 
 

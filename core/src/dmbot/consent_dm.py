@@ -32,7 +32,7 @@ from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, Conse
 from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, UNDER_LINE
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
-from dmbot.off_the_record import CHOICES, Paused, paused_text, resumed_text
+from dmbot.off_the_record import CHOICES, NOT_TOLD, Paused, paused_text, resumed_text
 
 log = logging.getLogger(__name__)
 
@@ -49,9 +49,9 @@ DELETE_LABEL = "🗑 Delete my transcripts"  # in the 🗂️ Menu (#1532); the 
 DELETE_YES_LABEL = "Yes, delete my lines"
 DELETE_NO_LABEL = "Cancel"
 KEEP_LABEL = "Keep recording"
-PAUSE_LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I press Resume"}
-PAUSE_ASK = "⏸️ How long should DMbot stop recording you? Nobody is recorded while it's off."
-ALREADY_BACK = "You're already back on the record."
+PAUSE_LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I resume"}
+PAUSE_ASK = "⏸️ How long should DMbot stop recording you? Only you. Others are still recorded."
+ALREADY_BACK = "You're already on the record."
 CLOSE_LABEL = "Close"
 # Test recordings (#1019): only in a server listed in DMBOT_TEST_RECORDING_GUILDS.
 TEST_VOICE_LABEL = "Save my voice for tests"
@@ -1055,7 +1055,7 @@ class OffRecordForButton(
     def __init__(self, guild_id: int, minutes: int | None) -> None:
         super().__init__(
             discord.ui.Button(
-                label=PAUSE_LENGTHS[minutes],
+                label=PAUSE_LENGTHS.get(minutes, "Until I resume"),
                 style=discord.ButtonStyle.primary
                 if minutes == 5
                 else discord.ButtonStyle.secondary,
@@ -1087,7 +1087,8 @@ class OffRecordForButton(
                 await interaction.edit_original_response(content=done.why, view=None)
                 return
             await interaction.edit_original_response(
-                content=paused_text(done.until), view=resume_view(self.guild_id)
+                content=paused_text(done.until) + ("" if done.told else NOT_TOLD),
+                view=resume_view(self.guild_id),
             )
 
 

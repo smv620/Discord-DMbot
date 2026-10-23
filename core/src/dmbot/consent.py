@@ -147,6 +147,7 @@ class ConsentStore:
         key = (guild_id, user_id)
         self._stops[key] = self._stops.get(key, 0) + 1
         self._held_back.setdefault(guild_id, set()).add(user_id)
+        self._paused.get(guild_id, {}).pop(user_id, None)  # a stop is final: no pause carries over
         if guild_id in self._cache:
             self._cache[guild_id] = self._cache[guild_id] - {user_id}
 

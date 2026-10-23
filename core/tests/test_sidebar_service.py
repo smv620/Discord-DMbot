@@ -102,6 +102,9 @@ class FakeHost:
     guide_raises: bool = False
     guide_withdraws: bool = False  # consent goes while the answer is being made
 
+    def sidebar_paused(self, guild_id: int, user_id: int) -> bool:
+        return False
+
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
 

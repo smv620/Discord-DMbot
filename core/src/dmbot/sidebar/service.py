@@ -159,6 +159,7 @@ class Host(Protocol):
     @property
     def tables(self) -> Mapping[int, Table]: ...
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool: ...
+    def sidebar_paused(self, guild_id: int, user_id: int) -> bool: ...
     def name_of(self, guild_id: int, user_id: int) -> str: ...
     async def sidebar_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
     def sidebar_server_name(self, guild_id: int) -> str: ...
@@ -387,6 +388,8 @@ class SidebarService:
         user_id = message.author.id
         if self.host.sidebar_has_consent(table.guild_id, user_id):
             return True
+        if self.host.sidebar_paused(table.guild_id, user_id):
+            return False  # off the record, not unagreed: no nudge to agree
         if self._note_ok(user_id, "agree"):
             text, view = self.host.consent_request(table)
             await reply(ask)
@@ -537,6 +540,8 @@ class SidebarService:
         if self.answerer is None or table.campaign_id is None or table.dmbchat_channel_id is None:
             return False
         if not self.host.sidebar_has_consent(table.guild_id, user_id):
+            if self.host.sidebar_paused(table.guild_id, user_id):
+                return False  # off the record: what they type is not read, and they did agree
             if user_id not in table.dmbchat_nudged:
                 table.dmbchat_nudged.add(user_id)
                 self._background(self.host.sidebar_nudge_chat(table, user_id), "sidebar-nudge")

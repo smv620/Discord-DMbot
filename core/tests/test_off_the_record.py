@@ -164,6 +164,43 @@ class TheService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pushed[-1], frozenset({ALICE, BOB, DM}))
         self.assertEqual(self.said[-1], TABLE_BACK)
 
+    async def test_a_failing_ears_or_chat_never_undoes_a_pause_or_throws(self) -> None:
+        async def broken_push(guild: int) -> None:
+            raise RuntimeError("ears down")
+
+        async def broken_say(guild: int, text: str) -> bool:
+            raise RuntimeError("chat down")
+
+        self.otr._push = broken_push
+        self.otr._say = broken_say
+        done = await self.otr.pause(G, ALICE, 5)
+        self.assertTrue(done.ok)
+        self.assertFalse(done.told)  # the pauser is told nobody could be told
+        self.assertFalse(self.consent.has_consent(G, ALICE))  # the pause holds in core anyway
+        self.assertTrue(await self.otr.resume(G, ALICE))  # and so does the resume
+        self.assertTrue(self.consent.has_consent(G, ALICE))
+
+    async def test_a_persons_pause_ending_during_the_tables_break_says_nothing(self) -> None:
+        await self.otr.pause(G, ALICE, 5)
+        await self.otr.pause_table(G, None)
+        said = len(self.said)
+        await self.otr.resume(G, ALICE)
+        self.assertEqual(len(self.said), said)  # still on the break: no "back on the record"
+        self.assertEqual(self.consent.consenting_now(G), frozenset())
+
+    async def test_resume_after_the_time_ran_out_still_sends_the_list(self) -> None:
+        await self.otr.pause(G, ALICE, 5)
+        self.clock.now += 400  # expired, but the timer has not fired yet
+        pushed = len(self.pushed)
+        self.assertTrue(await self.otr.resume(G, ALICE))
+        self.assertEqual(len(self.pushed), pushed + 1)
+
+    async def test_the_words_say_the_yes_stays_and_the_table_line_is_short(self) -> None:
+        self.assertIn("Your yes stays as it is", paused_text(5300))
+        self.assertIn("Your yes stays as it is", paused_text(None))
+        self.assertEqual(said_off("Alice", 5), "⏸️ Alice is off the record for 5 minutes.")
+        self.assertEqual(said_off("Alice", None), "⏸️ Alice is off the record until they resume.")
+
     async def test_a_session_end_is_quiet_and_clears_everything(self) -> None:
         await self.otr.pause(G, ALICE, 15)
         await self.otr.pause_table(G, None)
