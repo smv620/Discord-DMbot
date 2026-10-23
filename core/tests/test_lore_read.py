@@ -4,6 +4,7 @@ the shaping pass hands back. Pure: a scripted fake stands in for the AI."""
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import re
@@ -255,6 +256,28 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(reads), 1)  # no retry, no continuation: shaped as it is
         self.assertTrue(done.cut)
         self.assertEqual(len(done.names), 4)
+
+    async def test_the_deadline_keeps_what_pass_two_shaped_and_marks_the_read_cut(self) -> None:
+        fake = ai([Reply(LIST, False)])
+        quick = fake.complete.side_effect
+        shaped_calls = 0
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            nonlocal shaped_calls
+            if schema is not None:
+                shaped_calls += 1
+                if shaped_calls > 1:
+                    await asyncio.sleep(30)  # every slice after the first is still going
+            return await quick(system, text, max_tokens=max_tokens, schema=schema)
+
+        fake.complete.side_effect = complete
+        with (
+            mock.patch.object(lr, "SHAPE_LINES", 1),
+            mock.patch.object(lr, "LORE_TIME_LIMIT_S", 0.3),
+        ):
+            done = await read(fake)  # (returns at the deadline: it does not raise)
+        self.assertTrue(done.cut)
+        self.assertGreaterEqual(len(done.names), 1)  # the first slice was kept, not thrown away
 
     async def test_a_catch_all_label_that_is_not_in_the_quote_is_dropped(self) -> None:
         rows = [

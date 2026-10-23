@@ -395,6 +395,7 @@ async def read_lore(
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion."""
     stats = Stats()
+    started = time.monotonic()
     listed, cut = await read_list(read_ai, text, own, gate, stats)
     names: list[bg.Found] = []
     links: list[bg.Connection] = []
@@ -403,10 +404,24 @@ async def read_lore(
         (listed.names[i : i + by], []) for i in range(0, len(listed.names), by)
     ]
     slices += [([], listed.links[i : i + by]) for i in range(0, len(listed.links), by)]
-    shaped = await asyncio.gather(
-        *(_shape(shape_ai, text, a, b, own, gate, stats) for a, b in slices)
-    )
-    for found, joined, shape_cut in shaped:
+    # Whatever pass 2 has shaped when the whole read's time is up is kept and the read is marked
+    # cut (the DM is never shown "nothing" for a long read): the deadline lives here, not around
+    # the caller, so what is done is not thrown away with what is not.
+    tasks = [
+        asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats)) for a, b in slices
+    ]
+    left = max(0.0, LORE_TIME_LIMIT_S - (time.monotonic() - started))
+    if tasks:
+        _, pending = await asyncio.wait(tasks, timeout=left)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+            cut = True
+    for task in tasks:
+        if task.cancelled():
+            continue
+        found, joined, shape_cut = task.result()
         names += found
         links += joined
         cut = cut or shape_cut
