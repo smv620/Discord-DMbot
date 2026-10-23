@@ -17,7 +17,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.consent_dm import ResumeButton
 from dmbot.off_the_record import WAKE_MINUTES, Paused
-from dmbot.transcript.models import OFF_RECORD
+from dmbot.transcript.models import OFF_RECORD, Line
 
 GUILD, VOICE, SCREEN = 1, 20, 30
 DM, MIA = 7, 8
@@ -81,13 +81,14 @@ class Wake(unittest.IsolatedAsyncioTestCase):
             (MIA, OFF_RECORD, 1_700_000_000_000, 300_000),
         )
 
-    async def test_the_tables_break_marks_everyone_who_agreed_and_a_blink_marks_nobody(
-        self,
-    ) -> None:
+    async def test_the_tables_break_marks_only_those_at_the_table_who_agreed(self) -> None:
+        stranger = 99  # in the voice channel but never agreed
+        here = SimpleNamespace(members=[SimpleNamespace(id=DM), SimpleNamespace(id=stranger)])
+        self.bot.get_channel = lambda cid: here  # type: ignore[method-assign,assignment]
         self.bot._add_gaps(self.table, [(0, 1000.0, 1900.0), (MIA, 5000.0, 5000.5)])
+        # Mia agreed but was not in the channel; a blink marks nobody; the stranger never agreed.
         self.assertEqual(
-            sorted((x.user_id, x.duration_ms) for x in self.table.unsaved.lines()),
-            [(DM, 900_000), (MIA, 900_000)],
+            [(x.user_id, x.duration_ms) for x in self.table.unsaved.lines()], [(DM, 900_000)]
         )
 
     async def test_no_transcript_no_marker(self) -> None:
@@ -97,24 +98,47 @@ class Wake(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_phrase_pauses_for_five_minutes_and_tells_them_privately(self) -> None:
         pause = AsyncMock(return_value=Paused(True, 1_700_000_300, told=True))
-        self.bot.off_the_record.pause = pause  # type: ignore[method-assign]
+        self.bot.off_the_record.announce_pause = pause  # type: ignore[method-assign]
         sent = AsyncMock()
         self.bot._dm_message = sent  # type: ignore[method-assign]
         await DMBot._pause_by_phrase(self.bot, GUILD, MIA)
         pause.assert_awaited_once_with(GUILD, MIA, WAKE_MINUTES, said_it=True)
+        self.assertIn("What you said just now was not saved.", sent.await_args.args[1])
         text, view = sent.await_args.args[1], sent.await_args.args[2]
         self.assertIn("off the record", text)
         self.assertIn("<t:1700000300:R>", text)
         self.assertTrue(any(isinstance(i, ResumeButton) for i in view.children))
 
-    async def test_nothing_is_said_to_someone_who_could_not_be_paused(self) -> None:
-        self.bot.off_the_record.pause = AsyncMock(  # type: ignore[method-assign]
-            return_value=Paused(False, why="DMbot isn't recording you right now.")
-        )
-        sent = AsyncMock()
-        self.bot._dm_message = sent  # type: ignore[method-assign]
-        await DMBot._pause_by_phrase(self.bot, GUILD, MIA)
-        sent.assert_not_awaited()
+    async def test_they_are_off_the_record_in_core_before_anything_awaits(self) -> None:
+        """A line that arrives a moment after the phrase is dropped by the consent re-check."""
+        real = DMBot._wake_off_the_record  # (the fixture stubs it)
+        self.bot.off_the_record._listening = lambda g: True
+        self.bot._track = MagicMock()  # type: ignore[method-assign]
+        real(self.bot, GUILD, MIA)
+        self.assertFalse(self.consent.has_consent(GUILD, MIA))  # no await has run yet
+        self.assertTrue(self.consent.has_consent(GUILD, DM))
+        self.bot._track.call_args.args[0].close()  # (the announcement, not run here)
+
+    async def test_someone_not_recorded_is_not_paused_and_nothing_is_said(self) -> None:
+        real = DMBot._wake_off_the_record
+        self.bot._track = MagicMock()  # type: ignore[method-assign]
+        real(self.bot, GUILD, 555)  # never agreed
+        self.bot._track.assert_not_called()
+
+    async def test_the_phrase_is_dropped_even_when_the_session_is_ending(self) -> None:
+        self.bot.tables.pop(GUILD)
+        self.bot._ending[GUILD] = [self.table]
+        self.said(MIA, "Hey DMbot, off the record")
+        self.assertEqual((self.woken, self.kept()), ([], []))  # kept out, and nobody paused
+
+    async def test_words_written_down_before_the_phrase_arrived_are_dropped_too(self) -> None:
+        later = Line(5_000, MIA, "and then we ambush them", "and then we ambush them")
+        earlier = Line(1_000, MIA, "we reach the gate", "we reach the gate")
+        self.table.unsaved.add(earlier)
+        self.table.unsaved.add(later)  # a clip said after the phrase, written down first
+        utterance = Utterance(GUILD, MIA, 4_000, 4_500, bytes(32000), self.table.segmenter.session)
+        self.bot._deliver_transcript(utterance, "Hey DMbot, off the record")
+        self.assertEqual(self.kept(), ["we reach the gate"])
 
     async def test_typed_in_the_dmbot_chat_pauses_them_instead_of_asking_a_question(self) -> None:
         self.table.dmbchat_channel_id = 55
@@ -135,3 +159,11 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         message.interaction_metadata = None
         message.clean_content = text
         return message
+
+    async def test_someone_already_paused_who_says_it_again_is_paused_again_not_asked(self) -> None:
+        self.table.dmbchat_channel_id = 55
+        self.consent.pause(GUILD, MIA, 60)
+        asked: list[str] = []
+        self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)  # type: ignore[method-assign]
+        self.bot._hear_dmbchat(self.chat(MIA, "Hey DMbot, off the record"))
+        self.assertEqual((self.woken, asked), ([(GUILD, MIA)], []))

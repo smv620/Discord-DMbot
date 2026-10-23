@@ -368,7 +368,7 @@ def render(
     for line in everything:  # "[0:12:04] (Mia was off the record, 20:14 to 20:19)", both versions
         if line.sidebar == OFF_RECORD:
             when = clock((line.started_ms - start_ms) / 1000)
-            span = f"{_hhmm(line.started_ms)}\u2013{_hhmm(line.started_ms + line.duration_ms)}"
+            span = f"{_hhmm(line.started_ms)}\u2013{_hhmm(line.started_ms + line.duration_ms)} UTC"
             who = person(line.user_id)
             who += "," if who.endswith(", DM") else ""  # "(Mia, DM, was off the record, …)"
             timed.append((line.started_ms, f"[{when}] ({who} {OFF_RECORD_TEXT}, {span})"))

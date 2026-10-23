@@ -56,7 +56,7 @@ class OffTheRecordMarkers(unittest.TestCase):
         # 22:13:20 + 5 min = 22:18, to 22:23
         want = [
             "[0:00:05] (Mia): I cast Shield.",
-            "[0:05:00] (Mia was off the record, nothing recorded, 22:18\u201322:23)",
+            "[0:05:00] (Mia was off the record, nothing recorded, 22:18\u201322:23 UTC)",
             "[0:15:00] (Dee): Run!",
         ]
         self.assertEqual(self.render(export.AS_HEARD), want)

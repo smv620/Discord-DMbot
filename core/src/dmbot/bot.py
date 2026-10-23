@@ -1874,7 +1874,7 @@ class DMBot(commands.AutoShardedBot):
             length = int((ended - began) * 1000)
             if length < 1000:
                 continue
-            people = sorted(self.consent.agreed_set(table.guild_id)) if who == 0 else [who]
+            people = self._at_the_table(table) if who == 0 else [who]
             for person in people:
                 table.unsaved.add(
                     Line(
@@ -1887,23 +1887,34 @@ class DMBot(commands.AutoShardedBot):
                     )
                 )
 
+    def _at_the_table(self, table: Table) -> list[int]:
+        """Who was in the voice channel and agreed, for the marker of the table's break: not
+        everyone in the server who ever agreed (the transcript is open to the whole server)."""
+        channel = self.get_channel(table.voice_channel_id)
+        here = {m.id for m in getattr(channel, "members", ())}
+        return sorted(here & self.consent.agreed_set(table.guild_id))
+
     def _wake_off_the_record(self, guild_id: int, user_id: int) -> None:
         """ "Hey DMbot, off the record", said or typed: this person only, for five minutes. The
-        line itself is kept out of every transcript by the caller."""
+        line itself is kept out of every transcript by the caller. They are off the record in core
+        at once, with no await, so a line that arrives a moment later is already dropped; the
+        rest (saving, ears, the table's line, their private note) follows."""
+        refused = self.off_the_record.start_pause(guild_id, user_id, WAKE_MINUTES)
+        if refused is not None:
+            return  # not recorded or not listening: nothing was paused
         self._track(self._pause_by_phrase(guild_id, user_id), "off-the-record")
 
     async def _pause_by_phrase(self, guild_id: int, user_id: int) -> None:
         with log_context(guild_id=guild_id):
-            done = await self.off_the_record.pause(guild_id, user_id, WAKE_MINUTES, said_it=True)
-            if not done.ok:
-                return  # not recorded or not listening: nothing was paused
-            await self._dm_message(
-                user_id,
+            done = await self.off_the_record.announce_pause(
+                guild_id, user_id, WAKE_MINUTES, said_it=True
+            )
+            text = (
                 paused_text(done.until)
                 + " What you said just now was not saved."
-                + ("" if done.told else NOT_TOLD),
-                resume_view(guild_id),
+                + ("" if done.told else NOT_TOLD)
             )
+            await self._dm_message(user_id, text, resume_view(guild_id))
 
     async def pause_recording(self, guild_id: int, user_id: int, minutes: int | None) -> Paused:
         return await self.off_the_record.pause(guild_id, user_id, minutes)
@@ -4480,7 +4491,7 @@ class DMBot(commands.AutoShardedBot):
         if (
             text is not None
             and asks_off_record(text)
-            and self.consent.has_consent(table.guild_id, author.id)
+            and self.consent.agreed_now(table.guild_id, author.id)  # (paused again: a new 5)
         ):
             self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
         elif text is not None:
@@ -4749,12 +4760,15 @@ class DMBot(commands.AutoShardedBot):
             return
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
-        if text and self.tables.get(table.guild_id) is table and asks_off_record(text):
+        if text and asks_off_record(text):
             # "Hey DMbot, off the record" (#2466): this person goes off the record and the line
             # that said so is in neither transcript, nor anything fed from it. Not waited on a
             # speaker label: a wrongly paused person only presses Resume, while waiting keeps
             # them recorded.
-            self._wake_off_the_record(table.guild_id, utterance.user_id)
+            if self.tables.get(table.guild_id) is table:  # (a session that is ending pauses no one)
+                self._wake_off_the_record(table.guild_id, utterance.user_id)
+                # Words of theirs that were written down before this line arrived are not kept.
+                table.unsaved.drop_since(utterance.user_id, utterance.start_ms)
             return
         cleaned = text
         if text and table.name_lookup is not None:

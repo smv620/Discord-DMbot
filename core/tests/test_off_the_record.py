@@ -166,6 +166,19 @@ class TheRestart(unittest.IsolatedAsyncioTestCase):
         await otr2.resume(G, ALICE)
         self.assertEqual(gaps, [(G, ALICE, 50_000.0, 50_400.0)])  # from the first start
 
+    async def test_a_pause_that_ran_out_while_down_still_leaves_its_marker(self) -> None:
+        gaps: list[tuple[int, int, float, float]] = []
+        _, otr = self.build()
+        await otr.pause(G, ALICE, 5)  # 50_000 to 50_300
+        saved = self.saved[-1]
+        otr.end_session(G)
+        self.wall.now += 3600
+        self.clock.now += 3600
+        _, otr2 = self.build()
+        otr2._gap = lambda g, who, began, ended: gaps.append((g, who, began, ended))
+        await otr2.restore(G, saved)
+        self.assertEqual(gaps, [(G, ALICE, 50_000.0, 50_300.0)])  # its real end, not "now"
+
     async def test_a_pause_that_ran_out_while_down_is_not_restored_and_the_table_is_told(
         self,
     ) -> None:
@@ -262,6 +275,12 @@ class TheService(unittest.IsolatedAsyncioTestCase):
         self.otr._wall = lambda: self.now
         self.otr._gap = lambda g, who, began, ended: gaps.append((g, who, began, ended))
         return gaps
+
+    async def test_start_pause_is_all_synchronous_and_pause_is_start_then_announce(self) -> None:
+        self.assertIsNone(self.otr.start_pause(G, ALICE, 5))
+        self.assertFalse(self.consent.has_consent(G, ALICE))  # off the record before any await
+        self.assertFalse(self.pushed)  # ears is told afterwards
+        self.assertIsNotNone(self.otr.start_pause(G, 555, 5))  # never agreed
 
     async def test_a_stretch_off_the_record_is_told_when_it_ends_by_resume(self) -> None:
         gaps = self.watch_gaps()

@@ -162,10 +162,13 @@ class OffTheRecord:
 
     def _end(self, key: tuple[int, int]) -> None:
         """A pause is over: the transcript is told when it began and ended."""
+        self._end_at(key, self._wall())
+
+    def _end_at(self, key: tuple[int, int], ended: float) -> None:
         began = self._since.pop(key, None)
         if began is not None and self._gap is not None:
             try:
-                self._gap(key[0], key[1], began, self._wall())
+                self._gap(key[0], key[1], began, ended)
             except Exception as exc:  # the pause is over whatever the transcript did
                 log.error("Couldn't note a stretch off the record (%s)", type(exc).__name__)
 
@@ -212,11 +215,10 @@ class OffTheRecord:
         await self._tell_ears(guild_id)
         await self._tell_table(guild_id, TABLE_BACK)
 
-    async def pause(
-        self, guild_id: int, user_id: int, minutes: int | None, *, said_it: bool = False
-    ) -> Paused:
-        """Take this person off the record. Only while listening, and only someone who agreed.
-        Pausing again replaces the earlier pause (a new length)."""
+    def start_pause(self, guild_id: int, user_id: int, minutes: int | None) -> Paused | None:
+        """The part of a pause that must happen at once, with no await: the refusal, or None
+        once this person is off the record in core (so a line that arrives a moment later is
+        already dropped). Only while listening, and only someone who agreed."""
         if minutes not in CHOICES:
             return Paused(False, why=TRY_AGAIN)
         if not self._listening(guild_id):
@@ -229,6 +231,12 @@ class OffTheRecord:
         self._begin((guild_id, user_id))
         self._drop(guild_id, user_id)
         self._arm((guild_id, user_id), minutes)
+        return None
+
+    async def announce_pause(
+        self, guild_id: int, user_id: int, minutes: int | None, *, said_it: bool = False
+    ) -> Paused:
+        """The rest of a pause once `start_pause` returned None: save it, tell ears and table."""
         await self._keep(guild_id)
         await self._tell_ears(guild_id)
         name = self._name_of(guild_id, user_id)
@@ -236,6 +244,16 @@ class OffTheRecord:
         told = await self._tell_table(guild_id, line)
         log.info("Off the record: a person paused for %s", minutes)
         return Paused(True, self._until(minutes), told=told)
+
+    async def pause(
+        self, guild_id: int, user_id: int, minutes: int | None, *, said_it: bool = False
+    ) -> Paused:
+        """Take this person off the record. Pausing again replaces the earlier pause (a new
+        length)."""
+        refused = self.start_pause(guild_id, user_id, minutes)
+        if refused is not None:
+            return refused
+        return await self.announce_pause(guild_id, user_id, minutes, said_it=said_it)
 
     async def resume(self, guild_id: int, user_id: int) -> bool:
         """Back on the record now. False if they were not off it."""
@@ -302,6 +320,17 @@ class OffTheRecord:
             )
             if ends is not None:
                 self._rearm((guild_id, who), max(0.0, ends - now_c))
+        # A pause that ran out while DMbot was down still leaves its marker: from when it began
+        # to when it ended, so the transcript doesn't show an unexplained silence.
+        ends = {str(u): e for u, e in dict(saved.get("people") or {}).items()}
+        if saved.get("table") is not None:
+            ends["table"] = saved["table"]
+        for key, end in ends.items():
+            who = 0 if key == "table" else int(key)
+            at = began.get(key)
+            if who not in back and isinstance(at, int | float) and isinstance(end, int | float):
+                self._since[(guild_id, who)] = float(at)
+                self._end_at((guild_id, who), float(end))
         if back:
             log.info("Off the record: %d pause(s) kept across a restart", len(back))
         # Saved again as they stand now: pauses that ran out while DMbot was down are gone from it.

@@ -1154,15 +1154,19 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   transcribed or stored, and core re-checks the pause after every async step as it does consent. The
   DM also has **⏸️ Pause the table** for breaks. The table chat says "⏸️ <name> is off the record for 5
   minutes." and "▶️ <name> is back on the record.", and both transcripts get one marker line, "(<name>
-  was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
+  was off the record, nothing recorded, 20:14–20:19 UTC)". Nothing is cut from a transcript, because nothing was recorded, so
   this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
   DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
   is never acted on, because NPCs say it in the story; the call must carry its "Hey", and a line
-  said as a named NPC never triggers (#1624). *Built (2026-10-23, CloudDev):* the spoken phrase is not
-  held for the speaker label that decides "as a named NPC": a wrongly paused person only presses ▶️,
-  while waiting would keep recording them; the line that said it reaches neither transcript nor memory. There is no spoken "back on the record", since DMbot hears nothing from a paused person;
-  they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
-  the pause stays on the record.
+  said as a named NPC never triggers (#1624). There is no spoken "back on the record", since DMbot
+  hears nothing from a paused person; they come back with ▶️, the timer, or the session's end. It is
+  not retroactive: what was said before the pause stays on the record.
+  - *Built (2026-10-23, CloudDev, #2466 slice 2):* the spoken phrase is not held for the speaker label
+    that decides "as a named NPC": a wrongly paused person only presses ▶️, while waiting would keep
+    recording them. The person is off the record in core at once, before anything is awaited; the line
+    that said it, and anything of theirs written down after it, reaches neither transcript nor memory.
+    The table's break is marked for the people in the voice channel who agreed. A pause that ran out
+    while DMbot was down still leaves its marker, from its start to its real end.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
