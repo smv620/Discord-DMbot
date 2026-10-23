@@ -29,7 +29,7 @@ export default function NamesIsland() {
   return (
     <>
       <SignedInLine api={api} />
-      <Names api={api} path={window.location.pathname} search={window.location.search} />
+      <Names api={api} path={window.location.pathname} hash={window.location.hash} />
     </>
   );
 }

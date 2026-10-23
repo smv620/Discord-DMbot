@@ -44,21 +44,31 @@ function refusal(error: unknown): string | null {
   return words.errors[kind] ?? words.errorFallback;
 }
 
-/** The name Discord's "🎤 Say it" button sent the DM here for, from `?said=<the name as written>` (#2317): the
+/** The name Discord's "🎤 Say it" button sent the DM here for, from `#said=<the name as written>` (#2317): the
  * page opens on a search for it and, when one name is exactly that, opens its editor with the cursor in the
- * "how to say it" box. Anything else (no such name, a long or odd value) just shows the plain list. */
-export function saidFromSearch(search: string): string {
-  const raw = new URLSearchParams(search).get("said")?.trim() ?? "";
+ * "how to say it" box. Anything else (no such name, a long or odd value) just shows the plain list. It is in
+ * the address's fragment, not its query: a name can be a secret, and a query string is written to the site's
+ * logs while a fragment never leaves the browser. */
+export function saidFromHash(hash: string): string {
+  if (!hash.startsWith("#")) return ""; // (only a fragment is read, never a query string)
+  const raw = new URLSearchParams(hash.replace(/^#/, "")).get("said")?.trim() ?? "";
   return raw.length > 0 && raw.length <= 80 ? raw : "";
 }
 
-export default function Names({ api, path, search = "" }: { api: AccountApi; path: string; search?: string }) {
+export default function Names({ api, path, hash = "" }: { api: AccountApi; path: string; hash?: string }) {
   const ref = namesRefFromPath(path);
-  const sentFor = useRef(saidFromSearch(search)); // the name the link was for, until it has been opened
+  const sentFor = useRef(saidFromHash(hash)); // the name the link was for, until it has been opened
   const [focusRow, setFocusRow] = useState<string | null>(null); // the row whose "how to say it" box takes the cursor
   const [view, setView] = useState<View>("loading");
   const [data, setData] = useState<NamesPage | null>(null);
-  const [q, setQ] = useState(() => saidFromSearch(search));
+  const [q, setQ] = useState(() => saidFromHash(hash));
+  // Once read, the name leaves the address bar, so it is not left in the history or shared by a screenshot.
+  useEffect(() => {
+    if (saidFromHash(hash) !== "" && typeof window !== "undefined" && window.location.hash !== "") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [kind, setKind] = useState("");
   const [sort, setSort] = useState<NameSort>("name");
   const [busy, setBusy] = useState(false);
