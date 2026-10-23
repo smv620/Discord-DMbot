@@ -291,6 +291,7 @@ async def read_list(
     own: Mapping[str, str],
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
+    tick: Callable[[int], None] | None = None,
 ) -> tuple[PlainList, bool]:
     """Pass 1: the whole text in one call, retried once with twice the room, then continued from
     the list so far while it is still cut off at the cap. Returns the list and whether it is
@@ -300,6 +301,8 @@ async def read_list(
     room = read_room(text, model)
     cap = min(ROOM_CAP, max_output(model) if model else ROOM_CAP)
     started = time.monotonic()
+    if tick is not None:
+        tick(1)
     reply = await _call(gate, ai, system, read_request(text), room)  # (a failure here is the DM's)
     stats.read_calls += 1
     found = parse_plain(reply.text, complete=not reply.cut)
@@ -308,6 +311,8 @@ async def read_list(
             stats.read_cut += 1
             room = min(room * 2, cap)
             if time.monotonic() - started < PASS1_BUDGET_S:
+                if tick is not None:
+                    tick(stats.read_calls + 1)
                 again = await _call(gate, ai, system, read_request(text), room)
                 stats.read_calls += 1
                 reply, found = again, parse_plain(again.text, complete=not again.cut)
@@ -318,6 +323,8 @@ async def read_list(
             stats.read_cut += 1
             rounds += 1
             stats.continued += 1
+            if tick is not None:
+                tick(stats.read_calls + 1)
             reply = await _call(gate, ai, system, continue_request(text, plain_text(found)), cap)
             stats.read_calls += 1
             parse_plain(reply.text, complete=not reply.cut, into=found)
@@ -418,12 +425,19 @@ async def read_lore(
     long background shapes only the rest instead of the same first slices again.
 
     `progress(stage, done, total)` is told where the read is, with counts only (never text):
-    "reading" while pass 1 runs, then "shaping" with the slices finished of all of them."""
+    "reading" (with the number of the pass-1 call it is on) while pass 1 runs, then "shaping" with
+    the slices finished of all of them."""
     stats = Stats()
     started = time.monotonic()
+    tick: Callable[[int], None] | None = None
     if progress is not None:
-        progress("reading", 0, 0)
-    listed, cut = await read_list(read_ai, text, own, gate, stats)
+        # Each pass-1 call is movement ("try 2"), so a working pass is not called stalled.
+        def _tick(call: int) -> None:
+            progress("reading", call, 0)
+
+        tick = _tick
+
+    listed, cut = await read_list(read_ai, text, own, gate, stats, tick)
     if skip_name is not None:
         listed.names = [n for n in listed.names if not skip_name(line_name(n))]
     if skip_pair is not None:

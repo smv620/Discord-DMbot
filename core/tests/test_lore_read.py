@@ -473,7 +473,7 @@ class TheProgress(unittest.IsolatedAsyncioTestCase):
             await lr.read_lore(
                 fake, fake, TEXT, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
             )
-        self.assertEqual(told[0], ("reading", 0, 0))
+        self.assertEqual(told[0], ("reading", 1, 0))  # the first pass-1 call
         shaping = [t for t in told if t[0] == "shaping"]
         self.assertEqual(shaping[0][1], 0)
         total = shaping[0][2]

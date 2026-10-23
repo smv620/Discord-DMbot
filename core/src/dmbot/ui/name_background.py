@@ -68,6 +68,18 @@ from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
 
+# No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
+# take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
+STALL_AFTER_S = 240.0
+
+
+def message_is_gone(exc: BaseException) -> bool:
+    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
+    return isinstance(exc, discord.NotFound) or (
+        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
+    )
+
+
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
 QUOTE_SHOWN = 200  # a long quote must not push the buttons off a phone
@@ -283,6 +295,7 @@ class BackgroundOffer(_Menu):
         )
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        clicked = time.monotonic()  # the elapsed time the DM sees starts here
         await interaction.response.defer()  # the checks below are database reads (#88, #351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
@@ -356,11 +369,19 @@ class BackgroundOffer(_Menu):
                 await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
 
             # The same message is kept current (#2559): the step, part n of m, then how long.
-            async with WaitingMessage(show, reading_text) as waiting:
+            async with WaitingMessage(
+                show,
+                reading_text,
+                stall_after_s=STALL_AFTER_S,
+                stops_at_s=lore_read.LORE_TIME_LIMIT_S,
+                gone=message_is_gone,
+                started=clicked,
+            ) as waiting:
 
                 def on_step(stage: str, done: int, total: int) -> None:
                     if stage == "reading":
-                        waiting.step("Step 1 of 2: reading it through")
+                        again = f", try {done}" if done > 1 else ""
+                        waiting.step(f"Step 1 of 2: reading it through{again}")
                     else:
                         waiting.step("Step 2 of 2: picking out names and links", done, total)
 
