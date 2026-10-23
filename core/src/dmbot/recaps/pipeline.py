@@ -21,8 +21,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply
@@ -110,6 +110,9 @@ class Inputs:
     # this one (#2253). None when there is no earlier session (the first, or the first imported):
     # then nothing is a recap and the split stage makes no call.
     earlier: sp.Earlier | None = None
+    # How connected each name is in The truth, hidden connections too (#2411): numbers by name,
+    # used only to rank which beats the writer keeps. No connection and no fact is in it.
+    importance: Mapping[str, float] = field(default_factory=dict)
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -797,7 +800,7 @@ class RecapWorker:
         # (the hours are the play's: the talk and the retelling are not session time)
         length = rd.length_for(rd.session_hours(play, inputs.hours))
         message = rd.prose_message(
-            rd.pick_beats(sheet, length.beats),
+            rd.pick_beats(sheet, length.beats, importance=inputs.importance),
             inputs.previous,
             inputs.allowed_names,
             inputs.day,
@@ -955,7 +958,8 @@ class RecapWorker:
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
             facts, asked = await self._facts(
-                gid, cid, job, rd.pick_beats(sheet, length.beats), prose,
+                gid, cid, job,
+                rd.pick_beats(sheet, length.beats, importance=inputs.importance), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
                 inputs.corrections,
             )  # fmt: skip
@@ -1538,7 +1542,7 @@ class RecapWorker:
         assert loop.pending
         length = rd.length_for(rd.session_hours(play, inputs.hours))
         message = rd.prose_message(
-            rd.pick_beats(sheet, length.beats),
+            rd.pick_beats(sheet, length.beats, importance=inputs.importance),
             inputs.previous,
             inputs.allowed_names,
             inputs.day,
@@ -1601,7 +1605,8 @@ class RecapWorker:
         if revised is not None:
             try:
                 facts, asked = await self._facts(
-                    gid, cid, job, rd.pick_beats(sheet, length.beats), revised,
+                    gid, cid, job,
+                    rd.pick_beats(sheet, length.beats, importance=inputs.importance), revised,
                     {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
                     inputs.corrections, loop.waits > 0,
                 )  # fmt: skip

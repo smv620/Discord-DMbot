@@ -35,7 +35,7 @@ NO_STORE = "Recaps aren't available right now. Try again in a minute."
 NOT_NOW = "Okay, nothing was posted. Press Post to the table whenever you're ready."
 
 _TEMPLATE = (
-    r"dmbot:recap:(?P<act>read|post|yes|no|drop|tell|approve|cv|cm|cb|ct):"
+    r"dmbot:recap:(?P<act>read|post|yes|no|drop|tell|approve|ap|aa|ak|cv|cm|cb|ct):"
     r"(?P<campaign>[0-9a-f]{32}):(?P<at>[0-9]{1,12})"
 )
 _LABELS = {
@@ -46,6 +46,11 @@ _LABELS = {
     "yes": ("Yes", discord.ButtonStyle.success),
     "no": ("Not now", discord.ButtonStyle.secondary),
     "approve": ("✅ Approve the text", discord.ButtonStyle.primary),
+    # The three plain ways to approve (#2420), the same words as the recap page (#2419): post the
+    # text, make audio to review first, or keep it without posting.
+    "ap": ("✅ Approve and post text only", discord.ButtonStyle.success),
+    "aa": ("🎙️ Approve and make audio to review", discord.ButtonStyle.primary),
+    "ak": ("📋 Approve but don't post", discord.ButtonStyle.secondary),
     # After approving: what to make (#2083). cv, cm, cb, ct: voice-over, music, both, text only.
     "cv": (approval.LABELS[approval.VOICE], discord.ButtonStyle.primary),
     "cm": (approval.LABELS[approval.MUSIC], discord.ButtonStyle.primary),
@@ -62,11 +67,24 @@ CUES_FIRST = "Fix these first. Nothing was approved:"
 APPROVED_ALREADY = "You already approved this text. Edit it to change what you approved."
 ASK_AUDIO = "The cues look right. What should DMbot make?"
 APPROVED = {
-    approval.VOICE: "✅ Approved. DMbot is making the voice-over. It will be ready soon.",
-    approval.MUSIC: "✅ Approved. DMbot is making the background music. It will be ready soon.",
-    approval.BOTH: "✅ Approved. DMbot is making the voice-over and music. It will be ready soon.",
+    approval.VOICE: "✅ Approved. DMbot is making the voice-over. Nothing is posted. "
+    "Listen to it on your recap page when it is ready.",
+    approval.MUSIC: "✅ Approved. DMbot is making the background music. Nothing is posted. Listen "
+    "to it on your recap page when it is ready.",
+    approval.BOTH: "✅ Approved. DMbot is making the voice-over and music. Nothing is posted. "
+    "Listen to them on your recap page when they are ready.",
     approval.TEXT: "✅ Approved. No voice-over or music will be made.",
 }
+KEPT = "📋 Approved. Nothing was posted. Copy, share or post it later from your recap page."
+# Why the audio button is off (#2420): the page's words. A co-DM is never told the owner's plan
+# (#1470), and this line is seen by every DM, so only "not set up" is specific.
+AUDIO_WHY = {
+    "not_set_up": "Audio isn't available yet, so the audio button is off.",
+    "unavailable": "Audio isn't available for this campaign right now, so the audio button is off.",
+}
+ASK_WHICH_AUDIO = (
+    "Which audio should DMbot make? Pressing one approves the text. Nothing is posted."
+)
 TOO_LATE = "I couldn't approve that now. The text changed, or the audio is already being made."
 NO_AUDIO = (
     "Voice-over and music can't be made for this campaign right now (the plan, the narration "
@@ -75,13 +93,15 @@ NO_AUDIO = (
 MAX_SHOWN = 8  # cue problems listed in one message
 
 
-def ready_text(title: str, link: str) -> str:
+def ready_text(title: str, link: str, audio_why: str = "") -> str:
     """The DM-screen line that goes with the buttons: what it is, that nothing has gone to the
-    players yet, and where to change the words."""
+    players yet, and where to change the words. `audio_why` (#2420): why the audio button is off,
+    in the page's words, when it is."""
     where = f"\nRead, edit and post it on your recap page: {link}" if link else ""
+    off = f"\n{audio_why}" if audio_why else ""
     return (
         f"📜 Recap ready: **{discord.utils.escape_markdown(title)}**\n"
-        f"Nothing goes to the players until you post it.{where}"
+        f"Nothing goes to the players until you post it.{where}{off}"
     )
 
 
@@ -134,7 +154,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if job is None:
             await _tell(interaction, GONE)
             return
-        if self.act in ("read", "post", "drop"):  # a line of the bot's own, with its buttons
+        if self.act in ("read", "post", "drop", "ap", "ak"):  # the bot's own line, with its buttons
             bot.decision_lines.remember_pressed(self.key, interaction)
         if self.act == "no":
             await _tell(interaction, NOT_NOW)
@@ -148,7 +168,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 return
             await recap_feedback.open_form(interaction, self.campaign_id, self.session_at)
             return
-        if self.act == "approve" or self.act in _CHOICE:
+        if self.act in ("approve", "ap", "aa", "ak") or self.act in _CHOICE:
             if job.status != "draft":
                 await _tell(interaction, DECIDED)
                 return
@@ -234,6 +254,49 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 + ".\nEdit the text on your recap page, then press Approve again.",
             )
             return
+        if self.act in ("ap", "aa", "ak") and job.approved and job.audio_choice:
+            if self.act == "ap" and job.audio_choice == approval.TEXT:
+                # Approved as text only already (kept, or a post the bot's checks stopped and put
+                # back to a draft): "post" finishes it, still only for the text as approved.
+                if not await bot.recaps.decide(
+                    campaign.guild_id, campaign.id, self.session_at, "post", require_approved=True
+                ):
+                    await _tell(interaction, TOO_LATE)
+                    return
+                await self._sent(interaction, bot, campaign.guild_id, campaign.id)
+                return
+            await _tell(interaction, APPROVED_ALREADY)
+            return
+        if self.act == "aa":  # which audio, if audio can be made at all (#2420)
+            why = await bot.recap_audio_why(campaign.guild_id, campaign.id)
+            if why:
+                await _tell(interaction, AUDIO_WHY[why])
+                return
+            await _tell(
+                interaction,
+                ASK_WHICH_AUDIO,
+                view=audio_view(self.campaign_id, self.session_at),
+            )
+            return
+        if self.act in ("ap", "ak"):  # text only: posted at once, or kept without posting
+            posting = self.act == "ap"
+            if not await bot.recaps.approve(
+                campaign.guild_id,
+                campaign.id,
+                self.session_at,
+                interaction.user.id,
+                approval.TEXT,
+                expected=expected,
+                post=posting,
+            ):
+                await _tell(interaction, TOO_LATE)
+                return
+            if posting:
+                await self._sent(interaction, bot, campaign.guild_id, campaign.id)
+            else:
+                await bot.decision_lines.close(self.key, "Approved, not posted.")
+                await _tell(interaction, KEPT)
+            return
         if self.act == "approve":
             if job.approved and job.audio_choice:
                 await _tell(interaction, APPROVED_ALREADY)
@@ -270,6 +333,11 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         if not await bot.recaps.decide(gid, cid, self.session_at, "post"):
             await _tell(interaction, DECIDED)
             return
+        await self._sent(interaction, bot, gid, cid)
+
+    async def _sent(self, interaction: discord.Interaction, bot: Any, gid: int, cid: str) -> None:
+        """The recap is handed over to be posted (by Post, or by Approve and post text only): the
+        bot's own sending and checks, then what came of it, said to the DM."""
         await interaction.response.defer(ephemeral=True, thinking=False)
         await bot.post_recaps(gid)  # the same checks as the website's Post, once more
         after = await bot.recaps.get(gid, cid, self.session_at)
@@ -287,20 +355,36 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         )
 
 
-def ready_view(campaign_id: str, session_at: int, site: str = "") -> discord.ui.View:
-    """The two buttons left on a new recap line (#2118): the recap list on the website, where
-    reading, editing, approving and posting now happen, and Share a recap. The older buttons
-    (read, approve, post, skip, tell) still work on messages already sent, so nothing breaks, and
-    they stay on a new line when the website's address isn't set."""
+def ready_view(
+    campaign_id: str,
+    session_at: int,
+    site: str = "",
+    review_url: str = "",
+    audio_off: bool = False,
+) -> discord.ui.View:
+    """The buttons on a new recap line (#2420): the three plain ways to approve it, in the page's
+    words, then **📝 Review the recap** (the link to its page, `review_url`) and Share a recap.
+    `audio_off`: audio can't be made now, so that button is greyed (the line says why). "Don't
+    post" is gone: a recap the DM doesn't approve simply stays a draft. The older buttons (read,
+    approve, post, skip, tell) still work on lines already sent, so nothing breaks. With no website
+    address there is no page to review or share, so Read it takes their place."""
     view = discord.ui.View(timeout=None)
-    if not site:  # no website address: nothing to open or share, so the Discord buttons stay
-        for act in ("read", "approve", "post", "drop", "tell"):
-            view.add_item(RecapButton(act, campaign_id, session_at))
+    for act in ("ap", "aa", "ak"):
+        button = RecapButton(act, campaign_id, session_at)
+        button.item.row = 0
+        if act == "aa" and audio_off:
+            button.item.disabled = True
+        view.add_item(button)
+    if not site:
+        read = RecapButton("read", campaign_id, session_at)
+        read.item.row = 1
+        view.add_item(read)
         return view
-    view.add_item(
-        discord.ui.Button(label="Open recaps", emoji="📜", url=f"{site.rstrip('/')}/account/recaps")
-    )
-    view.add_item(ShareButton(campaign_id))
+    link = review_url or f"{site.rstrip('/')}/account/recaps"
+    view.add_item(discord.ui.Button(label="Review the recap", emoji="📝", url=link, row=1))
+    share = ShareButton(campaign_id)
+    share.item.row = 1
+    view.add_item(share)
     return view
 
 
@@ -319,4 +403,14 @@ def confirm_view(campaign_id: str, session_at: int) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     for act in ("yes", "no"):
         view.add_item(RecapButton(act, campaign_id, session_at))
+    return view
+
+
+def audio_view(campaign_id: str, session_at: int) -> discord.ui.View:
+    """Voice-over, Background music or Both (#2420): what "Approve and make audio to review" asks.
+    Text only is not here: the other two approve buttons are that."""
+    view = discord.ui.View(timeout=None)
+    for act, choice in _CHOICE.items():
+        if choice != approval.TEXT:
+            view.add_item(RecapButton(act, campaign_id, session_at))
     return view

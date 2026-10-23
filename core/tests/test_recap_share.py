@@ -236,6 +236,20 @@ class TheStoreSide(Base):
             await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
         )
 
+    async def test_an_approval_for_audio_is_not_posted_by_a_text_only_press(self) -> None:
+        # (#2420) audio is made and reviewed before anything is posted: a stale "post text only"
+        # press after the choice became audio posts nothing.
+        from dmbot.recaps.approval import text_hash
+
+        await self.finished(100)
+        ok = await self.store.approve(
+            1, self.one.id, 100, fx.DM, "both", expected=text_hash("T", "s")
+        )
+        self.assertTrue(ok)
+        self.assertFalse(
+            await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
+        )
+
     async def test_a_token_is_made_only_for_a_posted_recap_and_new_replaces_it(self) -> None:
         await self.finished(100)
         self.assertIsNone(await self.store.share_token(1, self.one.id, 100))  # a draft has none
@@ -274,7 +288,7 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
         base = dict(
             state="ready", status="posted", approved=True, title="The Silver Lock",
             summary="Mira drew her blade.", housekeeping=("Mira has 4 HP.",), speakers=(1, 2),
-            last_error="",
+            last_error="", audio_choice="text",
         )  # fmt: skip
         return SimpleNamespace(**{**base, **kw})
 
@@ -347,3 +361,24 @@ class ThePicker(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShareOnAnAudioApprovedDraft(unittest.IsolatedAsyncioTestCase):
+    """Share never posts a draft approved for narration or music (#2420): it says what to do."""
+
+    async def test_it_says_the_recap_waits_for_its_narration_and_posts_nothing(self) -> None:
+        job = SimpleNamespace(state="ready", status="draft", approved=True, audio_choice="both")
+        bot = SimpleNamespace(
+            recaps=SimpleNamespace(
+                get=AsyncMock(return_value=job), decide=AsyncMock(return_value=False)
+            ),
+            settings=SimpleNamespace(site_url="https://site.example.com"),
+            post_recaps=AsyncMock(),
+        )
+        campaign = SimpleNamespace(guild_id=GUILD, id=CID)
+        token, why = await DMBot.recap_share_link(cast(Any, bot), cast(Any, campaign), 100)
+        self.assertIsNone(token)
+        self.assertIn("waiting for its narration", why)
+        self.assertNotIn("Try again", why)
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()

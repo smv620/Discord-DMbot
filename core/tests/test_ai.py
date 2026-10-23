@@ -88,6 +88,35 @@ class Client(unittest.IsolatedAsyncioTestCase):
         await ai.tier(AIModelTier.CAREFUL).complete("rules", "doc", schema=schema)  # a tier client
         self.assertEqual(session.sent["json"]["output_config"]["format"]["schema"], schema)
 
+    async def test_images_go_in_before_the_text_as_base64_and_only_when_given(self) -> None:
+        """#2450: an image block for each image, then the text; nothing changes without one."""
+        import base64
+
+        from dmbot.ai import Image
+
+        body = {"content": [{"type": "text", "text": "{}"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST)
+        self.assertEqual(session.sent["json"]["messages"], [{"role": "user", "content": "doc"}])
+        picture = Image("image/png", b"\x89PNG\r\n\x1a\nbytes")
+        await ai.tier(AIModelTier.FAST).complete("rules", "look", images=[picture])
+        (message,) = session.sent["json"]["messages"]
+        self.assertEqual(
+            message["content"],
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.b64encode(picture.data).decode(),
+                    },
+                },
+                {"type": "text", "text": "look"},
+            ],
+        )
+        self.assertNotIn("PNG", repr(picture))  # the bytes are never in a log line or a repr
+
     async def test_a_refusal_is_flagged_and_a_schema_the_service_rejects_fails_in_plain_words(
         self,
     ) -> None:
