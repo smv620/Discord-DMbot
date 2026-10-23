@@ -1136,6 +1136,21 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/web/reveal", status_code=202)
+    async def me_campaign_web_reveal(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """The DM shows one name or connection to the players (#2405). Queued for the bot like the
+        other edits; the answer is polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_reveal(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/web/links", status_code=202)
     async def me_campaign_web_link_add(
         ref: str, signed: Signed, request: Request
