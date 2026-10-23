@@ -1256,8 +1256,6 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
   );
 }
 
-/** My characters (#1164): the person's own sheets, read-only. Loaded once the page is up; an
- * API older than this, or a failed load, shows nothing rather than an error. */
 /** The way in to the Shared rules page (#2460). Only a person who runs a campaign has rules to
  * share or use, and only an API that can say what they share has the page. */
 function SharedRulesSection({ me }: { me: Me }) {
@@ -1274,6 +1272,8 @@ function SharedRulesSection({ me }: { me: Me }) {
   );
 }
 
+/** My characters (#1164): the person's own sheets, read-only. Loaded once the page is up; an
+ * API older than this, or a failed load, shows nothing rather than an error. */
 function CharactersSection() {
   const { api } = useShared();
   const [list, setList] = useState<Character[] | null>(null);

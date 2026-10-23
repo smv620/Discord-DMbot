@@ -275,18 +275,20 @@ describe("the breadcrumb and the four tabs on every campaign page (#2461)", () =
     ["the story graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
     ["the import page", () => <Import api={mockApi("table")} path="/account/import/100.cmp1" />, w.pages.import, w.groups.table],
     ["the names", () => <Names api={mockApi("table")} path="/account/names/100.cmp1" />, w.pages.names, w.groups.story],
-    ["an NPC's page", () => <Npc api={mockApi("table")} path="/account/npc/100.cmp1/e1" />, w.pages.names, w.groups.story],
-    ["a recap", () => <Recaps api={mockApi("table")} path="/account/recaps/200000000000000001.cmp1.1791000000" />, w.pages.recaps, w.groups.story],
+    ["an NPC's page", () => <Npc api={mockApi("table")} path="/account/npc/100.cmp1/e1" />, w.pages.names, w.groups.story, true],
+    ["a recap", () => <Recaps api={mockApi("table")} path="/account/recaps/200000000000000001.cmp1.1791000000" />, w.pages.recaps, w.groups.story, true],
     ["the recaps of one campaign", () => <Recaps api={mockApi("table")} path="/account/recaps" search={`?campaign=${REFC}`} />, w.pages.recaps, w.groups.story],
-  ])("is on %s, with the right tab marked", async (_n, view, page, group) => {
+  ])("is on %s, with the right tab marked", async (_n, view, page, group, inList = false) => {
     render(view());
     await screen.findByRole("navigation", { name: w.tabsLabel });
-    await waitFor(() => expect(crumbs().getByText(page).getAttribute("aria-current")).toBe("page"));
+    // A page inside a list links the list and names itself last; a list page is the last crumb.
+    if (inList) await waitFor(() => expect(crumbs().getByRole("link", { name: page })).toBeTruthy());
+    else await waitFor(() => expect(crumbs().getByText(page).getAttribute("aria-current")).toBe("page"));
     await waitFor(() => expect(tabs().getByRole("link", { name: w.groups.settings })).toBeTruthy());
     const marked = tabs().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
     expect(marked.map((a) => a.textContent)).toEqual([group]);
     expect(crumbs().getByRole("link", { name: w.myAccount }).getAttribute("href")).toBe("/account");
-    expect(crumbs().getAllByRole("link").length).toBe(2); // My Account and the campaign; the page itself is not a link
+    expect(crumbs().getAllByRole("link").length).toBe(inList ? 3 : 2); // My Account, the campaign and (inside a list) the list; the page itself is not a link
   });
 
   it("shows a player no Settings tab on any campaign page", async () => {
@@ -358,5 +360,27 @@ describe("My Campaigns", () => {
     const { container } = render(<Account api={mockApi("table")} go={vi.fn()} />);
     await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(container.querySelector("#campaigns")).toBeTruthy();
+  });
+});
+
+describe("the breadcrumb on a page inside a list (#2485)", () => {
+  it("links the list and names the page last, and marks the tabs as a location", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="names" label="Brannoch" />);
+    const crumbs = await screen.findByRole("navigation", { name: w.crumbsLabel });
+    expect(within(crumbs).getByRole("link", { name: w.pages.names }).getAttribute("href")).toBe("/account/names/100.cmp1");
+    expect(within(crumbs).getByText("Brannoch").getAttribute("aria-current")).toBe("page");
+    cleanup();
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="recaps" label="The bridge" />);
+    const again = await screen.findByRole("navigation", { name: w.crumbsLabel });
+    expect(within(again).getByRole("link", { name: w.pages.recaps }).getAttribute("href")).toBe("/account/recaps?campaign=100.cmp1");
+    const tabs = await screen.findByRole("link", { name: w.groups.story });
+    expect(tabs.getAttribute("aria-current")).toBe("location");
+  });
+
+  it("keeps the list as the last crumb when the page is the list itself", async () => {
+    render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="names" />);
+    const crumbs = await screen.findByRole("navigation", { name: w.crumbsLabel });
+    expect(within(crumbs).queryByRole("link", { name: w.pages.names })).toBeNull();
+    expect(within(crumbs).getByText(w.pages.names).getAttribute("aria-current")).toBe("page");
   });
 });
