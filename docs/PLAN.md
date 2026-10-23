@@ -1146,6 +1146,21 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   the campaign. Stopping takes three taps (Menu, Stop, Yes) where saying yes takes one;
   the owner's legal review found that acceptable (2026-10-08). The warning still stays
   short and one-time, and the menu button is on every reminder.
+- **Off the record** (owner question, decided by Supervisor 2026-10-23, #2466): a person can step off
+  the record for a while without stopping. **A button is the main way.** **⏸️ Pause recording me** in the
+  🗂️ Menu (and on the per-session reminder) takes 5 minutes, 15 minutes, or until ▶️ Resume. It needs no
+  warning because it ends by itself, and it always ends with the listening session. A paused person is
+  off ears' allowlist, exactly like someone who never agreed: nothing of theirs is captured, decoded,
+  transcribed or stored, and core re-checks the pause after every async step as it does consent. The
+  DM also has **⏸️ Pause the table** for breaks. The table chat says "⏸️ <name> is off the record for 5
+  minutes." and "▶️ <name> is back on the record.", and both transcripts get one marker line, "(<name>
+  was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
+  this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
+  DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
+  is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
+  (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
+  they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
+  the pause stays on the record.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -1873,6 +1888,36 @@ names panel nor the speech-to-text hints can be a fixed list.
   it when it ends (posted, put back as a draft, dropped), so every writer of the status is covered; the bot
   moves it to `post` once its checks pass; the audio worker runs the `audio` step only when no post is under
   way. The web API's recap answer carries `postingSince`, `postingStep`, `postedUrl` and `serverNow`.
+- **Where everything is on the website** (owner, 2026-10-22, the account and campaign pages reorganised; it
+  builds on "A page for each campaign" below). One rule: **everything about one campaign lives on that
+  campaign's page; everything about you, or shared across campaigns, lives on My Account.** Every page shows
+  where it is (a breadcrumb: My Account › <Campaign> › Story graph) and the same campaign tabs, so nobody is
+  lost.
+  - **My Account** (`/account`), top to bottom:
+    1. **My campaigns:** one card per campaign. The **campaign's name is the link** to its page, and the card
+       shows its facts at a glance: 🟢 when DMbot is listening there right now; your part (You run it, You help
+       run it, You play in it); sessions; hours played; players; NPCs; started; last played. The DM tools are
+       not on the card; they are on the campaign's page.
+    2. **My characters.**
+    3. **Shared rules:** the one place for house-rules sets and homebrew packs you publish or follow, at
+       `/account/sharing`.
+    4. **My plan and billing.**
+    5. **My account:** email, DMbot ID, servers, sign-in.
+
+    The account-wide House rules, Homebrew and Transcripts cards go: each lives on its campaign's page.
+  - **The campaign's page** (`/account/campaigns/<server>.<campaign>`), the campaign's home. The heading has
+    the name, 🟢, your part and the facts. Below it are four groups, in this order, and the same four are the
+    tabs on every page of the campaign:
+    1. **Story:** Recaps · Story timeline · Story graph · Names and NPCs.
+    2. **At the table:** Transcripts · Import a past session.
+    3. **Rules:** House rules · Homebrew. Each of those pages links to **Shared rules** for sharing them.
+    4. **Settings** (the campaign's DMs only): who can see the DM screen (peek) · how much DMbot says ·
+       transcript retention · game masters · hand over · pause · delete. These are the same choices as
+       ⚙️ Settings in Discord, with the same words. Players see the groups they may use.
+  - **Story timeline:** the campaign's sessions in order, each with its number, date and length, its recap
+    (linked) and what was revealed at the table that session. It's built after the other pages.
+  - **Words:** a page is called by the same name everywhere: in Discord, on the tabs, in the breadcrumb, and on
+    the account page.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
   to that one campaign:
