@@ -153,6 +153,17 @@ export interface RecapAudio {
   canBuy: boolean;
 }
 
+/** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
+ * Discord number; the page shows `name` only. */
+export interface DiscordAccount {
+  key: string;
+  name: string;
+  /** The one signed in right now. */
+  current: boolean;
+  /** False for the last one. */
+  canRemove: boolean;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -160,6 +171,8 @@ export interface Me {
   access?: Access;
   campaigns: Campaign[];
   servers: Server[];
+  /** The Discord accounts on this DMbot account (#2534). Missing from an API older than #2533. */
+  discordAccounts?: DiscordAccount[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
@@ -1122,6 +1135,7 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1164,6 +1178,10 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
+  addDiscordUrl?(): string;
+  /** Take one Discord account off this DMbot account; never the last (#2534). */
+  removeDiscordAccount?(key: string): Promise<void>;
   /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
    * Missing from an API older than that. */
   myEmail?(): Promise<MyEmail>;
@@ -1402,6 +1420,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  last_account: "last-account",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1594,6 +1613,10 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
+    removeDiscordAccount: async (key) => {
+      await call("POST", `/me/discord-accounts/${encodeURIComponent(key)}/remove`);
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
