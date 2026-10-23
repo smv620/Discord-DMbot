@@ -412,24 +412,68 @@ class TheDeleteNotice(Deleting):
         tidied: list[Notice] = []
 
         async def dm_user(user_id: int, text: str) -> bool:
-            if user_id == 3:
-                raise RuntimeError("messages are off")  # one failing must not stop the rest
             told.append((user_id, text))
-            return True
+            return user_id != 3  # one that cannot be messaged must not stop the rest
 
         async def retire(note: Notice, now: int, *, by_hand: bool = False) -> None:
             tidied.append(note)
 
-        note = Notice(THURSDAY.id, "c1", "Frost*maiden", 1001, (2, 3, 4), 11, None, None, None,
-                      None, None, None)  # fmt: skip
+        note = Notice(THURSDAY.id, "c1", "Frost*maiden `@everyone`", 1001, (2, 3, 4), 11, None,
+                      None, None, None, None, None)  # fmt: skip
         me = SimpleNamespace(
             _retire_campaign_channels=retire, _dm_user=dm_user, name_of=lambda g, u: "Ali_ce"
         )
         await DMBot._finish_web_delete(me, note)  # type: ignore[arg-type]
         self.assertEqual(tidied, [note])
-        self.assertEqual([u for u, _ in told], [2, 4])
-        self.assertIn("deleted **Frost\\*maiden**", told[0][1])
-        self.assertIn("Ali\\_ce", told[0][1])
+        self.assertEqual([u for u, _ in told], [2, 3, 4])
+        text = told[0][1]
+        self.assertIn("deleted **Frost\\*maiden", text)
+        self.assertIn("Ali\\_ce", text)
+        self.assertNotIn("*maiden `", text)  # the asterisk and the backticks are escaped
+
+    async def test_a_failure_inside_one_note_does_not_lose_the_rest(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        def broken(g: int, u: int) -> str:
+            raise RuntimeError("no such member cache")
+
+        async def retire(note: Notice, now: int, *, by_hand: bool = False) -> None:
+            raise RuntimeError("discord is down")
+
+        me = SimpleNamespace(_retire_campaign_channels=retire, name_of=broken)
+        note = Notice(THURSDAY.id, "c1", "Gone", 1, (2,), None, None, None, None, None, None, None)
+        await DMBot._finish_web_delete(me, note)  # type: ignore[arg-type]  # (does not raise)
+
+    async def test_an_unreachable_server_names_the_deleter_by_mention_and_still_tells(self) -> None:
+        """The deleter is not cached for a server the bot has left: `name_of` gives `<@id>`."""
+        from dmbot.bot import DMBot
+
+        told: list[str] = []
+
+        async def dm_user(user_id: int, text: str) -> bool:
+            told.append(text)
+            return True
+
+        async def retire(note: Notice, now: int, *, by_hand: bool = False) -> None:
+            return None
+
+        from types import SimpleNamespace
+
+        me = SimpleNamespace(
+            _retire_campaign_channels=retire, _dm_user=dm_user, name_of=lambda g, u: f"<@{u}>"
+        )
+        note = Notice(555, "c1", "Gone", 1001, (2,), None, None, None, None, None, None, None)
+        await DMBot._finish_web_delete(me, note)  # type: ignore[arg-type]
+        self.assertEqual(told, ["🗑 <@1001> deleted **Gone**."])
+
+    async def test_the_server_stays_listed_while_its_note_waits(self) -> None:
+        await self.delete(self.session, self.lost, LOST, "lost world")
+        self.assertFalse(await self.campaigns.forget_guild_if_empty(LOST))  # a note is waiting
+        self.assertIn(LOST, await self.campaigns.guilds_with_campaigns())
+        await WebDeleteNotices(self.db).take(LOST)
+        self.assertTrue(await self.campaigns.forget_guild_if_empty(LOST))
 
     async def test_a_server_the_bot_has_left_is_still_finished(self) -> None:
         from types import SimpleNamespace

@@ -12034,6 +12034,9 @@ WEB_DELETE_NOTICES = (
                camp.dm_screen_channel_id, camp.transcript_channel_id, camp.gametime_channel_id,
                camp.dmbchat_channel_id, camp.dm_bot_channel_id, camp.rules_channel_id,
                camp.npcs_channel_id, floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        -- The server stays on the routing list until the bot has taken the note, so it is looked
+        -- at even if this was its last campaign.
+        INSERT INTO campaign_guilds (guild_id) VALUES (g) ON CONFLICT DO NOTHING;
         DELETE FROM campaigns WHERE guild_id = g AND id = c;
         RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels);
     END
@@ -12373,6 +12376,7 @@ MIGRATIONS: tuple[Migration, ...] = (
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
     "secret_exposures",
+    "web_delete_notices",
     "merge_restores",
     "transcript_respells",
     "image_day_use",

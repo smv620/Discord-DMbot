@@ -11356,17 +11356,27 @@ class DMBot(commands.AutoShardedBot):
             await self.campaigns.forget_guild_if_empty(guild_id)
 
     async def _finish_web_delete(self, notice: Notice) -> None:
+        # (the whole body is guarded: a note is taken once, so one failing must not lose the rest
+        # of its batch)
         with log_context(guild_id=notice.guild_id, campaign_id=notice.id):
             try:
-                await self._retire_campaign_channels(notice, int(time.time()), by_hand=True)
+                try:
+                    await self._retire_campaign_channels(notice, int(time.time()), by_hand=True)
+                except Exception:
+                    log.exception("Couldn't tidy a website-deleted campaign's channels")
+                name = discord.utils.escape_markdown(notice.name)
+                who = discord.utils.escape_markdown(
+                    self.name_of(notice.guild_id, notice.by_user_id)
+                )
+                text = delete_campaign.TOLD.format(who=who, name=name)
+                told = [await self._dm_user(other, text) for other in notice.other_dms]
+                log.info(
+                    "A campaign deleted on the website was finished: %d of %d game masters told",
+                    sum(told),
+                    len(told),
+                )
             except Exception:
-                log.exception("Couldn't tidy a website-deleted campaign's channels")
-            name = discord.utils.escape_markdown(notice.name)
-            who = discord.utils.escape_markdown(self.name_of(notice.guild_id, notice.by_user_id))
-            for other in notice.other_dms:
-                with contextlib.suppress(Exception):  # (messages off, left Discord: nothing to do)
-                    await self._dm_user(other, delete_campaign.TOLD.format(who=who, name=name))
-            log.info("A campaign deleted on the website was finished")
+                log.exception("Couldn't finish a website-deleted campaign")
 
     async def run_peek_notices(self) -> None:
         """Tell the DM, on the DM screen, that a player turned the peek on (#2404): one line for

@@ -28,7 +28,7 @@ class Notice:
     """A deleted campaign, as `HasChannels` (`retention_channels`) reads it."""
 
     guild_id: int
-    id: str  # the deleted campaign's ID
+    id: str  # the deleted campaign's ID (the note's own ID is not needed once it is taken)
     name: str
     by_user_id: int
     other_dms: tuple[int, ...]
