@@ -1889,12 +1889,16 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   *Undo also hands back what a merge moves outside the change log (#2438, migration 0199):* the merged
   name's private notes and its D&D Beyond sheet. A small record (`merge_restores`, kept as long as the batch
-  and deleted with it) holds the lengths and times of the notes and the sheet row, never a note's words, so a
-  person who deletes their notes leaves no copy. Undo puts a note or sheet back only if it is still as the
-  merge left it (a note written on since stays where it is), and the Undo itself is never refused over it.
+  and deleted with it, kept out of backups) holds, for each note, the person's id, the NPC's listed name,
+  the note's length and its times, never its words; and for a sheet only when it was read and from where,
+  never its content, link or player. Everything of both names is locked first, in one fixed order, so a
+  note edited meanwhile is read after the edit. Undo puts a note or sheet back only if it is still as the
+  merge left it (a note written on since, or a sheet read again since, stays where it is), and the Undo
+  itself is never refused over it. A sheet the merge forgot (the kept name had its own, or it was left from
+  an earlier player) is not brought back, because its content is not kept: the player links it again.
   Undoing the Undo merges again and the notes and sheet follow. A merged character's beliefs (a character's
-  own point of view) move to the kept entry through the change log, so the same Undo returns them; a belief
-  both held keeps the newest one.
+  own point of view) move to the kept entry's perspective (made as a `pc` for a player's character, else an
+  `npc`) through the change log, so the same Undo returns them; a belief both held keeps the newest one.
 
   *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
   all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same

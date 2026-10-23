@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from dmbot.memory.models import CONFIRMED, new_id
 from tests.test_memory_store import GUILD_A, MemoryTest
 
@@ -28,12 +30,14 @@ class MergeHelpers(MemoryTest):
     async def undo(self, batch: int) -> None:
         await self.memory.undo(GUILD_A, self.c, batch)
 
-    async def note(self, entry: str, user: int, body: str, orphaned: int | None = None) -> None:
+    async def note(
+        self, entry: str, user: int, body: str, orphaned: int | None = None, at: int = 100
+    ) -> None:
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO npc_notes (guild_id, campaign_id, entry_id, user_id, name, body,"
-                " updated_at, orphaned_at) VALUES (%s, %s, %s, %s, '', %s, 100, %s)",
-                (GUILD_A, self.c, entry, user, body, orphaned),
+                " updated_at, orphaned_at) VALUES (%s, %s, %s, %s, '', %s, %s, %s)",
+                (GUILD_A, self.c, entry, user, body, at, orphaned),
             )
 
     async def notes(self) -> dict[tuple[str, int], tuple[str, int | None]]:
@@ -50,10 +54,38 @@ class MergeHelpers(MemoryTest):
     async def sheet(self, entry: str, player: int = 777) -> None:
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, player_id)"
-                " VALUES (%s, %s, %s, %s, %s)",
-                (GUILD_A, self.c, entry, LINK, player),
+                "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet,"
+                " source, fetched_at, player_id, ask_mismatch)"
+                " VALUES (%s, %s, %s, %s, %s, 'dndbeyond', 1234, %s, false)",
+                (GUILD_A, self.c, entry, LINK, Jsonb({"name": "Aldric", "level": 5}), player),
             )
+
+    async def sheet_rows(self) -> dict[str, tuple[Any, ...]]:
+        """Every sheet row but for the entity it is on: the player, link, content, setting, time."""
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT entity_id, player_id, url, sheet, ask_mismatch, fetched_at"
+                " FROM character_sheets WHERE campaign_id = %s",
+                (self.c,),
+            )
+            return {
+                r["entity_id"]: (
+                    r["player_id"],
+                    r["url"],
+                    r["sheet"],
+                    r["ask_mismatch"],
+                    r["fetched_at"],
+                )
+                for r in await cur.fetchall()
+            }
+
+    async def stamps(self) -> dict[tuple[str, int], int]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT entry_id, user_id, updated_at FROM npc_notes WHERE campaign_id = %s",
+                (self.c,),
+            )
+            return {(r["entry_id"], r["user_id"]): r["updated_at"] for r in await cur.fetchall()}
 
     async def sheets(self) -> dict[str, int]:
         async with self.db.guild(GUILD_A) as conn:
@@ -181,14 +213,63 @@ class MergeThenUndo(MergeHelpers):
         await self.undo(batch)
         self.assertEqual(list(await self.sheets()), [gone])
 
-    async def test_a_forgotten_sheet_and_a_dropped_old_one_come_back(self) -> None:
+    async def test_a_moved_sheet_comes_back_exactly_through_undo_redo_undo(self) -> None:
         keep, gone = await self.names()
-        await self.sheet(gone, 777)  # the merged name's; the kept name has an old one nobody plays
-        await self.sheet(keep, 888)
+        await self.sheet(gone)
+        original = (await self.sheet_rows())[gone]
+        first = await self.merge(keep, gone)
+        self.assertEqual(await self.sheet_rows(), {keep: original})
+        undone = await self.memory.undo(GUILD_A, self.c, first)
+        assert undone.batch is not None
+        self.assertEqual(await self.sheet_rows(), {gone: original})  # link, content, setting, time
+        redone = await self.memory.undo(GUILD_A, self.c, undone.batch)
+        assert redone.batch is not None
+        self.assertEqual(await self.sheet_rows(), {keep: original})
+        await self.memory.undo(GUILD_A, self.c, redone.batch)
+        self.assertEqual(await self.sheet_rows(), {gone: original})
+
+    async def test_notes_come_back_with_their_times_through_undo_redo_undo(self) -> None:
+        keep, gone = await self.names()
+        await self.note(keep, 2, "on aldric", at=100)
+        await self.note(gone, 2, "on the monk", at=250)  # different times, so the checks matter
+        await self.note(gone, 1, "only on the monk", at=300)
+        before = (await self.notes(), await self.stamps())
+        first = await self.merge(keep, gone)
+        self.assertEqual((await self.stamps())[(keep, 2)], 250)  # the later of the two
+        undone = await self.memory.undo(GUILD_A, self.c, first)
+        assert undone.batch is not None
+        self.assertEqual((await self.notes(), await self.stamps()), before)
+        redone = await self.memory.undo(GUILD_A, self.c, undone.batch)
+        assert redone.batch is not None
+        await self.memory.undo(GUILD_A, self.c, redone.batch)
+        self.assertEqual((await self.notes(), await self.stamps()), before)
+
+    async def test_when_the_kept_names_own_sheet_won_the_other_stays_forgotten(self) -> None:
+        keep, gone = await self.names()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = 777 WHERE id = %s", (keep,)
+            )  # the kept name is a player's character, so its sheet is the one in use
+        await self.sheet(keep, 777)
+        await self.sheet(gone, 777)
+        kept_row = (await self.sheet_rows())[keep]
         batch = await self.merge(keep, gone)
-        self.assertEqual(await self.sheets(), {keep: 777})
+        self.assertEqual(await self.sheet_rows(), {keep: kept_row})
         await self.undo(batch)
-        self.assertEqual(await self.sheets(), {gone: 777, keep: 888})
+        # the forgotten one is not kept anywhere, so it is not back; the kept name's is untouched
+        self.assertEqual(await self.sheet_rows(), {keep: kept_row})
+
+    async def test_an_old_sheet_nobody_plays_is_dropped_and_the_moved_one_still_goes_back(
+        self,
+    ) -> None:
+        keep, gone = await self.names()
+        await self.sheet(gone, 777)
+        await self.sheet(keep, 888)  # left from an earlier player: shown nowhere
+        moved = (await self.sheet_rows())[gone]
+        batch = await self.merge(keep, gone)
+        self.assertEqual(await self.sheet_rows(), {keep: moved})
+        await self.undo(batch)
+        self.assertEqual(await self.sheet_rows(), {gone: moved})
 
     async def test_a_sheet_refreshed_since_is_left_alone(self) -> None:
         keep, gone = await self.names()
@@ -196,11 +277,43 @@ class MergeThenUndo(MergeHelpers):
         batch = await self.merge(keep, gone)
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "UPDATE character_sheets SET url = %s WHERE campaign_id = %s",
-                ("https://www.dndbeyond.com/characters/654321", self.c),
+                "UPDATE character_sheets SET fetched_at = 9999 WHERE campaign_id = %s", (self.c,)
             )
         await self.undo(batch)
         self.assertEqual(list(await self.sheets()), [keep])
+
+    async def test_the_snapshot_waits_for_a_writer_and_reads_what_it_wrote(self) -> None:
+        """The snapshot locks both names' notes (and sheets) first, so a writer on the website
+        either lands before it (and is read) or after it (and finds the note moved): never between
+        the reading and the move, which would leave the record saying "joined" for a note that
+        stayed apart."""
+        import asyncio
+
+        from dmbot.memory import merge_restore
+
+        keep, gone = await self.names()
+        await self.note(keep, 1, "k" * 2000)
+        await self.note(gone, 1, "g" * 2000)  # fits with the kept note: joined
+        async with self.db.guild(GUILD_A) as writer:
+            await writer.execute(
+                "SELECT 1 FROM npc_notes WHERE campaign_id = %s AND entry_id = %s FOR UPDATE",
+                (self.c, gone),
+            )
+
+            async def read() -> Any:
+                async with self.db.guild(GUILD_A) as conn:
+                    return await merge_restore.snapshot(conn, (GUILD_A, self.c), keep, gone, None)
+
+            reading = asyncio.ensure_future(read())
+            await asyncio.sleep(0.5)
+            self.assertFalse(reading.done())  # waiting for the writer, not reading past it
+            await writer.execute(
+                "UPDATE npc_notes SET body = %s, updated_at = 400 WHERE campaign_id = %s"
+                " AND entry_id = %s",
+                ("g" * 4000, self.c, gone),
+            )  # the writer's note now no longer fits with the kept one
+        (note,) = (await reading)["notes"]
+        self.assertEqual((note["how"], note["gone"]["size"]), ("apart", 4000))
 
     async def test_a_pruned_batch_leaves_no_restore_rows(self) -> None:
         keep, gone = await self.names()
@@ -216,13 +329,13 @@ class MergeThenUndo(MergeHelpers):
 
 
 class MergeFoldsPerspectives(MergeHelpers):
-    async def perspective(self, entry: str) -> str:
+    async def perspective(self, entry: str, kind: str = "npc") -> str:
         pid = new_id()
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
-                " created_at) VALUES (%s, %s, %s, 'npc', %s, 1)",
-                (GUILD_A, self.c, pid, entry),
+                " created_at) VALUES (%s, %s, %s, %s, %s, 1)",
+                (GUILD_A, self.c, pid, kind, entry),
             )
         return pid
 
@@ -265,6 +378,28 @@ class MergeFoldsPerspectives(MergeHelpers):
         self.assertEqual(await self.holders(), {keep: [(rel, 0.25)]})
         await self.undo(batch)
         self.assertEqual(await self.holders(), {gone: [(rel, 0.25)]})
+
+    async def test_a_new_perspective_takes_the_kept_entrys_kind_not_the_merged_ones(self) -> None:
+        keep, gone = await self.names()  # neither is a player's character
+        rel = await self.rel()
+        await self.believes(await self.perspective(gone, "pc"), rel, 10)
+        await self.merge(keep, gone)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT kind FROM memory_perspectives WHERE entity_id = %s", (keep,)
+            )
+            self.assertEqual([r["kind"] for r in await cur.fetchall()], ["npc"])
+        other = await self.add("Aldric the Player", status=CONFIRMED)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE memory_entities SET played_by = 5 WHERE id = %s", (other,))
+        third = await self.add("Aldric of the Hall", status=CONFIRMED)
+        await self.believes(await self.perspective(third, "npc"), rel, 11)
+        await self.memory.merge(GUILD_A, self.c, other, third, source="dm", dm_said_same=True)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT kind FROM memory_perspectives WHERE entity_id = %s", (other,)
+            )
+            self.assertEqual([r["kind"] for r in await cur.fetchall()], ["pc"])
 
     async def test_when_both_hold_beliefs_the_newest_for_a_pair_stands(self) -> None:
         keep, gone = await self.names()

@@ -25,9 +25,6 @@ from dmbot.db import Conn
 
 Ids = tuple[int, str]
 
-_SHEET_COLUMNS = (
-    "entity_id", "url", "sheet", "source", "fetched_at", "player_id", "ask_mismatch",
-)  # fmt: skip
 # How a note joined another: the kept body, a blank line, the merged one's body.
 _JOINER = "\n\n"
 NOTE_MAX = 5000  # a note's most characters (the table's own check)
@@ -125,27 +122,26 @@ async def move_sheets(conn: Conn, ids: tuple[int, str], keep_id: str, gone_id: s
 # ---- what to remember, and putting it back -------------------------------------------------
 
 
-async def _rows(
-    conn: Conn, table: str, columns: tuple[str, ...], ids: Ids, key: str, entry: str
-) -> list[dict[str, Any]]:
-    cur = await conn.execute(
-        f"SELECT {', '.join(columns)} FROM {table}"
-        f" WHERE guild_id = %s AND campaign_id = %s AND {key} = %s ORDER BY 1, 2",
-        (*ids, entry),
-    )
-    return [dict(r) for r in await cur.fetchall()]
-
-
 async def snapshot(
     conn: Conn, ids: Ids, keep_id: str, gone_id: str, keep_player: int | None
 ) -> dict[str, Any]:
-    """What the notes and sheets of both names look like now (call before the merge moves them):
-    lengths and times for notes, never their words. `keep_player`: who plays the kept entry, so a
-    sheet left from an earlier player (one the merge drops, because nothing could show it) is told
-    apart from the one in use."""
-    cols = "user_id, name, char_length(body) AS size, updated_at, orphaned_at"
-    gone_notes = await _query(conn, ids, gone_id, cols)
-    keep_notes = {n["user_id"]: n for n in await _query(conn, ids, keep_id, cols)}
+    """What the notes and sheets of both names look like now (call before the merge moves them,
+    inside the same write): lengths and times for notes, never their words; for a sheet only when
+    it was read and from where, never its content, its link or its player. Everything of both
+    names is locked first, in one fixed order (entry id, then person), so a note edited by its
+    writer on the website meanwhile cannot slip between this reading and the move.
+    `keep_player`: who plays the kept entry, so a sheet left from an earlier player (one the merge
+    drops, because nothing could show it) is told apart from the one in use."""
+    both = sorted([keep_id, gone_id])
+    cur = await conn.execute(
+        "SELECT entry_id, user_id, name, char_length(body) AS size, updated_at, orphaned_at"
+        " FROM npc_notes WHERE guild_id = %s AND campaign_id = %s AND entry_id = ANY(%s)"
+        " ORDER BY entry_id, user_id FOR UPDATE",
+        (*ids, both),
+    )
+    rows = [dict(r) for r in await cur.fetchall()]
+    gone_notes = [n for n in rows if n["entry_id"] == gone_id]
+    keep_notes = {n["user_id"]: n for n in rows if n["entry_id"] == keep_id}
     notes = []
     for g in gone_notes:
         k = keep_notes.get(g["user_id"])
@@ -153,23 +149,25 @@ async def snapshot(
         notes.append(
             {"gone": g, "keep": k, "how": "joined" if joined else "apart" if k else "moved"}
         )
-    gone_sheet = await _rows(conn, "character_sheets", _SHEET_COLUMNS, ids, "entity_id", gone_id)
-    keep_sheet = await _rows(conn, "character_sheets", _SHEET_COLUMNS, ids, "entity_id", keep_id)
+    cur = await conn.execute(
+        "SELECT entity_id, fetched_at, source, player_id FROM character_sheets"
+        " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s)"
+        " ORDER BY entity_id FOR UPDATE",
+        (*ids, both),
+    )
+    sheets = {r["entity_id"]: dict(r) for r in await cur.fetchall()}
+    gone_sheet, keep_sheet = sheets.get(gone_id), sheets.get(keep_id)
     return {
         "notes": notes,
-        "gone_sheet": gone_sheet[0] if gone_sheet else None,
-        "keep_sheet": keep_sheet[0] if keep_sheet else None,
-        "keep_sheet_in_use": bool(keep_sheet) and keep_sheet[0]["player_id"] == keep_player,
+        "gone_sheet": _mark(gone_sheet),
+        "keep_sheet": _mark(keep_sheet),
+        "keep_sheet_in_use": keep_sheet is not None and keep_sheet["player_id"] == keep_player,
     }
 
 
-async def _query(conn: Conn, ids: Ids, entry: str, cols: str) -> list[dict[str, Any]]:
-    cur = await conn.execute(
-        f"SELECT {cols} FROM npc_notes"
-        " WHERE guild_id = %s AND campaign_id = %s AND entry_id = %s ORDER BY user_id",
-        (*ids, entry),
-    )
-    return [dict(r) for r in await cur.fetchall()]
+def _mark(sheet: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What identifies a sheet row without holding it: when it was read and how."""
+    return None if sheet is None else {"fetched_at": sheet["fetched_at"], "source": sheet["source"]}
 
 
 async def save(
@@ -308,14 +306,17 @@ async def _restore_notes(
             )
 
 
-def _same_sheet(row: dict[str, Any] | None, was: dict[str, Any]) -> bool:
-    """`row` is `was`, whichever entry it is on."""
-    return row is not None and all(row[c] == was[c] for c in _SHEET_COLUMNS if c != "entity_id")
+def _is(row: dict[str, Any] | None, mark: dict[str, Any]) -> bool:
+    """`row` is the sheet `mark` describes (not read again since, whichever entry it is on)."""
+    return row is not None and (row["fetched_at"], row["source"]) == (
+        mark["fetched_at"],
+        mark["source"],
+    )
 
 
 async def _sheet(conn: Conn, ids: Ids, entry: str) -> dict[str, Any] | None:
     cur = await conn.execute(
-        f"SELECT {', '.join(_SHEET_COLUMNS)} FROM character_sheets"
+        "SELECT fetched_at, source FROM character_sheets"
         " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s FOR UPDATE",
         (*ids, entry),
     )
@@ -323,33 +324,21 @@ async def _sheet(conn: Conn, ids: Ids, entry: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-async def _put_sheet(conn: Conn, ids: Ids, entry: str, was: dict[str, Any]) -> None:
-    await conn.execute(
-        "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"
-        " fetched_at, player_id, ask_mismatch) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (*ids, entry, was["url"], None if was["sheet"] is None else Jsonb(was["sheet"]),
-         was["source"], was["fetched_at"], was["player_id"], was["ask_mismatch"]),
-    )  # fmt: skip
-
-
 async def _restore_sheets(
     conn: Conn, ids: Ids, keep_id: str, gone_id: str, before: dict[str, Any]
 ) -> None:
+    """A sheet that moved over goes back. One the merge forgot (the kept name had its own, or it
+    was left from an earlier player and nothing could show it) is not brought back: its content is
+    not kept anywhere, and the player links it again."""
     gone, keep = before["gone_sheet"], before["keep_sheet"]
-    in_use = before["keep_sheet_in_use"]
-    if gone is not None and await _sheet(conn, ids, gone_id) is None:
-        now_keep = await _sheet(conn, ids, keep_id)
-        if (keep is None or not in_use) and _same_sheet(now_keep, gone):
-            # it moved over: back it goes
-            await conn.execute(
-                "UPDATE character_sheets SET entity_id = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
-                (gone_id, *ids, keep_id),
-            )
-        elif keep is not None and in_use and _same_sheet(now_keep, keep):
-            # the kept name's own sheet won and the other was forgotten
-            await _put_sheet(conn, ids, gone_id, gone)
-    # a sheet left from an earlier player was dropped (nothing could show it): it was the kept
-    # entry's own, so it returns there when nothing has taken its place
-    if keep is not None and not in_use and await _sheet(conn, ids, keep_id) is None:
-        await _put_sheet(conn, ids, keep_id, keep)
+    moved = gone is not None and (keep is None or not before["keep_sheet_in_use"])
+    if (
+        moved
+        and await _sheet(conn, ids, gone_id) is None
+        and _is(await _sheet(conn, ids, keep_id), gone)
+    ):
+        await conn.execute(
+            "UPDATE character_sheets SET entity_id = %s"
+            " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
+            (gone_id, *ids, keep_id),
+        )

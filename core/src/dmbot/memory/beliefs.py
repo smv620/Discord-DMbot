@@ -19,7 +19,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from dmbot.db import Conn
-from dmbot.memory._changes import BELIEFS, PERSPECTIVES, RELATIONS, Changes, Scope
+from dmbot.memory._changes import (
+    BELIEFS,
+    ENTITIES,
+    PERSPECTIVES,
+    RELATIONS,
+    Changes,
+    Scope,
+)
 from dmbot.memory.models import (
     BELIEF_STATUSES,
     CONFIRMED,
@@ -338,9 +345,12 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
         target = keep_p[0]["id"]
     else:
         target = new_id()
+        kept = await w.get(ENTITIES, keep_id)
+        # (the kept entry's own kind: a player's character holds beliefs as one, anything else
+        # as an NPC; the merged one's kind is not copied)
+        kind = "pc" if kept is not None and kept["played_by"] is not None else "npc"
         await w.insert(
-            PERSPECTIVES,
-            {"id": target, "kind": gone_p[0]["kind"], "entity_id": keep_id, "created_at": w.now},
+            PERSPECTIVES, {"id": target, "kind": kind, "entity_id": keep_id, "created_at": w.now}
         )
     await w.update_where(
         BELIEFS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
