@@ -169,14 +169,20 @@ async def look(db: Database, session: Session, raw: object, *, now: int) -> dict
         return ENDED
     guild_id = link[0]
     why = await _why_not(db, session, guild_id, offer, now=now)
-    servers = await _servers(db, session, guild_id, sharing=await _shares_rules(db, session, link))
+    sharing = await _shares_rules(db, session, link)
+    servers = await _servers(db, session, guild_id, sharing=sharing)
+    # A server the campaign cannot go to (it shares a rule set) is not a way to accept: with none
+    # left, the page is told why in a code, so it does not work that out itself.
+    can_go = any((s["current"] or s["botIn"]) and not s.get("why") for s in servers)
+    if why is None and not can_go and sharing:
+        why = "shares_rules"
     mine = next((g for g in session.guilds if g.id == guild_id), None)
     return {
         "status": "open",
         "campaign": {"name": offer["campaign_name"]},
         "from": {"name": offer["from_name"]},
         "server": {"id": str(guild_id), "name": mine.name if mine else ""},
-        "canAccept": why is None and any(s["current"] or s["botIn"] for s in servers),
+        "canAccept": why is None and can_go,
         "why": why,
         "moveFailed": await _move_failed(db, session, link),  # the last try, for this person
         "servers": servers,

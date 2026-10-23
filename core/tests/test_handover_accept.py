@@ -464,6 +464,20 @@ class Moving(LinkBase):
         other = (await self.post(carol, "look", token=token)).json()
         self.assertIsNone(other["moveFailed"])
 
+    async def test_a_campaign_that_shares_rules_cannot_be_accepted_by_someone_outside_its_server(
+        self,
+    ) -> None:
+        await self.share_rules("shared")
+        token = await self.link()
+        bob = await self.bob_in(QUILLON)  # not in the campaign's own server
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertFalse(look["canAccept"])
+        self.assertEqual(
+            look["why"], "shares_rules"
+        )  # said in a code, so the page need not work it out
+        [only] = look["servers"]
+        self.assertEqual(only["why"], "shares_rules")
+
     async def test_a_rule_set_that_is_not_shared_does_not_stop_a_move(self) -> None:
         await self.share_rules("unshared")
         token = await self.link()
