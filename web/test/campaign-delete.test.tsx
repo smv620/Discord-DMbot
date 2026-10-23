@@ -54,6 +54,7 @@ describe("while it is switched off", () => {
     await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(screen.queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
     expect(screen.queryByText(w.unreachable)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Lost Hollow" })).toBeNull(); // a card on an unreachable server stays hidden
     expect(calls(api, "deleteCampaign")).toHaveLength(0);
     expect(calls(api, "campaignBackup")).toHaveLength(0);
   });
@@ -66,6 +67,18 @@ describe("the list", () => {
     expect(within(lost).getByText(w.unknownServer)).toBeTruthy();
     expect(within(lost).getByText(w.unreachable)).toBeTruthy();
     expect(within(card("The Brynwater Crossing")).queryByText(w.unreachable)).toBeNull();
+  });
+
+  it("offers Delete by the API's canDelete when it sends one (a campaign with no owner yet)", async () => {
+    const api = mockApi("lost-server");
+    const base = api.me.bind(api);
+    api.me = async () => {
+      const got = await base();
+      return got && { ...got, campaigns: got.campaigns.map((c) => (c.id === "cmp-varrow" ? { ...c, canDelete: true } : c.id === "cmp-ashen" ? { ...c, canDelete: false } : c)) };
+    };
+    await page(api);
+    expect(within(card("Shrine of Varrow")).getByRole("button", { name: w.buttonFor("Shrine of Varrow") })).toBeTruthy();
+    expect(within(card("Ashen Crown")).queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
   });
 
   it("offers Delete to the owner only, never to a co-DM or a player", async () => {
@@ -151,7 +164,7 @@ describe("deleting", () => {
     await expect(api.deleteCampaign!("100.cmp3.cp-co", "Shrine of Varrow")).rejects.toMatchObject({ kind: "not-allowed" });
   });
 
-  it("a campaign that is already gone is dropped from the list", async () => {
+  it("a campaign that is already gone leaves the list, and is never called deleted", async () => {
     const api = mockApi("lost-server");
     const real = api.deleteCampaign!;
     api.deleteCampaign = async (ref, name) => {
@@ -163,6 +176,8 @@ describe("deleting", () => {
     fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "The Brynwater Crossing" } });
     fireEvent.click(within(box).getByRole("button", { name: w.confirm }));
     await waitFor(() => expect(screen.queryByRole("link", { name: "The Brynwater Crossing" })).toBeNull());
+    expect(screen.getByText(w.problem["not-found"]!)).toBeTruthy();
+    expect(screen.queryByText(w.deleted("The Brynwater Crossing"))).toBeNull();
   });
 });
 

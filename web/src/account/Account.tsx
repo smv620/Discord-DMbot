@@ -1018,7 +1018,9 @@ function CampaignsSection({ me }: { me: Me }) {
   const [all, setAll] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const offeredIds = new Set(me.offers.outgoing.map((o) => o.campaignId));
-  const { first, older } = foldCampaigns(me.campaigns, offeredIds);
+  // A campaign on a server DMbot can't reach is listed only once the website can delete it (#2555).
+  const listed = CAMPAIGN_DELETE_LIVE ? me.campaigns : me.campaigns.filter((c) => c.serverReachable !== false);
+  const { first, older } = foldCampaigns(listed, offeredIds);
   // After a hand-over the older ones can all be gone while the list is open: the button goes with
   // them, so the list closes too (and a later fold starts closed).
   const open = all && older.length > 0;
@@ -1057,6 +1059,10 @@ function CampaignsSection({ me }: { me: Me }) {
                 setDone(text.handOverDone(person.name));
                 await refresh();
               }}
+              onGone={async () => {
+                setDone(campaignDeleteWords.problem["not-found"] ?? null);
+                await refresh();
+              }}
               onDeleted={async (name, channelsLeft) => {
                 setDone(CAMPAIGN_DELETE_LIVE ? `${campaignDeleteWords.deleted(name)}${channelsLeft ? ` ${campaignDeleteWords.channelsLeft}` : ""}` : "");
                 await refresh();
@@ -1091,6 +1097,7 @@ function CampaignRow({
   onWithdrawn,
   onHandedOver,
   onDeleted,
+  onGone,
   tryIt = false,
 }: {
   campaign: Campaign;
@@ -1101,6 +1108,7 @@ function CampaignRow({
   onHandedOver: (person: Person) => Promise<void>;
   /** The campaign was deleted from this card (#2555). */
   onDeleted: (name: string, channelsLeft: boolean) => Promise<void>;
+  onGone: () => Promise<void>;
   /** A Try It account: a Try It campaign can't be handed over (#2534). */
   tryIt?: boolean;
 }) {
@@ -1151,14 +1159,16 @@ function CampaignRow({
       {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
         <EmailHandover campaign={campaign} refId={campaign.ref} />
       )}
-      {/* Only the plan holder (the owner) is offered Delete; co-DMs and players never see it. */}
-      {CAMPAIGN_DELETE_LIVE && campaign.role === "owner" && campaign.ref && api.deleteCampaign && (
+      {/* Only the plan holder is offered Delete: the API says so with `canDelete` (a campaign with no owner yet
+          can be deleted by its game masters); an API without it falls back to the owner. */}
+      {CAMPAIGN_DELETE_LIVE && (campaign.canDelete ?? campaign.role === "owner") && campaign.ref && api.deleteCampaign && (
         <CampaignDelete
           api={api}
           refId={campaign.ref}
           name={campaign.name}
           tryIt={tryIt}
           onDeleted={(channelsLeft) => void onDeleted(campaign.name, channelsLeft)}
+          onGone={() => void onGone()}
         />
       )}
       {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (

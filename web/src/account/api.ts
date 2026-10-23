@@ -65,6 +65,9 @@ export interface Campaign {
   /** False when the account's server list doesn't have this campaign's server, or DMbot isn't in it any more
    * (#2555; core #2554). Only the owner's campaigns can be like that. Missing from an older API. */
   serverReachable?: boolean;
+  /** Whether this person may delete the campaign: the plan holder, or a game master of a campaign that
+   * has no owner yet (#2555). Missing from an older API: the owner may. */
+  canDelete?: boolean;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */

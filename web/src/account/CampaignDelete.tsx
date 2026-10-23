@@ -16,14 +16,18 @@ export default function CampaignDelete({
   name,
   tryIt = false,
   onDeleted,
+  onGone,
 }: {
   api: AccountApi;
   refId: string;
   name: string;
   /** A Try It campaign has no backup, so none is offered. */
   tryIt?: boolean;
-  /** Called once the campaign is gone, so the list can say so and read itself again. */
+  /** Called once the API says it deleted the campaign, so the list can say so and read itself again. */
   onDeleted: (channelsLeft: boolean) => void;
+  /** The campaign was already gone (not deleted by this press): the list reads itself again, and says
+   * so without claiming a delete. */
+  onGone: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -38,7 +42,7 @@ export default function CampaignDelete({
   const fail = (error: unknown) => {
     const kind = error instanceof ApiError ? error.kind : "server";
     setProblem(words.problem[kind] ?? words.problem["server"] ?? "");
-    if (kind === "not-found") onDeleted(false); // it is already gone: show the list as it is now
+    if (kind === "not-found") onGone(); // never "Deleted": this press deleted nothing
   };
 
   const backup = async () => {
@@ -116,7 +120,7 @@ export default function CampaignDelete({
       )}
       <label class="field">
         {words.typeName}
-        <input type="text" value={typed} maxLength={100} placeholder={name} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} onInput={(e) => setTyped((e.target as HTMLInputElement).value)} />
+        <input type="text" value={typed} maxLength={100} placeholder={name} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellcheck={false} onInput={(e) => setTyped((e.target as HTMLInputElement).value)} />
       </label>
       <p class="small muted">{typed.trim() !== "" && !matches ? words.noMatch : words.typeHint}</p>
       {problem && (
