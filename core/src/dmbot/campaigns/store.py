@@ -445,6 +445,17 @@ class CampaignStore:
                 int(v) for row in await cur.fetchall() for v in row.values() if v is not None
             )
 
+    async def table_chat_channel_ids(self, guild_id: int) -> frozenset[int]:
+        """The extra text channels the server's campaigns have picked to be read as table chat
+        (#1118), while the switch is on. For finding where DMbot may have answered a picture."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT table_chat_channel_id FROM campaigns WHERE guild_id = %s"
+                " AND table_chat AND table_chat_channel_id IS NOT NULL",
+                (guild_id,),
+            )
+            return frozenset(int(row["table_chat_channel_id"]) for row in await cur.fetchall())
+
     async def list_campaigns(self, guild_id: int) -> list[Campaign]:
         """All of a server's campaigns, most recently used first."""
         async with self._db.guild(guild_id, snapshot=True) as conn:
@@ -941,8 +952,11 @@ class CampaignStore:
             # deadlock while the sections clear their rows.
             await self._lock(conn, guild_id, campaign_id)
             current = await self._require(conn, guild_id, campaign_id)
+            # The holder is the owner or, with no owner yet, any game master (#2556); this is the
+            # check of `delete_campaign.holder_may`, made again under the lock.
             if only_if_owner is not None and (
-                current.owner_user_id != only_if_owner or only_if_owner not in current.dm_user_ids
+                only_if_owner not in current.dm_user_ids
+                or (current.owner_user_id is not None and current.owner_user_id != only_if_owner)
             ):
                 raise CampaignError(PLAN_HOLDER_CHANGED)
             for section in self._sections.values():

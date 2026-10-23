@@ -24,7 +24,7 @@ import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import beliefs
+from dmbot.memory import beliefs, kin
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
 from dmbot.memory.checks import (
     ACTS_AFTER_END,
@@ -389,8 +389,10 @@ def _make(
     )
 
 
-def _predicate_words(onto: Ontology, key: str, detail: str) -> str:
+def _predicate_words(onto: Ontology, key: str, detail: str, directional: bool = False) -> str:
     term = onto.predicates.get(key)
+    if key == "kin_of" and directional and (role := kin.role_of(detail)):
+        return kin.forward(role)  # "is the niece of", not "is family of" (#2457)
     return detail if key == "associated_with" and detail else (term.label if term else key)
 
 

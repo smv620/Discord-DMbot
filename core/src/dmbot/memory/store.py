@@ -33,7 +33,7 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, merge_restore, notify, standing, states
+from dmbot.memory import beliefs, kin, merge_restore, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
@@ -229,7 +229,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         r["id"], r["subject_id"], r["predicate"], r["object_id"], r["detail"],
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
-        r["secret"], r["created_at"], r["definition_version"], r["unrevealed"],
+        r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
     )  # fmt: skip
 
 
@@ -252,6 +252,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "created_at": rel.created_at,
         "definition_version": rel.definition_version,
         "unrevealed": rel.unrevealed,
+        "directional": rel.directional,
     }
 
 
@@ -3301,17 +3302,21 @@ class MemoryStore:
         secret: bool = False,
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
+        directional: bool = False,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
         upgraded (the DM's confirmation, or secret=True); one the DM rejected stays
         rejected unless the DM says it again. `unrevealed`: the story holds it back from the
-        players until the table has said it (#2404), the DM's to say."""
+        players until the table has said it (#2404), the DM's to say. `directional`: a family
+        connection whose detail is a role that reads one way, so the first name is the one who
+        holds it (#2457); the DM's to say, and kept in the order given."""
         async with self._write(guild_id, campaign_id, source) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
+                directional=directional,
             )  # fmt: skip
             return Written(value, w.batch)
 
@@ -3330,6 +3335,7 @@ class MemoryStore:
         secret: bool = False,
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
+        directional: bool = False,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -3377,16 +3383,24 @@ class MemoryStore:
             found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
             if len(found) != len(set(mention_ids)):
                 raise MemoryRuleError(NOT_FOUND)
-        s, o = ordered(pred, subject_id, object_id)
+        # Only the DM gives a role a direction, and only a family role (#2457)
+        directional = bool(
+            directional and source == DM and pred.key == "kin_of" and kin.role_of(detail)
+        )
+        s, o = ordered(pred, subject_id, object_id, detail, directional)
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-            pred.version, unrevealed,
+            pred.version, unrevealed, directional,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(new, existing)
         if same is not None:
             upgrade = _upgrade(_relation_row(same), status, secret, source)
+            if new.directional and not same.directional:  # the DM's word on the direction wins
+                upgrade = {
+                    **upgrade, "directional": True, "subject_id": s, "object_id": o,
+                }  # fmt: skip
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
@@ -3559,6 +3573,8 @@ class MemoryStore:
         detail: str,
         *,
         source: str,
+        directional: bool = False,
+        swap: bool = False,
     ) -> Written[Relation]:
         """New words between the same two names, in ONE change, so one Undo puts the old words
         back whole. The new connection is added (keeping who sees it) and the old one ended in the
@@ -3574,10 +3590,17 @@ class MemoryStore:
                 r.id: r.status
                 for r in await _relations_touching(w, current["subject_id"], current["object_id"])
             }
+            # `swap`: the DM's words name the other name first ("Mira is the niece of Aldric" over a
+            # connection stored the other way round); it only matters to a family role (#2457)
+            first, second = (
+                (current["object_id"], current["subject_id"])
+                if swap
+                else (current["subject_id"], current["object_id"])
+            )
             new, _ = await self.add_relation_in(
-                w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
+                w, first, predicate, second, confidence=1.0,
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
-                unrevealed=bool(current["unrevealed"]),
+                unrevealed=bool(current["unrevealed"]), directional=directional,
             )  # fmt: skip
             if new.id == relation_id:
                 return Written(new, w.batch)
@@ -4820,7 +4843,7 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
             continue
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
-            subject, obj = ordered(pred, subject, obj)
+            subject, obj = ordered(pred, subject, obj, str(row["detail"]), bool(row["directional"]))
         moves[row["id"]] = {"subject_id": subject, "object_id": obj}
         forget(state[row["id"]])
         moved = dataclasses.replace(state[row["id"]], subject_id=subject, object_id=obj)
@@ -4832,6 +4855,11 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
             upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
+            if moved.directional and not twin.directional:  # the one with a direction wins (#2457)
+                upgrade = {
+                    **upgrade, "directional": True, "subject_id": moved.subject_id,
+                    "object_id": moved.object_id,
+                }  # fmt: skip
             gone_rows.append(moved.id)
             forget(moved)
             del state[moved.id]
