@@ -302,3 +302,38 @@ class Plans(LinkBase):
         await self.give_plan(BOB.id, cap=1)
         look = (await self.post(bob, "look", token=token)).json()
         self.assertEqual((look["canAccept"], look["why"]), (True, None))
+
+    async def test_a_free_listed_account_with_a_priced_plan_can_and_without_one_cannot(
+        self,
+    ) -> None:
+        from dmbot import entitlements
+
+        entitlements.configure_free_users([BOB.id])
+        self.addCleanup(entitlements.configure_free_users, ())
+        token = await self.link()
+        bob = await self.bob()
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (False, "no_plan"))  # free list alone
+        await self.give_plan(BOB.id, cap=2)
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (True, None))
+        got = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual(got.status_code, 200, got.text)
+
+    async def test_the_owner_hears_of_a_decline_on_the_website(self) -> None:
+        # The door announces the answer, as every answer made on the website does (#737).
+        import psycopg
+
+        from tests.pg import TEST_URL
+
+        token = await self.link()
+        bob = await self.bob()
+        async with await psycopg.AsyncConnection.connect(TEST_URL, autocommit=True) as listener:
+            await listener.execute("LISTEN dmbot_handover_decided")
+            got = await self.post(bob, "decline", token=token)
+            self.assertEqual(got.status_code, 200, got.text)
+            seen = []
+            async for note in listener.notifies(timeout=5, stop_after=1):
+                seen.append(note.payload)
+        [row] = await self.offers()
+        self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])
