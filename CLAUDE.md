@@ -325,6 +325,13 @@ terminal output or Discord screenshots copied to it.
   on 2026-10-18, #1966, so it no longer looks like ⚙️ Settings). Stopping shows one short, factual warning
   and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
+- **Every wait shows that DMbot is still working** (owner, 2026-10-23, #2564): whenever someone waits
+  for DMbot to process something, on the website or in Discord (an import, a long document, a recap, a
+  backup, a move, an AI answer that takes more than a few seconds), DMbot shows **what stage it is at**,
+  **how far along** where it knows (part 1 of 2, 3 of 10), **how long it has been running**, and **when it
+  last moved forward**, updated while it runs. A wait that stops making progress says so, and a failure
+  says what happened and what to do next. Progress shows counts and stages only, never the words of a
+  transcript or document. A new feature with a wait ships with this, or the reviewer sends it back.
 - **Quick, short and on topic** (owner, 2026-10-09): DMbot is there to help the game move
   quickly, never to bog it down or distract. AI answers to the DM are as short as possible
   ("yes" when yes answers it), elaborate only when asked, and stay on the campaign, the
@@ -412,6 +419,12 @@ terminal output or Discord screenshots copied to it.
   a table holding rows. Open **every** table the statement reads, not only the one it
   writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
   backfill would have deleted every row it meant to fill).
+- **A foreign key that carries `guild_id` is `ON UPDATE CASCADE`** (Supervisor, 2026-10-23, #2550):
+  moving a campaign to another server changes its `guild_id` in one statement and lets the database
+  carry the change into every row that hangs off it. A new table whose foreign key includes
+  `guild_id` declares `ON UPDATE CASCADE`, or the catalog test (`test_campaign_move_cascade`) fails.
+  A new table with a `campaign_id` also goes on the list in `campaigns/tables.py`, in a backup
+  section or on the written "not in a backup, because…" list (#2552).
 - **Claim the migration number on #2475 before pushing** (Supervisor, 2026-10-16; one place since
   2026-10-23, after four more collisions in one night when claims sat on separate issues): read
   #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
