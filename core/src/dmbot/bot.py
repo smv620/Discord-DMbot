@@ -369,8 +369,10 @@ from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
+from dmbot.transcript import suggestions as line_suggestions
 from dmbot.transcript.cleaner import (
     DM_EDIT,
+    IMAGE_EDIT,
     SOUND,
     Cleaned,
     Fix,
@@ -425,8 +427,8 @@ from dmbot.transcription.base import (
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import guide as guide_screen
+from dmbot.ui import image_fix, looked_at, rule_card
 from dmbot.ui import logic as ui_logic
-from dmbot.ui import looked_at, rule_card
 from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
@@ -526,6 +528,7 @@ PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
 SOUND_CLOSE = 0.6
 # ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
 SOUND_LENGTH_GAP = 1
+IMAGE_REPLIES_KEPT = 200  # pictures whose reply is remembered, so a delete can take it back
 DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
@@ -1425,6 +1428,9 @@ class DMBot(commands.AutoShardedBot):
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
         self._deleted_messages: dict[int, float] = {}
+        # the "Text in this image" replies by the picture's message, so deleting the picture takes
+        # its words out of the chat too (#2450); the newest few, in memory only
+        self._image_replies: dict[int, list[discord.Message]] = {}
         self.map_notes: MapNoteStore | None = None  # set where the database is known (#2450)
         self.image_desk: ImageDesk | None = (
             ImageDesk(
@@ -1608,6 +1614,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(KnowButton, WordsButton)  # Watch the story (#1729)
         self.add_dynamic_items(GuideButton)  # Guide me (#1731)
         self.add_dynamic_items(LineFixButton, FixLineButton)  # a player's line fix (#1491)
+        self.add_dynamic_items(image_fix.FixTextButton)  # the words in a picture (#2450)
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -3080,7 +3087,9 @@ class DMBot(commands.AutoShardedBot):
                 suggested, waiting = await self.suggestions.session_counts(gid, session_id)
             except Exception:
                 log.exception("Couldn't count the session's suggested fixes")
-        edited = sum(1 for n in table.fix_notes.notes if n.fix.how == DM_EDIT and not n.undone)
+        edited = sum(
+            1 for n in table.fix_notes.notes if n.fix.how in (DM_EDIT, IMAGE_EDIT) and not n.undone
+        )
         unanswered = sum(
             1
             for why in table.questions.closed_why.values()
@@ -5254,7 +5263,10 @@ class DMBot(commands.AutoShardedBot):
         )
         if links:
             self._track(
-                self._hear_images(table, author.id, start_ms, message.id, links), "table-images"
+                self._hear_images(
+                    table, author.id, start_ms, message.id, links, message.channel.id
+                ),
+                "table-images",
             )
         text = table_chat.clean(message.clean_content)  # names, not <@123> markup
         if text is None:
@@ -5285,7 +5297,13 @@ class DMBot(commands.AutoShardedBot):
             return False
 
     async def _hear_images(
-        self, table: Table, user_id: int, start_ms: int, message_id: int, links: list[str]
+        self,
+        table: Table,
+        user_id: int,
+        start_ms: int,
+        message_id: int,
+        links: list[str],
+        channel_id: int = 0,
     ) -> None:
         """A picture in the table chat becomes an (image) line (#2450). Nothing is fetched or sent
         to the AI unless the poster agreed, the campaign's plan has AI and the day's limit is not
@@ -5339,6 +5357,59 @@ class DMBot(commands.AutoShardedBot):
                 message_id,
                 image=True,
             )
+            await self._say_image_text(table, user_id, start_ms + n, channel_id, read, message_id)
+
+    async def _say_image_text(
+        self,
+        table: Table,
+        user_id: int,
+        started_ms: int,
+        channel_id: int,
+        read: images.Read | None,
+        message_id: int = 0,
+    ) -> None:
+        """A picture of writing: the words DMbot read, said in the chat it was posted in, with
+        ✏️ Fix for the poster or a DM (#2450). Only the words of the picture, quoted: never DM
+        screen content. Not said when the poster no longer agrees or the session is over."""
+        session_id = table.transcript_session_id
+        if (
+            read is None
+            or read.kind != images.TEXT
+            or not read.text
+            or not channel_id
+            or session_id is None
+            or (message_id and message_id in self._deleted_messages)  # the picture is gone
+            or not self._still_recorded(table, user_id)
+            or not self.consent.has_image_consent(table.guild_id, user_id)
+        ):
+            return
+        sent = await self.post_message(
+            channel_id,
+            image_fix.reply_text(read.text),
+            image_fix.fix_view(session_id, user_id, started_ms),
+        )
+        if sent is None or not message_id:
+            return
+        if message_id in self._deleted_messages:  # deleted while the reply was being sent
+            await self._delete_reply(sent)
+            return
+        self._image_replies.setdefault(message_id, []).append(sent)
+        while len(self._image_replies) > IMAGE_REPLIES_KEPT:  # the oldest picture's go first
+            del self._image_replies[next(iter(self._image_replies))]
+
+    async def _delete_reply(self, reply: discord.Message) -> None:
+        """Take one of DMbot's own replies back. Never raises (it may be gone already)."""
+        try:
+            await reply.delete()
+        except discord.HTTPException:
+            log.info("Table image: a reply could not be deleted")
+
+    async def _forget_image_replies(self, message_ids: Iterable[int]) -> None:
+        """Pictures were deleted: so are the words DMbot said about them (#2450). A deleted
+        picture leaves nothing in the chat, as it leaves nothing in the unsaved transcript."""
+        for message_id in message_ids:
+            for reply in self._image_replies.pop(message_id, []):
+                await self._delete_reply(reply)
 
     def _deliver_typed(
         self,
@@ -5416,24 +5487,28 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
         """Several typed messages deleted at once (a moderator's purge): the same as one."""
+        for message_id in payload.message_ids:
+            self._note_deleted(message_id)
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
-        if table is not None:
+        if table is not None:  # first: nothing awaited stands between a delete and its line going
             for message_id in payload.message_ids:
-                self._note_deleted(message_id)
                 table.unsaved.drop_message(message_id)
         if self.map_notes is not None and payload.guild_id is not None:
             for message_id in payload.message_ids:
                 await self._forget_map_notes(payload.guild_id, message_id)
+        await self._forget_image_replies(payload.message_ids)  # last: it reads the chat
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
-        already saved stays in the raw transcript, as PLAN says."""
+        already saved stays in the raw transcript, as PLAN says. DMbot's reply about a picture
+        goes with the picture."""
+        self._note_deleted(payload.message_id)
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
-        if table is not None:
-            self._note_deleted(payload.message_id)
+        if table is not None:  # first: nothing awaited stands between a delete and its line going
             table.unsaved.drop_message(payload.message_id)
         if self.map_notes is not None and payload.guild_id is not None:
             await self._forget_map_notes(payload.guild_id, payload.message_id)
+        await self._forget_image_replies([payload.message_id])  # last: it reads the chat
 
     async def _forget_map_notes(self, guild_id: int, message_id: int) -> None:
         """A deleted picture takes the map notes made from it (#2450)."""
@@ -7053,15 +7128,21 @@ class DMBot(commands.AutoShardedBot):
             return fix_notes.ONLY_DM, None
         note = table.fix_notes.find(note_id)
         assert note is not None
-        if not self.consent.has_consent(guild_id, note.speaker):
+        # A picture's words need the speaker's yes to pictures, as writing them did.
+        agreed = (
+            self.consent.has_image_consent
+            if note.fix.how == IMAGE_EDIT
+            else self.consent.has_consent
+        )
+        if not agreed(guild_id, note.speaker):
             self._redraw_fix_notes(table)  # their line shouldn't be listed any more
             return fix_notes.STOPPED, None
         undone = table.fix_notes.undo(note_id)  # before any await: undone once
         if not undone:
             return fix_notes.ALREADY, None
         allow: tuple[str, int] | None = None
-        if note.fix.how == DM_EDIT:
-            pass  # a line the DM rewrote by hand (#1499): no name, so no "keep as heard" rule
+        if note.fix.how in (DM_EDIT, IMAGE_EDIT):
+            pass  # a line rewritten by hand (#1499): no name, so no "keep as heard" rule
         else:
             try:
                 written = await self.memory.add_correction(
@@ -7075,14 +7156,18 @@ class DMBot(commands.AutoShardedBot):
                 self.lookup.mark_stale(guild_id, table.campaign_id)
             allow = (table.campaign_id, written.batch) if written.batch is not None else None
         self._redraw_fix_notes(table)
-        if not self.consent.has_consent(guild_id, note.speaker):
+        if not agreed(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # their words aren't put back anywhere
         changed = await self._rewrite_line(
-            table, note.speaker, note.started_ms, table.fix_notes.line_text(note)
+            table,
+            note.speaker,
+            note.started_ms,
+            table.fix_notes.line_text(note),
+            image=note.fix.how == IMAGE_EDIT,
         )
-        if not self.consent.has_consent(guild_id, note.speaker):
+        if not agreed(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # stopped meanwhile: nothing about their line
-        if note.fix.how == DM_EDIT:
+        if note.fix.how in (DM_EDIT, IMAGE_EDIT):
             return fix_notes.edit_done_text(line_kept=not changed), None
         md = discord.utils.escape_markdown
         text = fix_notes.done_text(md(note.fix.heard), md(note.fix.written), line_kept=not changed)
@@ -7110,6 +7195,9 @@ class DMBot(commands.AutoShardedBot):
         text: str,
         *,
         noted: bool = False,
+        image: bool = False,
+        by: int = 0,
+        by_dm: bool = False,
     ) -> bool:
         """Write a fix the DM accepted into one line's cleaned words (#1491); what was heard
         never changes. `noted` (a DM's own edit, #1499): in a running session the change is listed
@@ -7118,8 +7206,16 @@ class DMBot(commands.AutoShardedBot):
         bring the old words back over this edit). A running session's line goes through the same
         writer as every fix (the saved line, the one waiting to be saved, and the channel message
         while it is recent); a finished session's saved line is changed in the database. Only
-        while the speaker is still recorded. True if a line changed."""
-        if not self.consent.has_consent(guild_id, user_id) or self.suggestions is None:
+        while the speaker is still recorded. True if a line changed. `image` (#2450): the line
+        describes a picture the speaker posted, which is kept apart from their speech; a correction
+        to it is always listed with Undo, and needs the speaker's yes to pictures. `by` and
+        `by_dm`: who made the fix and whether they are a DM: a second correction replaces the
+        earlier one only if it was theirs, or they are a DM."""
+        if image:
+            if not self.consent.has_image_consent(guild_id, user_id) or self.transcripts is None:
+                return False
+            noted = True
+        elif not self.consent.has_consent(guild_id, user_id) or self.suggestions is None:
             return False
         for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
             if (
@@ -7127,12 +7223,33 @@ class DMBot(commands.AutoShardedBot):
                 and table.campaign_id == campaign_id
                 and table.transcript_session_id == session_id
             ):
-                own = await self.suggestions.line(guild_id, session_id, user_id, started_ms)
+                if image:
+                    assert self.transcripts is not None  # (checked above)
+                    read = await self.transcripts.image_line(
+                        guild_id, session_id, user_id, started_ms
+                    )
+                    own = (
+                        None
+                        if read is None
+                        else line_suggestions.Own(started_ms, read[0], read[1], user_id)
+                    )
+                else:
+                    assert self.suggestions is not None  # (checked above)
+                    own = await self.suggestions.line(guild_id, session_id, user_id, started_ms)
                 if noted:
                     asked = table.questions.open
+                    # A picture's words corrected before are replaced by the new correction (the
+                    # Undo of the new one puts back the words as first read), not refused: only
+                    # a DM's Undo could ever clear the old note.
+                    earlier = (
+                        table.fix_notes.picture_edits(user_id, started_ms, by, by_dm)
+                        if image
+                        else []
+                    )
                     if (
                         own is None
-                        or table.fix_notes.on_line(user_id, started_ms)
+                        or earlier is None  # not theirs to replace
+                        or (table.fix_notes.on_line(user_id, started_ms) and not earlier)
                         # An open "Did they mean…?" about this line would write over the edit
                         # from the words as heard when it is answered.
                         or (
@@ -7144,14 +7261,20 @@ class DMBot(commands.AutoShardedBot):
                         return False
                     # The note is over the line's words now (not as heard), so an Undo puts
                     # those back and keeps any name already fixed in it.
-                    edit = Fix(0, len(own.text), own.text, text, "", DM_EDIT, sure=False)
-                    added = table.fix_notes.add(user_id, started_ms, own.text, (edit,))
-                    words = table.fix_notes.words_now(user_id, started_ms, own.text, (edit,))
-                    done = await self._rewrite_line(table, user_id, started_ms, words)
+                    base = earlier[0].fix.heard if earlier else own.text
+                    edit = Fix(
+                        0, len(base), base, text, "",
+                        IMAGE_EDIT if image else DM_EDIT, sure=False,
+                    )  # fmt: skip
+                    before = list(table.fix_notes.notes)
+                    table.fix_notes.notes = [n for n in before if n not in earlier]
+                    table.fix_notes.add(user_id, started_ms, base, (edit,), by=by)
+                    words = table.fix_notes.words_now(user_id, started_ms, base, (edit,))
+                    done = await self._rewrite_line(table, user_id, started_ms, words, image=image)
                     if done:
                         self._redraw_fix_notes(table)
-                    else:  # nothing changed: nothing to undo
-                        table.fix_notes.notes = [n for n in table.fix_notes.notes if n not in added]
+                    else:  # nothing changed: nothing to undo; the earlier notes stay as they were
+                        table.fix_notes.notes = before
                     return done
                 if own is not None:
                     # Like an answer to "Did they mean…?": the notes know the line's words
@@ -7165,10 +7288,19 @@ class DMBot(commands.AutoShardedBot):
         if self.transcripts is None:
             return False
         return bool(
-            await self.transcripts.relabel_line(guild_id, session_id, user_id, started_ms, text)
+            await self.transcripts.relabel_line(
+                guild_id,
+                session_id,
+                user_id,
+                started_ms,
+                text,
+                **({"image": True} if image else {}),
+            )
         )
 
-    async def _rewrite_line(self, table: Table, speaker: int, started_ms: int, text: str) -> bool:
+    async def _rewrite_line(
+        self, table: Table, speaker: int, started_ms: int, text: str, *, image: bool = False
+    ) -> bool:
         """Change a line's words (#296, #503): saved, waiting to be saved, and in the
         transcript channel if it was posted in the last ~30 s. Only while the speaker is
         still recorded, checked again after every wait. True if the line changed: saved
@@ -7176,16 +7308,22 @@ class DMBot(commands.AutoShardedBot):
         changed (a database error, logged), the channel isn't either, so "That line stays
         as heard" is true everywhere."""
         guild_id, found, edited = table.guild_id, False, False
+        agreed = self.consent.has_image_consent if image else self.consent.has_consent
         # The saved line: hold the save lock, so a batch being saved can't miss this.
         async with table.save_lock:
-            if self.consent.has_consent(guild_id, speaker):
-                found = table.unsaved.relabel(speaker, started_ms, text)
+            if agreed(guild_id, speaker):
+                found = table.unsaved.relabel(speaker, started_ms, text, image=image)
                 session_id = table.transcript_session_id
                 if not found and self.transcripts is not None and session_id is not None:
                     try:
                         found = bool(
                             await self.transcripts.relabel_line(
-                                guild_id, session_id, speaker, started_ms, text
+                                guild_id,
+                                session_id,
+                                speaker,
+                                started_ms,
+                                text,
+                                **({"image": True} if image else {}),
                             )
                         )
                     except Exception:
@@ -7198,7 +7336,8 @@ class DMBot(commands.AutoShardedBot):
             # A line shown as an off-topic marker stays one (#52): an Undo never brings
             # the chat back into the channel.
             hidden = (speaker, started_ms) in table.hidden
-            if self.consent.has_consent(guild_id, speaker) and not hidden:
+            # (a typed line, a picture's too, is never in the channel)
+            if agreed(guild_id, speaker) and not hidden and not image:
                 edit = table.transcript.relabel(speaker, started_ms, text, time.monotonic())
                 if edit is not None:
                     message, content = edit
@@ -7215,7 +7354,7 @@ class DMBot(commands.AutoShardedBot):
                     except Exception:
                         log.exception("Couldn't edit a transcript message with a name change")
         changed = found or edited
-        if changed and self.consent.has_consent(guild_id, speaker):
+        if changed and not image and agreed(guild_id, speaker):
             self._line_changed(table, speaker, started_ms, text)
         return changed
 
