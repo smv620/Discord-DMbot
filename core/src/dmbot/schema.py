@@ -12140,7 +12140,7 @@ IMPORT_STEPS = """
 
 
 WEB_BACKUPS = (
-    f"""
+    """
     -- The copy of a campaign the website downloads (#2554, part 1b). The website's role cannot read
     -- the tables a backup holds, so it asks for a copy here and the bot builds it the way
     -- Discord's Download does (same sections, same packing), from the database alone, so a server
@@ -12158,7 +12158,7 @@ WEB_BACKUPS = (
         -- server or id carries its waiting copies with it.
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
-        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
         state       TEXT NOT NULL DEFAULT 'waiting'
             CHECK (state IN ('waiting', 'working', 'done', 'failed')),
