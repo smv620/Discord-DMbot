@@ -35,6 +35,17 @@ describe("Names page", () => {
     expect(await serious()).toEqual([]);
   });
 
+  it("names ticked for Merge selected, and the question about which to keep (#2427)", async () => {
+    render(<Names api={mockApi("table")} path="/account/names/100.cmp1" />);
+    await screen.findByRole("list", { name: nw.listLabel });
+    fireEvent.click(screen.getByLabelText(nw.pickLabel("Mira Voss")));
+    fireEvent.click(screen.getByLabelText(nw.pickLabel("Brynwater Crossing")));
+    expect(await serious()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: nw.mergeSelected }));
+    await screen.findByRole("heading", { name: nw.mergeManyHeading });
+    expect(await serious()).toEqual([]);
+  });
+
   it("a name open to change, and the question before removing it", async () => {
     render(<Names api={mockApi("table")} path="/account/names/100.cmp1" />);
     const list = await screen.findByRole("list", { name: nw.listLabel });

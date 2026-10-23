@@ -24,7 +24,7 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import { clampHops, isTheory } from "./webLayout";
-import BackToCampaign from "./BackToCampaign";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign's address, read from `/account/web/<server>.<campaign>`. */
 export function webRefFromPath(path: string): string | null {
@@ -299,7 +299,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
   return (
     <div class="stack web-page">
-      {ref && <BackToCampaign campaignRef={ref} />}
+      {ref && <CampaignNav api={api} campaignRef={ref} page="graph" />}
       <p class="muted small">{words.lead}</p>
       {canEdit ? (
         <p class="small muted">{words.undoNote}</p>
