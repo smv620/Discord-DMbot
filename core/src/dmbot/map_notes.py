@@ -62,7 +62,9 @@ class MapNoteStore:
         self._db = db
         self._clock = clock
 
-    async def add(self, guild_id: int, campaign_id: str, user_id: int, read: Read) -> bool:
+    async def add(
+        self, guild_id: int, campaign_id: str, user_id: int, read: Read, message_id: int = 0
+    ) -> bool:
         """Keep a map's description. False for anything that is not a map with something in it.
         The oldest note goes when the campaign is over `KEEP`. One transaction."""
         if read.kind != "map" or not (read.places or read.layout):
@@ -83,12 +85,13 @@ class MapNoteStore:
                 (f"map_notes:{guild_id}:{campaign_id}",),
             )
             await conn.execute(
-                "INSERT INTO map_notes (guild_id, campaign_id, user_id, made_at, alt, layout,"
-                " places) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
+                "INSERT INTO map_notes (guild_id, campaign_id, user_id, message_id, made_at, alt,"
+                " layout, places) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
                 (
                     guild_id,
                     campaign_id,
                     user_id,
+                    message_id,
                     int(self._clock()),
                     alt[:ALT_MAX],
                     read.layout[:LAYOUT_MAX],
@@ -102,6 +105,17 @@ class MapNoteStore:
                 (guild_id, campaign_id, guild_id, campaign_id, KEEP),
             )
         return True
+
+    async def forget_message(self, guild_id: int, message_id: int) -> int:
+        """The picture was deleted: so are the notes made from it. How many went."""
+        if message_id <= 0:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM map_notes WHERE guild_id = %s AND message_id = %s",
+                (guild_id, message_id),
+            )
+            return cur.rowcount or 0
 
     async def notes(self, guild_id: int, campaign_id: str) -> list[MapNote]:
         """This campaign's notes, newest first."""

@@ -137,6 +137,24 @@ class Kept(DatabaseTest):
             cur = await conn.execute("SELECT count(*) AS n FROM map_notes")
             self.assertEqual((await cur.fetchone() or {})["n"], 0)
 
+    async def test_a_deleted_pictures_notes_go_and_no_one_elses(self) -> None:
+        await self.store.add(GUILD_A, self.one.id, ME, a_map("Mine"), message_id=500)
+        await self.store.add(GUILD_A, self.one.id, ME, a_map("Other"), message_id=501)
+        await self.store.add(GUILD_B, self.far.id, ME, a_map("Far"), message_id=500)  # same id
+        self.assertEqual(await self.store.forget_message(GUILD_A, 500), 1)
+        left = await self.store.notes(GUILD_A, self.one.id)
+        self.assertEqual([n.alt for n in left], ["A map of Other."])
+        self.assertEqual(len(await self.store.notes(GUILD_B, self.far.id)), 1)
+        self.assertEqual(await self.store.forget_message(GUILD_A, 0), 0)  # 0 is "no message"
+
+    async def test_a_backup_carries_no_message_id(self) -> None:
+        await self.store.add(GUILD_A, self.one.id, ME, a_map(), message_id=777)
+        backup = await self.campaigns.export(GUILD_A, self.one.id)
+        self.assertNotIn("777", str(backup.get("sections", backup)).replace("map_notes", ""))
+        restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
+        self.assertEqual(await self.store.forget_message(GUILD_B, 777), 0)  # nothing to match
+        self.assertEqual(len(await self.store.notes(GUILD_B, restored.id)), 1)
+
     async def test_they_travel_in_a_backup(self) -> None:
         await self.store.add(GUILD_A, self.one.id, ME, a_map("Alpha"))
         await self.store.add(GUILD_A, self.one.id, FRIEND, a_map("Beta"))

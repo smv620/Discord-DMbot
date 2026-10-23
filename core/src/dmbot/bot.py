@@ -62,7 +62,12 @@ from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, STORY_GUIDE, CampaignError
+from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_LEVEL,
+    SHARED_STORY,
+    STORY_GUIDE,
+    CampaignError,
+)
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -5246,6 +5251,19 @@ class DMBot(commands.AutoShardedBot):
             if (a.content_type or "").startswith("image/") and a.size <= images.MAX_BYTES
         ][: images.MAX_PER_MESSAGE]
 
+    async def _maps_may_be_kept(self, guild_id: int, campaign_id: str) -> bool:
+        """Has this campaign's DM confirmed the right to use shared material (the Shared story
+        switch's warning; CLAUDE.md, IP)? A map may be from a published adventure, so its places
+        are kept only then (#2450). A failure to read the record is a no."""
+        try:
+            return any(
+                c["purpose"] == SHARED_STORY
+                for c in await self.campaigns.confirmations(guild_id, campaign_id)
+            )
+        except Exception:
+            log.exception("Table image: couldn't read the right-to-use record")
+            return False
+
     async def _hear_images(
         self, table: Table, user_id: int, start_ms: int, message_id: int, links: list[str]
     ) -> None:
@@ -5273,15 +5291,20 @@ class DMBot(commands.AutoShardedBot):
         reads = await desk.describe(gid, cid, links, still_ok)
         if not still_ok():
             return
-        if self.map_notes is not None:
+        maps = [r for r in reads if r is not None and r.kind == images.MAP]
+        if maps and self.map_notes is not None:
             # Under the save lock, as "delete my past transcripts" takes it, and with the consent
             # asked once more right before, so a note can't be written after its poster deleted.
+            # Only where the DM confirmed the right to use shared material (the Shared story
+            # switch's confirmation): without it the picture gets its short line and no more.
             async with table.save_lock:
-                for read in reads:
-                    if read is None or read.kind != images.MAP or not still_ok():
-                        continue
+                if not await self._maps_may_be_kept(gid, cid):
+                    maps = []
+                for a_map in maps:
+                    if not still_ok():
+                        break
                     try:
-                        await self.map_notes.add(gid, cid, user_id, read)
+                        await self.map_notes.add(gid, cid, user_id, a_map, message_id)
                     except Exception as exc:  # the transcript line matters more than the note
                         log.warning(
                             "Table image: couldn't keep a map's description (%s)",
@@ -5378,6 +5401,9 @@ class DMBot(commands.AutoShardedBot):
             for message_id in payload.message_ids:
                 self._note_deleted(message_id)
                 table.unsaved.drop_message(message_id)
+        if self.map_notes is not None and payload.guild_id is not None:
+            for message_id in payload.message_ids:
+                await self._forget_map_notes(payload.guild_id, message_id)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
@@ -5386,6 +5412,16 @@ class DMBot(commands.AutoShardedBot):
         if table is not None:
             self._note_deleted(payload.message_id)
             table.unsaved.drop_message(payload.message_id)
+        if self.map_notes is not None and payload.guild_id is not None:
+            await self._forget_map_notes(payload.guild_id, payload.message_id)
+
+    async def _forget_map_notes(self, guild_id: int, message_id: int) -> None:
+        """A deleted picture takes the map notes made from it (#2450)."""
+        try:
+            assert self.map_notes is not None
+            await self.map_notes.forget_message(guild_id, message_id)
+        except Exception:
+            log.exception("Table image: couldn't delete a deleted picture's map notes")
 
     def _note_deleted(self, message_id: int) -> None:
         """Remember a deleted message for a few minutes (a picture takes seconds to describe)."""

@@ -11692,6 +11692,9 @@ MAP_NOTES = """
         guild_id    BIGINT NOT NULL,
         campaign_id TEXT NOT NULL,
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        -- the Discord message the map was posted in, so deleting the picture deletes its note
+        -- (0: restored from a backup, which never carries message IDs)
+        message_id  BIGINT NOT NULL DEFAULT 0,
         made_at     BIGINT NOT NULL,
         alt         TEXT NOT NULL CHECK (char_length(alt) BETWEEN 1 AND 400),
         layout      TEXT NOT NULL CHECK (char_length(layout) <= 2500),
@@ -11701,6 +11704,7 @@ MAP_NOTES = """
     );
     CREATE INDEX map_notes_campaign ON map_notes (campaign_id, id);
     CREATE INDEX map_notes_person ON map_notes (guild_id, user_id);
+    CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
 MIGRATIONS: tuple[Migration, ...] = (

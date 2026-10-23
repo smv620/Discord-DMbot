@@ -3195,17 +3195,12 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     (`MapNotesSection`, checked on restore like every section), and deleted with the poster's own lines when they
     delete their transcripts (stopping being recorded deletes neither the notes nor transcript lines, and a backup taken
     earlier still holds them, with the poster's Discord id). A poster who stops mid-reading leaves no note, and a note is
-    written under the same lock "delete my past transcripts" takes. **Open question for Supervisor before go-live
-    (IP):** a map in a player's picture may come from a published adventure; the notes keep its place names and
-    layout in words without the DM's confirmation of the right to use it (the Shared story flow). Nothing reads them
-    and the feature is off, so nothing is exposed yet; the go-live wording should say maps are kept in words, and the
-    ruling on whether to gate the storage on that confirmation belongs with it. Part 4 (the text reply and ✏️ Fix)
-    follows.
-  - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
-    that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
-    yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the
-    website's `pictures` promise, privacy page, help and features lines) is a separate PR that merges only on the
-    owner's word. The website's transcript view still tags these lines "(typed)" until its database functions
+    written under the same lock "delete my past transcripts" takes. **A map may be from a published adventure** (Supervisor's ruling, 2026-10-23): a note is written
+    only when the campaign has the DM's Shared story right-to-use confirmation recorded
+    (`shared_confirmations`, purpose `shared_story`; a failure to read it is a no, and another campaign's
+    confirmation does not count). Without it the picture gets only its short transcript line. A note holds
+    the message it came from (never in a backup), so deleting the picture, or a purge, deletes its notes.
+    The website's transcript view still tags these lines "(typed)" until its database functions
     learn the flag (follow-up).
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
