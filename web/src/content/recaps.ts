@@ -82,6 +82,8 @@ export const text = {
   uncheckedKeepTrying: "DMbot keeps trying to finish the check.",
   uncheckedOpened: "Opened. You can edit it now.",
   uncheckedFailed: "Couldn't open the draft. Press the button again in a minute.",
+  uncheckedChanged: "DMbot changed the draft while you were reading. Read it again, then press the button.",
+  uncheckedNotYet: "It isn't time yet. DMbot keeps trying to finish the check.",
   checksHeading: "What the checks said",
   checksNote: "DMbot wasn't sure about these. Only you can see them. You decide what stays.",
   failed: "DMbot couldn't write this recap. Press Try again, or leave it.",

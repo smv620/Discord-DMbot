@@ -326,6 +326,9 @@ export interface Recap {
   uncheckedDraft?: string[];
   /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
   canApproveUnchecked?: boolean;
+  /** A fingerprint of the words this view shows, sent back with "approve it as it is" so that only the
+   * words the DM read are approved (#2305). Missing from an older API. */
+  textHash?: string;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -1110,6 +1113,9 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "not-yet" // a draft is opened as it is only after 3 days of waiting (#2305)
+  | "changed" // the draft was revised since the page showed it (#2305)
+  | "bad-hash" // the page sent no fingerprint of the words (#2305)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1185,7 +1191,7 @@ export interface AccountApi {
   approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
   /** "Use this draft as it is" for a recap unchecked for 3 days (#2297, #2305): it then goes on as
    * a finished draft for the DM to edit and approve as usual. Missing from an older API. */
-  approveUnchecked?(ref: string): Promise<Recap>;
+  approveUnchecked?(ref: string, textHash: string): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1390,6 +1396,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  not_yet: "not-yet",
+  changed: "changed",
+  bad_hash: "bad-hash",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1781,8 +1790,8 @@ export function httpApi(
           ...(options?.post ? { post: true } : {}),
         }),
       ),
-    approveUnchecked: async (ref) =>
-      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, {})),
+    approveUnchecked: async (ref, textHash) =>
+      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, { textHash })),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
