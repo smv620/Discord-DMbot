@@ -141,6 +141,27 @@ def _unchecked_sentences(row: Mapping[str, Any], ready: bool) -> list[int]:
     ]
 
 
+# Whether the recap page may offer "approve it as it is" for a draft unchecked for 3 days (#2305).
+# The page and this read side are built; the approve itself changes where the job is in the bot's
+# steps, which is the bot's to do, so the route stays off until it does.
+APPROVE_UNCHECKED_LIVE = False
+
+
+def _unchecked_draft(row: Mapping[str, Any], ready: bool) -> list[str]:
+    """The draft's sentences, for the DM to read, once it has waited for its check for 3 days
+    (#2297): empty before that, and for a recap that is ready. The same split the marked sentence
+    numbers count by, so the page can highlight them. Only the campaign's DMs are ever given a
+    draft that is not posted; the signed-in read door already keeps to them."""
+    import time
+
+    since = _unchecked_since(row, ready)
+    if since == 0 or time.time() - since < critics.UNCHECKED_AFTER_S:
+        return []
+    from dmbot.recaps import draft
+
+    return draft.sentences_of(strip_cues(row["summary"]))
+
+
 def _mail_view(row: dict[str, Any]) -> dict[str, Any]:
     """Where the recap-ready email goes, for the signed-in person only (#2334): the address (null
     when there is none), where it came from (`payment`: the payment company's, change it in the
@@ -181,6 +202,12 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # themselves. Players never see an unchecked draft unless the DM approves it.
         "uncheckedSince": _unchecked_since(row, ready),
         "uncheckedSentences": _unchecked_sentences(row, ready),
+        "uncheckedDraft": (unchecked := _unchecked_draft(row, ready)),
+        # Only while it still waits (a failed or dropped recap is not opened this way).
+        "canApproveUnchecked": APPROVE_UNCHECKED_LIVE
+        and bool(unchecked)
+        and status == "draft"
+        and state not in ("ready", "failed"),
         "canEdit": ready,
         "canPost": ready,
         # While it goes out or its audio is made (#2419): when the work started on the server, the
