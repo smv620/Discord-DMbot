@@ -150,9 +150,8 @@ class ThePage(PlotBase):
                 (THURSDAY.id, self.one.id, await self.hash_of(), ALICE.id),
             )
         got = (await self.plot()).json()
-        self.assertEqual(
-            got["versions"], [{"version": 1, "acceptedBy": str(ALICE.id), "acceptedAt": 7}]
-        )
+        # (who accepted it is not sent: the page never shows a Discord id)
+        self.assertEqual(got["versions"], [{"version": 1, "acceptedAt": 7}])
         self.assertEqual(got["version"], 1)  # this text is that accepted version
 
     async def test_only_a_dm_of_the_campaign_reads_or_answers(self) -> None:

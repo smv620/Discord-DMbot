@@ -11960,8 +11960,8 @@ PLOT_ISSUES = (
             WHERE i.guild_id = g AND i.campaign_id = c AND i.session_at = at_
               AND i.text_hash = h AND st = 'ready';
         SELECT COALESCE(jsonb_agg(jsonb_build_object(
-                   'version', a.version, 'acceptedBy', a.accepted_by::TEXT,
-                   'acceptedAt', a.accepted_at) ORDER BY a.version), '[]'::jsonb)
+                   'version', a.version, 'acceptedAt', a.accepted_at)
+                   ORDER BY a.version), '[]'::jsonb)
             INTO vers FROM recap_accepted a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_;
         RETURN jsonb_build_object('state', st, 'hash', h, 'issues', issues,
