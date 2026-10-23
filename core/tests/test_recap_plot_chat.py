@@ -155,6 +155,31 @@ class Talking(PlotBase):
         got = await self.say("One more.")
         self.assertEqual((got.status_code, got.json()["error"]), (429, "too_soon"))
 
+    async def test_a_campaign_has_an_hourly_limit_across_its_issues(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:  # thirty answered messages this hour
+            for n in range(30):
+                await conn.execute(
+                    "INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at,"
+                    " user_id, role, body, state, created_at) VALUES (%s, %s, %s, 'other', 100,"
+                    " %s, 'dm', 'x', 'done', floor(extract(epoch FROM clock_timestamp())))",
+                    (THURSDAY.id, self.one.id, f"{n:032x}", ALICE.id),
+                )
+        got = await self.say()
+        self.assertEqual((got.status_code, got.json()["error"]), (429, "too_soon"))
+
+    async def test_talks_older_than_thirty_days_are_deleted_when_a_message_is_sent(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at, user_id,"
+                " role, body, state, created_at) VALUES (%s, %s, %s, 'old', 100, %s, 'dm', 'x',"
+                " 'done', 5)",
+                (THURSDAY.id, self.one.id, "f" * 32, ALICE.id),
+            )
+        await self.say()
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT id FROM plot_chat WHERE issue_id = 'old'")
+            self.assertEqual(await cur.fetchall(), [])
+
     async def test_a_changed_text_is_stale(self) -> None:
         await self.store.update(THURSDAY.id, self.one.id, 100, summary="A different recap.")
         got = await self.say()
@@ -251,3 +276,18 @@ class Talking(PlotBase):
         async with self.web.user(ALICE.id, session="x") as conn:
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 await conn.execute("SELECT * FROM plot_chat")
+
+
+class Off(PlotBase):
+    on = False
+
+    async def test_with_the_switch_off_a_message_is_refused_and_nothing_is_queued(self) -> None:
+        await self.checked()
+        issue = await self.issue("a1")
+        got = await self.client.post(
+            f"/me/recaps/{self.ref}/plot/{issue}/chat", json={"text": "hello"}
+        )
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "not_allowed"))
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM plot_chat")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)

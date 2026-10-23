@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 CALL_TIMEOUT_S = RETAKE_AFTER_S - 30  # the call always ends before its claim can be taken back
 PER_ROUND = 5  # messages answered in one round in one server
+KEEP_S = 30 * 24 * 3600  # a talk is kept this long, then goes
 
 
 class Completer(Protocol):
@@ -84,6 +85,16 @@ class TalkStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    async def sweep(self, guild_id: int) -> int:
+        """Delete the talks that are over thirty days old, in every campaign of the server (the
+        send door clears a campaign's own as it is used; this reaches the ones never used again)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM plot_chat WHERE guild_id = %s AND created_at < %s",
+                (guild_id, int(self._now()) - KEEP_S),
+            )
+            return int(cur.rowcount)
 
     async def claim_next(self, guild_id: int) -> Message | None:
         """The oldest waiting message (or a stalled one), marked as being worked on."""
@@ -257,6 +268,9 @@ class TalkRunner:
         self._memory = memory
         self._ai = ai
 
+    async def sweep(self, guild_id: int) -> int:
+        return await self._store.sweep(guild_id)
+
     async def round(self, guild_id: int, *, limit: int = PER_ROUND) -> int:
         """Answer the messages that wait in one server, at most `limit`. Returns how many."""
         done = 0
@@ -298,15 +312,28 @@ class TalkRunner:
             entity = await self._memory.entity(guild_id, s.campaign_id, entity_id)
             if entity is None or entity.status != CONFIRMED:
                 return await self._finish(guild_id, s, "failed", "That entry isn't there any more.")
-            try:
-                await self._memory.set_condition(
-                    guild_id, s.campaign_id, entity_id, condition, source=DM,
-                    from_session_at=at if type(at) is int else None,
-                )  # fmt: skip
-            except MemoryRuleError as rule:  # plain words, written for a DM
-                return await self._finish(guild_id, s, "failed", str(rule))
+            held = (await self._memory.states(guild_id, s.campaign_id, [entity_id])).get(entity_id)
+            if held is None or held.condition != condition:
+                # (a repeat after a crash finds it already made: it is never made twice, so a
+                # change the DM made by hand in between is not undone by a retry)
+                try:
+                    await self._memory.set_condition(
+                        guild_id, s.campaign_id, entity_id, condition, source=DM,
+                        from_session_at=at if type(at) is int else None,
+                    )  # fmt: skip
+                except MemoryRuleError as rule:  # plain words, written for a DM
+                    return await self._finish(guild_id, s, "failed", str(rule))
+            # The change is made (or was already so). It is `saved` whatever comes after.
             await self._finish(guild_id, s, "saved")
-            await self._store.answer_changed(guild_id, s, f"Saved: {s.proposal.get('label', '')}")
+            label = s.proposal.get("label")
+            try:
+                await self._store.answer_changed(
+                    guild_id, s, f"Saved: {label if isinstance(label, str) else ''}"
+                )
+            except Exception as exc:  # the change stands; the DM can answer the issue themselves
+                log.warning(
+                    "A saved plot proposal could not answer its issue: %s", type(exc).__name__
+                )
         except Exception as exc:  # the type only: an error can quote a row
             log.warning("A saved plot proposal failed: %s", type(exc).__name__)
             try:

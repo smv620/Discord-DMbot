@@ -277,6 +277,20 @@ class Answering(PlotBase):
         [kept] = await AcceptedStore(self.db).versions(THURSDAY.id, self.one.id, 100)
         self.assertEqual(kept.version, 1)  # and its text kept as the session's summary
 
+    async def test_an_edit_after_the_approval_posts_nothing_in_the_posting_statement(self) -> None:
+        """Approve, edit, then post. The read that decided "already approved" is not trusted: the
+        posting statement itself holds only the text the DM approved (a race cannot get past it)."""
+        from unittest.mock import patch
+
+        await self.checked()
+        ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
+        self.assertEqual(ok.status_code, 200)
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="Edited after approving.")
+        with patch("dmbot.web.recaps._approved", return_value=True):  # (the read saw it approved)
+            held = await self.client.post(f"/me/recaps/{self.ref}/post")
+        self.assertEqual(held.status_code, 409, held.text)
+        self.assertEqual((await self.state(self.one.id)).status, "draft")  # nothing was posted
+
     async def test_posting_an_already_approved_draft_is_as_before(self) -> None:
         await self.checked()
         ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})

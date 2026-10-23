@@ -12108,9 +12108,6 @@ PLOT_CHAT = (
         IF txt IS NULL OR char_length(btrim(txt)) = 0 OR char_length(txt) > 1000 THEN
             RETURN jsonb_build_object('status', 'bad_text');
         END IF;
-        -- A talk is kept for thirty days; older words of this campaign go here.
-        DELETE FROM plot_chat m
-            WHERE m.guild_id = g AND m.campaign_id = c AND m.created_at < now_s - 2592000;
         SELECT * INTO job FROM recap_jobs
             WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
         IF NOT FOUND THEN
@@ -12125,6 +12122,9 @@ PLOT_CHAT = (
                                    'hex') THEN
             RETURN jsonb_build_object('status', 'stale');
         END IF;
+        -- A talk is kept for thirty days; older words of this campaign go here.
+        DELETE FROM plot_chat m
+            WHERE m.guild_id = g AND m.campaign_id = c AND m.created_at < now_s - 2592000;
         -- A message the bot never answered (it was off, or died) is given up after ten minutes,
         -- so the DM is never stuck behind it.
         UPDATE plot_chat SET state = 'failed', error = 'timed_out'
@@ -12140,6 +12140,13 @@ PLOT_CHAT = (
         IF (SELECT count(*) FROM plot_chat m
             WHERE m.guild_id = g AND m.campaign_id = c AND m.issue_id = p_issue
               AND m.user_id = dmbot_current_user() AND m.role = 'dm') >= 15 THEN
+            RETURN jsonb_build_object('status', 'too_many');
+        END IF;
+        -- The campaign's whole hour: at most thirty messages from its DMs (each is a careful-tier
+        -- call; docs/costs.md), however many issues they are on.
+        IF (SELECT count(*) FROM plot_chat m
+            WHERE m.guild_id = g AND m.campaign_id = c AND m.role = 'dm'
+              AND m.created_at > now_s - 3600) >= 30 THEN
             RETURN jsonb_build_object('status', 'too_many');
         END IF;
         INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at, user_id, role,

@@ -277,3 +277,43 @@ class Saving(TalkBase):
         [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
         self.assertEqual(issue["answer"]["kind"], "leave")
         self.assertEqual(await self.condition(), "alive")  # the change was still made
+
+    async def test_a_retry_after_a_crash_does_not_make_the_change_twice(self) -> None:
+        """The change was made but the proposal still reads `saving` (the bot stopped): the retry
+        finds it already so, and just closes the proposal."""
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.memory.set_condition(
+            THURSDAY.id, self.one.id, self.ulfgar.value.id, "alive", source="dm"
+        )  # (the change was made)
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        history = await self.memory.state_history(THURSDAY.id, self.one.id, self.ulfgar.value.id)
+        self.assertEqual(len(history), 2)  # dead, then alive: no third row
+        self.assertEqual((await self.messages())[-1]["proposals"][0]["state"], "saved")
+
+    async def test_garbage_in_a_proposals_data_fails_that_proposal_only(self) -> None:
+        await self.say()
+        await self.runner(Ai(good({"entry": 1, "condition": "alive"}))).round(THURSDAY.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE plot_chat SET proposals = jsonb_build_array(jsonb_build_object("
+                "'id', 'p1', 'kind', 'condition', 'label', 5, 'data', '[]'::jsonb,"
+                " 'state', 'saving'), jsonb_build_object('id', 'p2', 'state', 'open'))"
+                " WHERE role = 'bot'"
+            )
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        first, second = (await self.messages())[-1]["proposals"]
+        self.assertEqual((first["state"], second["state"]), ("failed", "open"))
+
+    async def test_a_sibling_proposal_in_the_same_message_is_untouched(self) -> None:
+        first = await self.reply_with_proposal()
+        second = {**first, "id": "f" * 32}
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE plot_chat SET proposals = %s::jsonb WHERE role = 'bot'",
+                (json.dumps([first, second]),),
+            )
+        await self.press(second, "save")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        states = [p["state"] for p in (await self.messages())[-1]["proposals"]]
+        self.assertEqual(states, ["open", "saved"])
