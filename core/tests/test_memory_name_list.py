@@ -22,6 +22,7 @@ from dmbot.memory.name_list import (
     OutPerson,
     header,
     judge_bracket,
+    lines_for,
     parse,
     render,
     render_files,
@@ -103,6 +104,20 @@ class Pronunciation(unittest.TestCase):
     def test_an_aside_with_a_comma_stays_one_name(self) -> None:
         one = self.read("Vex (the boss, retired) | npc | Vexa")
         self.assertEqual((one.name, one.others), ("Vex", ("Vex the boss, retired", "Vexa")))
+
+    def test_a_download_uploaded_again_gives_the_same_names(self) -> None:
+        """Other and secret names with a comma, a semicolon or a quote in them survive (#2482)."""
+        others = ("Vex the boss, retired", "Vexa; the Younger", '"Vexx"', 'Old "Vex"', "Plain")
+        secrets = ("Mr. Black, the broker", 'He said "no", twice')
+        text = "\n".join(lines_for("Vex", "npc", others, secrets))
+        (one,) = parse(text, secrets=True).lines
+        self.assertEqual((one.others, one.secrets), (others, secrets), text)
+
+    def test_quotes_that_do_not_wrap_a_whole_name_stay_as_they_were(self) -> None:
+        one = self.read('Vex | npc | Old "Vex", "Vexa" extra, "open')
+        self.assertEqual(one.others, ('Old "Vex"', '"Vexa" extra', '"open'))
+        one = self.read('Vex | npc | "Vexa, the Younger", Vexi')
+        self.assertEqual(one.others, ("Vexa, the Younger", "Vexi"))
 
     def test_no_bracket_and_a_bracket_not_at_the_end_are_left_alone(self) -> None:
         self.assertEqual(self.read("Tavin | npc").said_as, "")

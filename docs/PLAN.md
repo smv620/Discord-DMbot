@@ -2204,7 +2204,9 @@ names panel nor the speech-to-text hints can be a fixed list.
   only for the campaign's DMs). One name per line: `name | kind | other names | secret
   names` (the fourth part so a DM's download reads back with its secret names; only the
   campaign's DMs may add them, and managers get a template without it). Other names are
-  separated by `,` or `;`, as in the ➕ Add a name form; lines starting with `#` are
+  separated by `,` or `;`, as in the ➕ Add a name form; a name with a comma, semicolon or leading quote in
+  it is written in double quotes (a quote inside is doubled), which Download all does for you, so a download
+  uploaded again gives back the same names (#2482); lines starting with `#` are
   skipped. Decided while building:
   - the whole list is saved as **one change** (one Undo, one reload for live
     transcription) rather than batches of 200, since a list is capped at 2,000 lines; a

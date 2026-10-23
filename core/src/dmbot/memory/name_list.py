@@ -2,7 +2,8 @@
 at scale", step 3; #126). Pure: no Discord, no database.
 
 One name per line: `name | kind | other names | secret names`. Only the name is needed;
-other names and secret names are separated by `,` or `;` (as in the Add a name form).
+other names and secret names are separated by `,` or `;` (as in the Add a name form); a name
+with a comma or semicolon in it is written in double quotes.
 Lines starting with `#` are notes and are skipped, so the template's instructions and a
 download's header can stay in the file when it's uploaded again.
 """
@@ -300,15 +301,61 @@ def _respelled(inside: str) -> bool:
     return bool(_STRESS.search(inside)) or any(c.isupper() for c in inside[1:])
 
 
+def _pieces(raw: str) -> list[str]:
+    """`raw` split at `,` and `;`, except a piece in double quotes, which is one name as written
+    (a download quotes a name with a separator in it, #2482). A doubled quote inside is one quote.
+    A quote that does not open a piece, or that is not closed before a separator, is just a
+    character, so older lists with quotes in a name read as they always did."""
+    pieces: list[str] = []
+    at, size = 0, len(raw)
+    while at <= size:
+        start = at
+        while start < size and raw[start] == " ":
+            start += 1
+        if start < size and raw[start] == '"':
+            text, end = [], start + 1
+            while end < size:
+                if raw[end] == '"':
+                    if raw[end + 1 : end + 2] != '"':
+                        break
+                    end += 1  # a doubled quote
+                text.append(raw[end])
+                end += 1
+            after = end + 1
+            while after < size and raw[after] == " ":
+                after += 1
+            if end < size and (after >= size or raw[after] in ";,"):
+                pieces.append("".join(text))
+                at = after + 1
+                continue
+        match = _SEPARATORS.search(raw, at)
+        stop = match.start() if match else size
+        pieces.append(raw[at:stop])
+        at = stop + 1
+    return pieces
+
+
 def _names(raw: str) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
-    for part in _SEPARATORS.split(raw):
+    for part in _pieces(raw):
         text = " ".join(part.split())
         if text and name_key(text) not in seen:
             seen.add(name_key(text))
             out.append(text)
     return out
+
+
+def _joined(names: Sequence[str]) -> str:
+    """Names for a list cell: separated by "; ", and one with a separator or a quote that could
+    be mistaken for quoting is written in double quotes, so reading the list back gives the same
+    names (#2482)."""
+    return "; ".join(
+        '"' + n.replace('"', '""') + '"'
+        if n.lstrip().startswith('"') or "," in n or ";" in n
+        else n
+        for n in names
+    )
 
 
 def _without(names: list[str], taken: set[str]) -> list[str]:
@@ -598,8 +645,8 @@ def lines_for(name: str, kind: str, others: Sequence[str], secrets: Sequence[str
         cells = [
             name,
             kind,
-            "; ".join(others[at : at + MAX_PER_LINE]),
-            "; ".join(secrets[at : at + MAX_PER_LINE]),
+            _joined(others[at : at + MAX_PER_LINE]),
+            _joined(secrets[at : at + MAX_PER_LINE]),
         ]
         while len(cells) > 1 and not cells[-1]:
             cells.pop()
@@ -618,10 +665,10 @@ def person_lines(p: OutPerson) -> list[str]:
         cells = [
             names[0],
             "player or DM",
-            "; ".join(names[1:][at : at + MAX_PER_LINE]),
+            _joined(names[1:][at : at + MAX_PER_LINE]),
             "",
             str(p.who),
-            "; ".join(plays[at : at + MAX_PER_LINE]),
+            _joined(plays[at : at + MAX_PER_LINE]),
         ]
         while len(cells) > 5 and not cells[-1]:
             cells.pop()  # the id is always written
