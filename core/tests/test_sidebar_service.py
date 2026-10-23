@@ -235,6 +235,23 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent(message), [FakeAnswer().text])
         self.assertEqual(self.host.saved, [])
 
+    async def test_a_question_asked_while_paused_is_never_stored_even_if_answered_after_a_resume(
+        self,
+    ) -> None:
+        """#2466: whether it is stored is decided when it is asked, not when the answer arrives."""
+        self.host.paused.add(DM)
+        self.answerer.gate = asyncio.Event()  # the answer waits
+        message = dm_message(content="find if you need line of sight for Fire ball")
+        task = asyncio.create_task(self.sidebar.on_dm_message(message))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.host.paused.discard(DM)  # they resume while the answer is still being made
+        self.answerer.gate.set()
+        await task
+        self.assertEqual(sent(message), [FakeAnswer().text])  # answered
+        self.assertEqual(self.host.saved, [])  # and not stored
+        self.assertEqual(self.sidebar._unstored, set())  # nothing left behind
+
     async def test_every_line_records_where_it_came_from(self) -> None:
         await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
         asked, answered = self.host.saved
