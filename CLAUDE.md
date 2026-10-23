@@ -412,6 +412,12 @@ terminal output or Discord screenshots copied to it.
   a table holding rows. Open **every** table the statement reads, not only the one it
   writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
   backfill would have deleted every row it meant to fill).
+- **A foreign key that carries `guild_id` is `ON UPDATE CASCADE`** (Supervisor, 2026-10-23, #2550):
+  moving a campaign to another server changes its `guild_id` in one statement and lets the database
+  carry the change into every row that hangs off it. A new table whose foreign key includes
+  `guild_id` declares `ON UPDATE CASCADE`, or the catalog test (`test_campaign_move_cascade`) fails.
+  A new table with a `campaign_id` also goes on the list in `campaigns/tables.py`, in a backup
+  section or on the written "not in a backup, because…" list (#2552).
 - **Claim the migration number on #2475 before pushing** (Supervisor, 2026-10-16; one place since
   2026-10-23, after four more collisions in one night when claims sat on separate issues): read
   #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
