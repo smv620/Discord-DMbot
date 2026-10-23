@@ -68,6 +68,7 @@ from dmbot.campaigns.models import (
     STORY_GUIDE,
     CampaignError,
 )
+from dmbot.campaigns.moves import HandoverMover
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -1526,6 +1527,7 @@ class DMBot(commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
+            mover=HandoverMover(campaigns, clock=time.time),  # a hand-over to another server
         )
         # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
         self.site_stops = SiteStops(
@@ -1726,6 +1728,7 @@ class DMBot(commands.AutoShardedBot):
             self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
             self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
             self._watched(self.site_offers.follow_decided(self.campaigns.listen), "site-decisions"),
+            self._watched(self.site_offers.follow_moves(self.campaigns.listen), "campaign-moves"),
             self._watched(self.site_stops.follow(self.campaigns.listen), "site-consent-stops"),
         ]
 

@@ -945,26 +945,30 @@ class CampaignStore:
                 current.owner_user_id != only_if_owner or only_if_owner not in current.dm_user_ids
             ):
                 raise CampaignError(PLAN_HOLDER_CHANGED)
-            for section in self._sections.values():
-                await section.clear(conn, guild_id, campaign_id)
-            # The saved session would go with the campaign anyway (ON DELETE CASCADE);
-            # removing it here logs it and leaves no restart note behind (#147).
-            cur = await conn.execute(
-                "DELETE FROM active_sessions WHERE guild_id = %s AND campaign_id = %s"
-                " RETURNING guild_id",
-                (guild_id, campaign_id),
-            )
-            had_session = await cur.fetchone() is not None
-            if had_session:
-                await conn.execute(
-                    "DELETE FROM live_session_guilds WHERE guild_id = %s", (guild_id,)
-                )
-            await conn.execute(
-                "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
-            )
+            had_session = await self.delete_in(conn, guild_id, campaign_id)
         if had_session:
             with log_context(guild_id=guild_id, campaign_id=campaign_id):
                 log.info("Saved session removed: its campaign was deleted")
+
+    async def delete_in(self, conn: Conn, guild_id: int, campaign_id: str) -> bool:
+        """The deletion itself, inside a transaction the caller holds (and has locked the
+        campaign in). True if a saved session went with it."""
+        for section in self._sections.values():
+            await section.clear(conn, guild_id, campaign_id)
+        # The saved session would go with the campaign anyway (ON DELETE CASCADE);
+        # removing it here logs it and leaves no restart note behind (#147).
+        cur = await conn.execute(
+            "DELETE FROM active_sessions WHERE guild_id = %s AND campaign_id = %s"
+            " RETURNING guild_id",
+            (guild_id, campaign_id),
+        )
+        had_session = await cur.fetchone() is not None
+        if had_session:
+            await conn.execute("DELETE FROM live_session_guilds WHERE guild_id = %s", (guild_id,))
+        await conn.execute(
+            "DELETE FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
+        )
+        return had_session
 
     # ---- hand-over (#437 part 1b) --------------------------------------------
     # One place for every hand-over write, used by the bot's buttons and the website's

@@ -11949,7 +11949,8 @@ HANDOVER_MOVE = """
     ALTER TABLE campaign_handover_offers
         ADD COLUMN move_to_guild_id BIGINT
             CHECK (move_to_guild_id IS NULL OR move_to_guild_id > 0),
-        ADD COLUMN moved_campaign_id TEXT;
+        ADD COLUMN moved_campaign_id TEXT,
+        ADD COLUMN move_claimed_at BIGINT;  -- the bot's lease on a move that is under way
 
     -- Claims the link for this person and asks for the move, in one step (#2532). Same rules as
     -- dmbot_handover_open with a claim, and the target must be one of the session's own servers
@@ -11987,6 +11988,9 @@ HANDOVER_MOVE = """
               AND c.guild_id = f.guild_id AND c.id = f.campaign_id
               AND c.owner_user_id = f.from_user_id;
         GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN  -- wakes the bot, which does the move (a sweep catches a missed one)
+            PERFORM pg_notify('dmbot_handover_move', g::text || ':' || o::text);
+        END IF;
         RETURN changed = 1;
     END
     $fn$;

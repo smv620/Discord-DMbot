@@ -23,11 +23,10 @@ from dmbot.web.sessions import Session, hash_token
 
 log = logging.getLogger(__name__)
 
-# Slice C1 (#2532): the website can record that the person wants the campaign in another server,
-# but nothing moves it until C2's bot sweep exists, so an accepted move would wait for ever. Until
-# C2 turns this on, another server is refused ("bad_server") and the page lists only the server the
-# campaign runs on now.
-MOVES_ARE_RUN = False
+# Slice C (#2532): the person may choose another of their servers. The website only records the
+# wish (`dmbot_handover_request_move`); the bot's `campaigns.moves.HandoverMover` does the move.
+# Kept as a switch so a build without the mover can never accept a move that would wait for ever.
+MOVES_ARE_RUN = True
 
 Why = Literal["no_plan", "try_it", "no_slot", "owner"]
 Outcome = Literal[
