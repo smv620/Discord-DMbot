@@ -10818,6 +10818,58 @@ PINNED_TRUTH = """
     1,
 )
 
+LINK_PIN_ACTION = """
+    -- The website's 📌 pin (#2447): a DM pins a connection as 100% truth, or takes it back, through
+    -- the same queue as the other connection edits ('link-pin': `target_id` the connection, `flag`
+    -- pinned or not). The bot applies it with the call the name card uses, so the change log and
+    -- Undo agree. No row changes: a wider list of actions and the door that checks it.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+         'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin'));
+"""
+_door_start = WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(")
+_door_end = WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read(")
+_pin_door = WEB_LINK_ACTIONS[_door_start:_door_end]
+for _old, _new, _times in (
+    (
+        "'link-add', 'link-words', 'link-secret', 'link-remove')",
+        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        3,
+    ),
+    (
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove')",
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin')",
+        1,
+    ),
+):
+    assert _pin_door.count(_old) == _times, (_old, _pin_door.count(_old))
+    _pin_door = _pin_door.replace(_old, _new)
+assert _pin_door.count("('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL") == 1
+_pin_door = _pin_door.replace(
+    "('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL",
+    "('secret', 'hide', 'link-add', 'link-secret', 'link-pin') AND fl IS NULL",
+)
+LINK_PIN_ACTION = (
+    LINK_PIN_ACTION
+    + _pin_door
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11031,6 +11083,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
     ("0190_pinned_truth", PINNED_TRUTH),  # the DM's 📌 100% truth (#2447)
     ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
+    ("0192_link_pin_action", LINK_PIN_ACTION),  # the website pins a connection (#2447)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

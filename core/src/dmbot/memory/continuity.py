@@ -19,10 +19,12 @@ otherwise the conflict is still shown, with the fact in DMbot's own words and no
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from dmbot.memory import beliefs
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
 from dmbot.memory.checks import (
     ACTS_AFTER_END,
@@ -555,7 +557,8 @@ class ContinuityStore:
             return "Not remembered. DMbot won't ask again."
         if action != CHANGED:
             raise MemoryRuleError("DMbot doesn't know that button any more.")
-        world = await self._world(guild_id, campaign_id, opted_in)
+        pinned = await self._memory.pinned_connections(guild_id, campaign_id)
+        world = await self._world(guild_id, campaign_id, opted_in, pinned)
         mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
         clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
         revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
@@ -585,6 +588,11 @@ class ContinuityStore:
                 row = await w.get(RELATIONS, fact_id)
                 if row is not None and row["to_session_at"] is None and claim.session_started_at:
                     await w.update(RELATIONS, fact_id, {"to_session_at": claim.session_started_at})
+                if (
+                    fact_id in world.pinned
+                ):  # "Story changed" takes the DM's pin off, in this change
+                    with contextlib.suppress(MemoryRuleError):  # (already unpinned meanwhile)
+                        await beliefs.set_pin(w, fact_id, False)
 
         await self._claims.confirm(
             guild_id, campaign_id, claim_id, opted_in=opted_in, before=before

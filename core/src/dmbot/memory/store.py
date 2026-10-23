@@ -3335,6 +3335,7 @@ class MemoryStore:
                 " ON r.guild_id = b.guild_id AND r.campaign_id = b.campaign_id"
                 " AND r.id = b.relation_id WHERE b.guild_id = %s AND b.campaign_id = %s"
                 " AND p.kind = 'truth' AND b.pinned AND r.status = 'confirmed'"
+                " AND r.to_session_at IS NULL"
                 " AND b.seq = (SELECT max(x.seq) FROM memory_beliefs x WHERE"
                 " x.guild_id = b.guild_id AND x.campaign_id = b.campaign_id"
                 " AND x.perspective_id = b.perspective_id AND x.relation_id = b.relation_id)",

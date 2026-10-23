@@ -207,6 +207,31 @@ class TheEdits(Editing):
         self.assertEqual(done["state"], "done")
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
 
+    async def test_a_dm_pins_and_unpins_a_connection_and_a_retry_is_done(self) -> None:
+        link = await self.free_link("sworn to")
+        pinned = await self.edit(link, action="pin", pinned=True)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(pinned))["state"], "done")
+        self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), {link})
+        again = await self.edit(link, action="pin", pinned=True)  # (a retried job: already so)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(again))["state"], "done")
+        off = await self.edit(link, action="pin", pinned=False)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(off))["state"], "done")
+        self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), set())
+
+    async def test_only_a_dm_can_queue_a_pin_and_it_needs_a_yes_or_no(self) -> None:
+        link = await self.free_link("sworn to")
+        self.assertEqual(await self.refused_edit(link=link, action="pin"), "bad_action")
+        self.assertEqual(
+            await self.refused_edit(link=link, action="pin", pinned="yes"), "bad_action"
+        )
+        self.assertEqual(
+            await self.refused_edit(self.player, link=link, action="pin", pinned=True),
+            "not_allowed",
+        )
+
     async def test_secret_and_known_switch_one_connection(self) -> None:
         link = self.links["rook-keep"]
         secret = await self.edit(link, action="secret", secret=True)

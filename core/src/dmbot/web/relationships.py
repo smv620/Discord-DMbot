@@ -264,7 +264,8 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}` or `{action: "remove", confirm: true}`. Returns the answer's id."""
+    secret}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
+    answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -281,6 +282,13 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-secret", target=link_id,
             text="", flag=bool(body["secret"]),
+        )  # fmt: skip
+    if action == "pin":  # 📌 100% truth (#2447); the door lets only a DM queue it
+        if not isinstance(body.get("pinned"), bool):
+            raise RecapError("bad_action")
+        return await _queue(
+            db, session, ref, entity=None, action="link-pin", target=link_id,
+            text="", flag=bool(body["pinned"]),
         )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:

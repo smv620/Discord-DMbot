@@ -181,6 +181,24 @@ class Continuity(ConfirmedMemoryTest):
         first, second = (await self.check()).conflicts
         self.assertEqual((first.pinned, second.pinned), (True, False))
 
+    async def test_story_changed_on_a_pinned_clash_unpins_it_in_the_same_change(self) -> None:
+        kept = await self.relate(self.bram, "carries", self.bow, status="confirmed")
+        rid = kept.value[0].id
+        await self.memory.pin(GUILD_A, self.c, rid, True, source="dm")
+        await self.claim(said("Kesh", "carries", "Heartseeker"))
+        (conflict,) = (await self.check()).conflicts
+        await self.store.answer(
+            GUILD_A, self.c, conflict.claim.id, CHANGED, opted_in=AGREED, levels=SMALL
+        )
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), set())
+
+    async def test_an_ended_connection_is_not_pinned_any_more(self) -> None:
+        kept = await self.relate(self.bram, "carries", self.bow, status="confirmed")
+        rid = kept.value[0].id
+        await self.memory.pin(GUILD_A, self.c, rid, True, source="dm")
+        await self.memory.update_relation(GUILD_A, self.c, rid, source="dm", to_session_at=300)
+        self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), set())
+
     async def test_a_secret_fact_is_not_pointed_at(self) -> None:
         await self.relate(
             self.ulfgar, "ally_of", self.cerric, status="confirmed", from_session_at=EARLIER
