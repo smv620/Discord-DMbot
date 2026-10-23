@@ -19,7 +19,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from dmbot.db import Conn
-from dmbot.memory._changes import BELIEFS, PERSPECTIVES, RELATIONS, Changes, Scope
+from dmbot.memory._changes import (
+    BELIEFS,
+    ENTITIES,
+    PERSPECTIVES,
+    RELATIONS,
+    Changes,
+    Scope,
+)
 from dmbot.memory.models import (
     BELIEF_STATUSES,
     CONFIRMED,
@@ -360,4 +367,31 @@ def party_knows(table: str = "memory_relations") -> str:
         " AND pb.confidence >= 1.0 AND pb.seq = (SELECT max(x.seq) FROM memory_beliefs x"
         "  WHERE x.guild_id = pb.guild_id AND x.campaign_id = pb.campaign_id"
         "  AND x.perspective_id = pb.perspective_id AND x.relation_id = pb.relation_id))"
+    )
+
+
+async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
+    """A merged-away character's beliefs become the kept entry's (#2438, #2433). The kept entry
+    gets a perspective if it had none, and every belief of the other entry's moves onto it. History
+    is kept, so a pair both believed has both rows and the newest (highest `seq`) is the one read.
+    The beliefs move through the change log, so Undo puts them back; the emptied perspective stays
+    on the merged-away entry (perspectives are not logged: an Undo never takes one from beliefs
+    resting on it)."""
+    gone_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [gone_id])
+    if not gone_p:
+        return
+    keep_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [keep_id])
+    if keep_p:
+        target = keep_p[0]["id"]
+    else:
+        target = new_id()
+        kept = await w.get(ENTITIES, keep_id)
+        # (the kept entry's own kind: a player's character holds beliefs as one, anything else
+        # as an NPC; the merged one's kind is not copied)
+        kind = "pc" if kept is not None and kept["played_by"] is not None else "npc"
+        await w.insert(
+            PERSPECTIVES, {"id": target, "kind": kind, "entity_id": keep_id, "created_at": w.now}
+        )
+    await w.update_where(
+        BELIEFS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
     )

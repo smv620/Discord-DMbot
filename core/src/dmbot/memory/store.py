@@ -33,7 +33,7 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, notify, standing, states
+from dmbot.memory import beliefs, merge_restore, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
@@ -2625,7 +2625,6 @@ class MemoryStore:
         confirm_keys: Collection[str] = (),
     ) -> None:
         """One merge inside an open write (see `merge`)."""
-        guild_id, campaign_id = w.guild_id, w.campaign_id
         onto = await _load_ontology(w)
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
@@ -2664,40 +2663,16 @@ class MemoryStore:
             }
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
+        before_moves = await merge_restore.snapshot(
+            w.conn, w.ids, keep_id, gone_id, kept["played_by"]
+        )
         await _move_rule_links(w, keep_id, gone_id)
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
             raise ValueError("Only the DM confirms names")
         await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
-        # A character's D&D Beyond sheet (#723) goes with it, unless the kept entry
-        # has its own: then the merged one's is forgotten (nothing could show or
-        # remove it). Not in the change log: undoing the merge leaves it on the kept
-        # entry; if that entry then has no player, the sheet is left out everywhere.
-        # The kept entry's own sheet counts only if it's its player's (a sheet
-        # left from an earlier player is shown nowhere): drop it first, so it can't
-        # beat a visible one.
-        await w.conn.execute(
-            "DELETE FROM character_sheets s USING memory_entities e"
-            " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
-            " AND e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
-            " AND e.id = s.entity_id AND s.player_id IS DISTINCT FROM e.played_by",
-            (guild_id, campaign_id, keep_id),
-        )
-        await w.conn.execute(
-            "DELETE FROM character_sheets"
-            " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
-            " AND EXISTS (SELECT 1 FROM character_sheets"
-            "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
-            (guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
-        )
-        await w.conn.execute(
-            "UPDATE character_sheets SET entity_id = %s"
-            " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
-            " AND NOT EXISTS (SELECT 1 FROM character_sheets"
-            "  WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s)",
-            (keep_id, guild_id, campaign_id, gone_id, guild_id, campaign_id, keep_id),
-        )
+        await merge_restore.move_sheets(w.conn, w.ids, keep_id, gone_id)
         own = await w.select(
             ALIASES, " AND entity_id = %s AND key = %s", [keep_id, lookup_key(keep["name"])]
         )
@@ -2707,7 +2682,8 @@ class MemoryStore:
             raise MemoryRuleError("A secret name can't be the main name.")
         await _move_relations(w, keep_id, gone_id)
         await _move_standing(w, keep_id, gone_id)
-        await _move_npc_notes(w, guild_id, campaign_id, keep_id, gone_id)
+        await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
+        await beliefs.fold_perspective(w, keep_id, gone_id)
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
         await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
@@ -2720,6 +2696,10 @@ class MemoryStore:
         await _forget_quotes(w, [gone_id] if _note_cleared(gone) else [])
         await _sync_plays(w, keep_id)
         await _sync_plays(w, gone_id)
+        # The merged entry's status change above always logs (it was not merged yet), so the
+        # batch is known.
+        assert w.batch is not None
+        await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
 
     async def check_people(
         self, guild_id: int, campaign_id: str, dm_ids: Collection[int]
@@ -3637,7 +3617,15 @@ class MemoryStore:
                 " WHERE guild_id = %s AND campaign_id = %s AND made_at < %s",
                 (*scope.ids, cutoff),
             )
-            return cur.rowcount
+            pruned = cur.rowcount
+            # what a merge moved goes with the batch it belongs to (#2438)
+            await scope.conn.execute(
+                "DELETE FROM merge_restores r WHERE r.guild_id = %s AND r.campaign_id = %s"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes c WHERE c.guild_id = r.guild_id"
+                " AND c.campaign_id = r.campaign_id AND c.batch = r.batch)",
+                scope.ids,
+            )
+            return pruned
 
     async def resolve_stale_flags(self, guild_id: int, campaign_id: str) -> Written[list[Flag]]:
         """Close the open flags whose problem is gone (#164): an undo, a merge, an edit
@@ -4786,69 +4774,6 @@ async def _move_aliases(
             ALIASES, {"entity_id": keep_id, "status": CONFIRMED}, " AND id = ANY(%s)", [confirming]
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
-
-
-async def _move_npc_notes(
-    w: Changes, guild_id: int, campaign_id: str, keep_id: str, gone_id: str
-) -> None:
-    """A person's private notes on the merged entry go to the one kept (#2265, #2298): every note,
-    the ones already marked "no longer listed" too. A person with a note on both keeps both, the
-    kept entry's first, joined. A note keeps its place in the 30 days it was given: one already
-    marked keeps its clock (the older of the two when joined), and the clock is never restarted. A
-    marked note is unmarked only if the kept entry is listed (the roster has it).
-
-    If the two together would be over the 5,000 characters a note may hold, the merged entry's note
-    is not joined: it stays as a note on a name no longer listed (30 days, in the person's "Notes
-    on names no longer listed", where they can copy it), so no word is lost. It is marked now
-    only if it was not marked already. Nothing of a note is read here beyond its length, a note
-    never leaves its writer's rows, and nothing is logged. (Undoing a merge does not move notes
-    back: they stay on the kept entry.)"""
-    ids = (guild_id, campaign_id)
-    now = int(time.time())
-    cur = await w.conn.execute(
-        "SELECT EXISTS (SELECT 1 FROM npc_roster WHERE guild_id = %s AND campaign_id = %s"
-        " AND entry_id = %s) AS listed",
-        (*ids, keep_id),
-    )
-    row = await cur.fetchone()
-    listed = bool(row and row["listed"])
-    # too long to join: the merged note stays apart, marked as no longer listed (a clock already
-    # running keeps running)
-    await w.conn.execute(
-        "UPDATE npc_notes g SET orphaned_at = COALESCE(g.orphaned_at, %s) FROM npc_notes k"
-        " WHERE g.guild_id = %s AND g.campaign_id = %s AND g.entry_id = %s"
-        " AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id AND k.entry_id = %s"
-        " AND k.user_id = g.user_id AND char_length(k.body) + 2 + char_length(g.body) > 5000",
-        (now, *ids, gone_id, keep_id),
-    )
-    # The notes that fit are decided from the rows as they are now, in one statement: the merged
-    # note is deleted and its words are appended to the kept one (a separate UPDATE first would
-    # make the kept note longer, and the delete's length check would then miss the twin).
-    await w.conn.execute(
-        "WITH joined AS ("
-        " DELETE FROM npc_notes g USING npc_notes k WHERE g.guild_id = %s AND g.campaign_id = %s"
-        " AND g.entry_id = %s AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id"
-        " AND k.entry_id = %s AND k.user_id = g.user_id"
-        " AND char_length(k.body) + 2 + char_length(g.body) <= 5000"
-        " RETURNING g.user_id, g.body, g.updated_at, g.orphaned_at)"
-        " UPDATE npc_notes k SET body = k.body || E'\\n\\n' || j.body,"
-        " updated_at = greatest(k.updated_at, j.updated_at),"
-        " orphaned_at = CASE WHEN %s THEN NULL WHEN k.orphaned_at IS NULL THEN j.orphaned_at"
-        "  WHEN j.orphaned_at IS NULL THEN k.orphaned_at"
-        "  ELSE least(k.orphaned_at, j.orphaned_at) END"
-        " FROM joined j WHERE k.guild_id = %s AND k.campaign_id = %s AND k.entry_id = %s"
-        " AND k.user_id = j.user_id",
-        (*ids, gone_id, keep_id, listed, *ids, keep_id),
-    )
-    # a note with no twin moves over, whether it was marked or not
-    await w.conn.execute(
-        "UPDATE npc_notes SET entry_id = %s,"
-        " orphaned_at = CASE WHEN %s THEN NULL ELSE orphaned_at END"
-        " WHERE guild_id = %s AND campaign_id = %s AND entry_id = %s"
-        " AND NOT EXISTS (SELECT 1 FROM npc_notes x WHERE x.guild_id = %s AND x.campaign_id = %s"
-        "  AND x.entry_id = %s AND x.user_id = npc_notes.user_id)",
-        (keep_id, listed, *ids, gone_id, *ids, keep_id),
-    )
 
 
 async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
