@@ -28,6 +28,7 @@ from dmbot.memory.recall import (
     check_citations,
 )
 from dmbot.memory.store import _load_ontology
+from tests import speed
 from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
 
 AGREED = {7, 8}  # who is recorded now
@@ -799,6 +800,7 @@ class Speed(MemoryTest):
 
         reports: list[str] = []
         bests: list[float] = []
+        busy = speed.slowdown()  # how slow this machine is right now (#2490)
         for audience in (DM_SCREEN, PLAYERS):
             await once(audience)  # the first call warms the connection and the plans
             asked.clear()
@@ -809,7 +811,7 @@ class Speed(MemoryTest):
             tries: list[list[tuple[float, Recall]]] = []
             for _ in range(2):
                 tries.append([await once(audience) for _ in range(7)])
-                if min(ms for ms, _ in tries[-1]) < CEILING_MS:
+                if min(ms for ms, _ in tries[-1]) < speed.allowed(CEILING_MS, busy):
                     break
             runs = min(tries, key=lambda t: min(ms for ms, _ in t))
             times = [ms for ms, _ in runs]
@@ -843,7 +845,10 @@ class Speed(MemoryTest):
         # median and the worst are reported beside it. The ceiling here is 100 ms, not the issue's
         # 50 ms: a shared runner (a best of 56.9 ms was seen twice) is slower than the server. The
         # 50 ms goal stands, and dev1 measures it on the server itself.
-        self.assertLess(max(bests), CEILING_MS, " || ".join(reports))
+        # The ceiling follows how busy the machine was (never below 100 ms, never above ten times
+        # it): a loaded runner is not a slow recall, a slow query plan still is (#2490).
+        ceiling = speed.allowed(CEILING_MS, busy)
+        self.assertLess(max(bests), ceiling, f"ceiling {ceiling:.0f} ms || " + " || ".join(reports))
 
 
 if __name__ == "__main__":
