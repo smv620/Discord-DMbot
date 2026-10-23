@@ -11657,6 +11657,13 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+TIMELINE_STABLE = """
+    -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
+    -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
+    -- keeps its pinned search_path, its owner and its grants. No rows change.
+    ALTER FUNCTION dmbot_web_story_timeline(BIGINT, TEXT) STABLE;
+"""
+
 WEB_IMAGE_LINES = """
     -- The website's transcript lines say which line describes a picture (#2507, after #2450): the
     -- reading page and the downloads tag it "(image)", as the bot's own file does, never "(typed)".
@@ -11966,6 +11973,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
+    ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
 )
 
