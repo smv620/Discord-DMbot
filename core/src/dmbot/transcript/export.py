@@ -16,6 +16,7 @@ import re
 import time
 import unicodedata
 from collections.abc import Collection, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
 from dmbot.transcript.models import (
     OFF_RECORD,
@@ -24,7 +25,7 @@ from dmbot.transcript.models import (
     Line,
     TranscriptSession,
 )
-from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK, Spoken, collapse
+from dmbot.transcript.topics import GAME, OFF_TOPIC, TABLE_TALK, Shown, Spoken, collapse
 
 UNKNOWN_SPEAKER = "Someone"
 _BRACKETS = str.maketrans("", "", "()[]{}")
@@ -72,6 +73,21 @@ HOW_TO_READ = (
 TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}
 
 AS_HEARD, CLEANED = "as-heard", "cleaned"
+
+
+@dataclass(frozen=True, slots=True)
+class Skip:
+    """Where a "[… of off-topic chat skipped]" note is in a cleaned file, and which lines it stands
+    for, without their words (#2567): the website finds them again from the speaker and times."""
+
+    index: int  # the note's place among the file's lines (after the header)
+    speaker: int
+    from_ms: int
+    to_ms: int
+    seconds: int
+    lines: int
+
+
 VERSIONS = (CLEANED, AS_HEARD)
 
 
@@ -298,6 +314,7 @@ def render(
     dms: Collection[int] = (),
     running: bool = False,
     version: str = AS_HEARD,
+    skips: list[Skip] | None = None,
 ) -> str:
     """The whole file. `names`: speaker ID → display name (missing ones show as
     'Someone'); `characters`: speaker ID → the character they play; `dms`: the speakers who are
@@ -317,7 +334,8 @@ def render(
         return f"{name}, DM" if user_id in dms else name
 
     shown: dict[int, tuple[str, str | None]] = {}  # each name cleaned once
-    timed: list[tuple[int, str]] = []  # (when it started, the line)
+    # (when it started, the line, what a skipped note stands for)
+    timed: list[tuple[int, str, Shown | None]] = []
     # The cleaned version hides clearly off-topic talk (#52): each run of it becomes one
     # marker with how long it lasted. The as-heard version keeps everything.
     everything = list(lines)
@@ -359,15 +377,15 @@ def render(
             else label(when, *shown[item.speaker], item.said_as, item.entity, safe=True)
         )  # a skipped note says what it is, with no character
         if item.skipped:  # "[0:12:04] (Mia) [1m 22s of off-topic chat skipped]"
-            timed.append((item.started_ms, f"{who} {item.text}"))
+            timed.append((item.started_ms, f"{who} {item.text}", item))
         else:
-            timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}"))
+            timed.append((item.started_ms, f"{who}: {' '.join(item.text.split())}", None))
     for line in shown_sidebar:  # "[0:12:04] (Sam) [DM Sidebar]: …", "[0:12:09] (DMbot) …"
         asker = DMBOT_NAME if line.sidebar not in QUESTION_KINDS else person(line.user_id)
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join(line.heard.split())
         tag = sidebar_tag(line)
-        timed.append((line.started_ms, f"[{when}] ({asker}) {tag}: {said}"))
+        timed.append((line.started_ms, f"[{when}] ({asker}) {tag}: {said}", None))
     for line in shown_typed:  # "[0:12:06] (Mia) {Cerric} (typed): we take a long rest"
         when = clock((line.started_ms - start_ms) / 1000)
         said = " ".join((line.text if version == CLEANED else line.heard).split())
@@ -378,16 +396,22 @@ def render(
             safe=True,
         )
         tag = IMAGE_TAG if line.image else TYPED_TAG
-        timed.append((line.started_ms, f"{who} {tag}: {said}"))
+        timed.append((line.started_ms, f"{who} {tag}: {said}", None))
     for line in everything:  # "[0:12:04] (Mia was off the record, 20:14 to 20:19)", both versions
         if line.sidebar == OFF_RECORD:
             when = clock((line.started_ms - start_ms) / 1000)
             span = f"{_hhmm(line.started_ms)}\u2013{_hhmm(line.started_ms + line.duration_ms)} UTC"
             who = person(line.user_id)
             who += "," if who.endswith(", DM") else ""  # "(Mia, DM, was off the record, …)"
-            timed.append((line.started_ms, f"[{when}] ({who} {OFF_RECORD_TEXT}, {span})"))
+            timed.append((line.started_ms, f"[{when}] ({who} {OFF_RECORD_TEXT}, {span})", None))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
-    body = [text for _, text in timed]
+    body = [text for _, text, _ in timed]
+    if skips is not None:
+        skips.extend(
+            Skip(n, note.speaker, note.started_ms, note.until_ms, round(note.seconds), note.count)
+            for n, (_, _, note) in enumerate(timed)
+            if note is not None
+        )
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
     ran = (
         f", ran {duration(session.ended_at - session.started_at)}"
