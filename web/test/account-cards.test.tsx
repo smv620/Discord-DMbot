@@ -63,10 +63,10 @@ describe("a campaign's card", () => {
 
   it("says your part in words: you run it, you help run it, you play in it", async () => {
     show();
-    expect(within(await card("The Brynwater Crossing")).getByText(text.youRunIt)).toBeTruthy();
-    expect(within(await card("Shrine of Varrow")).getByText(text.youHelp)).toBeTruthy();
+    expect(within(await card("The Brynwater Crossing")).getByText("You run it")).toBeTruthy();
+    expect(within(await card("Shrine of Varrow")).getByText("You help run it")).toBeTruthy();
     const mine = await card("The Lantern Road");
-    expect(within(mine).getByText(text.youPlay)).toBeTruthy();
+    expect(within(mine).getByText("You play in it")).toBeTruthy();
   });
 
   it("gives a campaign you only play in no DM tools", async () => {

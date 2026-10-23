@@ -1114,9 +1114,7 @@ function CampaignRow({
             {campaign.role === "owner" ? "👑" : campaign.role === "player" ? "🎲" : "🤝"}
           </span>{" "}
           {campaign.role === "owner"
-            ? noLimits
-              ? text.youRunItFree
-              : text.youRunIt
+            ? text.youRunIt
             : campaign.role === "player"
               ? text.youPlay
               : text.youHelp}
@@ -1242,7 +1240,7 @@ function ServersSection({ me }: { me: Me }) {
   const { api } = useShared();
   return (
     <section aria-labelledby="servers-heading" class="panel">
-      <h2 id="servers-heading">{text.serversHeading}</h2>
+      <h3 id="servers-heading">{text.serversHeading}</h3>
       {me.servers.length === 0 ? (
         <p>{text.noServers}</p>
       ) : (
@@ -1366,7 +1364,7 @@ function CharactersSection() {
 function IdSection({ me }: { me: Me }) {
   return (
     <section aria-labelledby="id-heading" class="panel">
-      <h2 id="id-heading">{text.idHeading}</h2>
+      <h3 id="id-heading">{text.idHeading}</h3>
       <p>{text.idLine(me.dmbotId ?? "")}</p>
       <p class="muted small">{text.idNote}</p>
       {me.experiencePoints !== undefined && (
@@ -1482,7 +1480,7 @@ function EmailSection({ hash }: { hash: string }) {
   if (loadFailed && !mine)
     return (
       <section aria-labelledby="email-section-heading" class="panel" id="email">
-        <h2 id="email-section-heading">{text.myEmailHeading}</h2>
+        <h3 id="email-section-heading">{text.myEmailHeading}</h3>
         <p class="warn" role="alert">
           {text.emailLoadFailed}
         </p>
@@ -1527,7 +1525,7 @@ function EmailSection({ hash }: { hash: string }) {
 
   return (
     <section aria-labelledby="email-section-heading" class="panel" id="email">
-      <h2 id="email-section-heading">{text.myEmailHeading}</h2>
+      <h3 id="email-section-heading">{text.myEmailHeading}</h3>
       <p>{mine.address ? text.emailNow(mine.address) : text.emailNone}</p>
       {payment && <p class="small">{text.emailPayment}</p>}
       {mine.pending && (
@@ -1651,7 +1649,7 @@ function MoveSection() {
   const [sent, setSent] = useState(false);
   return (
     <section aria-labelledby="move-heading" class="panel">
-      <h2 id="move-heading">{text.moveHeading}</h2>
+      <h3 id="move-heading">{text.moveHeading}</h3>
       <p>{text.moveText}</p>
       <Notice message={notice} />
       {sent && (
@@ -1693,7 +1691,7 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
   if (entries.length === 0 && done.length === 0) return null;
   return (
     <section aria-labelledby="recording-heading" class="panel">
-      <h2 id="recording-heading">{text.recordingHeading}</h2>
+      <h3 id="recording-heading">{text.recordingHeading}</h3>
       {done.map((line) => (
         <p key={line} class="ok" role="status">
           {line}
@@ -1783,7 +1781,7 @@ function ExportSection() {
   const { busy, notice, run } = useAction();
   return (
     <section aria-labelledby="export-heading" class="panel">
-      <h2 id="export-heading">{text.exportHeading}</h2>
+      <h3 id="export-heading">{text.exportHeading}</h3>
       <p>{text.exportWhat}</p>
       <ActionButton
         busy={busy}
@@ -1826,7 +1824,7 @@ function DeleteSection({
 
   return (
     <section aria-labelledby="delete-heading" class="panel danger">
-      <h2 id="delete-heading">{text.deleteHeading}</h2>
+      <h3 id="delete-heading">{text.deleteHeading}</h3>
       <Notice message={notice} />
       {step === 0 && (
         <button

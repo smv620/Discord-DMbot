@@ -51,7 +51,7 @@ export interface Campaign {
    * from an API older than that: the campaign is then not linked. */
   ref?: string;
   /** The facts on the card (#2460), each left out when there is none: DMbot is listening there
-   * now, the sessions played, hours played (one decimal), player characters claimed, NPCs the
+   * now, the sessions played, hours played (two decimals), player characters claimed, NPCs the
    * person may see, and when the campaign was started (ISO). Missing from an older API. */
   live?: boolean;
   sessions?: number;

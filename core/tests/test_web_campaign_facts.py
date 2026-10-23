@@ -68,12 +68,17 @@ class TheFacts(Base):
         got = (await self.facts())[self.c]
         self.assertEqual((got["sessions"], got["secondsPlayed"]), (2, 5_400))
 
-    async def test_a_session_still_open_now_is_live_but_an_old_open_one_is_not(self) -> None:
-        await self.session_row(1_000, None)  # left open long ago, by a crash
-        self.assertFalse((await self.facts())[self.c]["live"])
-        import time
+    async def active(self) -> None:
+        await self.sql(
+            "INSERT INTO active_sessions (guild_id, campaign_id, voice_channel_id,"
+            " screen_channel_id, started_by, started_at) VALUES (%s, %s, 1, 2, %s, %s)",
+            self.g, self.c, ALICE.id, 1_000,
+        )  # fmt: skip
 
-        await self.session_row(int(time.time()) - 600, None)
+    async def test_live_is_the_active_session_not_an_open_transcript_row(self) -> None:
+        await self.session_row(1_000, None)  # an open row alone (a crash left it) is not live
+        self.assertFalse((await self.facts())[self.c]["live"])
+        await self.active()
         self.assertTrue((await self.facts())[self.c]["live"])
 
     async def test_players_count_claimed_player_characters(self) -> None:
@@ -125,14 +130,19 @@ class TheFacts(Base):
         got = await self.facts()
         self.assertEqual(list(got), [self.c])
 
-    async def test_the_12_hour_edge_of_live(self) -> None:
-        import time
+    async def test_account_gives_a_player_one_player_card(self) -> None:
+        mira = await self.add("Mira", "player_character")
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", BOB.id, mira)
+        bob = await self.signed(BOB)
+        cards = (await me.build_me(self.web, bob, now=NOW))["campaigns"]
+        self.assertEqual([(c["id"], c["role"]) for c in cards], [(self.c, "player")])
 
-        now = int(time.time())
-        await self.session_row(now - 43_200 - 60, None)  # just past 12 hours
-        self.assertFalse((await self.facts())[self.c]["live"])
-        await self.session_row(now - 43_200 + 600, None)  # just inside
-        self.assertTrue((await self.facts())[self.c]["live"])
+    async def test_account_gives_a_dm_who_also_plays_one_dm_card(self) -> None:
+        mira = await self.add("Mira", "player_character")
+        await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", ALICE.id, mira)
+        cards = (await me.build_me(self.web, self.session, now=NOW))["campaigns"]
+        self.assertEqual([c["id"] for c in cards], [self.c])
+        self.assertNotEqual(cards[0]["role"], "player")
 
     async def signed(self, user: Any) -> Session:
         from dmbot.web import sessions

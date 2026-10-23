@@ -150,7 +150,7 @@ export function MyQuestions({ api, version = 0, canWrite = false }: Props) {
   if (!list || list.tickets.length === 0) return null;
   return (
     <section class="panel" aria-labelledby="questions-heading">
-      <h2 id="questions-heading">{text.questionsHeading}</h2>
+      <h3 id="questions-heading">{text.questionsHeading}</h3>
       <p>{list.reply ? text.questionsLead : text.questionsLeadNoEmail}</p>
       <ul class="questions">
         {list.tickets.map((question, i) => (

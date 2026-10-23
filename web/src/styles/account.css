@@ -63,7 +63,8 @@
     margin: 0;
   }
 
-  .account .panel h2 {
+  .account .panel h2,
+  .account .panel h3 {
     font-size: var(--text-lg);
     margin: 0;
   }
@@ -449,7 +450,8 @@
     overflow: hidden;
   }
 
-  .account .danger h2 {
+  .account .danger h2,
+  .account .danger h3 {
     color: var(--danger);
   }
 

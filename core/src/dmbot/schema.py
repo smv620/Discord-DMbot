@@ -10550,9 +10550,9 @@ CAMPAIGN_FACTS = """
     -- plays in (claimed a player character), in one read, not one per campaign. NULL when the
     -- caller is not in the server, like the other web doors. A non-DM's NPC count leaves out what
     -- the players cannot see (a hidden entry, or one whose own name is secret), exactly as the
-    -- Names list does. `live` is a session that started in the last 12 hours and has not ended: a
-    -- row left open by a crash must not read as "listening now" for ever. The seconds count the
-    -- sessions that ended, those whose transcripts were deleted by retention included.
+    -- Names list does. `live` is DMbot's own record of the session it is in right now
+    -- (active_sessions), not an open transcript row: a crash leaves one of those open. The seconds
+    -- count the sessions that ended, those whose transcripts were deleted by retention included.
     CREATE FUNCTION dmbot_web_campaign_facts(g BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -10571,9 +10571,8 @@ CAMPAIGN_FACTS = """
                 'players', x.players, 'npcs', x.npcs) ORDER BY lower(x.name), x.id)
             FROM (
                 SELECT k.id, k.name, k.created_at, k.last_played_at, d.user_id IS NOT NULL AS is_dm,
-                    EXISTS (SELECT 1 FROM transcript_sessions t
-                            WHERE t.guild_id = g AND t.campaign_id = k.id
-                              AND t.ended_at IS NULL AND t.started_at > now_s - 43200) AS live,
+                    EXISTS (SELECT 1 FROM active_sessions a
+                            WHERE a.guild_id = g AND a.campaign_id = k.id) AS live,
                     (SELECT count(*) FROM transcript_sessions t
                       WHERE t.guild_id = g AND t.campaign_id = k.id
                         AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) AS sessions,
@@ -10829,7 +10828,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
-    ("0191_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
+    ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

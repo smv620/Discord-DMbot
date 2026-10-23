@@ -220,9 +220,8 @@ export const text = {
   notPlayed: "Not played yet",
   active: "Active",
   paused: "Paused",
-  youRunIt: "Uses your hours",
-  // Free access with no limits has no hours to use (#824).
-  youRunItFree: "You run it",
+  // The three roles, same words on every card (#2460).
+  youRunIt: "You run it",
   youHelp: "You help run it",
   youPlay: "You play in it",
   // The card's facts (#2460). Keep these words equal to the Discord campaign list's; where Discord has
