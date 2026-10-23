@@ -190,16 +190,19 @@ function ActionButton({
   busy,
   onClick,
   kind = "primary",
+  label,
   children,
 }: {
   busy: boolean;
   onClick: () => void;
   kind?: "primary" | "secondary" | "danger";
+  /** A spoken name that starts with the visible words but says which thing, when there are several. */
+  label?: string;
   children: ComponentChildren;
 }) {
   const classes = kind === "primary" ? "button" : `button ${kind}`;
   return (
-    <button type="button" class={classes} disabled={busy} aria-busy={busy} onClick={onClick}>
+    <button type="button" class={classes} disabled={busy} aria-busy={busy} aria-label={busy ? undefined : label} onClick={onClick}>
       {busy ? text.busy : children}
     </button>
   );
@@ -1222,24 +1225,34 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
   const [email, setEmail] = useState("");
   const [said, setSaid] = useState<string | null>(null);
   const saidRef = useRef<HTMLParagraphElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const [badEmail, setBadEmail] = useState(false);
   const words = handoverOwnerWords;
   const open = campaign.handover ?? null;
+  const errorId = `handover-email-error-${campaign.id}`;
   const explain = (error: ApiError): string | null => {
     if (error.kind === "not-found") void refresh();
+    setBadEmail(error.kind === "bad-email");
+    if (error.kind === "bad-email") keepFocus(() => emailRef.current);
     return words.problem[error.kind] ?? words.problem["server"] ?? null;
   };
   return (
     <div class="stack">
-      <Notice message={notice} />
+      <div id={errorId}>
+        <Notice message={notice} />
+      </div>
+      {/* One status line: what was just done, or the open offer once there is one. */}
       <p class="small" role="status" tabIndex={-1} ref={saidRef}>
-        {said}
+        {open ? words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt)) : said}
       </p>
       {open ? (
         <>
-          <p class="small">{words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt))}</p>
+          <p class="muted small">{words.elsewhere}</p>
           <ActionButton
             busy={busy}
             kind="secondary"
+            label={words.takeBackFor(campaign.name)}
             onClick={() =>
               void run(async () => {
                 await api.takeBackHandover!(refId);
@@ -1273,7 +1286,21 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
             <legend>{words.question(campaign.name)}</legend>
             <label class="field">
               {words.label}
-              <input type="email" autocomplete="off" value={email} onInput={(e) => setEmail((e.target as HTMLInputElement).value)} />
+              <input
+                ref={emailRef}
+                type="email"
+                inputMode="email"
+                autocomplete="off"
+                autoCapitalize="none"
+                spellcheck={false}
+                aria-invalid={badEmail}
+                aria-describedby={badEmail ? errorId : undefined}
+                value={email}
+                onInput={(e) => {
+                  setEmail((e.target as HTMLInputElement).value);
+                  setBadEmail(false);
+                }}
+              />
             </label>
             <p class="muted small">{words.note}</p>
           </fieldset>
@@ -1281,7 +1308,16 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
             <button type="submit" class="button" disabled={busy || email.trim() === ""} aria-busy={busy}>
               {busy ? words.sending : words.send}
             </button>
-            <button type="button" class="button secondary" disabled={busy} onClick={() => setAsking(false)}>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                setAsking(false);
+                setBadEmail(false);
+                keepFocus(() => startRef.current);
+              }}
+            >
               {words.cancel}
             </button>
           </div>
@@ -1290,10 +1326,12 @@ function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string 
         <button
           type="button"
           class="button secondary"
+          ref={startRef}
           aria-label={words.buttonFor(campaign.name)}
           onClick={() => {
             setAsking(true);
             setSaid(null);
+            keepFocus(() => emailRef.current);
           }}
         >
           {words.button}

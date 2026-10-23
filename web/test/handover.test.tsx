@@ -262,8 +262,9 @@ describe("the owner's side: hand over by email", () => {
     await waitFor(() => expect(calls(api, "offerHandover")).toEqual(["offerHandover:100.cmp1:new@example.com"]));
     // the list is read again: an open offer now shows its end and Take back (never the address)
     expect(await screen.findByText(/We emailed the offer on/)).toBeTruthy();
-    expect(screen.queryByText(/new@example\.com/)).toBeNull();
-    expect(screen.getByText(o.emailed)).toBeTruthy();
+    expect(screen.queryByText(/new@example\.com/)).toBeNull(); // the address is never shown back
+    expect(screen.getByText(o.elsewhere)).toBeTruthy();
+    expect(screen.getByRole("button", { name: o.takeBackFor("The Brynwater Crossing") })).toBeTruthy();
   });
 
   it("takes an open offer back", async () => {
@@ -271,7 +272,7 @@ describe("the owner's side: hand over by email", () => {
     fireEvent.click(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") }));
     fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "new@example.com" } });
     fireEvent.click(within(row).getByRole("button", { name: o.send }));
-    fireEvent.click(await screen.findByRole("button", { name: o.takeBack }));
+    fireEvent.click(await screen.findByRole("button", { name: o.takeBackFor("The Brynwater Crossing") }));
     await waitFor(() => expect(calls(api, "takeBackHandover")).toEqual(["takeBackHandover:100.cmp1"]));
     expect(await screen.findByText(o.takenBack)).toBeTruthy();
     expect(screen.getByRole("button", { name: o.buttonFor("The Brynwater Crossing") })).toBeTruthy();
@@ -283,6 +284,7 @@ describe("the owner's side: hand over by email", () => {
     fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "bad" } });
     fireEvent.click(within(row).getByRole("button", { name: o.send }));
     expect(await within(row).findByText(o.problem["bad-email"] as string)).toBeTruthy();
+    expect(within(row).getByLabelText(o.label).getAttribute("aria-invalid")).toBe("true");
     fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "many@example.com" } });
     fireEvent.click(within(row).getByRole("button", { name: o.send }));
     expect(await within(row).findByText(o.problem["too-soon"] as string)).toBeTruthy();
