@@ -372,10 +372,6 @@ class CampaignStore:
         # Restoring makes the importer an owner, which takes a slot. Checked only when the
         # bot enforces plans (DMBOT_ENFORCE_PLANS, #437).
         self._restore_needs_slot = restore_needs_slot
-
-    @property
-    def db(self) -> Database:
-        return self._db
         self._sections: dict[str, ExportSection] = {}
         self.register_section(_DMSection())
         self.register_section(_OptionalRulesSection())
@@ -412,6 +408,10 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             await self._require(conn, guild_id, campaign_id)
             return await self._sections["confirmations"].dump(conn, guild_id, campaign_id)
+
+    @property
+    def db(self) -> Database:
+        return self._db
 
     def register_section(self, section: ExportSection) -> None:
         """Include another feature's per-campaign data in backups and deletes."""

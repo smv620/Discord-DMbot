@@ -582,7 +582,9 @@ def create_app(
         )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
-    handover_limit = RateLimit(60, count=6)  # offers by email, a minute's worth, by account
+    handover_limit = RateLimit(  # offers by email, a minute's worth, by account
+        60, count=6, clock=lambda: float(clock())
+    )
 
     async def mail_change_link(user_id: int, new: str, token: str) -> bool:
         """Mail the confirm link to the NEW address. False if it could not be sent."""
