@@ -472,6 +472,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [emailOn, setEmailOn] = useState<boolean | null>(null);
   // The Plot check (#2124): why Approve waits, and words its "Fix the recap" puts in the fix box.
   const [plotWhy, setPlotWhy] = useState<string | null>(null);
+  const [plotNonce, setPlotNonce] = useState(0);
   const [fixPrefill, setFixPrefill] = useState<{ n: number; text: string } | null>(null);
   // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
   const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
@@ -856,6 +857,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           refId={recap.ref}
           text={recap.text}
           onBlocked={setPlotWhy}
+          reloadKey={plotNonce}
           onFix={(text) => setFixPrefill((was) => ({ n: (was?.n ?? 0) + 1, text }))}
         />
       )}
@@ -866,6 +868,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           onRecap={setRecap}
           pageFocus={() => headingRef.current}
           blockedBy={plotWhy}
+          onPlotOpen={() => setPlotNonce((n) => n + 1)}
         />}
       {!editing && (
         <RecapShareControls

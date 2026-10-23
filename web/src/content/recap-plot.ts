@@ -63,18 +63,40 @@ export const plotWords = {
   proposalSaved: "Saved as your note.",
   proposalDeclined: "Not saved.",
   chatClose: "Close the chat",
+  thinking: "DMbot is thinking…",
+  chatSlow: "DMbot is taking a long time to answer. Your message is kept. Open this page again in a minute.",
+  // Why DMbot could not answer a message (the short codes the bot writes), so the DM can send it again.
+  chatFailed: {
+    bad_answer: "DMbot's answer didn't pass its checks, so it was thrown away. Send your message again, in other words.",
+    no_answer: "DMbot had no answer to that. Send it again, in other words.",
+    stale: "The recap changed while DMbot was answering. Read the questions again.",
+    unavailable: "DMbot couldn't answer just now. Send your message again in a minute.",
+    failed: "That didn't work. Send your message again.",
+  } as Record<string, string>,
+  proposalState: {
+    open: "",
+    saving: "Saving…",
+    saved: "Saved as your note.",
+    declined: "Not saved.",
+    failed: "That couldn't be saved. Nothing was changed.",
+  } as Record<string, string>,
+  unavailable: "The plot check isn't available right now. You can approve without it.",
   versions: "Earlier approved versions",
-  versionLine: (version: number, who: string, when: string): string => `Version ${version}, approved by ${who} on ${when}`,
+  versionLine: (version: number, when: string): string => `Version ${version}, approved on ${when}`,
   noVersions: "No version has been approved yet.",
   waitingOn: (n: number): string =>
     (n === 1 ? "Answer the question in the Plot check before you approve." : `Answer the ${n} questions in the Plot check before you approve.`) +
     " Leave it as is counts as an answer.",
   waitingCheck: "The Plot check is still running. You can approve when it is done.",
   problem: {
-    "not-allowed": "Only the DM can answer this. Ask your DM.",
-    "too-soon": "One moment. Try again in a few seconds.",
+    "too-soon": "This talk is long enough. Answer the question, or leave it as it is.",
     "not-found": "That question is already gone. The list is up to date now.",
     "bad-text": "That message is empty or too long. Shorten it and try again.",
+    "bad-answer": "That answer can't be used. Reload the page and try again.",
+    stale: "The recap changed, so DMbot checked it again. The questions below are the new ones.",
+    // (the API's `busy` reaches the page as "slow-down": DMbot is still answering the last message)
+    "slow-down": "DMbot is still answering your last message, or is busy. Wait a moment, then send again.",
+    "not-allowed": "That can't be done now: the plot check is switched off, or that note was already answered. Reload the page to see where it is.",
     network: "We couldn't reach DMbot. Nothing was changed. Try again in a moment.",
     server: "That didn't work, and nothing was changed. Try again in a moment.",
   } as Record<string, string>,

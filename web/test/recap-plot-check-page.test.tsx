@@ -5,10 +5,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import Recaps from "../src/account/Recaps";
 import { plotWords as w } from "../src/content/recap-plot";
-import { approveWords } from "../src/content/recap-approve";
+import { approveErrors, approveWords } from "../src/content/recap-approve";
 
 const live = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/recap-words", async (original) => {
@@ -73,4 +74,22 @@ it("is held with its What's new entry, and goes live with it", async () => {
   const { PLOT_CHECK_LIVE: real } = await vi.importActual<typeof import("../src/content/recap-words")>("../src/content/recap-words");
   const { held } = await import("../src/content/whats-new");
   expect(held.map((h) => h.title).includes("Plot check on a recap")).toBe(!real);
+});
+
+it("when Approve says a question is still open (plot_open), says so and reads the check again", async () => {
+  live.on = true;
+  const api = mockApi("table");
+  const real = api.plotCheck!;
+  let reads = 0;
+  // The first look says unavailable (so Approve is open); a question has landed since.
+  api.plotCheck = async (ref) => (reads++ === 0 ? { state: "unavailable", approveBlocked: false, version: 1, textHash: "h", issues: [], versions: [] } : real(ref));
+  api.approveRecap = async () => {
+    throw new ApiError("plot-open");
+  };
+  render(<Recaps api={api} path={`/account/recaps/${draft.ref}`} />);
+  await screen.findByText(w.unavailable);
+  fireEvent.click(await screen.findByRole("button", { name: approveWords.postText }));
+  expect(await screen.findByText(approveErrors["plot-open"] as string)).toBeTruthy();
+  await waitFor(() => expect(screen.getAllByRole("group").length).toBeGreaterThan(1)); // the questions are there now
+  await waitFor(() => expect((screen.getByRole("button", { name: approveWords.postText }) as HTMLButtonElement).disabled).toBe(true));
 });

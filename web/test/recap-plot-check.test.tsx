@@ -86,26 +86,43 @@ describe("the plot check", () => {
     expect(calls(api, "answerPlotIssue")).toHaveLength(0);
   });
 
-  it("saves a suggested note only on Save, and Not that saves nothing", async () => {
-    const { api, blocked } = await open();
+  it("talks it through: the message waits, DMbot answers with a note to keep, and nothing is saved by asking", async () => {
+    const { api } = await open();
     fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
     fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "He was raised." } });
     fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
-    expect(await within(issue(1)).findByText(/Ulfgar: alive again from session 7/)).toBeTruthy();
-    expect(calls(api, "decidePlotProposal")).toHaveLength(0); // nothing saved by asking
-    fireEvent.click(within(issue(1)).getByRole("button", { name: `${w.notThat}: Ulfgar: alive again from session 7` }));
-    expect(await within(issue(1)).findByText(w.proposalDeclined)).toBeTruthy();
+    expect(await within(issue(1)).findByText(w.thinking)).toBeTruthy(); // the bot answers a little later
+    expect(await within(issue(1)).findByText(/Ulfgar: alive again from session 7/, undefined, { timeout: 8000 })).toBeTruthy();
+    expect(calls(api, "plotChatSend")).toEqual(["plotChatSend:" + draft.ref + ":i1"]);
+    expect(calls(api, "decidePlotProposal")).toHaveLength(0);
+  }, 15_000);
+
+  it("saves a note only on Save (it reads Saving…, then Saved), and Not that saves nothing", async () => {
+    const { api } = await open();
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+    fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "He was raised." } });
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
+    const notThat = await within(issue(1)).findByRole("button", { name: `${w.notThat}: Ulfgar: alive again from session 7` }, { timeout: 8000 });
+    fireEvent.click(notThat);
+    expect(await within(issue(1)).findByText(w.proposalState.declined!)).toBeTruthy();
     expect(calls(api, "decidePlotProposal")[0]).toContain(":decline");
-    expect(blocked).not.toHaveBeenLastCalledWith(null);
-    // a second message, saved this time: the question is answered "the story changed"
+    // a second message, saved this time
     fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "He really was." } });
     fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
-    const saves = await within(issue(1)).findAllByRole("button", { name: new RegExp(`^${w.save}:`) });
+    const saves = await within(issue(1)).findAllByRole("button", { name: new RegExp(`^${w.save}:`) }, { timeout: 8000 });
     fireEvent.click(saves[0]!);
-    await waitFor(() => expect(within(issue(1)).getByText(w.yourAnswer.changed!)).toBeTruthy());
     expect(calls(api, "decidePlotProposal")[1]).toContain(":save");
-    void blocked;
-  });
+    expect(await within(issue(1)).findByText(w.proposalState.saving!)).toBeTruthy();
+    expect(await within(issue(1)).findByText(w.proposalState.saved!, undefined, { timeout: 8000 })).toBeTruthy();
+  }, 30_000);
+
+  it("says DMbot could not answer a message, so it can be sent again", async () => {
+    await open();
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+    fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "please fail" } });
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
+    expect(await within(issue(1)).findByText(w.chatFailed.no_answer!, undefined, { timeout: 8000 })).toBeTruthy();
+  }, 15_000);
 
   it("says Checking the change… after an edit, then shows the new questions", async () => {
     const { view, api } = await open("one");
@@ -137,7 +154,8 @@ describe("the plot check", () => {
 
   it("lists the approved versions", async () => {
     await open();
-    expect(screen.getByText(w.versionLine(1, "You", "2026-10-01"))).toBeTruthy();
+    expect(screen.getByText(/^Version 1, approved on /)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("100000000000000001"); // never an account number
   });
 });
 
@@ -156,24 +174,37 @@ describe("the real client", () => {
     const seen: string[] = [];
     const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
       seen.push(`${init?.method ?? "GET"} ${new URL(url).pathname} ${init?.body ?? ""}`);
-      return new Response(JSON.stringify({ thread: [] }), { status: 200 });
+      return new Response(JSON.stringify({ messages: [] }), { status: 200 });
     }) as typeof fetch);
     await api.plotCheck!("5.abc.1700");
     await api.answerPlotIssue!("5.abc.1700", "i1", { kind: "leave" });
-    await api.plotChat!("5.abc.1700", "i1", "hi");
+    await api.plotChatSend!("5.abc.1700", "i1", "hi");
+    await api.plotChat!("5.abc.1700", "i1");
     await api.decidePlotProposal!("5.abc.1700", "i1", "p1", "save");
     expect(seen).toEqual([
       "GET /me/recaps/5.abc.1700/plot ",
       'POST /me/recaps/5.abc.1700/plot/i1/answer {"kind":"leave"}',
-      'POST /me/recaps/5.abc.1700/plot/i1/chat {"message":"hi"}',
+      'POST /me/recaps/5.abc.1700/plot/i1/chat {"text":"hi"}',
+      "GET /me/recaps/5.abc.1700/plot/i1/chat ",
       'POST /me/recaps/5.abc.1700/plot/i1/proposals/p1 {"action":"save"}',
     ]);
+  });
+
+  it.each([
+    [422, "bad_answer", "bad-answer"],
+    [409, "stale", "stale"],
+    [409, "plot_open", "plot-open"],
+    [429, "too_soon", "too-soon"],
+    [409, "not_allowed", "not-allowed"],
+  ])("reads %s %s as %s", async (status, code, kind) => {
+    const api = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: code }), { status })) as typeof fetch);
+    await expect(api.answerPlotIssue!("5.abc.1700", "i1", { kind: "leave" })).rejects.toMatchObject({ kind });
   });
 });
 
 // Last in the file on purpose: these use fake timers, and axe (above) must run on real ones.
 describe("Approve never stays locked", () => {
-  const never = { state: "checking" as const, approveBlocked: true, issues: [], versions: [] };
+  const never = { state: "checking" as const, approveBlocked: true, version: 1, textHash: "h", issues: [], versions: [] };
 
   async function watch(look: () => Promise<typeof never>, afterOpen: () => void = () => {}) {
     live.on = true;
@@ -211,5 +242,31 @@ describe("Approve never stays locked", () => {
     expect(looks).toBeGreaterThan(5); // it did not stop at the first failure
     expect(blocked).toHaveBeenLastCalledWith(null);
     expect(screen.getByText(w.gaveUp)).toBeTruthy();
+  });
+});
+
+describe("what the real API can say", () => {
+  it("never holds Approve when the check is unavailable, and says so", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    api.plotCheck = async () => ({ state: "unavailable", approveBlocked: false, version: 1, textHash: "h", issues: [], versions: [] });
+    const blocked = vi.fn();
+    render(<RecapPlotCheck api={api} refId={draft.ref} text="x" onBlocked={blocked} onFix={() => {}} />);
+    expect(await screen.findByText(w.unavailable)).toBeTruthy();
+    expect(blocked).not.toHaveBeenCalledWith(expect.stringContaining("Plot check"));
+  });
+
+  it("reads the check again when an answer finds the recap changed (stale)", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    api.answerPlotIssue = async () => {
+      throw new ApiError("stale");
+    };
+    render(<RecapPlotCheck api={api} refId={draft.ref} text="x" onBlocked={() => {}} onFix={() => {}} />);
+    await screen.findByRole("heading", { name: w.heading });
+    const before = calls(api, "plotCheck").length;
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.leave, 1) }));
+    expect(await within(issue(1)).findByText(w.problem.stale!)).toBeTruthy();
+    await waitFor(() => expect(calls(api, "plotCheck").length).toBeGreaterThan(before));
   });
 });

@@ -41,7 +41,7 @@ import type {
   MyNpcNote,
   NpcPage,
 } from "./api";
-import { ApiError, type PlotIssue } from "./api";
+import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -713,26 +713,29 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const plotText = new Map<string, string>();
   const plotLooks = new Map<string, number>();
   const plotIssues = new Map<string, PlotIssue[]>();
+  const plotTalk = new Map<string, PlotMessage[]>(); // the talk about each question
+  const plotAnswerIn = new Map<string, number>(); // looks left before PlotBot answers
+  const plotSavingSeen = new Set<string>(); // notes that have been read once as "saving"
   const seedPlot = (): PlotIssue[] => [
     {
       id: "i1",
       kind: "dead_acts",
       level: "high",
+      sentence: 1,
       sentenceText: "Ulfgar opened the gate.",
       reason: "Ulfgar died in session 6.",
       source: { text: "Ulfgar fell to the ghoul at the bridge.", session: 6 },
       answer: null,
-      thread: [],
     },
     {
       id: "i2",
       kind: "item_twice",
       level: "medium",
+      sentence: 2,
       sentenceText: "Mara kept the silver key.",
       reason: "The silver key was last with Brannoch.",
       source: { text: "Brannoch pocketed the silver key.", session: 5 },
       answer: null,
-      thread: [],
     },
   ];
   const voiceLooks = new Map<string, { looks: number; size: number }>();
@@ -1512,8 +1515,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         ],
       };
     },
-    // The Plot check (#2124): two questions the first time; a recap whose text changed shows
-    // "checking" for one look, then the new question list. Answers and chats are kept per recap.
+    // The Plot check (#2124; core #2122, #2123): two questions the first time; a recap whose text changed
+    // shows "checking" for one look, then the new question list. A DM's message is "waiting" for one look,
+    // then PlotBot's answer is there with a suggested note; Save reads "saving" for one look, then "saved".
     async plotCheck(ref) {
       calls.push(`plotCheck:${ref}`);
       await reachable();
@@ -1529,15 +1533,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const looks = plotLooks.get(ref);
       if (looks !== undefined && looks < 1) {
         plotLooks.set(ref, looks + 1);
-        return { state: "checking" as const, approveBlocked: true, issues: [], versions: [] };
+        return { state: "checking" as const, approveBlocked: true, version: 2, textHash: "h", issues: [], versions: [] };
       }
       const issues = plotIssues.get(ref) ?? seedPlot();
       plotIssues.set(ref, issues);
       return {
         state: "ready" as const,
         approveBlocked: issues.some((i) => i.answer === null),
+        version: 2,
+        textHash: "h",
         issues: issues.map((i) => ({ ...i })),
-        versions: [{ version: 1, acceptedBy: "You", acceptedAt: "2026-10-01" }],
+        versions: [{ version: 1, acceptedBy: "100000000000000001", acceptedAt: 1790000000 }],
       };
     },
     async answerPlotIssue(ref, issue, answer) {
@@ -1549,35 +1555,81 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       found.answer = answer.note ? { kind: answer.kind, note: answer.note } : { kind: answer.kind };
       return { ...found };
     },
-    async plotChat(ref, issue, message) {
+    async plotChatSend(ref, issue, text) {
+      calls.push(`plotChatSend:${ref}:${issue}`);
+      await reachable();
+      signedIn();
+      if (!(plotIssues.get(ref) ?? []).some((i) => i.id === issue)) throw new ApiError("not-found");
+      if (text.trim() === "" || text.length > 1000) throw new ApiError("bad-text");
+      const key = `${ref}:${issue}`;
+      const talk = plotTalk.get(key) ?? [];
+      if (talk.some((m) => m.role === "dm" && m.state === "waiting")) throw new ApiError("slow-down");
+      if (talk.filter((m) => m.role === "dm").length >= 15) throw new ApiError("too-soon");
+      plotTalk.set(key, [...talk, { id: `m${talk.length}`, role: "dm", text, state: "waiting", error: "", proposals: [], at: 1790000000 + talk.length }]);
+      plotAnswerIn.set(key, 1); // PlotBot's answer shows on the next look
+    },
+    async plotChat(ref, issue) {
       calls.push(`plotChat:${ref}:${issue}`);
       await reachable();
       signedIn();
-      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
-      if (!found) throw new ApiError("not-found");
-      if (message.trim() === "") throw new ApiError("bad-text");
-      found.thread = [
-        ...found.thread,
-        { from: "dm", text: message },
-        {
-          from: "plotbot",
-          text: "Thanks. If Ulfgar is alive again from session 7, I can suggest a note. You decide.",
-          proposal: { id: `p${found.thread.length}`, text: "Ulfgar: alive again from session 7", state: "open" },
-        },
-      ];
-      return found.thread.map((l) => ({ ...l }));
+      const key = `${ref}:${issue}`;
+      let talk = plotTalk.get(key) ?? [];
+      const left = plotAnswerIn.get(key);
+      if (left !== undefined) {
+        if (left > 0) plotAnswerIn.set(key, left - 1);
+        else {
+          plotAnswerIn.delete(key);
+          // The first message gets an answer with a suggested note; "fail" in the words makes the bot give up.
+          const asked = talk.filter((m) => m.role === "dm" && m.state === "waiting");
+          talk = talk.map((m) => (m.role === "dm" && m.state === "waiting" ? { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" } : m));
+          if (asked.length > 0 && !/fail/.test(asked[0]!.text))
+            talk = [
+              ...talk,
+              {
+                id: `b${talk.length}`,
+                role: "bot",
+                text: "Thanks. If Ulfgar is alive again from session 7, I can suggest a note. You decide.",
+                state: "done",
+                error: "",
+                proposals: [{ id: `p${talk.length}`, kind: "condition", label: "Ulfgar: alive again from session 7", state: "open" }],
+                at: 1790000100 + talk.length,
+              },
+            ];
+        }
+      }
+      // A note being saved reads "saving" on the first look and "saved" on the one after.
+      talk = talk.map((m) => ({
+        ...m,
+        proposals: m.proposals.map((p) => {
+          if (p.state !== "saving") return p;
+          const seen = plotSavingSeen.has(p.id);
+          plotSavingSeen.add(p.id);
+          return seen ? { ...p, state: "saved" as const } : p;
+        }),
+      }));
+      plotTalk.set(key, talk);
+      return talk.map((m) => ({ ...m, proposals: m.proposals.map((p) => ({ ...p })) }));
     },
     async decidePlotProposal(ref, issue, proposal, action) {
       calls.push(`decidePlotProposal:${ref}:${issue}:${proposal}:${action}`);
       await reachable();
       signedIn();
-      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
+      const key = `${ref}:${issue}`;
+      let found: PlotProposal | undefined;
+      plotTalk.set(
+        key,
+        (plotTalk.get(key) ?? []).map((m) => ({
+          ...m,
+          proposals: m.proposals.map((p) => {
+            if (p.id !== proposal) return p;
+            if (p.state !== "open") throw new ApiError("not-allowed");
+            found = { ...p, state: action === "save" ? "saving" : "declined" };
+            return found;
+          }),
+        })),
+      );
       if (!found) throw new ApiError("not-found");
-      for (const line of found.thread) {
-        if (line.proposal?.id === proposal) line.proposal.state = action === "save" ? "saved" : "declined";
-      }
-      if (action === "save") found.answer = { kind: "changed" };
-      return { ...found, thread: found.thread.map((l) => ({ ...l })) };
+      return found;
     },
     async answerNameCheck(ref, id, answer) {
       calls.push(`answerNameCheck:${ref}:${id.slice(0, 1)}:${JSON.stringify(answer)}`);

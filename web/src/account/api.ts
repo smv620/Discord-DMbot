@@ -549,28 +549,47 @@ export interface NameCheck {
 }
 /** The Plot check of a recap (#2124; core #2122, #2123): PlotBot's questions, shown to the DM only. */
 export type PlotAnswerKind = "fix" | "changed" | "fine" | "leave";
-export interface PlotChatLine {
-  from: "dm" | "plotbot";
-  text: string;
-  /** A change PlotBot suggests keeping; nothing is saved unless the DM presses Save. */
-  proposal?: { id: string; text: string; state: "open" | "saved" | "declined" };
-}
 export interface PlotIssue {
   id: string;
   kind: string;
   level: "high" | "medium" | "low";
+  /** The recap sentence's number, and its words. */
+  sentence: number;
   sentenceText: string;
   reason: string;
   source: { text: string; session: number | null };
   answer: { kind: PlotAnswerKind; note?: string } | null;
-  thread: PlotChatLine[];
 }
 export interface PlotCheck {
-  state: "checking" | "ready";
-  /** The API's own word on whether Approve must wait; the page also counts unanswered questions. */
+  /** `unavailable`: the check can't run (switched off, or the bot didn't pick it up); it never holds Approve. */
+  state: "checking" | "ready" | "unavailable";
+  /** As of this read; the page also counts the questions it has seen answered. */
   approveBlocked: boolean;
+  version: number;
+  /** A fingerprint of the words that were checked. */
+  textHash: string;
   issues: PlotIssue[];
-  versions: { version: number; acceptedBy: string; acceptedAt: string }[];
+  /** Earlier approved versions. `acceptedBy` is an account number: the page never shows it. */
+  versions: { version: number; acceptedBy: string; acceptedAt: number }[];
+}
+/** A change PlotBot suggests keeping; nothing is saved unless the DM presses Save. */
+export interface PlotProposal {
+  id: string;
+  kind: string;
+  label: string;
+  /** `saving`: Save was pressed and the bot is making the change. */
+  state: "open" | "saving" | "saved" | "declined" | "failed";
+}
+/** One message of the DM's talk with PlotBot about one question (#2123). A DM message is `waiting` or
+ * `working` until the bot has answered it, and `failed` with a short code when it could not. */
+export interface PlotMessage {
+  id: string;
+  role: "dm" | "bot";
+  text: string;
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  proposals: PlotProposal[];
+  at: number;
 }
 
 export interface NameCheckList {
@@ -1159,6 +1178,9 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "bad-answer" // the Plot check's answer was not one it takes (#2122)
+  | "stale" // the recap changed since its Plot check (#2122)
+  | "plot-open" // Approve waits for the Plot check's open questions (#2122)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1353,10 +1375,12 @@ export interface AccountApi {
   /** The Plot check (#2124). Missing from an API older than #2122. */
   plotCheck?(ref: string): Promise<PlotCheck>;
   answerPlotIssue?(ref: string, issue: string, answer: { kind: PlotAnswerKind; note?: string }): Promise<PlotIssue>;
-  /** Talk an issue through: the DM's message goes in, the thread comes back with PlotBot's reply. */
-  plotChat?(ref: string, issue: string, message: string): Promise<PlotChatLine[]>;
+  /** The DM's message about one question: queued for PlotBot, who answers a little later. */
+  plotChatSend?(ref: string, issue: string, text: string): Promise<void>;
+  /** The talk about one question, oldest first; ask again while a message is waiting. */
+  plotChat?(ref: string, issue: string): Promise<PlotMessage[]>;
   /** Save or decline a suggested note; saving also answers the issue "the story changed". */
-  decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotIssue>;
+  decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotProposal>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -1450,6 +1474,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  bad_answer: "bad-answer",
+  stale: "stale",
+  plot_open: "plot-open",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1876,18 +1903,19 @@ export function httpApi(
         `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/answer`,
         answer,
       )) as PlotIssue,
-    plotChat: async (ref, issue, message) =>
-      ((await call(
-        "POST",
-        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`,
-        { message },
-      )) as { thread: PlotChatLine[] }).thread,
+    plotChatSend: async (ref, issue, text) => {
+      await call("POST", `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`, { text });
+    },
+    plotChat: async (ref, issue) =>
+      ((await call("GET", `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`)) as {
+        messages: PlotMessage[];
+      }).messages,
     decidePlotProposal: async (ref, issue, proposal, action) =>
       (await call(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/proposals/${encodeURIComponent(proposal)}`,
         { action },
-      )) as PlotIssue,
+      )) as PlotProposal,
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
     answerNameCheck: async (ref, id, answer) => {

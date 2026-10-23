@@ -9,8 +9,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { PLOT_CHAT_MAX_LETTERS, PLOT_NOTE_MAX_LETTERS, plotWords as words } from "../content/recap-plot";
+import { shortDateTime } from "../content/account";
 import { PLOT_CHECK_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { ApiError, type AccountApi, type PlotAnswerKind, type PlotCheck, type PlotIssue } from "./api";
+import { ApiError, type AccountApi, type PlotAnswerKind, type PlotCheck, type PlotIssue, type PlotMessage } from "./api";
 import { keepFocus } from "./focus";
 
 const POLL_MS = 2000;
@@ -22,6 +23,7 @@ export default function RecapPlotCheck({
   text,
   onBlocked,
   onFix,
+  reloadKey = 0,
 }: {
   api: AccountApi;
   refId: string;
@@ -31,6 +33,8 @@ export default function RecapPlotCheck({
   onBlocked: (why: string | null) => void;
   /** "Fix the recap": the words to put in the fix box. */
   onFix: (words: string) => void;
+  /** Changes when the page should read the check again (Approve said a question is still open). */
+  reloadKey?: number;
 }) {
   const [check, setCheck] = useState<PlotCheck | null>(null);
   const [failed, setFailed] = useState(false);
@@ -64,6 +68,11 @@ export default function RecapPlotCheck({
     if (live) void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, refId]);
+
+  useEffect(() => {
+    if (live && reloadKey > 0) void read();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
 
   // An edit: say so, and look again until the check is ready.
   useEffect(() => {
@@ -127,6 +136,7 @@ export default function RecapPlotCheck({
 
   const fail = (id: string, error: unknown) => {
     const kind = error instanceof ApiError ? error.kind : "server";
+    if (kind === "stale" || kind === "not-found") void read(); // the check moved on: show what is true now
     setProblems((was) => ({ ...was, [id]: words.problem[kind] ?? words.problem.server ?? "" }));
   };
   const keep = (next: PlotIssue) => {
@@ -164,8 +174,9 @@ export default function RecapPlotCheck({
         {checking && !gaveUp ? (changed.current ? words.checkingChange : words.checking) : said}
       </p>
       {gaveUp && <p class="note" role="status">{words.gaveUp}</p>}
-      {!checking && check.issues.length === 0 && <p>{words.none}</p>}
-      {!checking && (
+      {check.state === "unavailable" && <p class="note" role="status">{words.unavailable}</p>}
+      {check.state === "ready" && check.issues.length === 0 && <p>{words.none}</p>}
+      {check.state === "ready" && (
         <ul class="plot-issues">
           {check.issues.map((issue, index) => (
             <li key={issue.id}>
@@ -188,7 +199,7 @@ export default function RecapPlotCheck({
                 onNote={(on) => setNoting(on ? issue.id : null)}
                 api={api}
                 refId={refId}
-                onIssue={keep}
+                onSaved={() => void read()}
               />
             </li>
           ))}
@@ -201,7 +212,7 @@ export default function RecapPlotCheck({
         ) : (
           <ul class="small">
             {check.versions.map((v) => (
-              <li key={v.version}>{words.versionLine(v.version, v.acceptedBy, v.acceptedAt)}</li>
+              <li key={v.version}>{words.versionLine(v.version, shortDateTime(new Date(v.acceptedAt * 1000).toISOString()))}</li>
             ))}
           </ul>
         )}
@@ -224,7 +235,7 @@ function Issue({
   onNote,
   api,
   refId,
-  onIssue,
+  onSaved,
 }: {
   issue: PlotIssue;
   n: number;
@@ -239,12 +250,17 @@ function Issue({
   onNote: (on: boolean) => void;
   api: AccountApi;
   refId: string;
-  onIssue: (next: PlotIssue) => void;
+  /** A suggested note was saved: read the check again, the bot may have answered the question. */
+  onSaved: () => void;
 }) {
   const [note, setNote] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [chatProblem, setChatProblem] = useState("");
+  const [messages, setMessages] = useState<PlotMessage[]>([]);
+  const [chatSlow, setChatSlow] = useState(false);
+  const looks = useRef(0);
+  const savedSeen = useRef(new Set<string>());
   const titleId = `plot-issue-${issue.id}`;
   const level = words.level[issue.level] ?? "";
   const kind = words.kind[issue.kind] ?? "";
@@ -252,17 +268,67 @@ function Issue({
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLTextAreaElement>(null);
 
-  const send = async () => {
-    if (sending || message.trim() === "" || !api.plotChat) return;
-    setSending(true);
-    setChatProblem("");
+  const readChat = async (): Promise<PlotMessage[] | null> => {
     try {
-      const thread = await api.plotChat(refId, issue.id, message.trim());
-      onIssue({ ...issue, thread });
-      setMessage("");
+      const got = await api.plotChat!(refId, issue.id);
+      setMessages(got);
+      return got;
     } catch (error) {
       const code = error instanceof ApiError ? error.kind : "server";
-      setChatProblem(words.problem[code] ?? words.problem.server ?? "");
+      setChatProblem(words.problem[code] ?? words.problem["server"] ?? "");
+      return null;
+    }
+  };
+  // The talk is read when it is opened, and again every two seconds while PlotBot has a message to answer
+  // or a note to save (about two minutes at most, then it says so).
+  const waiting = messages.some((m) => (m.role === "dm" && (m.state === "waiting" || m.state === "working")) || m.proposals.some((p) => p.state === "saving"));
+  useEffect(() => {
+    if (talking && api.plotChat) void readChat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talking]);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!talking || !waiting || chatSlow) {
+      if (!waiting) looks.current = 0;
+      return;
+    }
+    const timer = setTimeout(async () => {
+      looks.current += 1;
+      if (looks.current >= 60) {
+        setChatSlow(true);
+        return;
+      }
+      await readChat();
+      setTick((n) => n + 1);
+    }, 2000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talking, waiting, chatSlow, tick]);
+  // A note that was saved: the question may have been answered by it.
+  useEffect(() => {
+    for (const m of messages)
+      for (const p of m.proposals)
+        if (p.state === "saved" && !savedSeen.current.has(p.id)) {
+          savedSeen.current.add(p.id);
+          onSaved();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
+  const send = async () => {
+    if (sending || message.trim() === "" || !api.plotChatSend) return;
+    setSending(true);
+    setChatProblem("");
+    setChatSlow(false);
+    looks.current = 0;
+    try {
+      await api.plotChatSend(refId, issue.id, message.trim());
+      setMessage("");
+      await readChat();
+    } catch (error) {
+      const code = error instanceof ApiError ? error.kind : "server";
+      if (code === "stale") onSaved(); // the recap changed: read the check again
+      setChatProblem(words.problem[code] ?? words.problem["server"] ?? "");
     } finally {
       setSending(false);
     }
@@ -272,10 +338,12 @@ function Issue({
     setSending(true);
     setChatProblem("");
     try {
-      onIssue(await api.decidePlotProposal(refId, issue.id, proposal, action));
+      await api.decidePlotProposal(refId, issue.id, proposal, action);
+      await readChat();
     } catch (error) {
       const code = error instanceof ApiError ? error.kind : "server";
-      setChatProblem(words.problem[code] ?? words.problem.server ?? "");
+      if (code === "stale") onSaved();
+      setChatProblem(words.problem[code] ?? words.problem["server"] ?? "");
     } finally {
       setSending(false);
     }
@@ -366,31 +434,38 @@ function Issue({
           <h5>{words.chatHeading}</h5>
           <p class="small muted">{words.chatLead}</p>
           <ul class="plot-chat">
-            {issue.thread.map((line, i) => (
-              <li key={i}>
-                <strong>{line.from === "dm" ? words.chatYou : words.chatBot}:</strong> {line.text}
-                {line.proposal && (
-                  <div class="stack small">
+            {messages.map((m) => (
+              <li key={m.id}>
+                <strong>{m.role === "dm" ? words.chatYou : words.chatBot}:</strong> {m.text}
+                {m.role === "dm" && (m.state === "waiting" || m.state === "working") && (
+                  <span class="small muted"> {words.thinking}</span>
+                )}
+                {m.state === "failed" && (
+                  <span class="small warn"> {words.chatFailed[m.error] ?? words.chatFailed["failed"]}</span>
+                )}
+                {m.proposals.map((p) => (
+                  <div key={p.id} class="stack small">
                     <p>
-                      {words.proposal} <em>{line.proposal.text}</em>
+                      {words.proposal} <em>{p.label}</em>
                     </p>
-                    {line.proposal.state === "open" ? (
+                    {p.state === "open" ? (
                       <div class="row">
-                        <button type="button" class="button" disabled={sending} aria-label={`${words.save}: ${line.proposal.text}`} onClick={() => void decide(line.proposal!.id, "save")}>
+                        <button type="button" class="button" disabled={sending} aria-label={`${words.save}: ${p.label}`} onClick={() => void decide(p.id, "save")}>
                           {words.save}
                         </button>
-                        <button type="button" class="button secondary" disabled={sending} aria-label={`${words.notThat}: ${line.proposal.text}`} onClick={() => void decide(line.proposal!.id, "decline")}>
+                        <button type="button" class="button secondary" disabled={sending} aria-label={`${words.notThat}: ${p.label}`} onClick={() => void decide(p.id, "decline")}>
                           {words.notThat}
                         </button>
                       </div>
                     ) : (
-                      <p role="status">{line.proposal.state === "saved" ? words.proposalSaved : words.proposalDeclined}</p>
+                      <p role="status">{words.proposalState[p.state]}</p>
                     )}
                   </div>
-                )}
+                ))}
               </li>
             ))}
           </ul>
+          {chatSlow && <p class="note" role="status">{words.chatSlow}</p>}
           <label class="field">
             {words.chatLabel}
             <textarea

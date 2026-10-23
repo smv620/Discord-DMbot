@@ -46,6 +46,7 @@ export default function RecapApprove({
   onRecap,
   pageFocus,
   blockedBy,
+  onPlotOpen,
 }: {
   api: AccountApi;
   recap: Recap;
@@ -54,6 +55,8 @@ export default function RecapApprove({
   pageFocus?: () => HTMLElement | null | undefined;
   /** Why Approve is waiting (the Plot check still has questions, #2124): the buttons stay, greyed, with this line. */
   blockedBy?: string | null;
+  /** The API says a Plot check question is still open: the page reads the check again. */
+  onPlotOpen?: () => void;
 }) {
   const [picking, setPicking] = useState(false);
   // Why the narration can't be made: undefined while it is being asked, "" when it can be.
@@ -127,6 +130,7 @@ export default function RecapApprove({
         : `${late ? `${words.approvedNotPostedPrefix} ` : ""}${approveErrors[kind] ?? errors.other}`,
     );
     // The plan or the month changed under us: stop offering the audio.
+    if (kind === "plot-open") onPlotOpen?.();
     if (kind === "not-in-plan") setWhy("plan");
     if (kind === "audio-unavailable") setWhy("allowance");
     // The page may be out of date (decided in Discord, say): read it again.
