@@ -217,12 +217,15 @@ async def build_me(
                 )
             for row in await offered.fetchall():
                 to_me = row["to_user_id"] == session.user_id
-                if row["via_email"] and not to_me:
-                    # Never the address (it is not stored); the page offers Take it back.
-                    emailed[f"{guild.id}.{row['campaign_id']}"] = {
-                        "sentAt": _iso_time(row["created_at"]),
-                        "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
-                    }
+                if row["via_email"]:
+                    # Never the address (it is not stored), and never in the offer lists: it has no
+                    # name to wait on. Only the owner's own card carries it (`handover`).
+                    if not to_me:
+                        emailed[f"{guild.id}.{row['campaign_id']}"] = {
+                            "sentAt": _iso_time(row["created_at"]),
+                            "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
+                        }
+                    continue
                 (incoming if to_me else outgoing).append(
                     {
                         "id": offer_ref(guild.id, row["id"]),
@@ -233,10 +236,6 @@ async def build_me(
                         # names were copied when the offer was made (migration 0022).
                         "personName": row["from_name"] if to_me else row["to_name"],
                         "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
-                        # Made by email (#2532): no name to show ("We've emailed the offer"),
-                        # and the owner is never told who it went to.
-                        "viaEmail": bool(row["via_email"]),
-                        "sentAt": _iso_time(row["created_at"]),
                     }
                 )
             for row in await agreed.fetchall():

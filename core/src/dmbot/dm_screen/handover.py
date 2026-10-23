@@ -135,8 +135,9 @@ TOLD_EXPIRED = (
 )
 # An offer made by email (#2532; PLAN): there is no name, and the campaign never moved.
 TOLD_EXPIRED_EMAIL = (
-    "They didn't answer within {days} days, so the offer of **{campaign}** ended. The campaign "
-    "is still yours. " + _OFFER_AGAIN
+    "They didn't answer within {days} days, so the offer ended. The campaign is still yours. "
+    "You can offer it again from ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, or from "
+    "your account page."
 )
 # An offer made on the website that DMbot never managed to send (Discord kept failing).
 TOLD_EXPIRED_UNSENT = (

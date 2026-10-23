@@ -193,12 +193,13 @@ class Offering(OfferBase):
         self.assertEqual(await self.offers(), [])
         self.assertEqual(self.transport.sent, [])
 
-    async def test_the_account_page_lists_it_without_a_name(self) -> None:
+    async def test_the_account_page_keeps_it_out_of_the_offer_lists(self) -> None:
+        # No name to wait on ("Waiting for  to say yes"): the owner's card carries `handover`.
         await self.offer()
         me = (await self.alice.get("/me")).json()
-        [out] = me["offers"]["outgoing"]
-        self.assertEqual((out["viaEmail"], out["personName"]), (True, ""))
-        self.assertEqual(out["campaignName"], "Frostmaiden")
+        self.assertEqual(me["offers"]["outgoing"], [])
+        [card] = [c for c in me["campaigns"] if c["ref"] == self.ref]
+        self.assertEqual(set(card["handover"]), {"sentAt", "expiresAt"})
         self.assertNotIn(NEW, str(me))
 
     async def test_the_email_has_the_plans_steps_and_says_nothing_of_an_account(self) -> None:
