@@ -33,6 +33,8 @@ import type {
   WebLinkChange,
   WebNode,
   WebQuery,
+  CampaignPage,
+  WebRevealTarget,
   MyNpcNote,
   NpcPage,
 } from "./api";
@@ -68,6 +70,7 @@ const user: Person = { id: "100000000000000001", name: "Belleros" };
 const campaigns: Campaign[] = [
   {
     id: "cmp-brynwater",
+    ref: "100.cmp1",
     name: "The Brynwater Crossing",
     serverName: "Thursday Table",
     lastPlayedAt: "2026-10-02T19:30:00Z",
@@ -78,6 +81,7 @@ const campaigns: Campaign[] = [
   },
   {
     id: "cmp-ashen",
+    ref: "100.cmp2",
     name: "Ashen Crown",
     serverName: "Gorrak's Hall",
     lastPlayedAt: null,
@@ -86,6 +90,7 @@ const campaigns: Campaign[] = [
   },
   {
     id: "cmp-varrow",
+    ref: "100.cmp3.cp-co",
     name: "Shrine of Varrow",
     serverName: "Thursday Table",
     lastPlayedAt: "2026-09-25T18:00:00Z",
@@ -323,6 +328,8 @@ export function mockRecaps(): Recap[] {
       ...base,
       ref: "200000000000000001.cmp1.1791000000",
       sessionAt: 1791000000,
+      sessionNumber: 4,
+      sessionSeconds: 2 * 3600 + 35 * 60,
       status: "draft",
       title: "The ferry at dusk",
       text: "The party crossed the Brynwater at dusk.\n\nThe ferryman asked for a story, not coin.",
@@ -427,7 +434,16 @@ function namesView(ref: string): "dm" | "manager" | "none" {
 interface WebState {
   nodes: WebNode[];
   /** Each connection belongs to a pair (a, b) and has an order: later is newer. */
-  links: { id: string; a: string; b: string; words: string; secret: boolean; direction: WebLink["direction"] }[];
+  links: {
+    id: string;
+    a: string;
+    b: string;
+    words: string;
+    secret: boolean;
+    direction: WebLink["direction"];
+    revealed?: boolean;
+    belief?: WebLink["belief"];
+  }[];
   nextLink: number;
 }
 
@@ -453,13 +469,34 @@ function startWeb(big: boolean): WebState {
   // Two connections between one pair, one of them secret: the line says "(+1)".
   connect(0, 1, true);
   connect(0, 1);
+  // Not revealed to the players yet (#2405): two names and one connection that comes from a backstory.
+  for (const i of [3, 8]) if (nodes[i]) nodes[i]!.revealed = false;
+  const byId = (id: string) => links.find((l) => l.id === id);
+  const l4 = byId("l4");
+  if (l4) l4.revealed = false;
+  // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
+  // Two ordinary connections between names everyone can see, so a player's view has them too.
+  const plain = links.filter((l) => {
+    const ends = [l.a, l.b].map((id) => nodes.find((n) => n.id === id));
+    const pairs = links.filter((o) => (o.a === l.a && o.b === l.b) || (o.a === l.b && o.b === l.a));
+    return !l.secret && l.revealed !== false && pairs.length === 1 && ends.every((n) => n && !n.secret && n.revealed !== false);
+  });
+  // The first the party is wrong about (full view says so); the second is only a hunch.
+  if (plain[0]) plain[0].belief = { confidence: 0.6, status: "Party theory", contradicted: true };
+  if (plain[1]) plain[1].belief = { confidence: 0.3, status: "Accusation" };
   return { nodes, links, nextLink: links.length + 1 };
 }
 
 function webView(ref: string): "dm" | "manager" | "none" {
   if (/\.web-none$/.test(ref)) return "none";
-  if (/\.web-manager$/.test(ref)) return "manager";
+  if (/\.web-(manager|player|private|open)$/.test(ref)) return "manager"; // not a DM
   return "dm";
+}
+
+/** Who may see the DM screen's things in a pretend campaign (#2405): `.web-private` is the DM only,
+ * `.web-open` everyone, anything else lets players peek. */
+function webVisibility(ref: string): "private" | "peek" | "open" {
+  return /\.web-private$/.test(ref) ? "private" : /\.web-open$/.test(ref) ? "open" : "peek";
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
@@ -483,7 +520,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
    * if every one is secret and the viewer may see them). */
-  const edgesOf = (links: WebState["links"], dm: boolean): WebEdge[] => {
+  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean): WebEdge[] => {
     const pairs = new Map<string, WebState["links"]>();
     for (const l of links) {
       if (l.secret && !dm) continue;
@@ -498,7 +535,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         b: group[0]!.b,
         label,
         more: group.length - 1,
-        links: group.map((l) => ({ id: l.id, words: l.words, secret: l.secret, direction: l.direction })),
+        links: group.map((l) => ({
+          id: l.id,
+          words: l.words,
+          secret: l.secret,
+          direction: l.direction,
+          ...(full ? { revealed: l.revealed !== false } : {}),
+          ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
+        })),
       };
     });
   };
@@ -506,9 +550,18 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     const view = webView(ref);
     if (view === "none") throw new ApiError("not-found");
     const dm = view === "dm";
+    const visibility = webVisibility(ref);
+    // What the person is shown (#2405): a DM sees everything unless they ask for the players' view; a
+    // player sees the players' view unless they peek, which the campaign's DM-screen setting allows or not.
+    if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
+    const all = dm ? query.view !== "players" : query.view === "full";
     const state = web(ref);
-    const visible = new Set(state.nodes.filter((n) => dm || !n.secret).map((n) => n.id));
-    const usable = state.links.filter((l) => visible.has(l.a) && visible.has(l.b) && (dm || !l.secret));
+    const visible = new Set(
+      state.nodes.filter((n) => all || (!n.secret && n.revealed !== false)).map((n) => n.id),
+    );
+    const usable = state.links.filter(
+      (l) => visible.has(l.a) && visible.has(l.b) && (all || (!l.secret && l.revealed !== false)),
+    );
     const centre = query.center && visible.has(query.center) ? query.center : [...visible][0]!;
     // Hops over every usable connection, as the real API counts them.
     const near = new Map<string, number>([[centre, 0]]);
@@ -531,9 +584,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     };
     const nodes = state.nodes
       .filter((n) => near.has(n.id))
-      .map((n) => (dm ? current(n) : { id: n.id, name: current(n).name, kind: current(n).kind }));
-    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), dm);
-    return { center: centre, nodes, edges, truncated: false, maxHops: 6, canEdit: dm };
+      .map((n) =>
+        all
+          ? { ...current(n), revealed: n.revealed !== false }
+          : { id: n.id, name: current(n).name, kind: current(n).kind },
+      );
+    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all);
+    return {
+      center: centre,
+      nodes,
+      edges,
+      truncated: false,
+      maxHops: 6,
+      canEdit: dm && all,
+      view: all ? "full" : "players",
+      ...(dm ? {} : { visibility, canPeek: visibility !== "private" }),
+    };
   };
   // The questions sent in this visit (#1373): the pretend API starts with none, as a new account has.
   let questions: SupportQuestion[] = [];
@@ -556,6 +622,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     email: true,
     canAudio: true,
     audioHow: "part of your plan",
+    audioUnavailable: "",
   };
   // The campaign's public names, as the API lists them (#1451).
   const names: CampaignName[] = [
@@ -606,12 +673,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       Object.assign(r, { summary, text: summary, housekeeping });
       return { ...r };
     },
-    async approveRecap(ref, choice) {
-      calls.push(`approveRecap:${ref}:${choice}`);
+    async approveRecap(ref, choice, options) {
+      calls.push(`approveRecap:${ref}:${choice}${options?.post ? ":post" : ""}`);
       const r = await find(ref);
       if (!r.approval?.canApprove) throw new ApiError("not-allowed");
       if (choice !== "text" && !choices.canAudio) throw new ApiError("not-in-plan");
+      if (choice !== "text" && choices.audioUnavailable) throw new ApiError("audio-unavailable");
       r.approval = { approved: true, choice, approvedAt: 1791000100, canApprove: false };
+      // As the API does: an audio choice queues the audio, which the page then waits for.
+      if (choice !== "text")
+        r.audio = { state: "queued", error: "", current: false, canAskAgain: false };
+      if (options?.post) {
+        // As the API does in the same call: handed to the bot, so nothing is left to edit or post.
+        Object.assign(r, {
+          status: "posting",
+          canEdit: false,
+          canPost: false,
+          canDrop: false,
+          canTryAgain: false,
+        });
+      }
       return { ...r };
     },
     // Importing older sessions (#2107). Speakers are the "Name:" at the start of each line; Cerric
@@ -764,7 +845,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
     // The relationship web (#2324): rings out from a name, the way the real API counts hops.
     async webGraph(ref, query: WebQuery): Promise<WebGraph> {
-      calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
+      calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
       signedIn();
       return webGraphOf(ref, query);
@@ -775,6 +856,24 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return { names: webGraphOf(ref, query).nodes.length };
     },
+    // A player who agreed to the warning peeks (#2405); the DM would be told once on the DM screen.
+    async webPeek(ref) {
+      calls.push(`webPeek:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "manager" || webVisibility(ref) === "private") throw new ApiError("peek-off");
+    },
+    // A DM shows a name or a connection to the players (#2405).
+    async webReveal(ref, target: WebRevealTarget) {
+      calls.push(`webReveal:${ref}:${target.kind}:${target.id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const state = web(ref);
+      const found = target.kind === "name" ? state.nodes.find((n) => n.id === target.id) : state.links.find((l) => l.id === target.id);
+      if (!found) throw new ApiError("not-found");
+      found.revealed = true;
+    },
     async changeWebLink(ref, change: WebLinkChange) {
       calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);
       await reachable();
@@ -782,7 +881,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
       const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true);
+        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true);
         return found[0] ?? { removed: true };
       };
       if (change.action === "add") {
@@ -803,6 +902,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         state.links.splice(state.links.indexOf(link), 1);
       }
       return edgeOf(link.a, link.b);
+    },
+    // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
+    // the person plays in without running it, `.cp-co` one they help run.
+    async campaignPage(ref): Promise<CampaignPage> {
+      calls.push(`campaignPage:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      const mine = campaigns.find((c) => c.ref === ref);
+      return {
+        ref,
+        name: mine?.name ?? "The Brynwater Crossing",
+        serverName: mine?.serverName ?? "Thursday Table",
+        role: /\.cp-player$/.test(ref) ? "player" : /\.cp-co$/.test(ref) ? "co-dm" : "owner",
+        importsOn: mine?.importsOn ?? false,
+      };
     },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
     // one the person is not in; `.npc-dm` shows a DM's own note.
@@ -1227,7 +1342,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       const r = recaps.find((x) => x.share?.on && x.share.path === `/r/${token}`);
       if (!r) throw new ApiError("not-found");
-      return { title: r.title, text: r.text, postedAt: r.sessionAt, audio: {} };
+      return {
+        title: r.title,
+        text: r.text,
+        postedAt: r.sessionAt,
+        sessionAt: r.sessionAt,
+        sessionNumber: r.sessionNumber ?? null,
+        sessionSeconds: r.sessionSeconds ?? null,
+        audio: {},
+      };
     },
     async decideRecap(ref, action) {
       calls.push(`${action}Recap:${ref}`);

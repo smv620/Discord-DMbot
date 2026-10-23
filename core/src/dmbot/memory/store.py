@@ -25,11 +25,12 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import notify, standing, states
+from dmbot.memory import beliefs, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
+    BELIEFS,
     CHANGED_SINCE,
     CORRECTIONS,
     DEPENDENTS,
@@ -38,6 +39,7 @@ from dmbot.memory._changes import (
     IMPRESSIONS,
     MENTIONS,
     NOT_FOUND,
+    PERSPECTIVES,
     PLAN_SAME_AS,
     PREDICATES,
     RELATIONS,
@@ -85,6 +87,7 @@ from dmbot.memory.models import (
     SOURCES,
     SPECIES,
     Alias,
+    Belief,
     Correction,
     Entity,
     Flag,
@@ -95,6 +98,7 @@ from dmbot.memory.models import (
     NewName,
     Opinion,
     PeopleSuggestion,
+    Perspective,
     Relation,
     RuleLink,
     SaidAsSuggestion,
@@ -187,6 +191,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["id"], r["type"], r["name"], r["description"], r["status"], r["merged_into"],
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
         r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
+        r["manipulated_by"],
     )  # fmt: skip
 
 
@@ -592,7 +597,10 @@ class MemoryStore:
                 r
                 for r in await scope.select(
                     RELATIONS,
-                    " AND status IN ('proposed', 'confirmed') AND NOT secret ORDER BY id",
+                    # a proposed one is shown while it is not secret; a confirmed one when the
+                    # players hold it as fact (their belief, #2409)
+                    " AND ((status = 'proposed' AND NOT secret)"
+                    f" OR (status = 'confirmed' AND {beliefs.party_knows()})) ORDER BY id",
                 )
                 if r["subject_id"] in live and r["object_id"] in live
             ]
@@ -1520,7 +1528,10 @@ class MemoryStore:
         it. Only table names are run, never anyone's data."""
         try:
             async with self._db.guild(guild_id) as conn:
-                await conn.execute("ANALYZE memory_entities, memory_aliases, memory_relations")
+                await conn.execute(
+                    "ANALYZE memory_entities, memory_aliases, memory_relations,"
+                    " memory_beliefs, memory_perspectives"
+                )
         except Exception:
             log.warning("Couldn't refresh the memory tables' statistics", exc_info=False)
 
@@ -3203,6 +3214,126 @@ class MemoryStore:
             row = await w.update(RELATIONS, relation_id, changes)
             return Written(_relation(row), w.batch)
 
+    # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
+
+    async def perspectives(self, guild_id: int, campaign_id: str) -> list[Perspective]:
+        """Who holds beliefs in this campaign: The truth and The party, then any character's."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(PERSPECTIVES, " ORDER BY created_at, id")
+        return [Perspective(r["id"], r["kind"], r["entity_id"], r["created_at"]) for r in rows]
+
+    async def believe(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        perspective_id: str,
+        relation_id: str,
+        confidence: float,
+        status: str,
+        *,
+        source: str,
+        evidence: Sequence[str] = (),
+        session_at: int | None = None,
+    ) -> Written[Belief]:
+        """A perspective comes to believe a connection at `confidence` (0.0 certainly false to 1.0
+        certainly true), with a status and the evidence it points at by id. A new row, never an
+        edit, so the history stays; logged, so Undo takes it back. Only the DM writes The truth.
+        The one way every writer records a belief."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            await beliefs.perspective_ids(w)  # The truth and The party exist before anything else
+            belief = await beliefs.believe_in(
+                w, perspective_id, relation_id, confidence, status,
+                evidence=evidence, session_at=session_at,
+            )  # fmt: skip
+            return Written(belief, w.batch)
+
+    async def party_view(
+        self, guild_id: int, campaign_id: str, *, known_only: bool = True
+    ) -> list[Belief]:
+        """What The party believes of the confirmed connections: the current belief for each. With
+        `known_only` (what players are shown today) just those held as fact, at 1.0; without, the
+        party's theories too. A connection with no party belief is not in it (a secret one)."""
+        return await self._view(guild_id, campaign_id, "party", known_only)
+
+    async def truth_view(self, guild_id: int, campaign_id: str) -> list[Belief]:
+        """What The truth holds of the confirmed connections, secret ones included: the current
+        belief for each, the DM's view."""
+        return await self._view(guild_id, campaign_id, "truth", False)
+
+    async def _view(
+        self, guild_id: int, campaign_id: str, kind: str, known_only: bool
+    ) -> list[Belief]:
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            cur = await scope.conn.execute(
+                "SELECT b.id, b.perspective_id, b.relation_id, b.confidence, b.status,"
+                " b.session_at, b.evidence_ids, b.seq, b.recorded_at FROM ("
+                "  SELECT DISTINCT ON (b.relation_id) b.*, r.secret AS relation_secret"
+                "    FROM memory_beliefs b"
+                "    JOIN memory_perspectives p ON p.guild_id = b.guild_id"
+                "     AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
+                "    JOIN memory_relations r ON r.guild_id = b.guild_id"
+                "     AND r.campaign_id = b.campaign_id AND r.id = b.relation_id"
+                "   WHERE b.guild_id = %s AND b.campaign_id = %s AND p.kind = %s"
+                "     AND r.status = 'confirmed'"
+                "   ORDER BY b.relation_id, b.seq DESC) b"
+                " WHERE (NOT %s OR b.confidence >= 1.0) AND b.confidence > 0"
+                # defence in depth: the players never hold a secret connection as fact
+                " AND (%s <> 'party' OR NOT (b.confidence >= 1.0 AND b.relation_secret))"
+                " ORDER BY b.relation_id",
+                (*scope.ids, kind, known_only, kind),
+            )
+            return [beliefs.belief_of(r) for r in await cur.fetchall()]
+
+    async def relation(self, guild_id: int, campaign_id: str, relation_id: str) -> Relation | None:
+        """One connection of any status (rejected ones too), or None. For a retried job to tell
+        "already done" from "never there"; nothing else lists a rejected connection."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(RELATIONS, " AND id = %s", [relation_id])
+            return _relation(rows[0]) if rows else None
+
+    async def change_relation_words(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        predicate: str,
+        detail: str,
+        *,
+        source: str,
+    ) -> Written[Relation]:
+        """New words between the same two names, in ONE change, so one Undo puts the old words
+        back whole. The new connection is added (keeping who sees it) and the old one ended in the
+        same write, so a refusal leaves the old as it was. Words that only differ in capitals are
+        the same connection (the duplicate rule): nothing is ended, and the connection comes back
+        as it is. Words that already exist between the two names reuse that connection, and a
+        secret one never becomes public."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            current = await w.get(RELATIONS, relation_id)
+            if current is None or current["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_FOUND)
+            before = {
+                r.id: r.status
+                for r in await _relations_touching(w, current["subject_id"], current["object_id"])
+            }
+            new, _ = await self.add_relation_in(
+                w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
+                status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
+            )  # fmt: skip
+            if new.id == relation_id:
+                return Written(new, w.batch)
+            # The words are new, or match a duplicate only proposed so far (the upgrade just made it
+            # the DM's, with no beliefs yet): the new connection takes over (#2409)
+            if before.get(new.id) != CONFIRMED:
+                await beliefs.carry(w, current, new.id)
+                moved = await w.get(RELATIONS, new.id)
+                assert moved is not None
+                new = _relation(moved)
+            if current["secret"] and not new.secret:
+                new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
+            check_status_change(current["status"], REJECTED, source)
+            await w.update(RELATIONS, relation_id, {"status": REJECTED})
+            return Written(new, w.batch)
+
     async def resolve_flag(
         self, guild_id: int, campaign_id: str, flag_id: str, *, source: str
     ) -> Written[Flag]:
@@ -3588,11 +3719,13 @@ class MemoryStore:
     async def undo_connection(
         self, guild_id: int, campaign_id: str, batch: int, *, within: int, secrets: bool
     ) -> Written[Relation]:
-        """Put back a connection the DM removed (#1566): reverses that one batch, which must be
-        a single change to one connection made by the DM, no more than `within` seconds ago. The
-        row comes back exactly as it was (secret flag, source, status, detail). A secret one is
-        only put back for someone who may see secrets (`secrets`), so a manager who isn't a DM
-        can't touch it. Refused, with nothing written, if the connection changed since."""
+        """Put back a connection the DM removed or reworded (#1566, #2323): reverses that one
+        batch, which must hold only changes to connections made by the DM, one of them ending a
+        connection, no more than `within` seconds ago. A reworded one is the new connection added
+        and the old one ended in that one batch, so both go back together. The ended row comes
+        back exactly as it was (secret flag, source, status, detail). A secret one is only put
+        back for someone who may see secrets (`secrets`), so a manager who isn't a DM can't touch
+        it. Refused, with nothing written, if the connection changed since."""
         async with self._write(guild_id, campaign_id, "undo", undoes=batch) as w:
             cur = await w.conn.execute(
                 "SELECT row_id, op, source, made_at, before, after FROM memory_changes"
@@ -3601,23 +3734,33 @@ class MemoryStore:
             )
             rows = await cur.fetchall()
             cur = await w.conn.execute(
-                "SELECT count(*) AS n FROM memory_changes"
-                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s",
-                (*w.ids, batch),
+                "SELECT table_name, op FROM memory_changes"
+                " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND table_name <> %s",
+                (*w.ids, batch, RELATIONS.name),
             )
-            total = await cur.fetchone()
-            if not rows or total is None or total["n"] != 1:
+            # (new words can raise a check's flag in the same change: it goes back with them, and
+            # so do the beliefs written for the connections it added or ended, #2409)
+            others = await cur.fetchall()
+            if not rows or any(
+                o["table_name"] not in (FLAGS.name, BELIEFS.name) or o["op"] != "insert"
+                for o in others
+            ):
                 raise TooLateToUndo(self._too_late())
-            (row,) = rows
-            after = row["after"] or {}
-            if row["op"] != "update" or row["source"] != DM or after.get("status") != REJECTED:
-                raise MemoryRuleError(NOT_FOUND)  # only a removal by the DM
-            if (row["before"] or {}).get("secret") and not secrets:
-                raise MemoryRuleError(NOT_FOUND)  # a secret is not even mentioned, old or not
-            if w.now - row["made_at"] > within:
+            ended = [
+                r
+                for r in rows
+                if r["op"] == "update" and (r["after"] or {}).get("status") == REJECTED
+            ]
+            if len(ended) != 1 or any(r["source"] != DM for r in rows):
+                raise MemoryRuleError(NOT_FOUND)  # only a removal or rewording by the DM
+            for r in rows:  # a secret is not even mentioned, old or not
+                secret = (r["before"] or {}).get("secret") or (r["after"] or {}).get("secret")
+                if secret and not secrets:
+                    raise MemoryRuleError(NOT_FOUND)
+            if any(w.now - r["made_at"] > within for r in rows):
                 raise TooLateToUndo(self._too_late())
             await undo_batch(w, batch)
-            back = await w.get(RELATIONS, row["row_id"])
+            back = await w.get(RELATIONS, ended[0]["row_id"])
             if back is None:
                 raise MemoryRuleError(NOT_FOUND)
             return Written(_relation(back), w.batch)

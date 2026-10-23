@@ -47,6 +47,19 @@ export interface Campaign {
   /** Importing older sessions works in this campaign's server (#2259), even while the site's own
    * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
   importsOn?: boolean;
+  /** The campaign's address, `<server>.<campaign>`, as the other pages' addresses (#2416). Missing
+   * from an API older than that: the campaign is then not linked. */
+  ref?: string;
+}
+
+/** One campaign's own page (#2416): what to call it, and whether the person runs it. */
+export interface CampaignPage {
+  ref: string;
+  name: string;
+  serverName: string;
+  /** "owner" and "co-dm" are the campaign's DMs; "player" is anyone else in its server. */
+  role: "owner" | "co-dm" | "player";
+  importsOn?: boolean;
 }
 
 /** A Discord server you manage. */
@@ -228,6 +241,11 @@ export interface Recap {
   serverName?: string;
   /** Unix seconds the session started. */
   sessionAt: number;
+  /** The session's number in its campaign, as the transcripts number it (#2418); missing from an
+   * older API, null when it can't be found. */
+  sessionNumber?: number | null;
+  /** How long the session ran, in seconds; null while it is still listening or if unknown. */
+  sessionSeconds?: number | null;
   gameDay: string | null;
   state: string;
   status: "draft" | "posting" | "posted" | "dropped";
@@ -302,6 +320,11 @@ export interface PublicRecap {
   postedAt: number;
   /** Only the kinds that exist; each is a full address that needs no sign-in. */
   audio: { voice?: string; music?: string };
+  /** When it was played (Unix seconds), which session it was and how long it ran (#2418). Left out
+   * by an older API. */
+  sessionAt?: number | null;
+  sessionNumber?: number | null;
+  sessionSeconds?: number | null;
 }
 
 /** One place in a recap's text where a cue (《a mood》 or ((a pause or pace))) is wrong, as a
@@ -421,7 +444,14 @@ export interface RecapChoices {
   email: boolean;
   canAudio: boolean;
   audioHow: string;
+  /** Why the narration can't be made right now (#2419), for the greyed button: "plan" (not in the
+   * plan), "allowance" (this month's are used up) or "not_set_up" (nothing here makes it); "" when
+   * it can be made. Missing from an older API, which the page reads as "no reason known". */
+  audioUnavailable?: AudioUnavailable | "";
 }
+
+// "unavailable" is what a co-DM is told instead of "plan" or "allowance" (they never learn the owner's plan).
+export type AudioUnavailable = "plan" | "allowance" | "not_set_up" | "unavailable";
 
 export type RecapChoice = "text" | "audio" | "email";
 
@@ -714,6 +744,19 @@ export interface WebNode {
   /** The kind's key ("npc", "place", ...). */
   kind: string;
   secret?: boolean;
+  /** False: the story hasn't revealed it to the players yet (#2405). Only in a view that shows
+   * unrevealed things: a DM's full view, or a player's peek. */
+  revealed?: boolean;
+}
+
+/** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
+export interface WebBelief {
+  /** Under 1 for a theory. */
+  confidence: number;
+  /** Plain words for what it is, such as "Party theory" or "Accusation". */
+  status: string;
+  /** Full view only: the party believes this and the truth holds it false. */
+  contradicted?: boolean;
 }
 
 /** One connection between two names, for the edge panel. `direction` says who does it to whom, from
@@ -723,6 +766,10 @@ export interface WebLink {
   words: string;
   secret: boolean;
   direction: "ab" | "ba" | "both";
+  /** False: not revealed to the players yet (#2405). */
+  revealed?: boolean;
+  /** A theory the party holds rather than a fact (#2405). */
+  belief?: WebBelief;
 }
 
 /** The line between two names: the most relevant connection's words, "(+more)" for the others. */
@@ -746,13 +793,28 @@ export interface WebGraph {
   maxHops: number;
   /** Only the campaign's DMs can change anything. */
   canEdit: boolean;
+  /** Who may see the DM screen's things in this campaign (#2405): "private" is the DM only. */
+  visibility?: "private" | "peek" | "open";
+  /** A player may turn peeking on (the visibility allows it). */
+  canPeek?: boolean;
+  /** Which web this is. */
+  view?: WebView;
 }
 
 export interface WebQuery {
   /** null: the API picks the most connected name. */
   center: string | null;
   hops: number;
+  /** "players": exactly what a player sees. "full": everything, for a DM or a player who peeks.
+   * Left out, the API picks for the person (#2405). */
+  view?: WebView;
 }
+
+/** Which web the page asks for (#2405). */
+export type WebView = "players" | "full";
+
+/** A name or a connection the DM shows the players (#2405). */
+export type WebRevealTarget = { kind: "name" | "link"; id: string };
 
 /** One change to the connections between names (DM only). */
 export type WebLinkChange =
@@ -875,6 +937,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
   | "network" // couldn't reach the API
+  | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
@@ -927,6 +990,7 @@ export type ApiErrorKind =
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
+  | "audio-unavailable" // the narration can't be made here, or this month's are used up (#2419)
   | "not-in-plan" // the narration can't be turned on: the plan doesn't have it (#1468)
   | "bad-choice" // not one of the three recap choices (#1468)
   | "too-big" // a transcript too long to show or save as one file (#1512)
@@ -1010,7 +1074,9 @@ export interface AccountApi {
   ): Promise<Recap>;
   /** Approve the text and pick what to make: voice-over, music, both or text only (#2083). The
    * API checks the cues again and refuses with `bad-cues`; any choice but text queues audio. */
-  approveRecap?(ref: string, choice: ApproveChoice): Promise<Recap>;
+  /** `post`: approve the text-only choice and hand it to the bot to post, in one call (#2419). An
+   * older API ignores it and leaves the recap approved and not posted. */
+  approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1026,6 +1092,8 @@ export interface AccountApi {
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
+  /** One campaign's page (#2416). Missing from an API older than that. */
+  campaignPage?(campaignRef: string): Promise<CampaignPage>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
   /** Save my private note on an NPC; an empty note clears it. */
@@ -1039,7 +1107,11 @@ export interface AccountApi {
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
   webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
-  /** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
+    /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
+  webPeek?(ref: string): Promise<void>;
+  /** A DM shows a name or a connection to the players (#2405). */
+  webReveal?(ref: string, target: WebRevealTarget): Promise<void>;
+/** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
    * `{ removed: true }` when the last connection between two names went. */
   changeWebLink?(ref: string, change: WebLinkChange): Promise<WebEdge | { removed: true }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
@@ -1210,6 +1282,10 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_email: "bad-email",
   in_use: "in-use",
   bad_target: "bad-target",
+  // The web's views: a visit the API doesn't know is no more than a failed try, so the page says
+  // its generic line rather than a reason (#2405).
+  bad_visit: "server",
+  peek_off: "peek-off",
   not_in_server: "not-in-server",
   bad_name: "bad-name",
   bad_kind: "bad-kind",
@@ -1219,6 +1295,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_ending: "not-ending",
   use_billing_page: "use-billing-page",
   not_in_plan: "not-in-plan",
+  audio_unavailable: "audio-unavailable",
   audio_off: "audio-off",
   bad_choice: "bad-choice",
   too_big: "too-big",
@@ -1551,10 +1628,11 @@ export function httpApi(
           housekeeping,
         }),
       ),
-    approveRecap: async (ref, choice) =>
+    approveRecap: async (ref, choice, options) =>
       recapFrom(
         await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve`, {
           choice,
+          ...(options?.post ? { post: true } : {}),
         }),
       ),
     recapAudioLinks: async (ref) =>
@@ -1640,6 +1718,8 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
         withLinks({ files, plan }, links),
       )) as ImportStarted,
+    campaignPage: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
     npcPage: async (ref, entry) =>
       (await call(
         "GET",
@@ -1700,6 +1780,7 @@ export function httpApi(
     webGraph: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
+      if (q.view) params.set("view", q.view);
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
@@ -1708,10 +1789,19 @@ export function httpApi(
     webSize: async (ref, q) => {
       const params = new URLSearchParams({ hops: String(q.hops) });
       if (q.center) params.set("center", q.center);
+      // The size is of the web in the view being asked for, so a DM in Players View or a player
+      // peeking must not be told the size of the other one.
+      if (q.view) params.set("view", q.view);
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
       )) as { names: number };
+    },
+    webPeek: async (ref) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
+    },
+    webReveal: async (ref, target) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/reveal`, target);
     },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web/links`;

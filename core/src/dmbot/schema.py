@@ -3185,6 +3185,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_npc_note_put", "dmbot_web_npc_note_put(BIGINT, TEXT, TEXT, TEXT)"),
     ("dmbot_web_npc_notes_mine", "dmbot_web_npc_notes_mine(BIGINT, TEXT)"),
     ("dmbot_web_npc_notes_delete", "dmbot_web_npc_notes_delete(BIGINT, TEXT)"),
+    # A campaign's own page on the website: its name, for any member of the server (#2416).
+    ("dmbot_web_campaign_card", "dmbot_web_campaign_card(BIGINT, TEXT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),
     (
@@ -9267,6 +9269,38 @@ NPC_NOTES = (
     """
 )
 
+CAMPAIGN_CARD = """
+    -- The campaign's own page on the website (#2416) needs the campaign's name for any member of
+    -- the server, a player included, and nothing else of it: not its DMs, its settings or one
+    -- line of its story. NULL when the caller is not in the server (the session's own list, the
+    -- same check as the other web doors) or the campaign is not there, so another server's
+    -- campaign looks like none at all.
+    CREATE FUNCTION dmbot_web_campaign_card(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        found_name TEXT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT k.name INTO found_name FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('name', found_name);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_campaign_card(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_campaign_card(BIGINT, TEXT) FROM PUBLIC;
+"""
+
 RECAP_VOICE = r"""
     -- Speaking instead of typing on the recap page (#2113). The clip waits in the request row
     -- until the bot has written it down; the same statement that stores the text sets the clip
@@ -10001,6 +10035,149 @@ WEB_RELATIONSHIPS = r"""
         FROM PUBLIC;
 """
 
+WEB_LINK_ACTIONS = r"""
+    -- Edits to the connections on the relationship web (#2323), through the same queue as the All
+    -- names page's actions: the website queues them, the bot applies them through the same
+    -- MemoryStore calls as Discord's name card (so the change log and Undo agree) and the page
+    -- polls. New actions: 'link-add' (`entity_id` and `target_id` are the two names, `text` the
+    -- words, `flag` secret), 'link-words' (`target_id` is the connection, `text` the new words),
+    -- 'link-secret' (`target_id`, `flag`) and 'link-remove' (`target_id`, `flag` the confirmation).
+    -- `result_other` is the other end of the pair the page shows afterwards (`result_id` is the
+    -- first), so it can draw the edge as it now stands. No row changes: a new column with a
+    -- constant default, and a wider list of actions.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+         'link-add', 'link-words', 'link-secret', 'link-remove'));
+    ALTER TABLE name_actions ADD COLUMN result_other TEXT NOT NULL DEFAULT ''
+        CHECK (char_length(result_other) <= 32);
+
+    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(
+        g BIGINT, c TEXT, ent TEXT, act TEXT, kd TEXT, tgt TEXT, txt TEXT, fl BOOLEAN
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        clean TEXT := btrim(regexp_replace(COALESCE(txt, ''), '[[:space:]]+', ' ', 'g'));
+        subject TEXT := ent;
+        is_link BOOLEAN := act LIKE 'link-%';
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF act IS NULL OR act NOT IN
+               ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'remove',
+                'link-add', 'link-words', 'link-secret', 'link-remove')
+        THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF clean ~ '[[:cntrl:]]' OR char_length(clean) > 100
+           OR (act IN ('spell', 'add-other', 'remove-other', 'secret', 'link-add', 'link-words')
+               AND clean = '')
+           OR (act IN ('kind', 'hide', 'merge', 'remove', 'link-secret', 'link-remove')
+               AND clean <> '')
+           OR (act = 'kind' AND (kd IS NULL OR kd !~ '^[a-z][a-z _-]{0,39}$'))
+           OR (act <> 'kind' AND COALESCE(kd, '') <> '')
+           OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove')
+               AND (tgt IS NULL OR tgt !~ '^[0-9a-f]{32}$'))
+           OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove')
+               AND COALESCE(tgt, '') <> '')
+           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)
+           OR (act = 'link-words' AND COALESCE(fl, false)) THEN
+            RETURN jsonb_build_object('status', 'bad_text');
+        END IF;
+        IF act IN ('remove', 'link-remove') AND fl IS NOT TRUE THEN
+            RETURN jsonb_build_object('status', 'needs_confirm');
+        END IF;
+        IF is_link AND act <> 'link-add' THEN
+            -- the connection itself: it must be a confirmed one of this campaign, between two
+            -- confirmed names; the entry the action is filed under is its first name
+            SELECT r.subject_id INTO subject FROM memory_relations r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.id = tgt AND r.status = 'confirmed'
+              AND r.predicate <> 'led_to'
+              AND EXISTS (SELECT 1 FROM memory_entities x WHERE x.guild_id = g
+                          AND x.campaign_id = c AND x.id = r.subject_id
+                          AND x.status = 'confirmed' AND x.type <> 'person')
+              AND EXISTS (SELECT 1 FROM memory_entities y WHERE y.guild_id = g
+                          AND y.campaign_id = c AND y.id = r.object_id
+                          AND y.status = 'confirmed' AND y.type <> 'person');
+            IF NOT FOUND THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+        ELSIF subject IS NULL OR NOT EXISTS (
+               SELECT 1 FROM memory_entities e
+               WHERE e.guild_id = g AND e.campaign_id = c AND e.id = subject
+                 AND e.status = 'confirmed' AND e.type <> 'person') THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        IF act IN ('merge', 'link-add') AND (tgt = subject OR NOT EXISTS (
+               SELECT 1 FROM memory_entities t
+               WHERE t.guild_id = g AND t.campaign_id = c AND t.id = tgt
+                 AND t.status = 'confirmed' AND t.type <> 'person')) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('name_action:' || g::TEXT || c, 0));
+        DELETE FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 30
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO name_actions (guild_id, campaign_id, id, entity_id, user_id, action, kind,
+                                  target_id, text, flag, created_at)
+            VALUES (g, c, rid, subject, dmbot_current_user(), act, COALESCE(kd, ''),
+                    COALESCE(tgt, ''), clean, COALESCE(fl, false), now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r name_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM name_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user();
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'error', r.error, 'action', r.action,
+                                  'resultId', r.result_id, 'resultOther', r.result_other);
+    END
+    $fn$;
+    -- (redefined functions lose their pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
     -- session when the start-up fill-in found them. The website's transcripts show these instead
@@ -10090,6 +10267,279 @@ RECAP_ADDRESS_CO_DM = """
     END
     $do$;
     REVOKE ALL ON FUNCTION dmbot_recap_address(BIGINT) FROM PUBLIC;
+"""
+
+# The recap posting clock (#2435): when a post or a narration began, at which step, and the posted
+# message's link, for the website's progress clock. New nullable columns: no row changes. The status
+# change itself starts and stops the clock (a trigger), so every writer of `status` (the bot, the
+# DM screen's buttons, the website) is covered at one place, and a failed or finished post can never
+# leave a clock running. The audio worker sets and clears the 'audio' step (recaps/store.py).
+RECAP_POSTING_CLOCK = r"""
+    ALTER TABLE recap_jobs ADD COLUMN posting_since BIGINT CHECK (posting_since > 0);
+    ALTER TABLE recap_jobs ADD COLUMN posting_step TEXT
+        CHECK (posting_step IN ('check', 'post', 'audio'));
+    ALTER TABLE recap_jobs ADD COLUMN posted_url TEXT
+        CHECK (posted_url ~ '^https://discord\.com/channels/[0-9]+/[0-9]+/[0-9]+$'
+               AND char_length(posted_url) <= 200);
+    ALTER TABLE recap_jobs ADD CONSTRAINT recap_jobs_posting_pair
+        CHECK ((posting_since IS NULL) = (posting_step IS NULL));
+
+    CREATE FUNCTION dmbot_recap_posting_clock() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $fn$
+    BEGIN
+        IF NEW.status = 'posting' AND OLD.status IS DISTINCT FROM 'posting' THEN
+            NEW.posting_since := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+            NEW.posting_step := 'check';
+            NEW.posted_url := NULL;
+        ELSIF OLD.status = 'posting' AND NEW.status IS DISTINCT FROM 'posting' THEN
+            NEW.posting_since := NULL;  -- posted, put back as a draft or dropped: the clock stops
+            NEW.posting_step := NULL;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER recap_jobs_posting_clock BEFORE UPDATE OF status ON recap_jobs
+        FOR EACH ROW EXECUTE FUNCTION dmbot_recap_posting_clock();
+"""
+
+BELIEFS = (
+    f"""
+    -- Assertions, perspectives and evidence (#2409; docs/STORY_MEMORY.md, section 9). A connection
+    -- row is already the claim itself; this adds WHO believes it and how strongly.
+    --   memory_perspectives  who holds beliefs: `truth` (the DM's meta-truth) and `party` (what
+    --                        the players have learned) for every campaign, and optionally one per
+    --                        player character (`pc`) or NPC (`npc`) whose beliefs matter.
+    --   memory_beliefs       a perspective's belief in one connection: a confidence from 0.0
+    --                        (certainly false) to 1.0, a status, the session, and the evidence it
+    --                        points at BY ID (claim, line or event pointers; no words). History is
+    --                        kept: a new belief adds a row, and the highest `seq` for a pair is
+    --                        the current one (a write's memory version, or one more than the
+    --                        pair's last, whichever is higher, so a restored backup keeps order).
+    --   memory_entities.manipulated_by  an event, clue or item entry that points at the evidence
+    --                        it faked ("the ledger Fabio planted").
+    -- Like every memory table both are one campaign's, with forced row-level security and
+    -- composite keys, so a row can never point into another campaign.
+    CREATE TABLE memory_perspectives (
+        {_memory_scope()}
+        id         TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        kind       TEXT NOT NULL CHECK (kind IN ('truth', 'party', 'pc', 'npc')),
+        entity_id  TEXT,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK ((kind IN ('truth', 'party') AND entity_id IS NULL)
+            OR (kind IN ('pc', 'npc') AND entity_id IS NOT NULL)),
+        {_entity_link("entity_id")}
+    );
+    CREATE UNIQUE INDEX memory_perspectives_one_each
+        ON memory_perspectives (guild_id, campaign_id, kind) WHERE kind IN ('truth', 'party');
+    CREATE UNIQUE INDEX memory_perspectives_one_per_entry
+        ON memory_perspectives (guild_id, campaign_id, entity_id) WHERE entity_id IS NOT NULL;
+    CREATE TABLE memory_beliefs (
+        {_memory_scope()}
+        id             TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
+        perspective_id TEXT NOT NULL,
+        relation_id    TEXT NOT NULL,
+        confidence     DOUBLE PRECISION NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+        status         TEXT NOT NULL CHECK (status IN ('theory', 'accusation', 'revealed_fact',
+            'false_evidence', 'secret_plot', 'magically_verified', 'evasion_under_magic')),
+        session_at     BIGINT,
+        evidence_ids   TEXT[] NOT NULL DEFAULT '{{}}'
+            CHECK (cardinality(evidence_ids) <= 20
+               AND char_length(array_to_string(evidence_ids, ',')) <= 2000),
+        seq            BIGINT NOT NULL,
+        recorded_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        FOREIGN KEY (guild_id, campaign_id, perspective_id)
+            REFERENCES memory_perspectives (guild_id, campaign_id, id) ON DELETE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, relation_id)
+            REFERENCES memory_relations (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE INDEX memory_beliefs_current
+        ON memory_beliefs (guild_id, campaign_id, relation_id, perspective_id, seq DESC);
+    CREATE INDEX memory_beliefs_by_perspective
+        ON memory_beliefs (guild_id, campaign_id, perspective_id);
+    ALTER TABLE memory_entities ADD COLUMN manipulated_by TEXT;
+    CREATE INDEX memory_entities_by_manipulated_by
+        ON memory_entities (guild_id, campaign_id, manipulated_by) WHERE manipulated_by IS NOT NULL;
+    ALTER TABLE memory_entities ADD CONSTRAINT memory_entities_manipulated_by_other
+        CHECK (manipulated_by IS NULL OR manipulated_by <> id);
+    ALTER TABLE memory_entities ADD CONSTRAINT memory_entities_manipulated_by_link
+        FOREIGN KEY (guild_id, campaign_id, manipulated_by)
+        REFERENCES memory_entities (guild_id, campaign_id, id) DEFERRABLE INITIALLY DEFERRED;
+    """
+    + _isolate("memory_perspectives")
+    + _isolate("memory_beliefs")
+    + """
+    -- The backfill. Migrations run with no server set, so row-level security hides every row: open
+    -- EVERY table the statements read or write for them alone, dropped again inside the
+    -- migration's transaction (CLAUDE.md: a plain INSERT ... SELECT would match nothing).
+    CREATE POLICY migrate_backfill ON memory_perspectives FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_beliefs FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_relations FOR SELECT USING (true);
+    CREATE POLICY migrate_backfill ON campaigns FOR SELECT USING (true);
+    -- Every campaign gets The truth and The party.
+    INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)
+        SELECT c.guild_id, c.id, md5(c.guild_id::text || c.id || k.kind || clock_timestamp()::text),
+               k.kind, extract(epoch FROM now())::BIGINT
+          FROM campaigns c CROSS JOIN (VALUES ('truth'), ('party')) AS k(kind);
+    -- Every confirmed connection: The truth at 1.0 (a secret one as a Secret Plot) ...
+    INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id, relation_id,
+                                confidence, status, session_at, evidence_ids, seq, recorded_at)
+        SELECT r.guild_id, r.campaign_id, md5(p.id || r.id || 'truth'), p.id, r.id, 1.0,
+               CASE WHEN r.secret THEN 'secret_plot' ELSE 'revealed_fact' END,
+               NULL, '{}', 0, extract(epoch FROM now())::BIGINT
+          FROM memory_relations r
+          JOIN memory_perspectives p ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
+                                    AND p.kind = 'truth'
+         WHERE r.status = 'confirmed';
+    -- ... and, when it is not secret, The party at 1.0 (a Revealed Fact). A secret one gets no
+    -- party belief at all.
+    INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id, relation_id,
+                                confidence, status, session_at, evidence_ids, seq, recorded_at)
+        SELECT r.guild_id, r.campaign_id, md5(p.id || r.id || 'party'), p.id, r.id, 1.0,
+               'revealed_fact', NULL, '{}', 0, extract(epoch FROM now())::BIGINT
+          FROM memory_relations r
+          JOIN memory_perspectives p ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
+                                    AND p.kind = 'party'
+         WHERE r.status = 'confirmed' AND NOT r.secret;
+    DROP POLICY migrate_backfill ON memory_perspectives;
+    DROP POLICY migrate_backfill ON memory_beliefs;
+    DROP POLICY migrate_backfill ON memory_relations;
+    DROP POLICY migrate_backfill ON campaigns;
+    -- Every campaign made from now on has them from the start, part of the campaign and never part
+    -- of a change a DM could undo (the trigger runs in the creating transaction, so the server is
+    -- already set and the table's policy lets the rows in).
+    CREATE FUNCTION dmbot_campaign_perspectives() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)
+            SELECT NEW.guild_id, NEW.id, md5(NEW.guild_id::text || NEW.id || k.kind), k.kind,
+                   NEW.created_at
+              FROM (VALUES ('truth'), ('party')) AS k(kind);
+        RETURN NEW;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_campaign_perspectives()'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    CREATE TRIGGER campaign_perspectives AFTER INSERT ON campaigns
+        FOR EACH ROW EXECUTE FUNCTION dmbot_campaign_perspectives();
+    """
+)
+
+# The relationship web's door reads what The party believes (#2409 part B): a member sees the
+# connections the players hold as fact, where it used to test the `secret` flag. Until guesses
+# arrive the two always agree (the writers keep them so, and a test holds the door to it). The
+# door is redefined as it was, with that one test changed, and its pinned settings set again.
+_PARTY_KNOWS_R = (
+    "EXISTS (SELECT 1 FROM memory_beliefs pb JOIN memory_perspectives pp"
+    " ON pp.guild_id = pb.guild_id AND pp.campaign_id = pb.campaign_id"
+    " AND pp.id = pb.perspective_id WHERE pp.kind = 'party' AND pb.guild_id = r.guild_id"
+    " AND pb.campaign_id = r.campaign_id AND pb.relation_id = r.id AND pb.confidence >= 1.0"
+    " AND pb.seq = (SELECT max(x.seq) FROM memory_beliefs x WHERE x.guild_id = pb.guild_id"
+    " AND x.campaign_id = pb.campaign_id AND x.perspective_id = pb.perspective_id"
+    " AND x.relation_id = pb.relation_id))"
+)
+assert WEB_RELATIONSHIPS.count("(is_dm OR (NOT r.secret AND r.to_session_at IS NULL") == 1
+WEB_GRAPH_PARTY = WEB_RELATIONSHIPS.replace(
+    "CREATE FUNCTION dmbot_web_relationships(",
+    "CREATE OR REPLACE FUNCTION dmbot_web_relationships(",
+    1,
+).replace(
+    "(is_dm OR (NOT r.secret AND r.to_session_at IS NULL",
+    "(is_dm OR (" + _PARTY_KNOWS_R + " AND r.to_session_at IS NULL",
+    1,
+)
+SHARED_RECAP_SESSION = """
+    -- A shared recap says which session it was and how long it ran (#2418), the same two facts the
+    -- DM's page shows. The public door reads them from the transcripts' own sessions, so the
+    -- number is the one the transcripts show. It needs one more read-only policy, tied (like the
+    -- others in RECAP_SHARE) to the one recap's server and campaign the function itself found;
+    -- only the number and the length leave the function, never a line or a speaker.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY recap_share_read ON transcript_sessions FOR SELECT TO %I
+                USING (guild_id = dmbot_recap_share_guild()
+                       AND campaign_id = dmbot_recap_share_campaign())',
+            current_user);
+    END
+    $do$;
+
+    CREATE OR REPLACE FUNCTION dmbot_recap_shared(tok TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        sess_number BIGINT;
+        sess_seconds BIGINT;
+        out JSONB;
+    BEGIN
+        IF tok IS NULL OR tok !~ '^[A-Za-z0-9_-]{43}$' THEN
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_tok', tok, true);
+        SELECT * INTO job FROM recap_jobs WHERE share_token = tok AND status = 'posted';
+        IF NOT FOUND THEN
+            PERFORM set_config('dmbot.recap_share_tok', '', true);
+            RETURN NULL;
+        END IF;
+        PERFORM set_config('dmbot.recap_share_guild', job.guild_id::TEXT, true);
+        PERFORM set_config('dmbot.recap_share_campaign', job.campaign_id, true);
+        -- Which session it was and how long it ran, as the transcripts page numbers and times it
+        -- (`dmbot_web_transcript_sessions`: Session N in order of start among the campaign's saved
+        -- sessions, those whose transcripts were deleted by retention included). Only these two
+        -- numbers leave: nothing of the transcript itself.
+        SELECT x.number, x.seconds INTO sess_number, sess_seconds FROM (
+            SELECT t.started_at, row_number() OVER (ORDER BY t.started_at, t.id) AS number,
+                   CASE WHEN t.ended_at IS NULL THEN NULL
+                        ELSE GREATEST(t.ended_at - t.started_at, 0) END AS seconds
+            FROM transcript_sessions t
+            WHERE t.guild_id = job.guild_id AND t.campaign_id = job.campaign_id
+              AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)) x
+        WHERE x.started_at = job.session_at ORDER BY x.number LIMIT 1;
+        out := jsonb_build_object(
+            'title', job.title, 'summary', job.summary, 'postedAt', job.decided_at,
+            'guild', job.guild_id::TEXT, 'campaign', job.campaign_id, 'at', job.session_at,
+            'audio', job.audio, 'audioHash', job.audio_text_hash, 'audioChoice', job.audio_choice,
+            'sessionNumber', sess_number, 'sessionSeconds', sess_seconds,
+            'audioOn', COALESCE((SELECT k.recaps_audio FROM campaigns k
+                                 WHERE k.guild_id = job.guild_id AND k.id = job.campaign_id),
+                                false),
+            'secret', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND (a.secret OR e.audience_limited OR e.hidden_from_players)), '[]'::jsonb),
+            'allowed', COALESCE((
+                SELECT jsonb_agg(DISTINCT a.text)
+                FROM memory_aliases a JOIN memory_entities e
+                  ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id
+                 AND e.id = a.entity_id
+                WHERE a.guild_id = job.guild_id AND a.campaign_id = job.campaign_id
+                  AND NOT a.secret AND NOT e.audience_limited AND NOT e.hidden_from_players
+                  AND a.status = 'confirmed' AND e.status = 'confirmed'
+                  AND e.type <> 'person'), '[]'::jsonb));
+        PERFORM set_config('dmbot.recap_share_tok', '', true);
+        PERFORM set_config('dmbot.recap_share_guild', '', true);
+        PERFORM set_config('dmbot.recap_share_campaign', '', true);
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_shared(TEXT) SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
 """
 
 MIGRATIONS: tuple[Migration, ...] = (
@@ -10294,6 +10744,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0175_recap_address_co_dm", RECAP_ADDRESS_CO_DM),  # a co-DM's recap email address (#2360)
     ("0176_transcript_speaker_names", TRANSCRIPT_SPEAKER_NAMES),  # names on the website (#2337)
     ("0177_web_relationships", WEB_RELATIONSHIPS),  # the relationship web's data (#2323)
+    ("0178_web_link_actions", WEB_LINK_ACTIONS),  # edits to the web's connections (#2323)
+    ("0179_beliefs", BELIEFS),  # perspectives, beliefs and the backfill (#2409)
+    ("0180_shared_recap_session", SHARED_RECAP_SESSION),  # a shared recap's session (#2418)
+    ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
+    ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
+    ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -10343,6 +10799,8 @@ ISOLATED_TABLES = (
     "memory_states",
     "memory_impressions",
     "memory_attitudes",
+    "memory_perspectives",
+    "memory_beliefs",
     "memory_claims",
     "rule_set_suggestions",
     "rule_set_suggestions_sent",

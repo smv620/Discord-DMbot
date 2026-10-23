@@ -231,6 +231,18 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "Every recap says which session it is",
+    what: "Each recap now says its campaign, its session number, the day it was played and how long the game ran, such as “Session 4 · Played Tuesday 21 October 2026 · 2 h 35 min”. It is on the recap page, in the list of recaps and on a shared recap.",
+    reason: "In review (#2418); held until dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
+    title: "A page for each campaign",
+    what: "On My Campaigns, tap a campaign's name to open its own page. It has links to its recaps, house rules, homebrew, story map, names and transcripts, all in one place. Players see only the pages for the whole table.",
+    reason: "In review (#2416); held until the API sends each campaign's address and dev1 deploys it.",
+  },
+  {
+    date: "2026-10-22",
     title: "See where a new name was said",
     what: "When DMbot asks you to check a name it heard, it now shows two short bits of what was said around it, with who said each line and when. A 🔎 More places button shows more, and 📜 Open in transcript opens that session on the website.",
     reason: "In review (#2329); held until dev1 deploys it.",
@@ -246,6 +258,12 @@ export const held: Held[] = [
     title: "Merge several names at once",
     what: "On the All names page, tick the names that are really one (like Belleros and Beleros), press Merge selected, and pick which to keep. They become one name, and you can undo it from the name's card in Discord.",
     reason: "In review (#2430); held until the bot side (#2426) is deployed.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Three clear ways to approve a recap",
+    what: "On a recap's page, Approve and post text only, Approve and make audio to review, or Approve but don't post. Audio is greyed with the reason when it can't be made. If you don't post, you can copy the text and post it later.",
+    reason: "In review (#2428); held until dev1 deploys it.",
   },
   {
     date: "2026-10-22",
@@ -766,8 +784,14 @@ export const held: Held[] = [
   {
     date: "2026-10-21",
     title: "See how your names are connected",
-    what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Everyone else never sees the secret ones.",
+    what: "On the website, pick any name in a campaign and see the names around it as a map, with lines for how they are connected. Choose how far out to look, tap a name to put it in the middle, and tap a line to read its connections. A campaign's game masters can change the words of a connection, make it secret, remove it or add one. Players see only what the story has told them. The game master can switch between Full View and Players View to check, and a player can choose to peek behind the DM screen, after a warning, if the game master allows it. Connections the party only suspects are drawn dotted, with a ?.",
     reason: "Waits for the web's routes (#2323) to be merged and deployed. When it is live, move this up.",
+  },
+  {
+    date: "2026-10-22",
+    title: "Connections on a name's card, one to a line",
+    what: "A name's card now lists its connections one to a line, like \"is a member of Frostwolf tribe\". Only a secret one has the 🤫 icon. A new ✏️ Edit a connection… menu lets a game master change the words of a connection, hide it from players or show it, or take it back (with Undo). A long list ends with \"and 12 more\" and a link to the website.",
+    reason: "Held until dev1 deploys it and has seen it on the test server (#2323).",
   },
   {
     date: "2026-10-22",

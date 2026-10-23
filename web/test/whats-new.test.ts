@@ -68,9 +68,12 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Every recap says which session it is", // until #2418 merges and dev1 deploys it
+      "A page for each campaign", // until #2416 merges, its API field is live and dev1 deploys it
       "See where a new name was said", // until #2329 merges and dev1 deploys it
       "Transcripts show real names", // until #2337 merges and dev1 deploys it
       "Merge several names at once",
+      "Three clear ways to approve a recap",
       "Open any NPC and keep your own notes on them", // until #2266 merges and dev1 has seen it
       "Bring your house rules in any file", // until #2377 merges and dev1 deploys it
       "Upload your campaign's backstory from the main menu", // until #2380 merges and dev1 deploys it
@@ -151,6 +154,7 @@ describe("What's new", () => {
       "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
       "A quiet reminder of the game time", // until seen on the test server (#1738)
       "See how your names are connected", // until #2323 merges and dev1 deploys it
+      "Connections on a name's card, one to a line", // until dev1 deploys it (#2323)
       "Change the email DMbot uses", // until #2349 merges and dev1 deploys it
     ]);
     for (const h of held) {

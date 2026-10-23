@@ -39,6 +39,9 @@ _COLUMNS = (
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
+    # The posting clock's columns (#2435): the page's `postingSince`, `postingStep` and `postedUrl`
+    # are made from them in `_view` (WebDev's #2436 owns those keys).
+    " r.posting_since, r.posting_step, r.posted_url,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
@@ -201,6 +204,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # how many days the table keeps transcripts, for the page's words (#2022).
         "transcriptsDeletedAt": row.get("transcripts_deleted_at"),
         "keepDays": row.get("keep_days"),
+        # Which session this is, as the transcripts number it, and how long it ran (#2418): both
+        # null when the session can't be found or is still listening; an older page ignores them.
+        "sessionNumber": row.get("session_number"),
+        "sessionSeconds": row.get("session_seconds"),
         # A recap that exists is no longer waiting for the DM's name answers (#2174); a held one
         # has no job yet and is listed by `_held_view`.
         "waitingForNames": False,
@@ -245,6 +252,8 @@ def _held_view(
         "cue_words": cues.allowed_words(),
         "transcriptsDeletedAt": None,
         "keepDays": None,
+        "sessionNumber": None,  # (#2418) no session has been saved for it yet
+        "sessionSeconds": None,
         "waitingForNames": True,
         "namesToAnswer": int(held["namesOpen"]),
         **({"serverName": server_name} if server_name else {}),
@@ -270,8 +279,11 @@ async def _with_transcript_marks(
     role has no grant on the transcript tables, so this asks the transcripts page's own door
     (`dmbot_web_transcript_sessions`), once for each campaign, in the server the caller has already
     set for the transaction. A recap is matched to its session by its start time, as the bot does
-    (`recaps/inputs.py`). A campaign the door does not know adds nothing."""
-    marks: dict[str, tuple[dict[int, int], int | None]] = {}
+    (`recaps/inputs.py`). A campaign the door does not know adds nothing.
+
+    The same answer gives the session's number and length (#2418): the number is the one the
+    transcripts page shows, never a second count. A recap with no session adds nothing."""
+    marks: dict[str, tuple[dict[int, int], int | None, list[dict[str, Any]]]] = {}
     for campaign_id in {r["campaign_id"] for r in rows}:
         cur = await conn.execute(
             "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
@@ -284,13 +296,40 @@ async def _with_transcript_marks(
             if s.get("transcriptsDeletedAt") is not None
         }
         days = found.get("keepDays")
-        marks[campaign_id] = (deleted, None if days is None else int(days))
+        marks[campaign_id] = (
+            deleted,
+            None if days is None else int(days),
+            list(found.get("sessions", [])),
+        )
     out: list[dict[str, Any]] = []
     for r in rows:
-        deleted, days = marks[r["campaign_id"]]
+        deleted, days, sessions = marks[r["campaign_id"]]
         at = deleted.get(int(r["session_at"]))
-        out.append({**r, "transcripts_deleted_at": at, "keep_days": days if at else None})
+        number, seconds = session_facts(sessions, int(r["session_at"]))
+        out.append(
+            {
+                **r,
+                "transcripts_deleted_at": at,
+                "keep_days": days if at else None,
+                "session_number": number,
+                "session_seconds": seconds,
+            }
+        )
     return out
+
+
+def session_facts(sessions: list[dict[str, Any]], started_at: int) -> tuple[int | None, int | None]:
+    """The number and the length in seconds of the session that started at `started_at`, from the
+    transcripts page's own list (#2418). The number is exactly the one the transcripts show. The
+    length is when it ended minus when it started, for a live session and an imported one alike;
+    null while it is still listening or if it never recorded an end, so the page leaves it out
+    rather than guess. Both are null when no session starts then."""
+    for s in sessions:
+        if int(s["startedAt"]) == started_at:
+            ended = s.get("endedAt")
+            seconds = None if ended is None else max(0, int(ended) - started_at)
+            return int(s["number"]), seconds
+    return None, None
 
 
 def _guild_of(session: Session, guild_id: int) -> int:
@@ -427,7 +466,9 @@ async def edit_recap(
 
 
 async def decide(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
-    """`post` (the bot sends it), `drop` (Don't post) or `again` (Try again, at most twice)."""
+    """`post` (the bot sends it), `drop` or `again` (Try again, at most twice). The page no longer
+    offers `drop` (#2419: a recap the DM does not approve simply stays a draft); the route stays
+    so an older open page still works."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         where = " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
@@ -497,6 +538,8 @@ async def approve_recap(
     choice: str,
     *,
     audio_in_plan: bool,
+    audio_unavailable: str = "",
+    post: bool = False,
     outside_engine: str | None = None,
 ) -> dict[str, Any]:
     """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
@@ -504,11 +547,17 @@ async def approve_recap(
     queues the audio. `outside_engine`: the speech-to-text company in use, so that only consent
     given for it counts, as in the bot. The secret names and the plan are checked again by the
     audio step before any paid call. `audio_in_plan`: from the campaign owner's plan; an audio
-    choice without it is refused ("not_in_plan")."""
-    if choice not in CHOICES:
+    choice without it is refused ("not_in_plan"), and one made while `audio_unavailable` says why
+    it can't be ("not_set_up", "allowance", "unavailable") is refused ("audio_unavailable").
+    `post` (#2419, "Approve and post text only"): approve a text-only choice and hand it to the bot
+    to post in the same transaction, so a failure leaves nothing approved and half-posted; it is
+    only for the text-only choice, since audio is made and reviewed before anything is posted."""
+    if choice not in CHOICES or (post and choice != TEXT):
         raise RecapError("bad_choice")
     if choice != TEXT and not audio_in_plan:
         raise RecapError("not_in_plan")
+    if choice != TEXT and audio_unavailable in ("not_set_up", "allowance", "unavailable"):
+        raise RecapError("audio_unavailable")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, row = await _one(conn, ref, session, marks=False)
         if refusal := cue_refusal(row["summary"]):
@@ -521,6 +570,14 @@ async def approve_recap(
         outcome = (await cur.fetchone() or {}).get("r")
         if outcome != "approved":
             raise RecapError("not_allowed")
+        if post:  # the same hand-over as `decide(..., "post")`, in this transaction
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET status = 'posting' WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND state = 'ready' AND status = 'draft'",
+                (gid, cid, at),
+            )
+            if not cur.rowcount:
+                raise RecapError("not_allowed")  # (the approval is rolled back with it)
         *_, row = await _one(conn, ref, session)
     return _view(row)
 

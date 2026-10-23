@@ -66,6 +66,7 @@ from dmbot.web.accounts import (
     user_of_dmbot_id,
 )
 from dmbot.web.admin import CSRF_HEADER, AdminSessions, FailedTries, GoogleSignIn
+from dmbot.web.campaign_page import read_campaign
 from dmbot.web.characters import build_characters
 from dmbot.web.discord import DiscordError, DiscordOAuth
 from dmbot.web.export import build_export
@@ -713,6 +714,7 @@ def create_app(
         "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
         "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
+        "audio_unavailable": (409, "audio_unavailable"),  # not set up here, or the month's used up
         "audio_off": (409, "audio_off"),
         "names_secret": (409, "names_secret"),  # the text names a secret (#2083)
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
@@ -938,12 +940,15 @@ def create_app(
         except ValueError:
             body = None
         choice = body.get("choice") if isinstance(body, dict) else None
-        if not isinstance(choice, str):
+        post = body.get("post", False) if isinstance(body, dict) else False
+        if not isinstance(choice, str) or not isinstance(post, bool):
             raise HTTPException(status_code=422, detail="bad_choice")
         try:
             facts = await read_choices(
                 db, session, ref.rsplit(".", 1)[0], now=int(clock()),
                 enforce_plans=settings.enforce_plans,
+                audio_on=settings.recap_audio_on,
+                audio_allowed=settings.recap_audio_per_month,
             )  # fmt: skip
             return await approve_recap(
                 db,
@@ -951,6 +956,8 @@ def create_app(
                 ref,
                 choice,
                 audio_in_plan=bool(facts["canAudio"]),
+                audio_unavailable=str(facts["audioUnavailable"]),
+                post=post,
                 outside_engine=settings.outside_engine,
             )
         except RecapError as err:
@@ -1029,6 +1036,16 @@ def create_app(
             path, media_type="audio/mpeg", headers={"Cache-Control": "private, no-store"}
         )
 
+    @app.get("/me/campaigns/{ref}")
+    async def me_campaign(ref: str, signed: Signed) -> dict[str, Any]:
+        """One campaign's own page (#2416): its name and the person's role in it. Anyone not in the
+        campaign's server, and a campaign that isn't there, get the same 404."""
+        session, _token = signed
+        try:
+            return await read_campaign(db, session, ref, imports_for=settings.imports_enabled_for)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.get("/me/campaigns/{ref}/all-names")
     async def me_campaign_all_names(
         ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: str = "1"
@@ -1077,7 +1094,61 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
-    relationship_refusals = {"not_found": (404, "not_found"), "bad_hops": (400, "bad_hops")}
+    relationship_refusals = {
+        "not_found": (404, "not_found"),
+        "bad_hops": (400, "bad_hops"),
+        "not_allowed": (403, "not_allowed"),
+        "bad_action": (400, "bad_action"),
+        "bad_name": (400, "bad_name"),
+        "too_long": (400, "too_long"),
+        "needs_confirm": (400, "needs_confirm"),
+        "bad_target": (400, "bad_target"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/web/links", status_code=202)
+    async def me_campaign_web_link_add(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Add a connection between two names (DM only, re-checked every call). Queued for the bot;
+        the answer is polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_add(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/links/{link_id}", status_code=202)
+    async def me_campaign_web_link_edit(
+        ref: str, link_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Change the words of a connection, make it secret or known, or remove it."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_edit(db, session, ref, link_id, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/answers/{answer}")
+    async def me_campaign_web_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where one of the signed-in DM's own connection edits stands, with the edge as it now
+        stands once it is done."""
+        session, _token = signed
+        try:
+            return await relationships.read_answer(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
 
     name_refusals = {
         "not_found": (404, "not_found"),
@@ -1158,7 +1229,13 @@ def create_app(
         session, _token = signed
         try:
             return await read_choices(
-                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+                db,
+                session,
+                ref,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+                audio_on=settings.recap_audio_on,
+                audio_allowed=settings.recap_audio_per_month,
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))

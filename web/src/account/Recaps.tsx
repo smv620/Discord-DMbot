@@ -12,10 +12,12 @@ import {
   heldWords,
   isHeld,
   sessionDay,
+  sessionLine,
   statusLine,
   text,
 } from "../content/recaps";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { campaignPage as campaignWords } from "../content/campaign-page";
 import { panelWords } from "../content/recap-panel";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
@@ -34,9 +36,11 @@ import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
+import { campaignHref } from "./campaignLinks";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
 import RecapPlayer from "./RecapPlayer";
+import BackToCampaign from "./BackToCampaign";
 
 const POLL_MS = 5000;
 /** How long, after Try again, a read that still shows the old failure is ignored. */
@@ -73,12 +77,21 @@ export function refFromPath(path: string): string | null {
   return match ? decodeURIComponent(match[1] ?? "") : null;
 }
 
+/** The campaign the list is narrowed to, from `?campaign=<server>.<campaign>` (#2416), or null. */
+export function campaignFromSearch(search: string): string | null {
+  const found = new URLSearchParams(search).get("campaign");
+  return found && /^[\w.-]+$/.test(found) ? found : null;
+}
+
 export default function Recaps({
   api,
   path,
+  search = "",
 }: {
   api: AccountApi;
   path: string;
+  /** The address's query, `?campaign=<ref>` narrows the list to one campaign. */
+  search?: string;
 }) {
   const ref = refFromPath(path);
   return (
@@ -86,7 +99,7 @@ export default function Recaps({
       <p>
         <a href="/account">{text.account}</a>
       </p>
-      {ref ? <Review api={api} recapRef={ref} /> : <List api={api} />}
+      {ref ? <Review api={api} recapRef={ref} /> : <List api={api} campaign={campaignFromSearch(search)} />}
     </div>
   );
 }
@@ -99,7 +112,7 @@ function SignedOut() {
   );
 }
 
-function List({ api }: { api: AccountApi }) {
+function List({ api, campaign }: { api: AccountApi; campaign: string | null }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   useEffect(() => {
     let live = true;
@@ -138,25 +151,32 @@ function List({ api }: { api: AccountApi }) {
         {load.message}
       </p>
     );
+  // One campaign's recaps when the address asks for it: a recap's own address starts with its
+  // campaign's (`<server>.<campaign>.<time>`).
+  const shown = campaign ? load.recaps.filter((r) => r.ref.startsWith(`${campaign}.`)) : load.recaps;
   return (
     <>
       {(RECAPS_LIVE || load.recaps.length > 0) && (
         <p class="lead">{text.lead}</p>
       )}
-      {load.recaps.length === 0 ? (
+      {campaign && (
+        <p class="small">
+          <a href={campaignHref(campaign)}>{campaignWords.backToThis}</a> · {campaignWords.onlyThisCampaign}{" "}
+          <a href="/account/recaps">{campaignWords.showAllRecaps}</a>
+        </p>
+      )}
+      {shown.length === 0 ? (
         <p class="panel" role="status">
-          {RECAPS_LIVE ? text.empty : text.emptyOff}
+          {campaign ? campaignWords.noneHere : RECAPS_LIVE ? text.empty : text.emptyOff}
         </p>
       ) : (
         <ul class="campaigns">
           {/* Newest session first, whatever order the API sends them in. */}
-          {[...load.recaps].sort((a, b) => b.sessionAt - a.sessionAt).map((r) => (
+          {[...shown].sort((a, b) => b.sessionAt - a.sessionAt).map((r) => (
             <li key={r.ref}>
               <span class="campaign-name">{r.title || text.untitled}</span>
               <span class="small">
-                {[r.campaign, r.serverName, sessionDay(r.sessionAt)]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {sessionLine(r, [r.serverName])}
               </span>
               {r.transcriptsDeletedAt && (
                 <span class="small">
@@ -564,7 +584,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         setRecap(optimisticTryAgain(next));
       } else setRecap(next);
       setEditing(false);
-      // Post and Don't post are said by the status lines above; only Try again needs a note.
+      // Posting is said by the status lines above; only Try again needs a note.
       if (action === "again") setNote({ ok: true, message: text.tryingAgain });
     } catch (error) {
       setNote({ ok: false, message: messageFor(error) });
@@ -580,6 +600,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const decided = recap.status !== "draft";
   return (
     <>
+      {recap.ref.includes(".") && (
+        <BackToCampaign campaignRef={recap.ref.slice(0, recap.ref.lastIndexOf("."))} name={recap.campaign} />
+      )}
       <div class="hello">
         <h2 tabIndex={-1} ref={headingRef}>
           {heading}
@@ -587,9 +610,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <span class="tag">{statusLine(recap, sawWaiting.current)}</span>
       </div>
       <p class="small">
-        {[recap.campaign, recap.serverName, sessionDay(recap.sessionAt)]
-          .filter(Boolean)
-          .join(" · ")}
+        {sessionLine(recap, [recap.serverName])}
       </p>
       {recap.transcriptsDeletedAt && (
         <p class="small">
@@ -754,7 +775,13 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
 
       {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
-      {!editing && <RecapApprove key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <RecapApprove
+          key={recap.ref}
+          api={api}
+          recap={recap}
+          onRecap={setRecap}
+          pageFocus={() => headingRef.current}
+        />}
       {!editing && (
         <RecapShareControls
           key={`share-${recap.ref}`}
@@ -769,11 +796,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {!editing &&
         !recap.working &&
-        (recap.canEdit ||
-          recap.canPost ||
-          recap.canTryAgain ||
-          recap.canDrop ||
-          !decided) && (
+        (recap.canEdit || recap.canTryAgain || !decided) && (
           <div class="row">
             {recap.canEdit && (
               <button
@@ -785,16 +808,6 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 {text.edit}
               </button>
             )}
-            {recap.canPost && (
-              <button
-                type="button"
-                class="button"
-                onClick={() => decide("post")}
-                disabled={busy !== null}
-              >
-                {busy === "post" ? text.busy : text.post}
-              </button>
-            )}
             {!decided && (
               <button
                 type="button"
@@ -803,16 +816,6 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
                 disabled={busy !== null || !recap.canTryAgain}
               >
                 {busy === "again" ? text.busy : againLabel(recap.triesLeft)}
-              </button>
-            )}
-            {recap.canDrop && (
-              <button
-                type="button"
-                class="button secondary"
-                onClick={() => decide("drop")}
-                disabled={busy !== null}
-              >
-                {busy === "drop" ? text.busy : text.drop}
               </button>
             )}
           </div>
