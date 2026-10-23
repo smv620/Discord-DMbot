@@ -1855,6 +1855,17 @@ names panel nor the speech-to-text hints can be a fixed list.
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
+    - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migrations 0190 and 0193): the DM's own word that a connection is
+      true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
+      (Unpin takes it back), or answers once per lore upload, "may change in play" (default) or "📌 100% truth", and
+      the connections kept from that upload are pinned. It is a `pinned` flag on the truth belief
+      (`memory_beliefs.pinned`), so Undo, backups and isolation work as for any belief; the web graph
+      shows it to a DM in Full View only. After a session, a claim that clashes with a pinned connection
+      is a heads-up even before the campaign has enough story for the others, worded as a "Check" line
+      with the line; the DM screen says only how many. Code finds it with the same rules as the other
+      heads-ups, never the AI, and DMbot only points: the DM decides. On the website the pin is the
+      `link-pin` action of the relationship web's edit queue (migration 0193), DM only and checked again by
+      the bot, like the other link actions.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.
@@ -1894,6 +1905,19 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+
+  *Undo also hands back what a merge moves outside the change log (#2438, migration 0199):* the merged
+  name's private notes and its D&D Beyond sheet. A small record (`merge_restores`, kept as long as the batch
+  and deleted with it, kept out of backups) holds, for each note, the person's id, the NPC's listed name,
+  the note's length and its times, never its words; and for a sheet only when it was read and from where,
+  never its content, link or player. Everything of both names is locked first, in one fixed order, so a
+  note edited meanwhile is read after the edit. Undo puts a note or sheet back only if it is still as the
+  merge left it (a note written on since, or a sheet read again since, stays where it is), and the Undo
+  itself is never refused over it. A sheet the merge forgot (the kept name had its own, or it was left from
+  an earlier player) is not brought back, because its content is not kept: the player links it again.
+  Undoing the Undo merges again and the notes and sheet follow. A merged character's beliefs (a character's
+  own point of view) move to the kept entry's perspective (made as a `pc` for a player's character, else an
+  `npc`) through the change log, so the same Undo returns them; a belief both held keeps the newest one.
 
   *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
   all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same
@@ -2059,7 +2083,16 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **One process for prose.** Whatever arrives through 📜 Upload campaign lore or 📥 Add many (a pasted text, a
     file, a link):
     - **A strict names list** (`name (pronunciation) | kind | other names`, one per line) is added straight
-      away, with no AI.
+      away, with no AI. **The bracket after a name** is how to say it only when code judges it a respelling
+      (#2447, built 2026-10-23): after dropping hyphens, stress marks and capitals its sound key is close to
+      the name's, and it holds no plain English word ("the", "of", "a", "an", "and"…). `Tavin (TAV-in)` and
+      `Ka'zeth (kah-ZETH)` keep the bracket as the name's said-as (#1451). Anything else is an aside, kept as
+      another name: `Tavin (the rogue)` gives "Tavin the rogue". A near miss (`Jorvik (YOR-vick)`) asks the DM
+      once after saving, "Is (YOR-vick) how to say **Jorvik**?" with [It's how to say it] and [It's another
+      name]; nothing changes until they answer. A bracket is accepted without asking only when it
+      also looks like a respelling (a hyphen, a stress mark or a shouted syllable: `TAV-in`, `kah-ZETH`); a plain
+      look-alike (`Kaela (Kael)`) is asked. A name the campaign already has with its bracket (a Download all
+      writes `Fenn (Lower Quay)`) stays whole when uploaded back. The first line that gives a pronunciation decides.
     - **Anything with prose in it** goes through the same single AI read as campaign lore: names and the
       connections the text states, each with its quote. Code keeps a connection only when its quote is in the
       text and both names are in this read or the campaign. **Nothing is invented:** no AI (PlotBot included)
@@ -2081,11 +2114,11 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.
-  - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Tav`): the bracket after a name is read as how to say
+  - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Mo`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
     "a". Otherwise it's an aside, kept as an other name with the name in front: `Tavin (the rogue)` gives
-    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (the Rogue) how to say Tavin?" [It's how
+    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (Kael) how to say Kaela?" [It's how
     to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
   - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
   - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen
@@ -2225,7 +2258,9 @@ names panel nor the speech-to-text hints can be a fixed list.
   only for the campaign's DMs). One name per line: `name | kind | other names | secret
   names` (the fourth part so a DM's download reads back with its secret names; only the
   campaign's DMs may add them, and managers get a template without it). Other names are
-  separated by `,` or `;`, as in the ➕ Add a name form; lines starting with `#` are
+  separated by `,` or `;`, as in the ➕ Add a name form; a name with a comma, semicolon or leading quote in
+  it is written in double quotes (a quote inside is doubled), which Download all does for you, so a download
+  uploaded again gives back the same names (#2482); lines starting with `#` are
   skipped. Decided while building:
   - the whole list is saved as **one change** (one Undo, one reload for live
     transcription) rather than batches of 200, since a list is capped at 2,000 lines; a
@@ -3096,8 +3131,10 @@ the session is listening, the campaign's Table chat switch is on, the author is 
 slash command (only plain messages and replies are read), and the author has consent (`has_consent`, the same
 check as a voice line). A typed line goes through `_act_on_line` like a spoken one (rules cards, house rules,
 the game clock), and also into names heard, vocabulary, the sidebar's "Hey DMbot" and the raw transcript as a
-`Line(typed=True)`: tagged `(typed)` in the as-heard file, never in the cleaned one and never in the live transcript
-channel; it has no audio check and no cleaning. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
+`Line(typed=True)`: tagged `(typed)` in both files (2026-10-23, #2447: the cleaned one leaves out typing the
+off-topic filter labels off-topic, through the same window as talk; its words reach the names scan and the word
+list when typed, never again at the label or at "Put it back"), never in the live transcript channel; it has no
+audio check and no cleaning. Typing over the rate limit skips the filter, so it always shows. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
 private panel that says which channels are read, picks the one extra text channel of this server, and turns it off.
 Migration 0052: `campaigns.table_chat` (default on) and `table_chat_channel_id`, `transcript_lines.typed`, and a new
 sidebar way-in `table-chat` (a typed "Hey DMbot" has no speech-to-text in its lineage). A backup carries the on/off

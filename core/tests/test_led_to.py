@@ -13,6 +13,7 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import OPEN, MemoryRuleError
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.ui import threads as ui
+from tests import speed
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
 
 
@@ -220,7 +221,7 @@ class Chain(ConfirmedMemoryTest):
         began = time.perf_counter()
         found = await self.memory.threads(GUILD_A, self.c)
         self.assertEqual(len(found), 51)
-        self.assertLess(time.perf_counter() - began, 1.0)
+        self.assertLess(time.perf_counter() - began, speed.allowed(1.0))
 
 
 class Cards(ConfirmedMemoryTest):
