@@ -16,7 +16,7 @@ import hmac
 import re
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
 KEEP_DAYS = 180
@@ -66,6 +66,29 @@ class AudioFiles:
 
     def forget_campaign(self, guild_id: int, campaign_id: str) -> None:
         shutil.rmtree(self._campaign(guild_id, campaign_id), ignore_errors=True)
+
+    def sweep_gone(self, keep: Mapping[int, Iterable[str]], *, min_age_s: float = 86400) -> int:
+        """Delete the folders of campaigns that no longer exist (#2554): `keep` is every campaign
+        that does, by server. The website's delete cannot remove audio (its container mounts the
+        volume read-only), so the bot does it here. A folder newer than `min_age_s` stays, so a
+        campaign made a moment after `keep` was read is never swept. Returns how many went."""
+        gone = 0
+        for guild_dir in self._root.glob("*"):
+            if not guild_dir.is_dir() or not guild_dir.name.isdigit():
+                continue
+            alive = set(keep.get(int(guild_dir.name), ()))
+            for folder in guild_dir.glob("*"):
+                try:
+                    if (
+                        folder.is_dir()
+                        and folder.name not in alive
+                        and self._now() - folder.stat().st_mtime >= min_age_s
+                    ):
+                        shutil.rmtree(folder, ignore_errors=True)
+                        gone += 1
+                except OSError:
+                    continue
+        return gone
 
     def sweep(self) -> int:
         """Delete the recaps' audio older than the retention. Returns how many recaps' folders

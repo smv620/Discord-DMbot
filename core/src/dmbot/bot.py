@@ -11223,7 +11223,24 @@ class DMBot(commands.AutoShardedBot):
                         log.info("Removed the audio of %d old recaps", gone)
                 except Exception:
                     log.exception("Removing old recap audio failed")
+                try:
+                    await self._sweep_deleted_campaign_audio()
+                except Exception:
+                    log.exception("Removing the audio of deleted campaigns failed")
             await asyncio.sleep(RECAP_ROUND_S)
+
+    async def _sweep_deleted_campaign_audio(self) -> None:
+        """A campaign deleted on the website leaves its audio on the disk: that container mounts
+        the volume read-only (#2554), so the bot removes it here. If no server lists a campaign
+        the sweep does nothing, so a failed read can never wipe the audio."""
+        keep: dict[int, set[str]] = {}
+        for guild_id in await self.campaigns.guilds_with_campaigns():
+            keep[guild_id] = await self.campaigns.campaign_ids(guild_id)
+        if not any(keep.values()):
+            return
+        gone = await asyncio.to_thread(self.recap_audio_files.sweep_gone, keep)
+        if gone:
+            log.info("Removed the audio of %d deleted campaigns", gone)
 
     async def _recap_request_loop(self) -> None:
         """Every few seconds: what DMs typed on the recap page (#2113), sorted and written back

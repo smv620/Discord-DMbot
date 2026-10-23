@@ -466,6 +466,12 @@ class CampaignStore:
             cur = await conn.execute("SELECT guild_id FROM campaign_guilds ORDER BY guild_id")
             return [int(r["guild_id"]) for r in await cur.fetchall()]
 
+    async def campaign_ids(self, guild_id: int) -> set[str]:
+        """The IDs of the server's campaigns (IDs only), for sweeping what a deleted one left."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute("SELECT id FROM campaigns WHERE guild_id = %s", (guild_id,))
+            return {str(r["id"]) for r in await cur.fetchall()}
+
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
         """Drop a server from the list once it holds no campaigns. Check and delete are one
         statement in the server's own scope, so a campaign made a moment ago keeps it listed."""

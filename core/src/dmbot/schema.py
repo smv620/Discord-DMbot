@@ -11921,8 +11921,9 @@ WEB_OWNED_CAMPAIGNS = """
                 RETURN jsonb_build_object('status', 'not_the_owner');
             END IF;
         END IF;
-        IF lower(btrim(regexp_replace(coalesce(typed, ''), '\\s+', ' ', 'g')))
-           IS DISTINCT FROM lower(btrim(regexp_replace(camp.name, '\\s+', ' ', 'g'))) THEN
+        -- The typed name arrives as its `name_key` (Python's, the one Discord's delete uses), so
+        -- there is one rule for what counts as the same name.
+        IF typed IS DISTINCT FROM camp.name_key THEN
             RETURN jsonb_build_object('status', 'name_mismatch');
         END IF;
         IF EXISTS (SELECT 1 FROM active_sessions a WHERE a.guild_id = g AND a.campaign_id = c) THEN
@@ -11932,9 +11933,10 @@ WEB_OWNED_CAMPAIGNS = """
             OR camp.transcript_channel_id IS NOT NULL OR camp.gametime_channel_id IS NOT NULL
             OR camp.dmbchat_channel_id IS NOT NULL OR camp.dm_bot_channel_id IS NOT NULL
             OR camp.rules_channel_id IS NOT NULL OR camp.npcs_channel_id IS NOT NULL;
-        -- Every table of the campaign goes with its row (migration 0215 and the foreign keys).
+        -- Every table of the campaign goes with its row: each one's foreign key cascades, as
+        -- for Discord's delete.
         DELETE FROM campaigns WHERE guild_id = g AND id = c;
-        RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels, 'name', camp.name);
+        RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels);
     END
     $fn$;
 

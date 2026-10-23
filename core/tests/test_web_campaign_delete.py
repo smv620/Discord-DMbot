@@ -17,8 +17,8 @@ from dmbot.web.app import create_app
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
-from tests.test_recap_web import ALICE, BOB, HEADERS, NOW, THURSDAY, Base
-from tests.test_web_api import API, FakeDiscord, settings
+from tests.test_recap_web import BOB, HEADERS, NOW, Base
+from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
 
 LOST = 777  # a server Alice's session does not have (left, removed, gone)
 
@@ -42,7 +42,7 @@ class Deleting(Base):
 
     async def delete(self, session: Any, campaign: Any, guild: int, name: str) -> dict[str, Any]:
         return await campaign_delete.delete(
-            self.web, session, f"{guild}.{campaign.id}", {"name": name}, audio=self.audio
+            self.web, session, f"{guild}.{campaign.id}", {"name": name}, audio=None
         )
 
     async def refused(self, session: Any, campaign: Any, guild: int, name: str) -> str:
@@ -66,6 +66,20 @@ class Deleting(Base):
         )
         here = cards["One"]
         self.assertEqual((here["serverReachable"], here["canDelete"]), (True, True))
+
+    async def test_a_server_dmbot_has_left_is_not_reachable(
+        self,
+    ) -> None:
+        async with self.db.user(ALICE.id, install_guild=THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via,"
+                " left_at) VALUES (%s, %s, 1, 'site', 2)",
+                (THURSDAY.id, ALICE.id),
+            )
+        cards = await self.cards(self.session)
+        self.assertEqual(
+            (cards["One"]["serverReachable"], cards["One"]["canDelete"]), (False, True)
+        )
 
     async def test_a_game_master_who_is_not_the_owner_does_not_see_it(self) -> None:
         await self.campaigns.add_dm(LOST, self.lost.id, BOB.id)
@@ -94,8 +108,34 @@ class Deleting(Base):
         self.assertIsNone(await self.campaigns.get(LOST, self.lost.id))
         self.assertIsNotNone(await self.campaigns.get(THURSDAY.id, self.one.id))
         self.assertIsNotNone(await self.campaigns.get(THURSDAY.id, self.two.id))
-        self.assertFalse((self.audio_root / str(LOST) / self.lost.id).exists())  # after the commit
         self.assertNotIn("Lost World", await self.cards(self.session))
+        # The web container cannot remove audio (its volume is read-only): the bot's sweep does.
+        self.assertTrue(folder.exists())
+        keep = {
+            g: await self.campaigns.campaign_ids(g)
+            for g in await self.campaigns.guilds_with_campaigns()
+        }
+        self.assertEqual(self.audio.sweep_gone(keep, min_age_s=0), 1)
+        self.assertFalse((self.audio_root / str(LOST) / self.lost.id).exists())
+
+    async def test_the_sweep_keeps_live_campaigns_and_new_folders(self) -> None:
+        mine = self.audio_root / str(THURSDAY.id) / self.one.id / "recaps/1"
+        mine.mkdir(parents=True)
+        new = self.audio_root / str(LOST) / "brandnew"
+        new.mkdir(parents=True)
+        keep = {THURSDAY.id: {self.one.id, self.two.id}}
+        self.assertEqual(self.audio.sweep_gone(keep), 0)  # nothing is a day old
+        self.assertEqual(self.audio.sweep_gone(keep, min_age_s=0), 1)  # only the stray goes
+        self.assertTrue(mine.exists())
+        self.assertFalse(new.exists())
+
+    async def test_the_typed_name_matches_the_way_discords_delete_does(self) -> None:
+        odd = await self.campaigns.create(THURSDAY.id, "Straße  Watch", ALICE.id)
+        self.assertEqual(
+            await self.refused(self.session, odd, THURSDAY.id, "Strasse"), "name_mismatch"
+        )
+        answer = await self.delete(self.session, odd, THURSDAY.id, "  STRASSE watch ")
+        self.assertEqual(answer["status"], "deleted")
 
     async def test_the_answer_says_when_discords_channels_are_left(self) -> None:
         await self.sql(

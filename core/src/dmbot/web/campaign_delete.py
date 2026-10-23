@@ -11,13 +11,17 @@ reach the server), the typed name, and not during a session. A campaign is named
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+from dmbot.campaigns.models import name_key
 from dmbot.db import Database
 from dmbot.recaps.audio.files import AudioFiles
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _scoped
 from dmbot.web.sessions import Session
+
+log = logging.getLogger(__name__)
 
 REFUSALS = {"not_found", "not_the_owner", "session_running", "name_mismatch"}
 
@@ -31,8 +35,8 @@ async def delete(
     audio: AudioFiles | None,
 ) -> dict[str, Any]:
     """Delete the campaign for its owner. Raises `RecapError` with the refusal word. The recap
-    audio files go after the commit; Discord's channels are left (the website cannot tidy them),
-    which the answer says."""
+    audio is removed by the bot's sweep (this container cannot); Discord's channels are left (the
+    website cannot tidy them), which the answer says."""
     guild_id, campaign_id = _parse(ref)
     typed = body.get("name") if isinstance(body, dict) else None
     if not isinstance(typed, str) or not 0 < len(typed) <= 200:
@@ -40,13 +44,17 @@ async def delete(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_delete_campaign(%s, %s, %s) AS r", (guild_id, campaign_id, typed)
+            "SELECT dmbot_web_delete_campaign(%s, %s, %s) AS r",
+            (guild_id, campaign_id, name_key(typed)),
         )
         row = await cur.fetchone()
     answer = row["r"] if row else None
     status = answer.get("status") if isinstance(answer, dict) else None
     if status != "deleted" or not isinstance(answer, dict):
         raise RecapError(status if status in REFUSALS else "not_found")
+    log.info("Campaign deleted from the website: guild=%s campaign=%s", guild_id, campaign_id)
     if audio is not None:
-        audio.forget_campaign(guild_id, campaign_id)  # after the commit: a failure leaves files
+        # Best effort only: the web container mounts the audio volume read-only, so this removes
+        # nothing there. The bot sweeps the folders of campaigns that no longer exist.
+        audio.forget_campaign(guild_id, campaign_id)
     return {"status": "deleted", "channelsLeft": bool(answer.get("channels"))}
