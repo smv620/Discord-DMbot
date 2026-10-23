@@ -11,8 +11,9 @@ import httpx
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import MemoryRuleError
-from dmbot.web import relationships
+from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
@@ -231,6 +232,22 @@ class TheEdits(Editing):
             await self.refused_edit(self.player, link=link, action="pin", pinned=True),
             "not_allowed",
         )
+
+    async def test_a_stranger_cannot_queue_a_pin_nor_read_its_answer(self) -> None:
+        link = await self.free_link("sworn to")
+        token = await sessions.sign_in(
+            self.web, BOB, [DiscordGuild(id=999, name="Elsewhere", manage=True)], now=NOW, days=30
+        )
+        stranger = await sessions.find(self.web, token, now=NOW)  # in another server only
+        self.assertIn(
+            await self.refused_edit(stranger, link=link, action="pin", pinned=True),
+            ("not_found", "not_allowed"),
+        )
+        queued = await self.edit(link, action="pin", pinned=True)
+        with self.assertRaises(RecapError):
+            await self.poll(queued, stranger)
+        await self.apply_all()
+        self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), {link})
 
     async def test_secret_and_known_switch_one_connection(self) -> None:
         link = self.links["rook-keep"]

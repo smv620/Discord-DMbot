@@ -1843,7 +1843,7 @@ names panel nor the speech-to-text hints can be a fixed list.
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
-    - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migration 0190): the DM's own word that a connection is
+    - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migrations 0190 and 0193): the DM's own word that a connection is
       true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
       (Unpin takes it back), or answers once per lore upload, "may change in play" (default) or "📌 100% truth", and
       the connections kept from that upload are pinned. It is a `pinned` flag on the truth belief
@@ -1851,7 +1851,9 @@ names panel nor the speech-to-text hints can be a fixed list.
       shows it to a DM in Full View only. After a session, a claim that clashes with a pinned connection
       is a heads-up even before the campaign has enough story for the others, worded as a "Check" line
       with the line; the DM screen says only how many. Code finds it with the same rules as the other
-      heads-ups, never the AI, and DMbot only points: the DM decides.
+      heads-ups, never the AI, and DMbot only points: the DM decides. On the website the pin is the
+      `link-pin` action of the relationship web's edit queue (migration 0193), DM only and checked again by
+      the bot, like the other link actions.
     - **The DM's switch: Players View / Full View.** Full View (the default for DMs) is today's view: everything,
       with 🤫 on secret ones and a dimmed "not revealed yet" look on unrevealed ones. Players View shows the
       DM exactly what a player sees, read-only, so the DM can check before sharing a screen.

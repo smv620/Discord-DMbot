@@ -158,7 +158,7 @@ class Continuity(ConfirmedMemoryTest):
         text = ui.line_text(conflict, {})
         self.assertIn("Check: ", text)
         self.assertIn("You pinned: Bram carries Heartseeker", text)
-        self.assertIn("1 go against a pin", ui.waiting_text(1, 1))
+        self.assertIn("1 goes against a pin", ui.waiting_text(1, 1))
         self.assertNotIn("pinned", ui.waiting_text(2))
 
     async def test_nothing_pinned_below_the_critical_mass_says_nothing(self) -> None:
