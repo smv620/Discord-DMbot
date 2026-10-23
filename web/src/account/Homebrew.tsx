@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindOrder, problem, text } from "../content/homebrew";
+import { sharingCard } from "../content/sharing";
 import {
   ApiError,
   type AccountApi,
@@ -13,7 +14,7 @@ import {
   type HomebrewEntry,
   type HomebrewPage,
 } from "./api";
-import BackToCampaign from "./BackToCampaign";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign in the address: `/account/homebrew/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -96,6 +97,8 @@ export default function HomebrewPageView({
     <div class="stack">
       <p>
         <a href="/account">{text.account}</a>
+        {" · "}
+        <a href="/account/sharing">{sharingCard.link}</a>
       </p>
       {ref === null ? (
         <Campaigns api={api} />
@@ -230,7 +233,7 @@ function Entries({
             <p>
               <a href="/account/homebrew">{text.allCampaigns}</a>
             </p>
-            <BackToCampaign campaignRef={campaignRef} name={found.name} />
+            <CampaignNav api={api} campaignRef={campaignRef} page="homebrew" name={found.name} />
             <h2>{found.name}</h2>
             <p class="small">
               {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>
