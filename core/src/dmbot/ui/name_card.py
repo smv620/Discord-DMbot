@@ -103,7 +103,7 @@ SPELLING_AND_SOUND = SPELLING_ONLY + " Put how it sounds in the How to say it bo
 ONLY_ONE_GUESS = "☝️ Taken as the only one (it has a proper name)."
 # A state the DM flips (#2321): the label says what pressing does, not what is now.
 HIDE_BUTTON = "🙈 Hide from players"
-SHOW_BUTTON = "👀 Players know it now"
+SHOW_BUTTON = "👁️ Show to players"
 HIDDEN_LINE = "🙈 Hidden from players. Only you see it."
 ONLY_ONE_BUTTON = "☝️ Only one exists"
 MORE_THAN_ONE_BUTTON = "Allow more than one"

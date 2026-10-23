@@ -42,9 +42,10 @@ VIEWS = ("players", "full")  # the switch: what a player sees, or everything (a 
 def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
-    every connection as `links`: {id, words, secret, direction}. `direction` says which way the
-    words read between the pair: "a-b", "b-a", or "both" for the ones that read the same either
-    way. A connection's `secret` is only sent to a DM (the door sends none to anyone else)."""
+    every connection as `links`: {id, words, secret, revealed, direction}. `direction` says which
+    way the words read between the pair: "a-b", "b-a", or "both" for the ones that read the same
+    either way. A connection's `secret` (and whether it is `revealed` yet) is only sent to a DM
+    (the door sends none to anyone else)."""
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
@@ -57,6 +58,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 "id": row["id"],
                 "words": link_words(str(row["predicate"]), str(row["detail"] or "")),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
+                "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "direction": direction,
                 "at": int(row["at"]),
             }
@@ -76,6 +78,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "id": x["id"],
                         "words": x["words"],
                         "secret": x["secret"] if can_edit else False,
+                        "revealed": x["revealed"] if can_edit else True,
                         "direction": x["direction"],
                     }
                     for x in links

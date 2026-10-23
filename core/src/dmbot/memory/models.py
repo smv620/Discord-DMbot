@@ -387,6 +387,8 @@ class Relation:
     created_at: int
     # The version of its relationship's definition it was written under (#1189).
     definition_version: int = 1
+    # Kept from the players until the table has said it (#2404); a backstory connection starts so.
+    unrevealed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
