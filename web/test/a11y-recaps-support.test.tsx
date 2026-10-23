@@ -75,6 +75,39 @@ describe("the recap pages", () => {
     expect(await serious()).toEqual([]);
   });
 
+  it("the progress panel while a recap goes out, and after it is posted with a link, has nothing serious or critical", async () => {
+    const api = mockApi("table");
+    const now = Math.floor(Date.now() / 1000);
+    const first = await api.recap!(REF);
+    api.recap = async () => ({
+      ...first,
+      status: "posting",
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      canDrop: false,
+      postingSince: now - 42,
+      postingStep: "post",
+      serverNow: now,
+    });
+    render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
+    await screen.findByRole("timer");
+    expect(await serious()).toEqual([]);
+    cleanup();
+    api.recap = async () => ({
+      ...first,
+      status: "posted",
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      canDrop: false,
+      postedUrl: "https://discord.com/channels/1/2/3",
+    });
+    render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
+    await screen.findByRole("link", { name: /Open it in Discord/ });
+    expect(await serious()).toEqual([]);
+  });
+
   it("every name's box has its own label, and a result is announced", async () => {
     render(<Recaps api={mockApi("table")} path={`/account/recaps/${REF}`} />);
     await screen.findByText(nameWords.heading);
