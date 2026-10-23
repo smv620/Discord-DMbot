@@ -10557,7 +10557,6 @@ CAMPAIGN_FACTS = """
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         me BIGINT := dmbot_current_user();
-        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN

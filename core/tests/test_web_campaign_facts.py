@@ -135,7 +135,8 @@ class TheFacts(Base):
         await self.sql("UPDATE memory_entities SET played_by = %s WHERE id = %s", BOB.id, mira)
         bob = await self.signed(BOB)
         cards = (await me.build_me(self.web, bob, now=NOW))["campaigns"]
-        self.assertEqual([(c["id"], c["role"]) for c in cards], [(self.c, "player")])
+        # Bob also runs another campaign in the fixture, so look only at this one.
+        self.assertEqual([c["role"] for c in cards if c["id"] == self.c], ["player"])
 
     async def test_account_gives_a_dm_who_also_plays_one_dm_card(self) -> None:
         mira = await self.add("Mira", "player_character")
