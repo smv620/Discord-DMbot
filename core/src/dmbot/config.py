@@ -78,6 +78,12 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    # Images posted in the table chat are described once by the AI (#2450). Off until dev1 has run
+    # a live check; with it off no image is fetched or sent anywhere. `table_images_per_day` is the
+    # most images one campaign has described in a day (each counts toward its AI use); past it an
+    # image is noted as not described.
+    table_images_on: bool = False
+    table_images_per_day: int = 40
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
     # Importing older sessions (#2105): off for everyone until dev1 has checked a real import,
     # and on for the listed servers alone (#2259). The web API reads the same two settings.
@@ -334,6 +340,18 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     speech_model = get("ELEVENLABS_SPEECH_MODEL") or "eleven_v3"
     if not (speech_model.isascii() and speech_model.replace("_", "").replace(".", "").isalnum()):
         raise ConfigError("ELEVENLABS_SPEECH_MODEL must be a model id such as eleven_v3.")
+    images_raw = (get("DMBOT_TABLE_IMAGES") or "0").lower()
+    if images_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_TABLE_IMAGES must be 1 (on) or 0 (off), got "' + images_raw + '".')
+    images_day_raw = get("DMBOT_TABLE_IMAGES_PER_DAY") or "40"
+    if not (images_day_raw.isascii() and images_day_raw.isdigit()) or not (
+        1 <= int(images_day_raw) <= 1000
+    ):
+        raise ConfigError(
+            'DMBOT_TABLE_IMAGES_PER_DAY must be a whole number from 1 to 1000, got "'
+            + images_day_raw
+            + '".'
+        )
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
@@ -381,6 +399,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        table_images_on=images_raw in ("1", "true", "on"),
+        table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,

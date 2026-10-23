@@ -45,6 +45,7 @@ from dmbot import (
     features,
     fightbot,
     hours,
+    images,
     install,
     mail,
     owner_presence,
@@ -61,7 +62,12 @@ from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
 from dmbot.campaigns import Campaign, CampaignStore
-from dmbot.campaigns.models import DEFAULT_DM_SCREEN_LEVEL, STORY_GUIDE, CampaignError
+from dmbot.campaigns.models import (
+    DEFAULT_DM_SCREEN_LEVEL,
+    SHARED_STORY,
+    STORY_GUIDE,
+    CampaignError,
+)
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -245,9 +251,11 @@ from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
+from dmbot.image_desk import ImageDesk, ImageUseStore
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
+from dmbot.map_notes import MapNotesSection, MapNoteStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import definitions, document_reader, extractor, plan_reader, web_actions
 from dmbot.memory import health as memory_health
@@ -265,6 +273,7 @@ from dmbot.memory.exposures import (
     secret_connections,
 )
 from dmbot.memory.heard_backup import HeardSection
+from dmbot.memory.importance import ImportanceCache
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
@@ -517,6 +526,7 @@ PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
 SOUND_CLOSE = 0.6
 # ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
 SOUND_LENGTH_GAP = 1
+DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
 SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
@@ -1119,6 +1129,9 @@ class DMBot(commands.AutoShardedBot):
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
+        # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
+        # after each session.
+        self.importance = ImportanceCache(memory) if memory is not None else None
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
@@ -1406,6 +1419,20 @@ class DMBot(commands.AutoShardedBot):
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
+            else None
+        )
+        # Pictures posted in the table chat (#2450): off unless the backend switch is on.
+        # Messages deleted lately, so a picture still being described when its poster deletes it
+        # is not written down afterwards (#2450); id → when.
+        self._deleted_messages: dict[int, float] = {}
+        self.map_notes: MapNoteStore | None = None  # set where the database is known (#2450)
+        self.image_desk: ImageDesk | None = (
+            ImageDesk(
+                self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
+                self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE_MAP], Feature.IMAGE_MAP),
+                per_day=settings.table_images_per_day,
+            )
+            if self.ai_client and settings.table_images_on
             else None
         )
         self.audio_ai = (
@@ -2988,6 +3015,8 @@ class DMBot(commands.AutoShardedBot):
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
+            # The names' importance for the recap's beats (#2411), from the story as it is now.
+            ("name importance", lambda: self.refresh_importance(table)),
             # Queues or holds the recap (#2169): held at once while the extractor is still to run.
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
@@ -3017,6 +3046,12 @@ class DMBot(commands.AutoShardedBot):
                 await step()
             except Exception:
                 log.exception("After the session: %s failed", name)
+
+    async def refresh_importance(self, table: Table) -> None:
+        """After a session (#2411): read how connected each name is again, so the recap that is
+        about to be written ranks its beats by the story as it is now."""
+        if self.importance is not None and table.campaign_id is not None:
+            await self.importance.refresh(table.guild_id, table.campaign_id)
 
     async def post_session_summary(
         self, table: Table, ended_at: int, caught_up: bool, downloads_sent: int
@@ -5208,48 +5243,151 @@ class DMBot(commands.AutoShardedBot):
             or getattr(message, "interaction_metadata", None) is not None
         ):
             return
-        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
-        if text is None or not self.consent.has_consent(table.guild_id, author.id):
-            return
-        self._deliver_typed(
-            table, author.id, text, int(message.created_at.timestamp() * 1000), message.id
+        if not self.consent.has_consent(table.guild_id, author.id):
+            return  # nothing of a message, picture or words, is read for someone who didn't agree
+        start_ms = int(message.created_at.timestamp() * 1000)
+        links = (
+            self._image_links(message)
+            if self.image_desk is not None
+            and self.consent.has_image_consent(table.guild_id, author.id)
+            else []
         )
+        if links:
+            self._track(
+                self._hear_images(table, author.id, start_ms, message.id, links), "table-images"
+            )
+        text = table_chat.clean(message.clean_content)  # names, not <@123> markup
+        if text is None:
+            return
+        self._deliver_typed(table, author.id, text, start_ms, message.id)
+
+    @staticmethod
+    def _image_links(message: discord.Message) -> list[str]:
+        """The links of the pictures on a message: by what Discord says the file is, within the
+        size DMbot reads. Only links; the pictures are fetched later, after the plan check."""
+        return [
+            a.url
+            for a in message.attachments
+            if (a.content_type or "").startswith("image/") and a.size <= images.MAX_BYTES
+        ][: images.MAX_PER_MESSAGE]
+
+    async def _maps_may_be_kept(self, guild_id: int, campaign_id: str) -> bool:
+        """Has this campaign's DM confirmed the right to use shared material (the Shared story
+        switch's warning; CLAUDE.md, IP)? A map may be from a published adventure, so its places
+        are kept only then (#2450). A failure to read the record is a no."""
+        try:
+            return any(
+                c["purpose"] == SHARED_STORY
+                for c in await self.campaigns.confirmations(guild_id, campaign_id)
+            )
+        except Exception:
+            log.exception("Table image: couldn't read the right-to-use record")
+            return False
+
+    async def _hear_images(
+        self, table: Table, user_id: int, start_ms: int, message_id: int, links: list[str]
+    ) -> None:
+        """A picture in the table chat becomes an (image) line (#2450). Nothing is fetched or sent
+        to the AI unless the poster agreed, the campaign's plan has AI and the day's limit is not
+        used; consent is checked again after the slow steps, so someone who stopped meanwhile
+        gets no line. The picture is read once and kept nowhere."""
+        desk, gid, cid = self.image_desk, table.guild_id, table.campaign_id
+
+        def still_ok() -> bool:
+            # Asked before every download and AI call: the yes must be to wording that mentions
+            # pictures (IMAGE_TERMS_VERSION), still given, the session still going, and the
+            # message still there.
+            return (
+                self._still_recorded(table, user_id)
+                and self.consent.has_image_consent(gid, user_id)
+                and message_id not in self._deleted_messages
+            )
+
+        if desk is None or cid is None or not still_ok():
+            return
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
+        reads = await desk.describe(gid, cid, links, still_ok)
+        if not still_ok():
+            return
+        maps = [r for r in reads if r is not None and r.kind == images.MAP]
+        if maps and self.map_notes is not None:
+            # Under the save lock, as "delete my past transcripts" takes it, and with the consent
+            # asked once more right before, so a note can't be written after its poster deleted.
+            # Only where the DM confirmed the right to use shared material (the Shared story
+            # switch's confirmation): without it the picture gets its short line and no more.
+            async with table.save_lock:
+                if not await self._maps_may_be_kept(gid, cid):
+                    maps = []
+                for a_map in maps:
+                    if not still_ok():
+                        break
+                    try:
+                        await self.map_notes.add(gid, cid, user_id, a_map, message_id)
+                    except Exception as exc:  # the transcript line matters more than the note
+                        log.warning(
+                            "Table image: couldn't keep a map's description (%s)",
+                            type(exc).__name__,
+                        )
+        for n, read in enumerate(reads):
+            self._deliver_typed(
+                table,
+                user_id,
+                images.line_text(read),
+                start_ms + n,
+                message_id,
+                image=True,
+            )
 
     def _deliver_typed(
-        self, table: Table, user_id: int, text: str, start_ms: int, message_id: int = 0
+        self,
+        table: Table,
+        user_id: int,
+        text: str,
+        start_ms: int,
+        message_id: int = 0,
+        *,
+        image: bool = False,
     ) -> None:
         """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
         audio check. In the transcript it is tagged (typed), in both versions; typing clearly not
         about the game goes through the same off-topic filter as talk and is left out of the
-        cleaned version (#2447, item 6)."""
-        if asks_off_record(text):  # the line is not kept; they are off the record (#2466)
+        cleaned version (#2447, item 6). A described picture (`image`) is only ever a record: its
+        words are data from the AI about a stranger's file, so they reach the names scan and the
+        transcript but never run a clock phrase, a house rule, the sidebar, the topic filter or
+        the off-the-record words."""
+        if not image and asks_off_record(text):  # the line is not kept; off the record (#2466)
             self._wake_off_the_record(table.guild_id, user_id)
             return
         now = time.monotonic()
         table.idle.activity(now)  # typed chat at the table is not silence (#2034)
-        listeners = table.typed_rate.allow(user_id, now)
+        listeners = True if image else table.typed_rate.allow(user_id, now)  # (the day limits it)
         if not listeners and table.typed_rate.should_log(now):
             # No text, no names: only that it happened (#1154).
             log.info("Typed chat: a flood of lines; extra lines skip the listeners")
         names_said = 0
         if listeners:
-            table.vocabulary.note(user_id, text)
+            if not image:  # a description's words are not the poster's own talk
+                table.vocabulary.note(user_id, text)
             if table.name_lookup is not None:
                 named = mentions(table.name_lookup, text)
                 names_said = len(named)
-                table.scene.note(named, user_id, now)
+                if not image:
+                    table.scene.note(named, user_id, now)
                 table.heard_counts.update((entity_id, user_id) for entity_id in named)
-            self._act_on_line(table, user_id, text, typed=True)
+            if not image:
+                self._act_on_line(table, user_id, text, typed=True)
         if self.transcripts is not None:
             table.unsaved.add(
-                Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
+                Line(start_ms, user_id, text, text, typed=True, image=image, message_id=message_id)
             )
-            if listeners and self._topic_holds(table, text, names_said):
+            if listeners and not image and self._topic_holds(table, text, names_said):
                 # Its words already reached the names scan above; the label only decides whether
                 # the cleaned transcript shows the line (no `held` entry: nothing to put back).
                 self._topic_wait(table, user_id, start_ms, text, 0.0, typed=True)
-        if not listeners:
+        if not listeners or image:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
@@ -5281,14 +5419,37 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
             for message_id in payload.message_ids:
+                self._note_deleted(message_id)
                 table.unsaved.drop_message(message_id)
+        if self.map_notes is not None and payload.guild_id is not None:
+            for message_id in payload.message_ids:
+                await self._forget_map_notes(payload.guild_id, message_id)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
         already saved stays in the raw transcript, as PLAN says."""
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
+            self._note_deleted(payload.message_id)
             table.unsaved.drop_message(payload.message_id)
+        if self.map_notes is not None and payload.guild_id is not None:
+            await self._forget_map_notes(payload.guild_id, payload.message_id)
+
+    async def _forget_map_notes(self, guild_id: int, message_id: int) -> None:
+        """A deleted picture takes the map notes made from it (#2450)."""
+        try:
+            assert self.map_notes is not None
+            await self.map_notes.forget_message(guild_id, message_id)
+        except Exception:
+            log.exception("Table image: couldn't delete a deleted picture's map notes")
+
+    def _note_deleted(self, message_id: int) -> None:
+        """Remember a deleted message for a few minutes (a picture takes seconds to describe)."""
+        now = time.monotonic()
+        self._deleted_messages = {
+            m: t for m, t in self._deleted_messages.items() if now - t < DELETED_KEPT_S
+        }
+        self._deleted_messages[message_id] = now
 
     def after_chat_change(self, campaign: Campaign) -> None:
         """A running session reads typed chat from now on as the DM just set it (#1118)."""
@@ -8956,6 +9117,7 @@ class DMBot(commands.AutoShardedBot):
             session_at=job.session_at,
             styles=self.recap_styles,
             notes=self.recap_notes,
+            importance=self.importance,
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
@@ -8969,6 +9131,11 @@ class DMBot(commands.AutoShardedBot):
         between "keep this" and "this may be explained"; it is made here, in code."""
         if self.memory is None or not seeds:
             return []
+        if self.importance is not None:
+            # The names that matter most to the story come first (#2411), so the recall's budget
+            # is spent on them; this only orders names the beats already had.
+            scores = await self.importance.get(gid, cid)
+            seeds = sorted(dict.fromkeys(seeds), key=lambda n: -scores.get(name_key(n), 0.0))
         service = RecallService(self.memory)
         everything = await service.recall(
             gid, cid, seeds=seeds, audience=DM_SCREEN, budget=RECAP_RECALL_BUDGET,
@@ -12596,6 +12763,7 @@ def register_backup_sections(
     campaigns.register_section(AdventureSection())  # and its adventure text (#1698)
     campaigns.register_section(SpendSection())  # and what reading it cost, amounts only (#1723)
     campaigns.register_section(SiteApprovalsSection())  # the sites it approved (#1633)
+    campaigns.register_section(MapNotesSection())  # and the maps posted at its table (#2450)
     campaigns.register_section(StyleSection())  # and how it likes its recaps to sound (#2075)
     campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
@@ -12673,6 +12841,9 @@ async def run(settings: Settings) -> None:
             backstory_links=BackstoryLinks(db),
         )
         bot.house_wins = WinsStore(db)
+        bot.map_notes = MapNoteStore(db)  # maps put into words, for MapBot (#2450)
+        if bot.image_desk is not None:  # the day's count lives in the database (#2450)
+            bot.image_desk.counter = ImageUseStore(db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

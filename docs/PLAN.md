@@ -1869,6 +1869,19 @@ names panel nor the speech-to-text hints can be a fixed list.
       open (the change log's Undo; the question then waits again). A state ("Roan is dead") has no secret flag, so it has no 🤫.
       **❓ Party theory** (The party at 0.5, Theory) waits for guesses (#2412): until then a party belief
       below 1.0 is refused.
+    - *Built (CloudDev, 2026-10-23, #2411):* **recaps rank by how connected a name is.** `importance` is the
+      number of live connections an entry has in The truth, secret ones included, plus a quarter for each
+      entry two steps out, capped at 20 (`memory/importance.py`, computed in code from the connections and
+      The truth's beliefs; an ended connection, or one The truth puts at 0.0, does not count). It is kept
+      in memory per campaign and read again after each session. It only **ranks**: when a long session has
+      more beats than the recap can tell, a beat's names add their importance after what PlotBot marked
+      (so a minor mention of a well-connected name is kept), and PlotBot's story context is recalled for
+      the names that matter most first. The writer's names and facts still come only from what the players
+      know; the scores are numbers by name and no connection or fact is ever put in a prompt through them.
+      The token budget is unchanged: it changes the order, not the size.
+      **PlotBot is DM-only, so it may read DM-only connections** (it has since #2254, and is told which
+      memory the players know); the recap **writer** and every other call never get them, and a test
+      proves it with a real store behind PlotBot's story memory.
     - *Built, slice 4 (CloudDev, 2026-10-23, #2410):* the summary also goes when no secret was said, if
       there are new names or things to check (no Recant part then). The things to check are **spelled
       out in words** (the first five, with who said each: "you" or "a player"), in the DM-only copies of
@@ -3175,7 +3188,33 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     and not from its name. `read` makes one fast call for the description; a map is read again by the careful
     model for its places and layout. Nothing in the bot calls it yet: part 2 (table-chat wiring, the transcript
     line, the day's limit and the consent terms bump, together, so nothing is read before people agree), part 3
-    (the map table for MapBot) and part 4 (the text reply and ✏️ Fix) follow.
+    (the map table for MapBot, below) and part 4 (the text reply and ✏️ Fix) follow.
+  - *Built, part 2 (CloudDev, 2026-10-23, #2450): the table chat reads pictures.* Off unless the backend switch
+    `DMBOT_TABLE_IMAGES` is on, 40 pictures per campaign per day (`DMBOT_TABLE_IMAGES_PER_DAY`). Only a message from
+    someone who agreed, in the table's chat while listening, never a bot or webhook, has its attachments (up to 4,
+    each up to 3.75 MB (what encodes to the AI service's 5 MB), by what Discord says the file is) looked at; the poster's consent is checked before anything
+    is fetched and again before every download and every AI call (a person who presses Stop meanwhile gets no
+    line), and the campaign's plan must have AI. Each becomes a line tagged `(image)` in the raw and cleaned
+    transcripts (a map says "a map"; a picture of text carries its words), or "a picture was posted (not
+    described)" past the day's limit or when the picture could not be read. A described picture is a **record
+    only**: its names count as said, but it never runs a clock phrase, a house rule, the sidebar or the off-topic
+    filter. The day's count is a row per campaign and day in the database (`image_day_use`, a count only, deleted
+    with the campaign), so the limit holds across restarts; the log holds counts only.
+  - *Built, part 3 (CloudDev, 2026-10-23, #2450): maps kept in words for MapBot.* When the picture read is a map,
+    its description (the places and where each is from the others, the layout, the short description) is also
+    kept in `map_notes` (migration 0203; `dmbot/map_notes.py`), with who posted it. **Words only, never the
+    picture.** Nothing is built on the notes yet: MapBot is a later feature. Per campaign and server (row-level
+    security), at most 200 a campaign (the oldest goes), deleted with the campaign, in its backup
+    (`MapNotesSection`, checked on restore like every section), and deleted with the poster's own lines when they
+    delete their transcripts (stopping being recorded deletes neither the notes nor transcript lines, and a backup taken
+    earlier still holds them, with the poster's Discord id). A poster who stops mid-reading leaves no note, and a note is
+    written under the same lock "delete my past transcripts" takes. **A map may be from a published adventure** (Supervisor's ruling, 2026-10-23): a note is written
+    only when the campaign has the DM's Shared story right-to-use confirmation recorded
+    (`shared_confirmations`, purpose `shared_story`; a failure to read it is a no, and another campaign's
+    confirmation does not count). Without it the picture gets only its short transcript line. A note holds
+    the message it came from (never in a backup), so deleting the picture, or a purge, deletes its notes.
+    The website's transcript view still tags these lines "(typed)" until its database functions
+    learn the flag (follow-up).
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.

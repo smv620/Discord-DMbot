@@ -220,15 +220,15 @@ class TranscriptStore:
                 "INSERT INTO transcript_lines"
                 " (guild_id, session_id, started_ms, user_id, heard, text, duration_ms, topic,"
                 " entity, sidebar, sidebar_ref, sidebar_reply_to, sidebar_via, sidebar_stt,"
-                " sidebar_model, sidebar_prompt, sidebar_sources, typed)"
+                " sidebar_model, sidebar_prompt, sidebar_sources, typed, image)"
                 " SELECT %s, %s, l.started_ms, l.user_id, l.heard, l.text, l.duration_ms,"
                 " l.topic, l.entity, l.sidebar, l.ref, l.reply_to, l.via, l.stt, l.model, l.prompt,"
-                " l.sources::jsonb, l.typed"
+                " l.sources::jsonb, l.typed, l.image"
                 " FROM unnest(%s::bigint[], %s::bigint[], %s::text[], %s::text[], %s::int[],"
                 " %s::text[], %s::text[], %s::text[], %s::text[], %s::text[], %s::text[],"
-                " %s::text[], %s::text[], %s::text[], %s::text[], %s::boolean[])"
+                " %s::text[], %s::text[], %s::text[], %s::text[], %s::boolean[], %s::boolean[])"
                 " AS l(started_ms, user_id, heard, text, duration_ms, topic, entity, sidebar, ref,"
-                " reply_to, via, stt, model, prompt, sources, typed)"
+                " reply_to, via, stt, model, prompt, sources, typed, image)"
                 " RETURNING id",
                 (
                     guild_id,
@@ -244,6 +244,7 @@ class TranscriptStore:
                     [line.sidebar or None for line in lines],
                     *_lineage_columns(lines),
                     [line.typed for line in lines],
+                    [line.image for line in lines],
                 ),
             )
             ids = [int(r["id"]) for r in await cur.fetchall()]
@@ -485,7 +486,8 @@ class TranscriptStore:
                 "SELECT started_ms, user_id, heard, coalesce(text, heard) AS text, duration_ms,"
                 " topic, coalesce(entity, '') AS entity, coalesce(sidebar, '') AS sidebar,"
                 " sidebar_ref, sidebar_reply_to,"
-                " sidebar_via, sidebar_stt, sidebar_model, sidebar_prompt, sidebar_sources, typed"
+                " sidebar_via, sidebar_stt, sidebar_model, sidebar_prompt, sidebar_sources, typed,"
+                " image"
                 " FROM transcript_lines"
                 " WHERE session_id = %s ORDER BY started_ms, id",
                 (session_id,),
@@ -502,6 +504,7 @@ class TranscriptStore:
                     _lineage(r),
                     r["entity"],
                     bool(r["typed"]),
+                    bool(r["image"]),
                 )
                 for r in await cur.fetchall()
             ]
@@ -692,7 +695,8 @@ class TranscriptStore:
         if anything fails nothing is deleted.
 
         Goes: their lines (both versions, the sidebar questions and DMbot's replies to them,
-        which carry their id), their fix suggestions in any state, the story-memory mentions
+        which carry their id), the maps they posted, kept in words (#2450), their fix suggestions in
+        any state, the story-memory mentions
         that point at those lines (and the undo-log rows of those mentions), the name counts
         kept per speaker, and the story claims that cite them and were never confirmed. Each
         affected session's line count and speaker list are worked out again.
@@ -720,6 +724,10 @@ class TranscriptStore:
             )
             await conn.execute(  # where a fixed spelling was written into their lines (#2170)
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            await conn.execute(  # and the maps they posted, kept in words for MapBot (#2450)
+                "DELETE FROM map_notes WHERE guild_id = %s AND user_id = %s",
                 (guild_id, user_id),
             )
             await conn.execute(  # and the questions kept about their words (#1572)
