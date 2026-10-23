@@ -142,7 +142,7 @@ export const text = {
   signOutEverywhereWait: "Wait a minute, then try again.",
 
   // Plan
-  planHeading: "Your plan",
+  planHeading: "My plan and billing",
   noPlan: "You don't have a plan yet.",
   startTryIt: "Start Try It",
   startTryItNote: "Free for 30 days. No card needed.",
@@ -211,7 +211,7 @@ export const text = {
   lapsed: `Your campaigns are kept for ${formatPeriod(data.keepAfterPlanStopsPaying)}. Pick a plan to play again.`,
 
   // Campaigns
-  campaignsHeading: "Your campaigns",
+  campaignsHeading: "My campaigns",
   noCampaigns: "No campaigns yet. Start one in Discord with /dmbot start.",
   /** The button under a long list (#1991): the real count, one or many. */
   showOlder: (n: number) => (n === 1 ? "Show 1 older campaign" : `Show ${n} older campaigns`),
@@ -220,10 +220,24 @@ export const text = {
   notPlayed: "Not played yet",
   active: "Active",
   paused: "Paused",
-  youRunIt: "Uses your hours",
-  // Free access with no limits has no hours to use (#824).
-  youRunItFree: "You run it",
+  // The three roles, same words on every card (#2460).
+  youRunIt: "You run it",
   youHelp: "You help run it",
+  youPlay: "You play in it",
+  // The card's facts (#2460). Keep these words equal to the Discord campaign list's; where Discord has
+  // no such line yet, it should get this one.
+  listeningNow: "Listening now",
+  factsLabel: (name: string): string => `About ${name}`,
+  sessionsFact: (n: number): string => (n === 1 ? "1 session" : `${n} sessions`),
+  hoursFact: (h: number): string => {
+    const whole = Math.round(h);
+    return h < 1 ? "Under 1 hour played" : `${whole} ${whole === 1 ? "hour" : "hours"} played`;
+  },
+  playersFact: (n: number): string => (n === 1 ? "1 player" : `${n} players`),
+  npcsFact: (n: number): string => (n === 1 ? "1 NPC" : `${n} NPCs`),
+  startedFact: (iso: string): string => `Started ${shortDate(iso)}`,
+  // The heading over the sections about the person and their account (#2460).
+  myAccountHeading: "My Account",
   handOver: "Hand over",
 
   // Hand over

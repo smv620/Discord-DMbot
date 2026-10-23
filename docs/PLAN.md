@@ -1160,7 +1160,11 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
   (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
   they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
-  the pause stays on the record.
+  the pause stays on the record. A paused person's **typed** question to DMbot is still answered
+  privately (typing to DMbot is deliberate), but nothing of it is written to any transcript or stored
+  (Supervisor, 2026-10-23, #2470). A pause has no lasting effect: it changes no stored consent or
+  choice, a restart while paused keeps the pause (it never starts recording someone who was told they
+  are off the record), and stopping during a pause ends it at once.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -1893,6 +1897,28 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+
+  *Undo also hands back what a merge moves outside the change log (#2438, migration 0199):* the merged
+  name's private notes and its D&D Beyond sheet. A small record (`merge_restores`, kept as long as the batch
+  and deleted with it, kept out of backups) holds, for each note, the person's id, the NPC's listed name,
+  the note's length and its times, never its words; and for a sheet only when it was read and from where,
+  never its content, link or player. Everything of both names is locked first, in one fixed order, so a
+  note edited meanwhile is read after the edit. Undo puts a note or sheet back only if it is still as the
+  merge left it (a note written on since, or a sheet read again since, stays where it is), and the Undo
+  itself is never refused over it. A sheet the merge forgot (the kept name had its own, or it was left from
+  an earlier player) is not brought back, because its content is not kept: the player links it again.
+  Undoing the Undo merges again and the notes and sheet follow. A merged character's beliefs (a character's
+  own point of view) move to the kept entry's perspective (made as a `pc` for a player's character, else an
+  `npc`) through the change log, so the same Undo returns them; a belief both held keeps the newest one.
+
+  *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
+  all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same
+  letters (spaces, hyphens and a leading the/a/an ignored), a letter or two apart (one up to 8 letters, two
+  beyond; never below 5 letters, never when a number or a one-letter last word differs, the linker's rule),
+  sound alike (names of 5 letters or more), or one inside the other as whole words ("Belleros" and
+  "Belleros the Elder"). "Not the same" is kept per pair in `name_not_same` (the DM's alone, not in backups,
+  gone with either name). 🔗 Merge several… sits on the Same as… screen, because the card's rows are full. The
+  website's door is the all-names action `merge-many {others[]}` on the kept name.
 - **The recap posting clock** (#2435, migration 0184). A recap job records `posting_since` (whole Unix seconds),
   `posting_step` (`check`, `post`, or `audio` while narration is made) and `posted_url` (the first message's
   Discord link). A database trigger starts the clock at `check` when the status becomes `posting` and stops
@@ -1925,6 +1951,26 @@ names panel nor the speech-to-text hints can be a fixed list.
     4. **Settings** (the campaign's DMs only): who can see the DM screen (peek) · how much DMbot says ·
        transcript retention · game masters · hand over · pause · delete. These are the same choices as
        ⚙️ Settings in Discord, with the same words. Players see the groups they may use.
+       **Changing them from the site (#2463):** who can see the DM screen, how much DMbot says
+       (Quiet or Normal) and transcript retention are changed through the website's action queue
+       (`setting_actions`, the same pattern as the All names page). The DM is checked when the choice is
+       queued and again when the bot applies it, and the bot applies it exactly like the Discord button:
+       the same store calls, the channel permissions for visibility, the notice in the DM screen and the
+       same words back to the DM. A shorter transcript limit deletes old sessions, so it needs the DM's
+       yes sent with it, as Discord asks first. Only a campaign's DMs may use it (Discord also lets a
+       server manager change visibility; the site is narrower). The logs hold counts and outcome words,
+       never the choice. **Words the page shows** (UX review): while it waits "Saving…", and after a
+       while "This is taking longer than usual"; a choice gone after an hour reads "That choice timed
+       out. Try again." The answer's `note` (Discord's own words, which may carry `**bold**`) is shown as
+       it is under the page's own lead-in, and a refusal reads "Discord didn't allow this change:" then
+       the note. `not_allowed` → "Only this campaign's DM can change this. Ask them, or use ⚙️ Settings
+       in Discord."; `not_found` → "DMbot can't find this campaign any more."; `needs_confirm` → the
+       page shows Discord's own deletion warning (`transcript_keep.warning_text`) with "Delete after N"
+       and "Keep as it is", and queues nothing until the DM says yes; `failed` → "Something went wrong.
+       Try again."; `bad_value`, `bad_setting` and `too_soon` → "That choice isn't available. Reload the
+       page and try again." and "Slow down a moment." DM-screen settings are never shown to players.
+       Game masters, hand over, pause and delete stay in Discord: the page says "Do this
+       in Discord: 👤 DMbot Main Menu → ⚙️ Settings → 🗂️ Campaign management → …".
   - **Story timeline:** the campaign's sessions in order, each with its number, date and length, its recap
     (linked) and what was revealed at the table that session. It's built after the other pages.
   - **Words:** a page is called by the same name everywhere: in Discord, on the tabs, in the breadcrumb, and on
@@ -3077,8 +3123,10 @@ the session is listening, the campaign's Table chat switch is on, the author is 
 slash command (only plain messages and replies are read), and the author has consent (`has_consent`, the same
 check as a voice line). A typed line goes through `_act_on_line` like a spoken one (rules cards, house rules,
 the game clock), and also into names heard, vocabulary, the sidebar's "Hey DMbot" and the raw transcript as a
-`Line(typed=True)`: tagged `(typed)` in the as-heard file, never in the cleaned one and never in the live transcript
-channel; it has no audio check and no cleaning. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
+`Line(typed=True)`: tagged `(typed)` in both files (2026-10-23, #2447: the cleaned one leaves out typing the
+off-topic filter labels off-topic, through the same window as talk; its words reach the names scan and the word
+list when typed, never again at the label or at "Put it back"), never in the live transcript channel; it has no
+audio check and no cleaning. Typing over the rate limit skips the filter, so it always shows. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
 private panel that says which channels are read, picks the one extra text channel of this server, and turns it off.
 Migration 0052: `campaigns.table_chat` (default on) and `table_chat_channel_id`, `transcript_lines.typed`, and a new
 sidebar way-in `table-chat` (a typed "Hey DMbot" has no speech-to-text in its lineage). A backup carries the on/off
@@ -4127,11 +4175,11 @@ responsibility" wording; no `{{CHECK}}` markers remain. That closes #498 item 4.
 stays private until the rest of #498 is done and the owner says go. Settings stay in Discord for now;
 the site is account, plan, campaigns, invite and marketing.
 **What's new page** (Supervisor, 2026-10-15, #1321/#1322). The site has a short What's new page
-(`/whats-new`, content in `web/src/content/whats-new.ts`), newest first, in plain words. An entry
+(`/whats-new`, one file per entry in `web/src/content/whats-new/` since #2469, 2026-10-23), newest first, in plain words. An entry
 goes there only when its feature is **live: deployed on the server and not known to fail** for an
 ordinary user. Untried is not broken; a failed live check takes the entry off. An entry that is
 deployed but blocked (for example the account move, whose code goes to the payment email while
-payments are off, #1096) waits in the file's `held` list with its reason. A PR that ships a
+payments are off, #1096) is marked `held` in its file, with its reason. A PR that ships a
 feature people can see adds its entry, or a held one, in the same PR.
 
 **Session recaps** (Supervisor, 2026-10-15 and 2026-10-16; built in #1392, #1397, #1412, #1415,

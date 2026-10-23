@@ -12,6 +12,7 @@ from pathlib import Path
 from dmbot import secrets_match as sm
 from dmbot.recaps import text as recap_text
 from dmbot.recaps.audio import script
+from tests import speed
 
 # (secret, allowed names, text, blocked?)
 ROWS = [
@@ -203,14 +204,14 @@ class Speed(unittest.TestCase):
         allowed = [f"Allowed Place{n} Hall" for n in range(300)]
         best = min(self.timed(text, secrets, allowed) for _ in range(3))
         self.assertLess(
-            best, 0.15
+            best, speed.allowed(0.15)
         )  # (a loaded CI runner took 0.1 s; a slow search would take seconds)
         self.assertFalse(sm.names_a_secret(text, secrets, allowed))
         # And with a secret in it, the allowed names are looked at and the answer is still quick.
         said = text + " Secret Name3 Holder spoke"
         started = time.perf_counter()
         self.assertTrue(sm.names_a_secret(said, secrets, allowed))
-        self.assertLess(time.perf_counter() - started, 0.2)
+        self.assertLess(time.perf_counter() - started, speed.allowed(0.2))
 
     def test_every_match_inside_an_allowed_name_looks_each_name_up_once(self) -> None:
         """The contrived text of #2100: the secret stands only inside the allowed name, thousands

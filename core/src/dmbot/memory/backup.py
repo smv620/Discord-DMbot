@@ -288,7 +288,12 @@ class MemorySection:
         await bump_version(conn, guild_id, campaign_id)
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
-        names = ("memory_changes", "memory_mentions", *(t.name for t in reversed(_TAGS.values())))
+        names = (
+            "memory_changes",
+            "merge_restores",
+            "memory_mentions",
+            *(t.name for t in reversed(_TAGS.values())),
+        )
         for name in names:
             await conn.execute(
                 sql.SQL("DELETE FROM {} WHERE guild_id = %s AND campaign_id = %s").format(

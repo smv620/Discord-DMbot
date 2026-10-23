@@ -7,7 +7,7 @@ download a campaign's, so unlike the recap pages this is not for DMs only. Two d
 rows to any signed-in person whose session lists the server; the website's role has no grant on the
 transcript tables. What the reader sees is made by the bot's own `transcript/export.py`
 (`render`), the same text the Discord download carries: the cleaned version leaves out what
-Discord's cleaned file leaves out (DM sidebar lines, typed chat, off-topic talk) and the
+Discord's cleaned file leaves out (DM sidebar lines, off-topic talk and typing) and the
 as-heard version is the raw transcript, sidebar lines included (docs/PLAN.md). There is no
 second formatter.
 
@@ -196,9 +196,9 @@ def speaker_names(
 ) -> dict[int, str]:
     """Each person's name in the order they first appear in THIS version: the one kept at the
     session (`stored`; two people with one name tell apart with " (2)"), else "Speaker 1",
-    "Speaker 2", ... counted among those without a name. The cleaned version leaves out typed chat
-    and sidebar lines, so someone who only typed or asked DMbot is not listed there: a gap in the
-    numbers would hint at a hidden person."""
+    "Speaker 2", ... counted among those without a name. The cleaned version leaves out sidebar
+    lines and typing clearly not about the game, so someone who only asked DMbot, or whose typing
+    was all hidden, is not listed there: a gap in the numbers would hint at a hidden person."""
     kept = stored or {}
     names: dict[int, str] = {}
     unnamed = 0
