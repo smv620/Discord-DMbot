@@ -926,7 +926,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`importProgress:${ref}:${importId}`);
       const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
       const state = seen < 2 ? ("working" as const) : ("done" as const);
+      const now = Math.floor(Date.now() / 1000);
       return {
+        // The whole import's progress, the shared shape (#2564).
+        import: {
+          stage: state === "done" ? "done" : "cleaning",
+          done: state === "done" ? 1 : 0,
+          total: 1,
+          unit: "sessions",
+          startedAt: now - 30,
+          updatedAt: now - 2,
+          serverNow: now,
+          state: state === "done" ? ("done" as const) : ("running" as const),
+          reason: null,
+        },
         sessions: [
           {
             file: "session-1-2026-09-14.txt",
