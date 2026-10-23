@@ -460,7 +460,8 @@ class TheReveal(Editing):
         )
         self.assertEqual(await self.refused_reveal("name", elsewhere.value.id), "not_found")
         self.assertEqual(await self.apply_all(), [])
-        self.assertEqual(await self.refused_reveal("link", "f" * 32), "not_found")  # (applied: not found)
+        # (applied: not found)
+        self.assertEqual(await self.refused_reveal("link", "f" * 32), "not_found")
 
     async def test_the_body_is_checked(self) -> None:
         with self.assertRaises(RecapError) as caught:
