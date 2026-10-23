@@ -136,6 +136,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,
     ),
     Feature(
+        "table pictures",
+        "Pictures in the table chat",
+        "",
+        lambda s: s.table_images_on,
+        ("table_images_on",),
+        for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
@@ -170,6 +178,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "recap_audio_per_month": "a limit",
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
+    "table_images_per_day": "a limit",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }
