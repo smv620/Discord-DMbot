@@ -184,8 +184,15 @@ export default function CampaignSettings({
       await new Promise((r) => setTimeout(r, behind ? LATE_POLL_MS : POLL_MS[Math.min(i, POLL_MS.length - 1)]));
       if (!live.current) return;
       const waited = Date.now() - started;
-      // The queue forgets a choice after an hour, so a bot that never answers ends here.
-      if (waited > GIVE_UP_MS) return set(setting, { kind: "error", message: words.timedOut });
+      // What the page says while it waits, whether the look worked or not: a site that cannot be
+      // reached must not leave "Saving…" showing for an hour.
+      const say = () => {
+        if (waited > OFFLINE_AFTER_MS) set(setting, { kind: "offline" });
+        else if (waited > SLOW_AFTER_MS) set(setting, { kind: "saving", slow: true });
+      };
+      // The queue forgets a choice after an hour. Look once more before giving up, in case the
+      // answer came just now.
+      const final = waited > GIVE_UP_MS;
       let got;
       try {
         got = await api.campaignSettingAnswer(campaignRef, answer);
@@ -194,6 +201,8 @@ export default function CampaignSettings({
         if (error instanceof ApiError && error.kind === "not-found") return set(setting, { kind: "error", message: words.timedOut });
         // Being signed out or no longer a game master will not mend by waiting.
         if (error instanceof ApiError && (error.kind === "not-allowed" || error.kind === "signed-out")) return set(setting, { kind: "error", message: refusal(error.kind) });
+        if (final) return set(setting, { kind: "error", message: words.timedOut });
+        say();
         continue; // a look that fails is tried again until the hour is up
       }
       if (got.state === "done") {
@@ -204,9 +213,9 @@ export default function CampaignSettings({
         if (got.error === "needs_confirm") return set(setting, { kind: "confirm", value });
         return set(setting, { kind: "error", message: answerWords(got.error, got.note) });
       }
+      if (final) return set(setting, { kind: "error", message: words.timedOut });
       // Offline is a thing to say, not a reason to stop: the bot may still answer within the hour.
-      if (waited > OFFLINE_AFTER_MS) set(setting, { kind: "offline" });
-      else if (waited > SLOW_AFTER_MS) set(setting, { kind: "saving", slow: true });
+      say();
     }
   }
 

@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import CampaignPageView from "../src/account/CampaignPage";
 import { mockApi } from "../src/account/mock";
 import { campaignPage as w } from "../src/content/campaign-page";
@@ -115,6 +116,29 @@ describe("a late answer (#2488)", () => {
     const { section } = await open("100.cmp1.cs-offline");
     vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
+    expect(within(section).getByText(w.timedOut)).toBeTruthy();
+  });
+});
+
+describe("when the site's own server cannot be reached while waiting (#2488)", () => {
+  it("still says it is slow, then that DMbot isn't answering, instead of Saving… for an hour", async () => {
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => {
+      throw new ApiError("network");
+    };
+    render(
+      <div class="account">
+        <CampaignPageView api={api} path="/account/campaigns/100.cmp1" />
+      </div>,
+    );
+    const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    for (let i = 0; i < 50; i += 1) await vi.advanceTimersByTimeAsync(250);
+    expect(within(section).getByText(`${w.saving} ${w.slow}`)).toBeTruthy();
+    for (let i = 0; i < 100; i += 1) await vi.advanceTimersByTimeAsync(250);
+    expect(within(section).getByText(w.offline)).toBeTruthy();
     await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
     expect(within(section).getByText(w.timedOut)).toBeTruthy();
   });
