@@ -73,7 +73,21 @@ export interface CampaignPage {
   settings?: CampaignSettings;
 }
 
-/** What ⚙️ Settings holds for a campaign today, read-only on the website. */
+/** One of the three choices a game master can change on the Settings tab (#2484). */
+export type CampaignSettingName = "visibility" | "level" | "retention";
+
+/** Where a choice sent to the bot stands. `error` is the bot's word when it failed (`needs_confirm`,
+ * `refused` with Discord's words in `note`, `not_allowed`, `not_found`, `bad_value`, `failed`); `note`
+ * is what Discord would say about it. */
+export interface CampaignSettingAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  setting: CampaignSettingName;
+  value: string;
+  note: string;
+}
+
+/** What ⚙️ Settings holds for a campaign today. */
 export interface CampaignSettings {
   visibility: "private" | "peek" | "open";
   level: "quiet" | "normal" | "chatty";
@@ -1090,6 +1104,8 @@ export type ApiErrorKind =
   | "no-lines-kept" // every line of a file would be dropped (#2107)
   | "not-posted" // only a posted or approved recap can have a public link (#2118, #2119)
   | "bad-action" // not one of on, off or new (#2118)
+  | "bad-setting" // a campaign setting the site does not change (#2484)
+  | "bad-value" // a choice Discord does not offer for it (#2484)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1227,6 +1243,14 @@ export interface AccountApi {
     number: number,
     version: TranscriptVersion,
   ): Promise<Blob>;
+  /** Send one settings choice to the bot (#2484): the answer to poll. A shorter transcript limit
+   * deletes old sessions, so it goes with `confirm: true` once the game master has said yes. */
+  setCampaignSetting?(
+    campaignRef: string,
+    choice: { setting: CampaignSettingName; value: string; confirm?: boolean },
+  ): Promise<string>;
+  /** Where a choice sent with `setCampaignSetting` stands. */
+  campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
    * older API. */
   timeline?(campaignRef: string): Promise<Timeline>;
@@ -1414,6 +1438,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_lines_kept: "no-lines-kept",
   not_posted: "not-posted",
   bad_action: "bad-action",
+  bad_setting: "bad-setting",
+  bad_value: "bad-value",
 };
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
@@ -1642,6 +1668,19 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    setCampaignSetting: async (campaignRef, choice) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {
+          setting: choice.setting,
+          value: choice.value,
+          ...(choice.confirm ? { confirm: true } : {}),
+        })) as { answer: string }
+      ).answer,
+    campaignSettingAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/settings/answers/${encodeURIComponent(answer)}`,
+      )) as CampaignSettingAnswer,
     timeline: async (campaignRef) =>
       (await call(
         "GET",

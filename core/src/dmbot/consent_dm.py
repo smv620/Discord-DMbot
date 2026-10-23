@@ -32,6 +32,7 @@ from dmbot.consent import CONSENT_COMMAND, PRIVATE_MESSAGE, TERMS_VERSION, Conse
 from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, UNDER_LINE
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
+from dmbot.off_the_record import CHOICES, NOT_TOLD, Paused, paused_text, resumed_text
 
 log = logging.getLogger(__name__)
 
@@ -41,11 +42,17 @@ _CAMPAIGN = r"(?P<campaign>[0-9a-f]{32}|-)"
 DECLINE_LABEL = "No thanks"
 STOP_LABEL = "Stop recording me"
 MENU_LABEL = "Menu"  # with the 🗂️ emoji (⚙️ is Settings)
+PAUSE_LABEL = "Pause recording me"  # with ⏸️: off the record for a while (#2466)
+RESUME_LABEL = "Resume now"  # with ▶️
 STOP_YES_LABEL = "Yes, stop recording me"
 DELETE_LABEL = "🗑 Delete my transcripts"  # in the 🗂️ Menu (#1532); the issue says "past"
 DELETE_YES_LABEL = "Yes, delete my lines"
 DELETE_NO_LABEL = "Cancel"
 KEEP_LABEL = "Keep recording"
+PAUSE_LENGTHS = {5: "5 minutes", 15: "15 minutes", None: "Until I resume"}
+PAUSE_ASK = "⏸️ How long should DMbot stop recording you? Only you. Others are still recorded."
+ALREADY_BACK = "You're already on the record."
+RESUMED_AFTER_BREAK = "▶️ You're back on when the table's break ends."
 CLOSE_LABEL = "Close"
 # Test recordings (#1019): only in a server listed in DMBOT_TEST_RECORDING_GUILDS.
 TEST_VOICE_LABEL = "Save my voice for tests"
@@ -463,6 +470,15 @@ class ConsentActions(Protocol):
     async def grant_test_voice(self, guild_id: int, user_id: int) -> None: ...
 
     async def stop_saving_voice(self, guild_id: int, user_id: int) -> None: ...
+
+    # Off the record (#2466): a pause for a while, which ends by itself and changes no consent
+    async def pause_recording(self, guild_id: int, user_id: int, minutes: int | None) -> Paused: ...
+
+    async def resume_recording(self, guild_id: int, user_id: int) -> bool: ...
+
+    def is_paused(self, guild_id: int, user_id: int) -> bool: ...
+
+    def table_is_paused(self, guild_id: int) -> bool: ...
 
 
 def _test_voice_state(actions: ConsentActions, guild_id: int, user_id: int) -> str | None:
@@ -975,6 +991,7 @@ class MenuButton(
                     recording=await actions.recorded(self.guild_id, interaction.user.id),
                     sheets=actions.sheets is not None,
                     test_voice=_test_voice_state(actions, self.guild_id, interaction.user.id),
+                    paused=actions.is_paused(self.guild_id, interaction.user.id),
                 ),
                 self.guild_id,
             )
@@ -990,6 +1007,143 @@ class MenuButton(
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )
+
+
+class OffRecordButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:pause:{_GUILD}:{_CAMPAIGN}",
+):
+    """⏸️ Pause recording me, in the 🗂️ Menu and on the session's reminder (#2466): asks how long,
+    in one tap with no warning (a pause ends by itself), and pauses nothing until a length is
+    chosen. Only your own recording."""
+
+    def __init__(self, guild_id: int, campaign_id: str | None = None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=PAUSE_LABEL,
+                emoji="⏸️",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:consent:pause:{guild_id}:{campaign_id or '-'}",
+            )
+        )
+        self.guild_id = guild_id
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OffRecordButton:
+        return cls(int(match["guild"]), _campaign(match))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            if _served_here(interaction, self.guild_id) is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            view = pause_choices_view(self.guild_id)
+            if _lasting(interaction):  # a message others may scroll past: the choice is only yours
+                await interaction.response.send_message(
+                    PAUSE_ASK, view=view, ephemeral=True, allowed_mentions=NO_PINGS
+                )
+                return
+            await interaction.response.edit_message(content=PAUSE_ASK, view=view)
+
+
+class OffRecordForButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:pausefor:{_GUILD}:(?P<minutes>[0-9]{{1,3}})",
+):
+    """One of the lengths: 5 minutes, 15 minutes, or until you press Resume (0)."""
+
+    def __init__(self, guild_id: int, minutes: int | None) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=PAUSE_LENGTHS.get(minutes, "Until I resume"),
+                style=discord.ButtonStyle.primary
+                if minutes == 5
+                else discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:consent:pausefor:{guild_id}:{minutes or 0}",
+            )
+        )  # fmt: skip
+        self.guild_id = guild_id
+        self.minutes = minutes
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> OffRecordForButton:
+        return cls(int(match["guild"]), int(match["minutes"]) or None)
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            if _served_here(interaction, self.guild_id) is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            await interaction.response.defer()  # the pause is a quick call, but answer first
+            if self.minutes not in CHOICES:
+                await interaction.edit_original_response(content="Nothing was paused.", view=None)
+                return
+            done = await _actions(interaction).pause_recording(
+                self.guild_id, interaction.user.id, self.minutes
+            )
+            if not done.ok:
+                await interaction.edit_original_response(content=done.why, view=None)
+                return
+            await interaction.edit_original_response(
+                content=paused_text(done.until) + ("" if done.told else NOT_TOLD),
+                view=resume_view(self.guild_id),
+            )
+
+
+class ResumeButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:consent:resume:{_GUILD}",
+):
+    """▶️ Resume now: back on the record. Only your own."""
+
+    def __init__(self, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=RESUME_LABEL,
+                emoji="▶️",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"dmbot:consent:resume:{guild_id}",
+            )
+        )
+        self.guild_id = guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ResumeButton:
+        return cls(int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        with log_context(guild_id=self.guild_id):
+            if _served_here(interaction, self.guild_id) is None:
+                await interaction.response.send_message(NOT_HERE, ephemeral=True)
+                return
+            await interaction.response.defer()
+            actions = _actions(interaction)
+            was = await actions.resume_recording(self.guild_id, interaction.user.id)
+            if was and actions.table_is_paused(self.guild_id):  # the DM's break is still on
+                text = RESUMED_AFTER_BREAK
+            else:
+                text = resumed_text() if was else ALREADY_BACK
+            await interaction.edit_original_response(content=text, view=None)
+
+
+def pause_choices_view(guild_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    for minutes in CHOICES:
+        view.add_item(OffRecordForButton(guild_id, minutes))
+    return view
+
+
+def resume_view(guild_id: int) -> discord.ui.View:
+    view = discord.ui.View(timeout=None)
+    view.add_item(ResumeButton(guild_id))
+    return view
 
 
 class CloseButton(
@@ -1151,6 +1305,7 @@ class StopSavingButton(
                 emoji="🧪",
                 style=discord.ButtonStyle.danger,
                 custom_id=f"dmbot:testvoice:stop:{guild_id}",
+                row=1,  # on its own row, so the menu's own five stay together on the first
             )
         )
         self.guild_id = guild_id
@@ -1186,6 +1341,9 @@ CONSENT_BUTTONS = (
     DeleteNoButton,
     KeepButton,
     MenuButton,
+    OffRecordButton,
+    OffRecordForButton,
+    ResumeButton,
     CloseButton,
 )
 
@@ -1277,6 +1435,7 @@ def menu_view(
     adds the campaign's D&D Beyond Join button when the DM set one (#1119)."""
     view = discord.ui.View(timeout=None)
     view.add_item(MenuButton(guild_id, campaign_id))
+    view.add_item(OffRecordButton(guild_id, campaign_id))  # one tap from the reminder (#2466)
     if invite:
         view.add_item(invite_button(invite))
     return view
@@ -1289,6 +1448,7 @@ def options_view(
     recording: bool,
     sheets: bool,
     test_voice: str | None = None,
+    paused: bool = False,
 ) -> discord.ui.View:
     """The menu's buttons, only those that apply: 📜 (when sheets are on), Stop recording
     me (or the consent button, for someone who stopped), and Close. `test_voice`: in a test
@@ -1301,6 +1461,9 @@ def options_view(
     elif test_voice == "ask" and recording:
         view.add_item(SaveVoiceButton(guild_id))
     if recording:
+        # Off the record for a while (#2466), or back on it if they already are. In a test server's
+        # menu too: real people are recorded there. The test-voice button has its own row.
+        view.add_item(ResumeButton(guild_id) if paused else OffRecordButton(guild_id, campaign_id))
         view.add_item(StopButton(guild_id, campaign_id or "-"))
     else:
         view.add_item(StartButton(guild_id))

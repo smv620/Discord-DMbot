@@ -22,7 +22,9 @@ class Stopping(unittest.IsolatedAsyncioTestCase):
     async def test_a_failing_cleanup_never_blocks_stopping(self) -> None:
         fake = SimpleNamespace(
             consent=SimpleNamespace(
-                has_consent=lambda *_: True, revoke=AsyncMock(return_value=True)
+                has_consent=lambda *_: True,
+                agreed_now=lambda *_: True,
+                revoke=AsyncMock(return_value=True),
             ),
             stop_recording=MagicMock(),
             _tell_dm_about_consent=MagicMock(),
