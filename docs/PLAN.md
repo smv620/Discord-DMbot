@@ -1146,6 +1146,21 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   the campaign. Stopping takes three taps (Menu, Stop, Yes) where saying yes takes one;
   the owner's legal review found that acceptable (2026-10-08). The warning still stays
   short and one-time, and the menu button is on every reminder.
+- **Off the record** (owner question, decided by Supervisor 2026-10-23, #2466): a person can step off
+  the record for a while without stopping. **A button is the main way.** **⏸️ Pause recording me** in the
+  🗂️ Menu (and on the per-session reminder) takes 5 minutes, 15 minutes, or until ▶️ Resume. It needs no
+  warning because it ends by itself, and it always ends with the listening session. A paused person is
+  off ears' allowlist, exactly like someone who never agreed: nothing of theirs is captured, decoded,
+  transcribed or stored, and core re-checks the pause after every async step as it does consent. The
+  DM also has **⏸️ Pause the table** for breaks. The table chat says "⏸️ <name> is off the record for 5
+  minutes." and "▶️ <name> is back on the record.", and both transcripts get one marker line, "(<name>
+  was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
+  this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
+  DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
+  is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
+  (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
+  they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
+  the pause stays on the record.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -1795,7 +1810,9 @@ names panel nor the speech-to-text hints can be a fixed list.
       revealed (no change for players today).
     - **When it changes, by itself:** an unrevealed name becomes revealed when its name or one of its other
       names is said or typed (the whole-name matcher that guards secrets). An unrevealed connection becomes
-      revealed when both its names are revealed and the session states it. The DM can also press **👁️ Reveal
+      revealed when both its names are revealed and the session states it; that step comes with the knowledge
+      map review (#2410). Until then the after-session report points the DM to connections whose names are both
+      revealed (Supervisor, 2026-10-22, #2451). The DM can also press **👁️ Reveal
       to players** on a card or in the graph.
     - **🤫 Secrets said out loud are revealed too, and the DM can recant** (owner, 2026-10-22, replacing "🤫 is
       stronger"): after the session, the **knowledge map review** lists "Secrets exposed" with **↩️ Recant**
@@ -1841,6 +1858,42 @@ names panel nor the speech-to-text hints can be a fixed list.
 
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
+- **The recap posting clock** (#2435, migration 0184). A recap job records `posting_since` (whole Unix seconds),
+  `posting_step` (`check`, `post`, or `audio` while narration is made) and `posted_url` (the first message's
+  Discord link). A database trigger starts the clock at `check` when the status becomes `posting` and stops
+  it when it ends (posted, put back as a draft, dropped), so every writer of the status is covered; the bot
+  moves it to `post` once its checks pass; the audio worker runs the `audio` step only when no post is under
+  way. The web API's recap answer carries `postingSince`, `postingStep`, `postedUrl` and `serverNow`.
+- **Where everything is on the website** (owner, 2026-10-22, the account and campaign pages reorganised; it
+  builds on "A page for each campaign" below). One rule: **everything about one campaign lives on that
+  campaign's page; everything about you, or shared across campaigns, lives on My Account.** Every page shows
+  where it is (a breadcrumb: My Account › <Campaign> › Story graph) and the same campaign tabs, so nobody is
+  lost.
+  - **My Account** (`/account`), top to bottom:
+    1. **My campaigns:** one card per campaign. The **campaign's name is the link** to its page, and the card
+       shows its facts at a glance: 🟢 when DMbot is listening there right now; your part (You run it, You help
+       run it, You play in it); sessions; hours played; players; NPCs; started; last played. The DM tools are
+       not on the card; they are on the campaign's page.
+    2. **My characters.**
+    3. **Shared rules:** the one place for house-rules sets and homebrew packs you publish or follow, at
+       `/account/sharing`.
+    4. **My plan and billing.**
+    5. **My account:** email, DMbot ID, servers, sign-in.
+
+    The account-wide House rules, Homebrew and Transcripts cards go: each lives on its campaign's page.
+  - **The campaign's page** (`/account/campaigns/<server>.<campaign>`), the campaign's home. The heading has
+    the name, 🟢, your part and the facts. Below it are four groups, in this order, and the same four are the
+    tabs on every page of the campaign:
+    1. **Story:** Recaps · Story timeline · Story graph · Names and NPCs.
+    2. **At the table:** Transcripts · Import a past session.
+    3. **Rules:** House rules · Homebrew. Each of those pages links to **Shared rules** for sharing them.
+    4. **Settings** (the campaign's DMs only): who can see the DM screen (peek) · how much DMbot says ·
+       transcript retention · game masters · hand over · pause · delete. These are the same choices as
+       ⚙️ Settings in Discord, with the same words. Players see the groups they may use.
+  - **Story timeline:** the campaign's sessions in order, each with its number, date and length, its recap
+    (linked) and what was revealed at the table that session. It's built after the other pages.
+  - **Words:** a page is called by the same name everywhere: in Discord, on the tabs, in the breadcrumb, and on
+    the account page.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
   to that one campaign:
@@ -1934,6 +1987,36 @@ names panel nor the speech-to-text hints can be a fixed list.
     up to about 10,000 names.
   - Nothing is deleted by itself. The after-session check stays capped at 10
     suggestions a session, link suggestions included.
+- **Campaign lore, and one way in for names** (owner, 2026-10-22, replacing the separate backstory and
+  "names from any document" paths for prose).
+  - **The name:** 📜 Upload backstory becomes **📜 Upload campaign lore** (the same place in the 👤 DMbot Main
+    Menu).
+  - **One process for prose.** Whatever arrives through 📜 Upload campaign lore or 📥 Add many (a pasted text, a
+    file, a link):
+    - **A strict names list** (`name (pronunciation) | kind | other names`, one per line) is added straight
+      away, with no AI.
+    - **Anything with prose in it** goes through the same single AI read as campaign lore: names and the
+      connections the text states, each with its quote. Code keeps a connection only when its quote is in the
+      text and both names are in this read or the campaign. **Nothing is invented:** no AI (PlotBot included)
+      adds a connection the text doesn't state. The DM answers each one: ✅ Keep, 🤫 Keep as secret, ❌ No.
+  - **How the read works** (owner, 2026-10-22, after a long document's answer was cut off, #2454): the whole
+    text is read at once (the models read hundreds of pages). **Pass 1** (the careful model) writes the names
+    and the relationships the text states, each with its quote, as a plain list, with output room sized to the
+    text and continued if needed. **Pass 2** (the fast model) only reshapes that list into the ingestion
+    format, never adding. Code then checks every quote against the original text. DMbot never says "no names
+    found" when an answer was cut short.
+  - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
+    Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
+    players.
+  - **Pronunciation in the list** (`Moric (MOR-ick) | NPC | Mo`): the bracket after a name is read as how to say
+    it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
+    stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
+    "a". Otherwise it's an aside, kept as an other name with the name in front: `Moric (the rogue)` gives
+    Moric, also called "Moric the rogue". A near miss asks the DM ("Is (the Rogue) how to say Moric?" [It's how
+    to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
+  - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
+  - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen
+    notice with its line. Nothing is said when nothing is pinned.
 - **Connections from a backstory** (owner, 2026-10-22). 📜 From a story or background also suggests
   the connections the DM's text states ("Vex is the boss of the Ashen Hand"), in the same AI read
   (no extra call). Each comes with a short quote. Code keeps a connection only if its quote is in the
@@ -2902,8 +2985,30 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
 - **When and whose:** only while DMbot is listening, and only messages from people who agreed to
   be recorded. Bots are never read.
 - **What happens to them:** a typed line goes to the same listeners as a spoken one (clock phrases,
-  house rules, names heard, "Hey DMbot"). It goes into the **raw** transcript tagged `(typed)`,
-  never the cleaned one. Commands and DMbot's own messages are skipped.
+  house rules, names heard, "Hey DMbot"). It goes into the transcript under the name of whoever wrote or
+  pasted it, tagged `(typed)`: the raw one, and (owner, 2026-10-22) the cleaned one too, where off-topic
+  typing is hidden like off-topic talk. What is typed there is **revealed** to the players, as anything said
+  in the voice channel is. Commands and DMbot's own messages are skipped. Only people who agreed to be
+  recorded are read (consent), while DMbot is listening.
+- **Images posted there** (owner, 2026-10-22). An image someone posts in the table chat DMbot reads (same
+  channels, same consent, while listening) is sent once to the AI to be described:
+  - **The transcript gets a description** in place of the image, under the poster's name and tagged
+    `(image)`: "(image) A torn letter with a wax seal." It counts as revealed, like anything typed there.
+    The image itself is never stored; only the words are kept.
+  - **A map:** the description names the places on it and says, in plain words, where each one is from the
+    others (north of, across the river from, two days' ride east of, inside), with any scale, roads, rivers
+    and labels shown. It is detailed enough that the layout could be drawn again from the words alone, and it
+    only says what the map shows, nothing guessed. It is kept as a map description for **MapBot**, a later
+    feature that draws simple local and regional maps from asserted facts (nothing is built for MapBot now).
+  - **A picture of text** (a handout, a note, a page): DMbot replies in the channel with the text it read,
+    "Text in this image:" and the words, so the table can check it. **✏️ Fix** lets the poster or a DM correct
+    it, and the transcript keeps the corrected text.
+  - **Limits:** images only (png, jpg, webp, gif's first frame), up to about 10 MB and a few per message;
+    a campaign's images count toward its AI use, and past the day's limit an image is noted as "(image, not
+    described)". The fast model describes, and a map uses the careful one. The DM's private channels are
+    never read.
+  - **Consent:** the consent message says DMbot also reads images posted in the table chat, so the consent
+    terms version goes up and everyone is asked again.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
@@ -4981,12 +5086,13 @@ Any entry (person, group, place, thing) can be kept from the players until the D
 know it: the 🙈 switch on the kind step of Add a name, and 🙈 Hide from players / 👀 Players know
 it now on the name card (DM only). It is the clue's `audience_limited` treatment without an
 audience to track: `memory_entities.hidden_from_players`, read everywhere as
-`Entity.unseen_by_players`. Players' lists, cards, answers, recaps, the NPC list and the website's
-recap name check leave it out; the DM and the DM screen see it, and a backup carries it. Only the
+`Entity.unseen_by_players`. Players' lists, cards, answers, the NPC list and the website leave it out;
+recaps (Discord and the website's recap name check alike) leave it out **unless the table said it in that
+session's lines** (Supervisor, 2026-10-22, #2446); the DM and the DM screen see it, and a backup carries it. Only the
 DM sets it. The relationship-level secret is separate and already exists (a secret connection).
-A player's character, the party and DMbot's own player entries can't be hidden. A hidden name is
-treated like a clue only some know in the transcript too: DMbot doesn't recognise or clean it
-until the DM shows it.
+A player's character, the party and DMbot's own player entries can't be hidden. **A hidden name is not a secret for DMbot's listeners** (Supervisor, 2026-10-22, replacing
+"treated like a clue in the transcript"): the cleaner and the DM sidebar recognise and use it; only a 🤫
+spelling or a clue only some know keeps the secret treatment.
 A database trigger clears the flag whenever an entry becomes a player's character or the party, whichever path does it (an import, a change of kind, the plays answer, a merge).
 
 ### Recap output room and Try again (#2341, 2026-10-22)

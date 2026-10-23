@@ -597,7 +597,10 @@ class MemoryStore:
                 r
                 for r in await scope.select(
                     RELATIONS,
-                    " AND status IN ('proposed', 'confirmed') AND NOT secret ORDER BY id",
+                    # a proposed one is shown while it is not secret; a confirmed one when the
+                    # players hold it as fact (their belief, #2409)
+                    " AND ((status = 'proposed' AND NOT secret)"
+                    f" OR (status = 'confirmed' AND {beliefs.party_knows()})) ORDER BY id",
                 )
                 if r["subject_id"] in live and r["object_id"] in live
             ]
@@ -1525,7 +1528,10 @@ class MemoryStore:
         it. Only table names are run, never anyone's data."""
         try:
             async with self._db.guild(guild_id) as conn:
-                await conn.execute("ANALYZE memory_entities, memory_aliases, memory_relations")
+                await conn.execute(
+                    "ANALYZE memory_entities, memory_aliases, memory_relations,"
+                    " memory_beliefs, memory_perspectives"
+                )
         except Exception:
             log.warning("Couldn't refresh the memory tables' statistics", exc_info=False)
 
@@ -3305,12 +3311,23 @@ class MemoryStore:
             current = await w.get(RELATIONS, relation_id)
             if current is None or current["status"] != CONFIRMED:
                 raise MemoryRuleError(NOT_FOUND)
+            before = {
+                r.id: r.status
+                for r in await _relations_touching(w, current["subject_id"], current["object_id"])
+            }
             new, _ = await self.add_relation_in(
                 w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
             )  # fmt: skip
             if new.id == relation_id:
                 return Written(new, w.batch)
+            # The words are new, or match a duplicate only proposed so far (the upgrade just made it
+            # the DM's, with no beliefs yet): the new connection takes over (#2409)
+            if before.get(new.id) != CONFIRMED:
+                await beliefs.carry(w, current, new.id)
+                moved = await w.get(RELATIONS, new.id)
+                assert moved is not None
+                new = _relation(moved)
             if current["secret"] and not new.secret:
                 new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
             check_status_change(current["status"], REJECTED, source)
