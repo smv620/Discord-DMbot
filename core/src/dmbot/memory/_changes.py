@@ -140,7 +140,8 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at", "definition_version"),
+     "secret", "created_at", "definition_version", "unrevealed"),
+    defaults={"unrevealed": False},  # held back from the players until said at the table (#2404)
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -355,7 +356,7 @@ class Changes(Scope):
         if (
             table is RELATIONS
             and self.undoes is None
-            and ("status" in changes or "secret" in changes)
+            and ("status" in changes or "secret" in changes or "unrevealed" in changes)
         ):
             await self._beliefs_follow(after)
         return after
@@ -605,7 +606,7 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
-    "memory_relations": {"definition_version": 1},
+    "memory_relations": {"definition_version": 1, "unrevealed": False},
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
     "memory_entities": {

@@ -26,6 +26,7 @@ from dmbot.recaps import critics, cues
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
+from dmbot.recaps.held import apply_held
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
 from dmbot.recaps.text import names_a_secret, strip_cues
@@ -558,6 +559,12 @@ async def post_checks(
     names = (await cur.fetchone() or {}).get("r")
     if names is None:  # not a DM of the campaign: nothing is said about the recap
         raise RecapError("not_found" if must_be_posted else "not_allowed")
+    # The bot's rule too: a name the players haven't been shown yet is allowed when the table said
+    # it in this very session (#2404).
+    cur = await conn.execute(
+        "SELECT dmbot_recap_held_names(%s, %s, %s) AS r", (gid, cid, row["session_at"])
+    )
+    names = apply_held(names, (await cur.fetchone() or {}).get("r"))
     if must_be_posted and row["status"] != "posted":
         raise RecapError("not_posted")
     text = "\n".join([row["title"], strip_cues(row["summary"]), *row["housekeeping"]])

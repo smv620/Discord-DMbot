@@ -1046,7 +1046,7 @@ class NameCards(NamesTest):
             GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
         )
         self.fresh()
-        self.assertIn("👁 Show players", labels(await self.page_of(corin.id, rel.id)))
+        self.assertIn("👁️ Show to players", labels(await self.page_of(corin.id, rel.id)))
 
     async def test_a_secret_connection_moves_a_name_up_for_a_dm_and_not_for_anyone_else(
         self,

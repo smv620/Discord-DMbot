@@ -151,7 +151,7 @@ async def show_one(
     await _replace(
         interaction,
         f"**{_said(found)}**"
-        + (" 🤫" if found.relation.secret else "")
+        + (" 🤫" if found.relation.secret else " 🙈" if found.relation.unrevealed else "")
         + "\n"
         + (
             "Change the words, hide it, or remove it."
@@ -168,9 +168,10 @@ class OneConnection(_Menu):
         self.campaign_id = campaign_id
         self.entity_id = entity_id
         self.relation_id = found.relation.id
-        self.secret = (
-            found.relation.secret
-        )  # as shown now: a press flips THIS, never "the opposite"
+        # As shown now: a press flips THIS, never "the opposite". A connection the story is holding
+        # back (a backstory one, #2404) is hidden from players like a secret one, and the same
+        # switch shows it to them.
+        self.secret = found.relation.secret or found.relation.unrevealed
         r = found.relation
         subject = found.names.entities.get(r.subject_id)
         other = found.names.entities.get(r.object_id)
@@ -194,7 +195,7 @@ class OneConnection(_Menu):
             self.add_item(
                 _Button(
                     self._flip,
-                    label="👁 Show players" if self.secret else "🤫 Hide from players",
+                    label="👁️ Show to players" if self.secret else "🤫 Hide from players",
                     style=grey,
                     row=1,
                 )
@@ -271,21 +272,23 @@ class OneConnection(_Menu):
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
         target = not self.secret  # from what the page showed: a double press never flips back
-        if found.relation.secret == target:
+        if (found.relation.secret or found.relation.unrevealed) == target:
             await _tell(interaction, "It's already like that. Press Back to see the card.")
             return
         c = found.campaign
         try:
-            await link_edits.set_secret(found.memory, c.guild_id, c.id, found.relation, target)
+            written = await link_edits.set_secret(
+                found.memory, c.guild_id, c.id, found.relation, target
+            )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change that. {exc}")
             return
         note = (
             f"🤫 Hidden from players: {_said(found)}. Not right? Edit it again."
             if target
-            else f"👁 Players can see it now: {_said(found)}. Not right? Edit it again."
+            else f"👁️ Players can see it now: {_said(found)}. {UNDO_NOTE}"
         )
-        await self._changed(interaction, found, note)
+        await self._changed(interaction, found, note, undo=written.batch)
 
     async def _remove(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
