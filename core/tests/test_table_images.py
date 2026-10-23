@@ -8,7 +8,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from dmbot import images, table_chat
 from dmbot.ai import Image
@@ -248,6 +248,57 @@ class TableImages(chat.AtTheTableTyped):
         ]
         await self.hear(msg)
         self.assertEqual((self.fetched, self.lines()), ([], []))
+
+    # ---- a picture of writing is answered in the chat (#2450, part 4) ----
+
+    def say_into(self) -> AsyncMock:
+        """The chat's replies are caught here instead of sent."""
+        self.live.transcript_session_id = "a" * 32
+        said = AsyncMock(return_value=object())
+        self.bot.post_message = said  # type: ignore[method-assign]
+        return said
+
+    def reads(self, kind: str) -> None:
+        self.bot.image_desk = self.make_desk(vision=Vision(kind=kind))
+
+    async def test_a_picture_of_text_is_answered_in_the_chat_it_was_posted_in(self) -> None:
+        said = self.say_into()
+        self.reads("text")
+        await self.hear(picture(channel=EXTRA))
+        said.assert_awaited_once()
+        channel, text, view = said.await_args.args
+        self.assertEqual(channel, EXTRA)
+        self.assertEqual(text, "Text in this image:\n> The key is under the stone.")
+        [button] = view.children
+        [line] = self.lines()
+        # the key of the line it fixes: the session, the poster and the moment
+        self.assertEqual(button.custom_id, f"dmbot:imgfix:{'a' * 32}:{DM}:{line.started_ms}")
+
+    async def test_a_picture_that_is_not_writing_gets_no_reply(self) -> None:
+        said = self.say_into()
+        for kind in ("picture", "map"):
+            self.reads(kind)
+            await self.hear(picture())
+        said.assert_not_awaited()
+
+    async def test_a_picture_that_was_not_described_gets_no_reply(self) -> None:
+        said = self.say_into()
+        self.bot.image_desk = self.make_desk(per_day=0)
+        await self.hear(picture())
+        said.assert_not_awaited()
+
+    async def test_nobody_who_stopped_meanwhile_is_answered(self) -> None:
+        said = self.say_into()
+        self.bot.consent.has_consent = lambda guild_id, user_id: False  # type: ignore[method-assign]
+        await self.bot._say_image_text(self.live, DM, 5, VOICE, images.Read("text", "x", "words"))
+        said.assert_not_awaited()
+
+    async def test_the_reply_is_not_sent_for_someone_who_did_not_agree(self) -> None:
+        said = self.say_into()
+        self.reads("text")
+        self.bot.consent.has_consent = lambda guild_id, user_id: user_id != PLAYER  # type: ignore[method-assign]
+        await self.hear(picture(author=PLAYER))
+        said.assert_not_awaited()
 
 
 class TheDay(Clocks):

@@ -265,19 +265,43 @@ class TranscriptStore:
         return ids
 
     async def relabel_line(
-        self, guild_id: int, session_id: str, user_id: int, started_ms: int, text: str
+        self,
+        guild_id: int,
+        session_id: str,
+        user_id: int,
+        started_ms: int,
+        text: str,
+        *,
+        image: bool = False,
     ) -> int:
         """A saved line's cleaned words changed (an Undo, #296). What was heard never
         changes; `text` goes back to NULL when it's the same as heard. How many lines
-        changed (0: it wasn't saved)."""
+        changed (0: it wasn't saved). `image`: the line is a described picture (#2450), which is
+        a typed line, so it is kept apart from the person's speech."""
+        kind = "typed AND image" if image else "NOT typed"
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
-                " AND sidebar IS NULL AND NOT typed",
+                f" AND sidebar IS NULL AND {kind}",  # (a fixed choice of two, never user input)
                 (text, session_id, user_id, started_ms),
             )
             return cur.rowcount
+
+    async def image_line(
+        self, guild_id: int, session_id: str, user_id: int, started_ms: int
+    ) -> tuple[str, str] | None:
+        """(what the AI first read, the line as it reads now) for a described picture of this
+        person's, or None (not theirs, not a picture, or not saved yet)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT heard, coalesce(text, heard) AS text FROM transcript_lines"
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL AND typed AND image ORDER BY id LIMIT 1",
+                (session_id, user_id, started_ms),
+            )
+            r = await cur.fetchone()
+        return None if r is None else (str(r["heard"]), str(r["text"]))
 
     async def set_topic(
         self,
