@@ -43,7 +43,9 @@ class Button(StrEnum):
     MY_CHARACTER = "my_character"  # the player's character link in this campaign
     SETTINGS = "settings"  # the campaign's Settings card, game masters only
     NAMES = "names"  # 📇 Names: the names home card, game masters only (#1986)
-    BACKSTORY = "backstory"  # 📜 Upload backstory: names and connections from the DM's own story
+    BACKSTORY = (
+        "backstory"  # 📜 Upload campaign lore: names and connections from the DM's own story
+    )
 
 
 # Each role's buttons, in the order they are drawn. A role never gets more than the one below it

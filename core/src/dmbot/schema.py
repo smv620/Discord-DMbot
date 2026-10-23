@@ -11100,6 +11100,12 @@ RECAP_HELD_NAMES = r"""
     REVOKE ALL ON FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT) FROM PUBLIC;
 """
 
+BACKSTORY_LINK_WORDS = """
+    -- A stated relationship no fixed kind fits is kept on the catch-all with the words the text
+    -- used (#2454), so a waiting connection has to carry them until the DM keeps it.
+    ALTER TABLE backstory_links ADD COLUMN detail TEXT NOT NULL DEFAULT '';
+"""
+
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -11525,6 +11531,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)

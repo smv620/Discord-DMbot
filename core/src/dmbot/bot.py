@@ -1212,6 +1212,14 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
+        self.background_read_ai = (
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ], Feature.NAMES_BACKGROUND_READ
+            )
+            if self.ai_client
+            else None
+        )
         # The story-plan reader (#1714): the AI reads an adventure once, on a DM's press.
         self.plan_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER)
@@ -1532,7 +1540,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
         import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
-        self.add_dynamic_items(BackstoryButton)  # 📜 Upload backstory, from the Main Menu (#2380)
+        self.add_dynamic_items(
+            BackstoryButton
+        )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
