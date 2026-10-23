@@ -21,6 +21,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from typing import ClassVar
 
 from psycopg import errors
 
@@ -153,6 +154,82 @@ def find_exposures(
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class Waiting:
+    """One row of the table: what the summary lists and the Recant button points at."""
+
+    id: int
+    kind: str
+    spelling: str | None
+    relation_id: str | None
+    times: int
+    status: str
+    batch: int | None
+    claimed_at: int | None = None  # when it was claimed to be shown (status `applying`)
+
+
+def dedupe(rows: Sequence[Waiting]) -> tuple[list[Waiting], dict[int, list[int]]]:
+    """One row for each secret, however many sessions said it: the first (the most said, as the
+    rows come), with the ids of the others it stands for, which the caller settles once it is
+    handled. Names by spelling, connections by id."""
+    kept: list[Waiting] = []
+    stands_for: dict[int, list[int]] = {}
+    seen: dict[tuple[str, str | None], int] = {}
+    for row in rows:
+        key = (row.kind, row.spelling if row.kind == "name" else row.relation_id)
+        if key in seen:
+            stands_for[seen[key]].append(row.id)
+            continue
+        seen[key] = row.id
+        stands_for[row.id] = []
+        kept.append(row)
+    return kept, stands_for
+
+
+async def describe(
+    memory: MemoryStore, guild_id: int, campaign_id: str, rows: Sequence[Waiting]
+) -> list[tuple[Waiting, str]]:
+    """Each waiting exposure with the plain words the summary shows for it, in order. One that is
+    no longer a secret (the DM changed it meanwhile), or whose connection is gone, is left out:
+    there is nothing to tell. A name: the name as the DM wrote it. A connection: both ends and
+    how they are tied."""
+    from dmbot.memory.secret_aloud import secret_names
+
+    text_of: dict[str, str] = {}
+    for secret in await secret_names(memory, guild_id, campaign_id):
+        text_of.setdefault(spelling_key(secret.text), secret.text)
+    ties: dict[str, str] = {}
+    wanted = [r.relation_id for r in rows if r.relation_id]
+    if wanted:
+        async with memory._read(guild_id, campaign_id) as scope:
+            join = (
+                " ON {x}.guild_id = r.guild_id AND {x}.campaign_id = r.campaign_id"
+                " AND {x}.id = r.{e}"
+            )
+            cur = await scope.conn.execute(
+                "SELECT r.id, a.name AS a, b.name AS b, r.predicate, p.label"
+                " FROM memory_relations r"
+                " JOIN memory_entities a" + join.format(x="a", e="subject_id") +
+                " JOIN memory_entities b" + join.format(x="b", e="object_id") +
+                " LEFT JOIN memory_predicates p ON p.guild_id = r.guild_id"
+                " AND p.campaign_id = r.campaign_id AND p.key = r.predicate"
+                " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.id = ANY(%s) AND r.secret"
+                " AND r.predicate <> 'led_to'"
+                " AND r.status = 'confirmed'",
+                (*scope.ids, wanted),
+            )  # fmt: skip
+            for r in await cur.fetchall():
+                how = str(r["label"] or r["predicate"]).replace("_", " ")
+                ties[str(r["id"])] = f"{r['a']} and {r['b']} ({how})"
+    out: list[tuple[Waiting, str]] = []
+    for row in rows:
+        if row.kind == "name" and row.spelling in text_of:
+            out.append((row, f"{text_of[row.spelling]} (a name)"))
+        elif row.kind == "connection" and row.relation_id in ties:
+            out.append((row, ties[row.relation_id]))
+    return out
+
+
 class ExposureStore:
     """The pending exposures, one campaign at a time (every statement names the server and the
     campaign, and the table has row-level security on top)."""
@@ -279,5 +356,73 @@ class ExposureStore:
                 f"UPDATE secret_exposures SET status = 'settled' WHERE guild_id = %s"
                 f" AND campaign_id = %s AND kind = %s AND {column} = %s AND status = 'pending'",
                 (guild_id, campaign_id, kind, key),
+            )
+            return cur.rowcount
+
+    async def waiting(self, guild_id: int, campaign_id: str) -> list[Waiting]:
+        """The exposures still waiting to be applied, from this and earlier sessions, names then
+        connections, most said first (what a summary left out last time comes first again)."""
+        return await self._rows(guild_id, campaign_id, "status = 'pending'", [], "")
+
+    async def one(self, guild_id: int, campaign_id: str, exposure_id: int) -> Waiting | None:
+        """A row by its id, in this campaign only (what a Recant button carries)."""
+        rows = await self._rows(guild_id, campaign_id, "id = %s", [exposure_id], "")
+        return rows[0] if rows else None
+
+    async def _rows(
+        self, guild_id: int, campaign_id: str, where: str, params: list[int], extra: str
+    ) -> list[Waiting]:
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, kind, spelling, relation_id, times, status, batch, claimed_at"
+                " FROM secret_exposures"
+                f" WHERE guild_id = %s AND campaign_id = %s AND {where} {extra}"
+                " ORDER BY kind DESC, times DESC, id",
+                (guild_id, campaign_id, *params),
+            )
+            return [
+                Waiting(
+                    int(r["id"]), r["kind"], r["spelling"], r["relation_id"], int(r["times"]),
+                    r["status"], r["batch"], r["claimed_at"],
+                )
+                for r in await cur.fetchall()
+            ]  # fmt: skip
+
+    # Where a row may come from for each state it moves to: a second press or a second run
+    # matches nothing, and a row is claimed (`applying`) before its secret is shown.
+    _FROM: ClassVar[dict[str, tuple[str, ...]]] = {
+        "applying": ("pending",),
+        "pending": ("applying",),
+        "applied": ("applying",),
+        "settled": ("pending", "applying"),
+        "recanted": ("applied", "pending"),
+    }
+
+    async def mark(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        ids: Sequence[int],
+        status: str,
+        batch: int | None = None,
+    ) -> int:
+        """Move rows to `status` (`applied` with the change-log batch that showed them). Only a
+        row in a state it may come from moves, and the count says how many did."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE secret_exposures SET status = %s, batch = COALESCE(%s, batch),"
+                " claimed_at = CASE WHEN %s = 'applying' THEN %s ELSE claimed_at END"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
+                " AND status = ANY(%s)",
+                (
+                    status,
+                    batch,
+                    status,
+                    int(self._clock()),
+                    guild_id,
+                    campaign_id,
+                    list(ids),
+                    list(self._FROM[status]),
+                ),
             )
             return cur.rowcount
