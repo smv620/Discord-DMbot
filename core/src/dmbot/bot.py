@@ -68,6 +68,7 @@ from dmbot.campaigns.models import (
     STORY_GUIDE,
     CampaignError,
 )
+from dmbot.campaigns.row_sections import STORY_NOTES
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -13013,6 +13014,8 @@ def register_backup_sections(
     campaigns.register_section(RecapSection(forget_audio=forget_audio))
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
+    # and what the DM and the story keep about names, rows for row (#2552)
+    campaigns.register_section(STORY_NOTES)
 
 
 async def run(settings: Settings) -> None:

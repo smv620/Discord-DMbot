@@ -9,6 +9,8 @@ what a campaign move (#2550) is proved against: every table here moves with its 
 
 from __future__ import annotations
 
+from dmbot.campaigns.row_sections import STORY_NOTES
+
 # Registered backup section name -> the tables it carries.
 SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "dms": ("campaign_dms",),
@@ -46,6 +48,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "game_effects": ("game_effects",),
     "recaps": ("recap_jobs", "recap_dictionaries"),
     "memory_heard": ("memory_heard",),
+    STORY_NOTES.name: tuple(t.name for t in STORY_NOTES.tables),
 }
 
 # Table -> why a backup does not carry it. A reason that is not already a PLAN decision is
@@ -67,16 +70,10 @@ NOT_IN_BACKUP: dict[str, str] = {
 # a section (or to NOT_IN_BACKUP, with a reason Supervisor has approved) and the list ends empty.
 OWED_TO_BACKUP: tuple[str, ...] = (
     "adventure_reads",
-    "backstory_links",
     "fightbot_players",
-    "house_rules_file",
     "import_plays",
     "name_actions",
     "name_answers",
-    "name_later",
-    "name_not_same",
-    "npc_notes",
-    "npc_roster",
     "npcs_channel_messages",
     "pack_suggestions",
     "plan_divergences",
@@ -85,15 +82,12 @@ OWED_TO_BACKUP: tuple[str, ...] = (
     "plan_position",
     "plan_same_as",
     "recap_holds",
-    "recap_name_checks",
     "recap_requests",
     "rule_set_codes",
     "rule_set_editors",
     "rule_set_suggestions",
     "rule_set_versions",
     "rule_sets",
-    "said_as_suggestions",
-    "secret_exposures",
     "session_imports",
     "session_usage",
     "setting_actions",
