@@ -28,6 +28,14 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "handover by email",
+        "Hand over by email",
+        "A campaign is handed over by a link sent to an email address.",
+        lambda s: s.handover_email_on,
+        ("handover_email_on",),
+        for_dms=False,  # for whoever runs DMbot: on only when the whole hand-over is live (#2532)
+    ),
+    Feature(
         "time suggestions",
         "Clock suggestions",
         "DMbot offers to move the game clock when time passes. You choose.",
