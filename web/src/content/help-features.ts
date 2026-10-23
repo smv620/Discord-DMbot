@@ -30,12 +30,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "account",
     whatsNew: "Receive a campaign by email",
-    text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on, then take the campaign, or say no thanks. If you take it, it moves to your account, its play time comes out of your hours, and the DM who offered it stays on as a co-DM. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the DM to hand the campaign over again.",
-  },
-  {
-    audience: "account",
-    whatsNew: "Receive a campaign by email",
-    text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on, then accept, or say no thanks. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the game master to hand the campaign over again.",
+    text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on (if you play on a server where DMbot already runs this campaign, your Discord account simply becomes its DM there), then take the campaign, or say no thanks. If you take it, it moves to your account, its play time comes out of your hours, and the DM who offered it stays on as a co-DM. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the DM to hand the campaign over again.",
   },
   {
     audience: "gameMaster",

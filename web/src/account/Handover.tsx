@@ -72,6 +72,11 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
       return;
     }
     keepHandoverToken(found); // so a sign-in on the way does not lose it
+    // Take the code out of the address bar, so it is not left in the history or shared by a screenshot.
+    // The page keeps it in memory and in sessionStorage; the email link still works.
+    if (typeof window !== "undefined" && window.location.hash !== "") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
     void (async () => {
       try {
         const me = await api.me();

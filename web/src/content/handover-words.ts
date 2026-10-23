@@ -45,7 +45,7 @@ export const handoverWords = {
   signInDiscord: "Sign in with Discord",
   signInEmail: "Sign in with your email instead",
   // (After signing in the person lands on My Account, which shows a link back here.)
-  signInNote: "After you sign in, open the offer from My Account. It stays there until it ends.",
+  signInNote: "After you sign in, open the link in the offer email again.",
   ended: "This offer has ended. Ask the DM to hand the campaign over again.",
   loadFailed: "We couldn't open the offer just now. Nothing was changed.",
   tryAgain: "Try again",
@@ -65,7 +65,7 @@ export const handoverWords = {
   waitingLink: "Open the offer",
   linkKept: "The link still works for 7 days.",
   whereHeading: "Where should it run?",
-  whereLead: "Pick the Discord server for this campaign.",
+  whereLead: "Pick the Discord server for this campaign. If you play on a server where DMbot already runs this campaign, your Discord account simply becomes its DM there.",
   current: "(where it runs now)",
   addBotFor: (name: string): string => `Add DMbot to ${name}`,
   needsBot: "(DMbot isn't there yet)",
