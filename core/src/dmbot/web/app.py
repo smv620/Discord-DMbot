@@ -101,6 +101,7 @@ from dmbot.web.recap_requests import (
 from dmbot.web.recaps import (
     RecapError,
     approve_recap,
+    approve_unchecked,
     audio_again,
     decide,
     edit_recap,
@@ -701,6 +702,9 @@ def create_app(
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
+        "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
+        "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
+        "bad_hash": (422, "bad_hash"),
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
         # Importing older sessions (#2105)
@@ -971,6 +975,25 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/recaps/{ref}/approve-unchecked")
+    async def me_recap_approve_unchecked(ref: str, signed: Signed, request: Request) -> Any:
+        """Approve, as it is, a draft that waited 3 days for its last check (#2305):
+        `{"textHash": <the recap's textHash the page showed>}`. The database's door holds it to a
+        DM of the campaign, to the 3 days (409 `not_yet` before) and to that text (409 `changed`
+        if the draft was revised since); the bot's worker then finishes the recap. A non-DM gets
+        `not_found`. A second press answers the same and changes nothing."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        expected = body.get("textHash") if isinstance(body, dict) else None
+        try:
+            return await approve_unchecked(db, session, ref, expected)  # type: ignore[arg-type]
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     # The public, read-only link of a posted recap (#2118): no sign-in, the token is the key.
     # Per address, because anyone can call it; the same answer for every way it can fail.
     # The page itself is strict; the audio has its own, looser one (a player asks for a file in
@@ -1132,6 +1155,21 @@ def create_app(
         session, _token = signed
         try:
             return await relationships.peek(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/reveal", status_code=202)
+    async def me_campaign_web_reveal(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """The DM shows one name or connection to the players (#2405). Queued for the bot like the
+        other edits; the answer is polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_reveal(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

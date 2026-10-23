@@ -10,8 +10,11 @@ import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
+import { handoverToken } from "./Handover";
+import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
 import { keepFocus } from "./focus";
-import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -19,6 +22,7 @@ import {
   type AccountApi,
   type Campaign,
   type Character,
+  type DiscordAccount,
   type Me,
   type MyEmail,
   type MyPlan,
@@ -188,16 +192,19 @@ function ActionButton({
   busy,
   onClick,
   kind = "primary",
+  label,
   children,
 }: {
   busy: boolean;
   onClick: () => void;
   kind?: "primary" | "secondary" | "danger";
+  /** A spoken name that starts with the visible words but says which thing, when there are several. */
+  label?: string;
   children: ComponentChildren;
 }) {
   const classes = kind === "primary" ? "button" : `button ${kind}`;
   return (
-    <button type="button" class={classes} disabled={busy} aria-busy={busy} onClick={onClick}>
+    <button type="button" class={classes} disabled={busy} aria-busy={busy} aria-label={busy ? undefined : label} onClick={onClick}>
       {busy ? text.busy : children}
     </button>
   );
@@ -333,6 +340,7 @@ export default function Account({
       body = (
         <SignedIn
           installResult={installResult(search)}
+          discordNews={DISCORD_ACCOUNTS_LIVE ? discordResult(search) : null}
           hash={hash}
           me={state.me}
           onDeleted={() => setState({ kind: "deleted" })}
@@ -463,6 +471,7 @@ function SignedIn({
   me,
   hash,
   installResult: installMessage,
+  discordNews,
   onDeleted,
   onSignedOutByChoice,
 }: {
@@ -470,6 +479,8 @@ function SignedIn({
   /** The page's `#...`, for the change-of-email link (#2349). */
   hash: string;
   installResult: string | null;
+  /** What coming back from adding a Discord account says (?discord=...), or null (#2534). */
+  discordNews: string | null;
   onDeleted: () => void;
   onSignedOutByChoice: () => void;
 }) {
@@ -513,6 +524,12 @@ function SignedIn({
         <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
+      {HANDOVER_LIVE && handoverToken("") !== null && (
+        // An offer link was opened before signing in: its code was kept, so the way back is here.
+        <p class="note" role="status">
+          {handoverWords.waitingOnAccount} <a href="/handover">{handoverWords.waitingLink}</a>
+        </p>
+      )}
       {installMessage && <ForgetInstallResult />}
       {installMessage && (
         <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
@@ -537,6 +554,9 @@ function SignedIn({
       <PlanSection me={me} />
       <h2 id="my-account-heading">{text.myAccountHeading}</h2>
       {me.dmbotId !== undefined && <IdSection me={me} />}
+      {DISCORD_ACCOUNTS_LIVE && me.discordAccounts && api.addDiscordUrl && api.removeDiscordAccount && (
+        <DiscordAccountsSection accounts={me.discordAccounts} resultText={discordNews} />
+      )}
       {api.myEmail && <EmailSection hash={hash} />}
       <ServersSection me={me} />
       {me.canMove === true && api.getMoveCode && <MoveSection />}
@@ -1025,6 +1045,7 @@ function CampaignsSection({ me }: { me: Me }) {
             <CampaignRow
               key={c.id}
               campaign={c}
+              tryIt={me.plan?.id === "try-it"}
               offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
               onWithdrawn={async (person) => {
                 setDone(text.withdrawn(person));
@@ -1063,6 +1084,7 @@ function CampaignRow({
   offer,
   onWithdrawn,
   onHandedOver,
+  tryIt = false,
 }: {
   campaign: Campaign;
   /** A hand-over of this campaign you offered and nobody has answered yet. */
@@ -1070,6 +1092,8 @@ function CampaignRow({
   /** Gets the name of the person the offer was for, to say they'll be told. */
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
+  /** A Try It account: a Try It campaign can't be handed over (#2534). */
+  tryIt?: boolean;
 }) {
   const { api, refresh, noLimits } = useShared();
   const { busy, notice, run } = useAction();
@@ -1112,7 +1136,10 @@ function CampaignRow({
           </div>
         </>
       )}
-      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
+      {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
+        <EmailHandover campaign={campaign} refId={campaign.ref} />
+      )}
+      {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
           kind="secondary"
@@ -1125,7 +1152,7 @@ function CampaignRow({
           {text.handOver}
         </ActionButton>
       )}
-      {people !== null && (
+      {!HANDOVER_LIVE && people !== null && (
         <form
           id={formId}
           class="handover"
@@ -1198,6 +1225,145 @@ function CampaignRow({
         </form>
       )}
     </li>
+  );
+}
+
+/** Hand a campaign over by email (#2534; core #2532): the owner types the new owner's address, and sees only
+ * "We've emailed the offer". While an offer is open it shows when it ends and a Take back button. The
+ * answer never says whether the address has an account or a plan (#437). */
+function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [asking, setAsking] = useState(false);
+  const [email, setEmail] = useState("");
+  const [said, setSaid] = useState<string | null>(null);
+  const saidRef = useRef<HTMLParagraphElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const [badEmail, setBadEmail] = useState(false);
+  const words = handoverOwnerWords;
+  const open = campaign.handover ?? null;
+  const errorId = `handover-email-error-${campaign.id}`;
+  const explain = (error: ApiError): string | null => {
+    if (error.kind === "not-found") void refresh();
+    setBadEmail(error.kind === "bad-email");
+    if (error.kind === "bad-email") keepFocus(() => emailRef.current);
+    return words.problem[error.kind] ?? words.problem["server"] ?? null;
+  };
+  return (
+    <div class="stack">
+      <div id={errorId}>
+        <Notice message={notice} />
+      </div>
+      {/* One status line: what was just done, or the open offer once there is one. */}
+      <p class="small" role="status" tabIndex={-1} ref={saidRef}>
+        {open ? words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt)) : said}
+      </p>
+      {open && !asking ? (
+        <>
+          <p class="muted small">{words.elsewhere}</p>
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            label={words.takeBackFor(campaign.name)}
+            onClick={() =>
+              void run(async () => {
+                await api.takeBackHandover!(refId);
+                setSaid(words.takenBack);
+                await refresh();
+                keepFocus(() => saidRef.current);
+              }, explain)
+            }
+          >
+            {words.takeBack}
+          </ActionButton>
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setAsking(true);
+              keepFocus(() => emailRef.current);
+            }}
+          >
+            {words.sendElsewhere}
+          </button>
+        </>
+      ) : asking ? (
+        <form
+          class="handover"
+          noValidate // the API checks the address and our own plain words say what is wrong
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (email.trim() === "") return;
+            void run(async () => {
+              // A light check first, so an obvious slip doesn't use one of the day's five offers.
+              if (!/^\S+@\S+\.\S+$/.test(email.trim())) throw new ApiError("bad-email");
+              await api.offerHandover!(refId, email.trim());
+              setAsking(false);
+              setEmail("");
+              setSaid(words.emailed);
+              await refresh();
+              keepFocus(() => saidRef.current);
+            }, explain);
+          }}
+        >
+          <fieldset disabled={busy}>
+            <legend>{words.question(campaign.name)}</legend>
+            <label class="field">
+              {words.label}
+              <input
+                ref={emailRef}
+                type="email"
+                inputMode="email"
+                autocomplete="off"
+                autoCapitalize="none"
+                spellcheck={false}
+                aria-invalid={badEmail}
+                aria-describedby={badEmail ? errorId : undefined}
+                value={email}
+                onInput={(e) => {
+                  setEmail((e.target as HTMLInputElement).value);
+                  setBadEmail(false);
+                }}
+              />
+            </label>
+            <p class="muted small">{words.note}</p>
+            {open && <p class="muted small">{words.replaces}</p>}
+          </fieldset>
+          <div class="row">
+            <button type="submit" class="button" disabled={busy || email.trim() === ""} aria-busy={busy}>
+              {busy ? words.sending : words.send}
+            </button>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                setAsking(false);
+                setBadEmail(false);
+                keepFocus(() => startRef.current);
+              }}
+            >
+              {words.cancel}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          type="button"
+          class="button secondary"
+          ref={startRef}
+          aria-label={words.buttonFor(campaign.name)}
+          onClick={() => {
+            setAsking(true);
+            setSaid(null);
+            keepFocus(() => emailRef.current);
+          }}
+        >
+          {words.button}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1339,6 +1505,124 @@ function CharactersSection() {
       )}
     </section>
   );
+}
+
+/** The message for coming back from adding a Discord account (?discord=added etc.), or null (#2534). */
+function discordResult(search: string): string | null {
+  const result = new URLSearchParams(search).get("discord");
+  return result === null ? null : (discordAccountsWords.result[result] ?? discordAccountsWords.result["failed"] ?? null);
+}
+
+/** Your Discord accounts (#2534): the list by name, "Add a Discord account" (Discord's own sign-in,
+ * never a typed number) and Remove with one confirmation, never for the last one. The list is the API's;
+ * after a removal it is read again from `me`. */
+function DiscordAccountsSection({ accounts, resultText }: { accounts: DiscordAccount[]; resultText: string | null }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [asking, setAsking] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const saidRef = useRef<HTMLParagraphElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const words = discordAccountsWords;
+  useEffect(forgetDiscordResult, []); // show the result once: a reload must not repeat it
+  const last = accounts.length <= 1;
+  return (
+    <section aria-labelledby="discord-accounts-heading" class="panel">
+      <h3 id="discord-accounts-heading">{words.heading}</h3>
+      <p>{words.lead}</p>
+      {resultText && (
+        <p class={resultText === words.result["added"] ? "ok" : "warn"} role="status">
+          {resultText}
+        </p>
+      )}
+      <Notice message={notice} />
+      <p class="ok" role="status" tabIndex={-1} ref={saidRef}>
+        {said}
+      </p>
+      <ul class="stack">
+        {accounts.map((a) => (
+          <li key={a.key} class="stack">
+            <p>
+              <strong>{a.name}</strong> {a.current && <span class="muted small">{words.you}</span>}
+            </p>
+            {a.canRemove && !last && !a.current && asking !== a.key && (
+              <button
+                type="button"
+                class="button secondary"
+                aria-label={words.removeFor(a.name)}
+                disabled={busy}
+                onClick={() => {
+                  setAsking(a.key);
+                  setSaid(null);
+                  keepFocus(() => keepRef.current); // the safe choice first
+                }}
+              >
+                {words.remove}
+              </button>
+            )}
+            {asking === a.key && (
+              <div class="stack" role="group" aria-label={words.removeFor(a.name)}>
+                <p>{words.confirmFor(a.name)}</p>
+                <div class="row">
+                  <button
+                    type="button"
+                    class="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        async () => {
+                          try {
+                            await api.removeDiscordAccount!(a.key);
+                          } catch (error) {
+                            // Already gone (removed in another tab): say so, and read the list again so
+                            // the page matches what is true.
+                            if (error instanceof ApiError && error.kind === "not-found") {
+                              setAsking(null);
+                              await refresh();
+                            }
+                            throw error;
+                          }
+                          setAsking(null);
+                          setSaid(words.removed);
+                          await refresh();
+                          keepFocus(() => saidRef.current);
+                        },
+                        (error) => words.problem[error.kind] ?? words.problem["default"] ?? null,
+                      )
+                    }
+                  >
+                    {busy ? words.removing : words.confirmYes}
+                  </button>
+                  <button type="button" class="button secondary" ref={keepRef} disabled={busy} onClick={() => setAsking(null)}>
+                    {words.keep}
+                  </button>
+                </div>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {last ? (
+        <p class="muted small">{words.lastOne}</p>
+      ) : (
+        accounts.some((a) => a.current && a.canRemove) && <p class="muted small">{words.cantRemoveNow}</p>
+      )}
+      <p>
+        <a class="button" href={api.addDiscordUrl!()}>
+          {words.add}
+        </a>
+      </p>
+      <p class="muted small">{words.addNote}</p>
+    </section>
+  );
+}
+
+/** Take ?discord= out of the address once its result is shown (as for ?install=). */
+function forgetDiscordResult(): void {
+  if (typeof window === "undefined" || !window.location.search.includes("discord=")) return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("discord");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
 /** Your DMbot ID and experience points (#1231). The ID is an account number, not a secret. */

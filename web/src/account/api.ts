@@ -59,6 +59,9 @@ export interface Campaign {
   players?: number;
   npcs?: number;
   startedAt?: string;
+  /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
+   * when it was sent and when it ends, never the address. Missing from an older API. */
+  handover?: { sentAt: string; expiresAt: string } | null;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -153,6 +156,41 @@ export interface RecapAudio {
   canBuy: boolean;
 }
 
+/** One server a person could take a handed-over campaign to (#2534; core #2532). */
+export interface HandoverServer {
+  id: string;
+  name: string;
+  /** Where the campaign runs now. */
+  current: boolean;
+  /** False: DMbot has to be added to it first. */
+  botIn: boolean;
+}
+
+/** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
+ * alike, so the page can't tell anyone which. */
+export type HandoverLook =
+  | { status: "ended" }
+  | {
+      status: "open";
+      campaign: { name: string };
+      from: { name: string };
+      server: { id: string; name: string };
+      canAccept: boolean;
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      servers: HandoverServer[];
+    };
+
+/** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
+ * Discord number; the page shows `name` only. */
+export interface DiscordAccount {
+  key: string;
+  name: string;
+  /** The one signed in right now. */
+  current: boolean;
+  /** False for the last one. */
+  canRemove: boolean;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -160,6 +198,8 @@ export interface Me {
   access?: Access;
   campaigns: Campaign[];
   servers: Server[];
+  /** The Discord accounts on this DMbot account (#2534). Missing from an API older than #2533. */
+  discordAccounts?: DiscordAccount[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
@@ -579,7 +619,12 @@ export interface ImportSpeaker {
 export interface ImportPreviewFile {
   name: string;
   format: string | null;
-  /** "unreadable", "too_big", "not_txt" or "empty"; null when the file can be used. */
+  /** Why the file or doc can't be used, or null when it can. One of the codes the import API
+   * returns: from the reader (`unreadable`, `unknown_format`, `no_speaker_names`), from the file
+   * (`not_txt`, `too_big`, `empty`, `too_many_lines`, `too_many_speakers`) or from a Google Doc
+   * link (`not_a_google_doc`, `repeated_link`, `doc_not_shared`, `doc_too_big`, `doc_unreachable`).
+   * Each has plain words in `importPage.fileError`; test/import-error-codes.test.ts keeps the three
+   * lists (core, this comment and those words) in step. */
   error: string | null;
   suggestedDate: string | null;
   lineCount: number;
@@ -1002,6 +1047,13 @@ interface NameAnswer {
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
+/** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
+interface WebAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error?: string | null;
+  edge?: WebEdge | null;
+  removed?: boolean;
+}
 
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
@@ -1110,6 +1162,10 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "ended" // a hand-over offer that has ended (#2534)
+  | "owner-offer" // the person is the campaign's own owner (#2534)
+  | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1152,6 +1208,19 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
+   * address is: the page never learns whether it has an account or a plan. */
+  offerHandover?(ref: string, email: string): Promise<void>;
+  /** Take the open offer back. */
+  takeBackHandover?(ref: string): Promise<void>;
+  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
+  handoverLook?(token: string): Promise<HandoverLook>;
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  handoverDecline?(token: string): Promise<void>;
+  /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
+  addDiscordUrl?(): string;
+  /** Take one Discord account off this DMbot account; never the last (#2534). */
+  removeDiscordAccount?(key: string): Promise<void>;
   /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
    * Missing from an API older than that. */
   myEmail?(): Promise<MyEmail>;
@@ -1390,6 +1459,10 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  ended: "ended",
+  owner: "owner-offer",
+  bad_server: "bad-server",
+  last_account: "last-account",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1537,6 +1610,24 @@ export function httpApi(
     return asFile ? response.blob() : response.json();
   }
 
+  /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
+   * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
+   * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
+  async function waitForAnswer(path: string): Promise<WebAnswer> {
+    for (let i = 0; i < NAME_POLLS; i++) {
+      let got: WebAnswer | null = null;
+      try {
+        got = (await call("GET", path)) as WebAnswer;
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "signed-out") throw error;
+      }
+      if (got?.state === "done") return got;
+      if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+      if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+    }
+    throw new ApiError("still-waiting");
+  }
+
   const url = async (path: string, body?: unknown): Promise<string> =>
     ((await call("POST", path, body)) as { url: string }).url;
 
@@ -1564,6 +1655,22 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    offerHandover: async (ref, email) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
+    },
+    takeBackHandover: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
+    },
+    handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
+    handoverAccept: async (token, serverId) =>
+      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverDecline: async (token) => {
+      await call("POST", "/me/handover/decline", { token });
+    },
+    addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
+    removeDiscordAccount: async (key) => {
+      await call("POST", `/me/discord-accounts/${encodeURIComponent(key)}/remove`);
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
@@ -1948,17 +2055,31 @@ export function httpApi(
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
     },
+    // A DM's reveal is queued for the bot like every other edit (202 {answer}); a name is answered at
+    // the All names answers, a connection at the web's own (#2405).
     webReveal: async (ref, target) => {
-      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/reveal`, target);
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/web/reveal`, target)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const where = target.kind === "name" ? "all-names" : "web";
+      await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
     },
+    // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
     changeWebLink: async (ref, change) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/web/links`;
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
+      let queued: { answer: string };
       if (change.action === "add") {
         const { action: _action, ...body } = change;
-        return (await call("POST", base, body)) as WebEdge;
+        queued = (await call("POST", `${base}/links`, body)) as { answer: string };
+      } else {
+        const { id, ...body } = change;
+        queued = (await call("POST", `${base}/links/${encodeURIComponent(id)}`, body)) as {
+          answer: string;
+        };
       }
-      const { id, ...body } = change;
-      return (await call("POST", `${base}/${encodeURIComponent(id)}`, body)) as WebEdge | { removed: true };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
+      return got.removed || !got.edge ? { removed: true } : got.edge;
     },
     importProgress: async (ref, importId) =>
       (await call(

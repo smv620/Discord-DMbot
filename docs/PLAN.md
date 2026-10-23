@@ -2217,6 +2217,26 @@ names panel nor the speech-to-text hints can be a fixed list.
   connections the DM confirmed are used**, in hints and anywhere else, **and secret
   connections never feed hints**: today's lookup also loads suggested ones, so step 1
   adds a map of confirmed, non-secret connections.
+  *Built, family roles (CloudDev, 2026-10-23, #2457):* a family connection (`kin_of`) keeps the word
+  it was said in (parent, child, sibling, spouse, grandparent, grandchild, mother, father, son,
+  daughter, sister, brother, wife, husband, aunt, uncle, niece, nephew, cousin, grandmother,
+  grandfather, granddaughter, grandson; `memory/kin.py`) as its detail. With a role it is stored once,
+  in the role's direction ("Mira kin_of Aldric, niece") and reads "is the niece of" on Mira's card and
+  "has a niece" on Aldric's: the same word both times, so a gender is never guessed for the other name.
+  The name card, the connection editor's sentence, the relationship web (label, direction and a `back`
+  reading), NPC list and pages ("Connected to: …") and recall's text all show it. Typed or picked
+  words give it ("is the niece of"); on the website, words read from the other side ("has a niece")
+  are stored with the two names swapped. Cousin, sibling and spouse are true of both names alike:
+  they read "is the cousin of" from either card and are stored once, smaller ID first. **Which rows
+  carry a direction (Supervisor, 2026-10-23, #2457):** `memory_relations.directional` (migration
+  0204), true only for a role the DM typed or picked; the order of the two names is the meaning
+  only then (a write never sorts it). Older rows, even with a role word as detail, were stored
+  sorted by ID, so their direction is arbitrary: they stay false and keep reading "is family of"
+  both ways. A words change keeps the flag (true when the new words are a role); when two merged
+  rows say the same, the directional one wins. The column is in the change log, in backups (a file
+  from before it restores as false) and in the website's door; no row is updated. With no role,
+  or any detail that is not one of these words, it reads "is family of" both ways. The lore read's
+  pass 2 is not changed (follow-up).
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),
@@ -3213,7 +3233,29 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     (`shared_confirmations`, purpose `shared_story`; a failure to read it is a no, and another campaign's
     confirmation does not count). Without it the picture gets only its short transcript line. A note holds
     the message it came from (never in a backup), so deleting the picture, or a purge, deletes its notes.
-    The website's transcript view still tags these lines "(typed)" until its database functions
+  - *Built, part 4 (CloudDev, 2026-10-23, #2450): the words in a picture of text are said in the chat, with ✏️ Fix.*
+    After the line is written, DMbot replies in the chat the picture was posted in with "Text in this image:" and the
+    words, quoted and shown exactly as read (no bold, links or pings), cut to fit one message. Nothing else is said:
+    a picture, a map and a picture that was not described get no reply. The reply is not sent for someone who stopped or
+    who has not agreed to pictures. **✏️ Fix** is for the person who posted it and the campaign's DMs, checked on every
+    press (anyone else is told so privately); it opens a form with the words, and the corrected words replace them in
+    the transcript line at once (what the AI first read is kept as with every fix). The change is listed with **Undo** in
+    "✏️ Name fixes to check" while the session runs, learns no "keep as heard" rule, and a second fix waits for the
+    first to be undone. The new words are checked against the campaign's secret names (a secret name is never
+    written: the transcript is open to the whole server) and the poster's yes to pictures must still stand. The
+    button's ID holds the session, the poster and the line's moment, so it works after a restart. A line not saved
+    yet says "try again in a minute". A picture's line is kept apart from the same person's speech at the same moment:
+    a speech fix never touches it and a picture fix never touches speech.
+    *Deleting the picture (#2522):* the reply is sent as a Discord reply to the picture, so it carries a reference to it.
+    A delete or a purge removes the reply: from memory (the newest 200 replies) at once, and otherwise (after a restart,
+    or past the 200) by reading the 50 messages after the picture, in a channel that is read as table chat (a voice
+    channel's chat, or a campaign's extra channel), for DMbot's own message that references it. Another bot's or a
+    person's message is never touched, and a server's chat is read at most 10 times a minute for this.
+  - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
+    that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
+    yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the
+    website's `pictures` promise, privacy page, help and features lines) is a separate PR that merges only on the
+    owner's word. The website's transcript view still tags these lines "(typed)" until its database functions
     learn the flag (follow-up).
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
@@ -4819,6 +4861,17 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       DM's recap page. The DM decides, as always.
     - **This is DMbot's own loop,** before the DM sees anything. PlotBot's DM-facing check before
       Accept (above) still runs on the result.
+    - *Built, approving an unchecked draft (CloudDev, 2026-10-23, #2305).* A recap whose check cannot be
+      reached waits (15 minutes, an hour, 4 hours, then every 12 hours) and never fails for waiting. After **3 days**
+      the DM is told once, in these words: "📜 Your recap is written but DMbot couldn't finish checking it. You can read
+      it and approve it yourself on the recap page." The page shows the draft with the sentences DMbot could not check
+      marked, and `POST /me/recaps/{ref}/approve-unchecked` with the recap's `textHash` (a DM of the campaign; anyone else
+      gets "not found"; before the 3 days, `not_yet`; a draft revised since the page showed it, `changed`; a second press
+      answers the same) approves it as it is, so only the words the DM read are approved. The database's door (`dmbot_recap_approve_unchecked`, migration
+      0207) marks the check done, records who and when in the critics' JSON, and adds the note "Check: DMbot could not
+      finish checking this recap. The DM approved it as it is."; the bot's worker then runs the title and
+      housekeeping step and the recap is `ready`, after which the usual approval and posting apply. Players see nothing
+      before the DM posts, as with any recap. A save of the critics' loop made from before the approval cannot undo it.
   - **Cost:** the owner accepts **two to five times** today's recap cost for this. The per-recap call
     ceiling and the campaign's daily ceiling rise to match. docs/costs.md is updated in its own PR,
     which needs the owner's label.

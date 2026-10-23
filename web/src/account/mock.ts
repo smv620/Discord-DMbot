@@ -234,6 +234,10 @@ export function scenarioMe(scenario: Scenario): Me | null {
     servers,
     recording,
     dmbotId: "1P0Z4F6N2K9",
+    discordAccounts: [
+      { key: "d1", name: "Mira (main)", current: true, canRemove: true },
+      { key: "d2", name: "Mira on the phone", current: false, canRemove: true },
+    ],
     experiencePoints: 1245,
     canMove: false,
     canSupport: false,
@@ -1594,6 +1598,74 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`email-use:${token}`);
       if (token !== "good-link") throw new ApiError("bad-link");
       me = scenarioMe("table");
+    },
+    // The owner's side of a hand-over by email (#2534): one open offer per campaign, and an answer that
+    // never says anything about the address. `bad` is not an address; `many@example.com` is over the limit.
+    async offerHandover(ref, email) {
+      calls.push(`offerHandover:${ref}:${email}`);
+      await reachable();
+      signedIn();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ApiError("bad-email");
+      if (email.startsWith("many@")) throw new ApiError("too-soon");
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      // (copied, never changed in place: the pretend campaigns are shared by every test)
+      const open = { sentAt: "2026-10-23T12:00:00Z", expiresAt: "2026-10-30T12:00:00Z" };
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: open } : x)) };
+    },
+    async takeBackHandover(ref) {
+      calls.push(`takeBackHandover:${ref}`);
+      await reachable();
+      signedIn();
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: null } : x)) };
+    },
+    // The hand-over accept page (#2534). Tokens: `open` (can accept), `no-plan`, `try-it`, `own`, `late`
+    // (ended); `gone-after` looks open and ends before accepting.
+    async handoverLook(token) {
+      calls.push(`handoverLook:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "late" || !/^[\w-]{1,200}$/.test(token)) return { status: "ended" };
+      const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
+      return {
+        status: "open",
+        campaign: { name: "The Silver Hall" },
+        from: { name: "Mira" },
+        server: { id: "s1", name: "Friday Night Dice" },
+        canAccept: why === null,
+        why,
+        servers: [
+          { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+          { id: "s2", name: "Sunday Table", current: false, botIn: true },
+          { id: "s3", name: "New Server", current: false, botIn: false },
+        ],
+      };
+    },
+    async handoverAccept(token, serverId) {
+      calls.push(`handoverAccept:${token}:${serverId}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+      if (serverId === "s3") throw new ApiError("bad-server");
+      return { campaignRef: "s1.cmp1" };
+    },
+    async handoverDecline(token) {
+      calls.push(`handoverDecline:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+    },
+    addDiscordUrl: () => "#demo-add-discord",
+    async removeDiscordAccount(key) {
+      calls.push(`removeDiscordAccount:${key}`);
+      await reachable();
+      signedIn();
+      const list = me?.discordAccounts ?? [];
+      const found = list.find((a) => a.key === key);
+      if (!found) throw new ApiError("not-found");
+      if (list.length <= 1) throw new ApiError("last-account");
+      const left = list.filter((a) => a.key !== key);
+      me = { ...me!, discordAccounts: left.map((a) => ({ ...a, canRemove: left.length > 1 })) };
     },
     async getMoveCode() {
       calls.push("move-code");
