@@ -14,6 +14,14 @@ const contentDir = fileURLToPath(new URL("../src/content/", import.meta.url));
 
 // The content files that speak about the bot's buttons. The rest (account, admin, pricing, …) name
 // the website's own buttons, which are not the bot's to hold.
+/** A content file's text; What's new is one file per entry now (#2468), so its folder counts too. */
+function contentText(file: string): string {
+  const own = readFileSync(join(contentDir, file), "utf8");
+  if (file !== "whats-new.ts") return own;
+  const folder = join(contentDir, "whats-new");
+  return [own, ...readdirSync(folder).map((f) => readFileSync(join(folder, f), "utf8"))].join("\n");
+}
+
 const botFacing = ["help.ts", "whats-new.ts", "players.ts", "features.ts", "before-you-start.ts"];
 
 const pythonFiles = (dir: string): string[] =>
@@ -49,7 +57,7 @@ describe("button labels on the site", () => {
 
   for (const file of botFacing) {
     it(`${file} presses only real buttons`, () => {
-      const items = buttonPhrases(readFileSync(join(contentDir, file), "utf8"));
+      const items = buttonPhrases(contentText(file));
       const problems = labelProblems(items, labels, allowed).map(
         (p) => `${file}: "${p.phrase}" is not a DMbot button${p.closest ? `; the closest real one is "${p.closest}"` : ""}`,
       );
@@ -86,7 +94,7 @@ describe("button labels on the site", () => {
   });
 
   it("counts the phrases it checked", () => {
-    const total = botFacing.reduce((n, f) => n + buttonPhrases(readFileSync(join(contentDir, f), "utf8")).length, 0);
+    const total = botFacing.reduce((n, f) => n + buttonPhrases(contentText(f)).length, 0);
     expect(total).toBeGreaterThan(80); // a drop means the reader stopped seeing the site's steps
   });
 });
