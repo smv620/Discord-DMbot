@@ -10,7 +10,7 @@ import json
 import re
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 from unittest.mock import AsyncMock
 
@@ -268,7 +268,7 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
                 shaped_calls += 1
                 if shaped_calls > 1:
                     await asyncio.sleep(30)  # every slice after the first is still going
-            return await quick(system, text, max_tokens=max_tokens, schema=schema)
+            return cast(Reply, await quick(system, text, max_tokens=max_tokens, schema=schema))
 
         fake.complete.side_effect = complete
         with (
