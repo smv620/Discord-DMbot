@@ -381,7 +381,8 @@ describe("opening at a moment (#2402)", () => {
     const all = lines(10, 20);
     expect(lineAtMoment(all, 14_000, false)).toBe(4); // begins exactly then
     expect(lineAtMoment(all, 14_900, false)).toBe(4); // just after: still that line
-    expect(lineAtMoment(all, 9_000, false)).toBeNull(); // before the first line
+    expect(lineAtMoment(all, 9_000, false)).toBe(0); // before the first line: the first line
+    expect(lineAtMoment(all, 0, true)).toBe(0); // even with more pages to come: no need to load them
     expect(lineAtMoment(all, 99_000, false)).toBe(9); // past the end, nothing more to load: the last line
     expect(lineAtMoment(all, 99_000, true)).toBeNull(); // past the end of what is loaded, more to load: ask again
     expect(lineAtMoment(["a note", ...all], 11_500, false)).toBe(2); // a line with no start is skipped
@@ -422,6 +423,23 @@ describe("opening at a moment (#2402)", () => {
     const marked = await screen.findByText("[0:02:05] line at 125s");
     expect(marked.getAttribute("aria-current")).toBe("location");
     expect(asked).toEqual([0, 50, 100]);
+  });
+
+  it("marks the first line for a moment before it, and loads only the first page", async () => {
+    window.location.hash = "#t=0";
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const api = mockApi("table");
+    const first = await api.transcript!(REF, 1, "cleaned");
+    const asked: number[] = [];
+    api.transcript = async (_r, number, version, offset = 0) => {
+      asked.push(offset);
+      return { ...first, number, version, lines: lines(10 + offset, 20 + offset), next: offset < 20 ? offset + 10 : null };
+    };
+    page(api, `/account/transcripts/${REF}/1`);
+    const marked = await screen.findByText("[0:00:10] line at 10s");
+    expect(marked.getAttribute("aria-current")).toBe("location");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(asked).toEqual([0]); // the rest was never fetched
   });
 
   it("stops loading when the moment is past the end", async () => {

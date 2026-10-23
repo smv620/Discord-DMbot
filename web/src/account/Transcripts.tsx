@@ -365,15 +365,16 @@ export function lineOffsetSeconds(line: string): number | null {
   return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) : null;
 }
 
-/** The line that began at or just before the moment: the last one whose start is not after it. Null
- * when no line starts that early, or when the loaded lines may stop before the moment is reached
- * (`more`): the caller loads the next page and asks again. */
+/** The line that began at or just before the moment: the last one whose start is not after it. A
+ * moment before the first line is the first line (such as `#t=0`). Null only when the loaded lines
+ * may stop before the moment is reached (`more`) or none has a start: the caller loads the next page
+ * and asks again. */
 export function lineAtMoment(lines: string[], ms: number, more: boolean): number | null {
   let found: number | null = null;
   for (const [i, line] of lines.entries()) {
     const at = lineOffsetSeconds(line);
     if (at === null) continue;
-    if (at * 1000 > ms) return found;
+    if (at * 1000 > ms) return found ?? i; // before the first line: the first line
     found = i;
   }
   return more ? null : found;
