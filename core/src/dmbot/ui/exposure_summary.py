@@ -25,7 +25,7 @@ from dmbot.memory._changes import ALREADY_UNDONE
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
-from dmbot.ui.names import ReviewButton
+from dmbot.ui.names import RecapNamesButton, ReviewButton
 from dmbot.ui.secret_aloud import NO_CAMPAIGN, NO_MEMORY, NOT_YOURS
 
 log = logging.getLogger(__name__)
@@ -195,7 +195,12 @@ class RecantButton(
 
 
 def summary_view(
-    exposure_ids: Sequence[int], campaign_id: str, guild_id: int, *, new_names: bool = False
+    exposure_ids: Sequence[int],
+    campaign_id: str,
+    guild_id: int,
+    *,
+    new_names: bool = False,
+    private: bool = False,
 ) -> discord.ui.View:
     """One ↩️ Recant button for each listed item, five to a row, numbered like the list; then the
     📝 Check new names button on its own row when the message lists new names."""
@@ -205,7 +210,8 @@ def summary_view(
         button.item.row = (n - 1) // PER_ROW
         view.add_item(button)
     if new_names:
-        check = ReviewButton(campaign_id)
+        # A private message has no server, so its button carries the server (as the recap's does).
+        check = RecapNamesButton(guild_id, campaign_id) if private else ReviewButton(campaign_id)
         check.item.row = 2  # after the (at most two) rows of Recant buttons
         view.add_item(check)
     return view

@@ -75,6 +75,8 @@ class Text(unittest.TestCase):
         check: Any = view.children[-1]
         self.assertEqual(check.item.custom_id, f"dmbot:names:review:{CID}")
         self.assertEqual(check.item.row, 2)
+        private: Any = summary_view([1], CID, GUILD_A, new_names=True, private=True).children[-1]
+        self.assertEqual(private.item.custom_id, f"dmbot:names:recap:{GUILD_A}:{CID}")
         plain = summary_view([1], CID, GUILD_A)
         self.assertEqual(len(plain.children), 1)  # no names, no extra button
         self.assertNotIn("🆕", summary_text(["A"], 0))
