@@ -4470,7 +4470,19 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     with `recap_run --compare` (two drafts read blind). Every check after the writer is the same whichever
     wrote it. It needs a **paid-tier** Gemini key (the free tier's terms allow using the data), the privacy
     page naming Google as a processor when it writes, and its cost in docs/costs.md (#2574). Which writer
-    is the default is the owner's call after the comparison. The formatting model
+    is the default is the owner's call after the comparison.
+    - **The Gemini writer reads the cleaned transcript** (owner, 2026-10-23, #2590): the whole
+      cleaned transcript of the session (never the raw one, never sound, never DM-screen content,
+      which the cleaned transcript doesn't hold), with PlotBot's guide to what matters (the beats,
+      the open threads and what the campaign's memory marks as important), so it picks out what is
+      important itself instead of writing from the beat sheet alone. What the writer reads is its
+      own setting (`RECAP_WRITER_READS`: `beats` or `transcript`), apart from who writes, so
+      `recap_run --compare` can test one change at a time. The checks after the writer read the
+      same input: the fact check counts a detail as supported when the transcript says it, and the
+      names, secrets, presence and coverage checks are unchanged. A secret name said aloud at the
+      table is in the transcript, so the writer is told never to use it, and the secret check still
+      refuses a draft that does. The privacy page says Google gets the cleaned transcript (#2589).
+    The formatting model
     (`AI_MODEL_FORMATTING`, default Haiku 5.5, `claude-haiku-5-5`) then puts that text into the
     recap's fixed shape with the structured-output schema: sections, moods, cues and music prompts.
     - **The formatter changes no word of the story.** Code compares the narration's words before and
