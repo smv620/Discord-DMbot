@@ -400,7 +400,7 @@ class WhatIsListedIsWhatIsShown(StepBase):
         await self.store.record(
             GUILD_A, self.c, 100, [Exposure("name", spelling_key("Vexa"), None, 1)]
         )
-        bot = SimpleNamespace(
+        bot: Any = SimpleNamespace(
             memory=self.memory, exposures=self.store, lookup=None,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign(id=self.c))),
             settings=SimpleNamespace(site_url=""), post=AsyncMock(return_value=True),
@@ -428,7 +428,7 @@ class RunningTwice(StepBase):
         await self.store.record(
             GUILD_A, self.c, 100, [Exposure("name", spelling_key("Auril"), None, 1)]
         )
-        bot = SimpleNamespace(
+        bot: Any = SimpleNamespace(
             memory=self.memory, exposures=self.store, lookup=None,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign(id=self.c))),
             settings=SimpleNamespace(site_url=""), post=AsyncMock(return_value=True),
