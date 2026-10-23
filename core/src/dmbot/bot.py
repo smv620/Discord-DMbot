@@ -419,6 +419,7 @@ from dmbot.ui.name_card import (
     FinishPastButton,
     UndoButton,
     UndoConnectionButton,
+    UndoManyButton,
     UndoRunButton,
     UndoSpellingButton,
 )
@@ -1521,6 +1522,7 @@ class DMBot(commands.AutoShardedBot):
             UndoButton,
             UndoConnectionButton,
             UndoRevealedButton,
+            UndoManyButton,
             UndoListButton,
             UndoSpellingButton,
             FinishPastButton,

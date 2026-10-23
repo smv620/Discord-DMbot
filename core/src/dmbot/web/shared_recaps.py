@@ -29,7 +29,8 @@ PUBLIC_KINDS = (VOICE, MUSIC)  # never the mix: it is the DM's own copy
 
 
 async def _find(db: Database, token: str) -> dict[str, Any] | None:
-    """The posted recap this token names whose text passes the secret check, else None."""
+    """The posted (or, for a link the DM made before posting, approved) recap this token names whose
+    text passes the secret check, else None."""
     if not _TOKEN.fullmatch(token):
         return None
     async with db.anonymous() as conn:
@@ -77,8 +78,8 @@ async def read_shared(
         "text": strip_cues(found["summary"]),
         "postedAt": found["postedAt"],
         # When it was played, and which session it was and how long it ran (#2418): the same facts
-        # as the DM's page. The number and length come from the shared door once it carries them;
-        # until then the page leaves them out (it must render an answer without them).
+        # as the DM's page. The number and length come from the shared door (migration 0180); an
+        # older door leaves them out, and the page renders an answer without them.
         "sessionAt": found.get("at"),
         "sessionNumber": found.get("sessionNumber"),
         "sessionSeconds": found.get("sessionSeconds"),

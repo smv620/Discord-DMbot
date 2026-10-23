@@ -47,6 +47,30 @@ def _recap_audio_view(
     )
 
 
+def _facts_of(fact: dict[str, Any] | None) -> dict[str, Any]:
+    """The card's facts (#2460) as the page reads them; a fact that is missing or zero is left out,
+    so the card does not say "0 sessions" for a campaign nobody has played yet."""
+    if fact is None:
+        return {}
+    out: dict[str, Any] = {}
+    if fact.get("live"):
+        out["live"] = True
+    if fact.get("sessions"):
+        out["sessions"] = int(fact["sessions"])
+    seconds = int(fact.get("secondsPlayed") or 0)
+    if seconds > 0:
+        # Two decimals, so a short test session is not rounded away to nothing; the page says
+        # "Under 1 hour played" for it and rounds the rest.
+        out["hoursPlayed"] = round(seconds / 3600, 2)
+    if fact.get("players"):
+        out["players"] = int(fact["players"])
+    if fact.get("npcs"):
+        out["npcs"] = int(fact["npcs"])
+    if fact.get("startedAt"):
+        out["startedAt"] = _iso_time(int(fact["startedAt"]))
+    return out
+
+
 def _iso_time(seconds: int | None) -> str | None:
     if seconds is None:
         return None
@@ -145,8 +169,11 @@ async def build_me(
                         " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
                         {"g": guild.id},
                     )
-                pending.append((guild, mine, offered, here, agreed))
-        for guild, mine, offered, here, agreed in pending:
+                # The facts on each card (#2460): one read for the whole server.
+                facts = await conn.execute("SELECT dmbot_web_campaign_facts(%s) AS f", (guild.id,))
+                pending.append((guild, mine, offered, here, agreed, facts))
+        for guild, mine, offered, here, agreed, facts in pending:
+            found_facts = {str(f["id"]): f for f in ((await facts.fetchone() or {}).get("f") or [])}
             for row in await mine.fetchall():
                 campaigns.append(
                     {
@@ -166,6 +193,25 @@ async def build_me(
                         # Whether importing older sessions works in its server (#2259), so the
                         # page shows the importer only where it does.
                         "importsOn": imports_for(guild.id),
+                        **_facts_of(found_facts.get(str(row["id"]))),
+                    }
+                )
+            # Campaigns this person plays in but does not run (#2460): a card, no DM tools.
+            for fact in found_facts.values():
+                if fact["dm"]:
+                    continue
+                campaigns.append(
+                    {
+                        "id": str(fact["id"]),
+                        "ref": f"{guild.id}.{fact['id']}",
+                        "name": fact["name"],
+                        "serverName": guild.name,
+                        "lastPlayedAt": _iso_time(fact["lastPlayedAt"]),
+                        # (a paused state arrives with #437 part 2; the door does not carry it yet)
+                        "status": "active",
+                        "role": "player",
+                        "importsOn": False,
+                        **_facts_of(fact),
                     }
                 )
             for row in await offered.fetchall():

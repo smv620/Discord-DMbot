@@ -241,6 +241,7 @@ export default function WebMap({
           ))}
           {nodes.some((n) => n.revealed === false) && <li>{words.legendNotRevealed}</li>}
           {edges.some(isTheory) && <li>{words.legendTheory}</li>}
+          {edges.some((e) => e.links.some((l) => l.pinned)) && <li>{words.legendPinned}</li>}
         </ul>
       </section>
     </div>
