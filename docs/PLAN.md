@@ -2027,11 +2027,11 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.
-  - **Pronunciation in the list** (`Moric (MOR-ick) | NPC | Mo`): the bracket after a name is read as how to say
+  - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Tav`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
-    "a". Otherwise it's an aside, kept as an other name with the name in front: `Moric (the rogue)` gives
-    Moric, also called "Moric the rogue". A near miss asks the DM ("Is (the Rogue) how to say Moric?" [It's how
+    "a". Otherwise it's an aside, kept as an other name with the name in front: `Tavin (the rogue)` gives
+    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (the Rogue) how to say Tavin?" [It's how
     to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
   - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
   - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen
