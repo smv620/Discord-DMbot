@@ -102,6 +102,7 @@ from dmbot.dm_screen import (
     set_suggestion,
     set_update,
     update_notes,
+    web_settings,
 )
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
@@ -125,7 +126,7 @@ from dmbot.dm_screen.adventure_card import RemoveNoButton as RemoveAdventureNoBu
 from dmbot.dm_screen.adventure_card import RemoveYesButton as RemoveAdventureYesButton
 from dmbot.dm_screen.adventure_card import SeeButton as SeeAdventureButton
 from dmbot.dm_screen.backstory_button import BackstoryButton
-from dmbot.dm_screen.channel import update_help_card
+from dmbot.dm_screen.channel import setup_dm_screen, update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
@@ -1026,6 +1027,8 @@ class DMBot(commands.AutoShardedBot):
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         # What DMs did on the website's All names page, waiting to be applied (#2294).
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
+        # What DMs chose on the website's Settings page, waiting to be applied (#2463).
+        self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
@@ -10206,6 +10209,10 @@ class DMBot(commands.AutoShardedBot):
             except Exception as exc:
                 log.warning("The name actions failed: %s", type(exc).__name__)
             try:
+                await self.run_web_settings()
+            except Exception as exc:
+                log.warning("The website settings failed: %s", type(exc).__name__)
+            try:
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
@@ -10218,6 +10225,8 @@ class DMBot(commands.AutoShardedBot):
                             await self.name_answers.sweep(guild.id)
                         if self.name_actions is not None:
                             await self.name_actions.sweep(guild.id)
+                        if self.web_settings is not None:
+                            await self.web_settings.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
@@ -10310,6 +10319,60 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Name action %s: %s", action.action, done.error or "done")
                     if not done.error and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, action.campaign_id)
+
+    # ---- the website's Settings page (#2463): the Host of dm_screen.web_settings ----
+
+    async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
+        return await self.campaigns.get(guild_id, campaign_id)
+
+    async def apply_visibility(self, campaign: Campaign, visibility: str) -> str:
+        """Who can see the DM screen, as the Discord button does it: saved and applied together
+        under the campaign's lock, the same warning posted in the screen, a live session caught
+        up. The DM's notice is Discord's own words."""
+        guild = self.get_guild(campaign.guild_id)
+        if guild is None:
+            raise DMScreenError(screen_messages.CAMPAIGN_GONE)
+        result = await setup_dm_screen(guild, campaign.id, self.campaigns, visibility=visibility)
+        note = screen_messages.visibility_changed(visibility, was=campaign.dm_screen_visibility)
+        if result.warning:
+            note += "\n" + result.warning
+            with contextlib.suppress(discord.HTTPException):
+                await result.channel.send(result.warning, allowed_mentions=NO_PINGS)
+        await self.after_screen_change(result.campaign, result.channel)
+        return note
+
+    async def apply_level(self, campaign: Campaign, level: str) -> Campaign:
+        return await self.set_screen_level(
+            campaign.guild_id, campaign.id, level, was=campaign.dm_screen_level
+        )
+
+    async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign:
+        return await self.campaigns.set_transcript_keep(campaign.guild_id, campaign.id, days)
+
+    async def run_web_settings(self) -> None:
+        """What DMs chose on the website's Settings page (#2463), applied the way Discord's
+        ⚙️ Settings buttons apply it. Each sender must still be a DM of the campaign; only the
+        outcome word is logged, never the choice."""
+        store = self.web_settings
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(NAME_ANSWERS_PER_ROUND):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    try:
+                        done = await web_settings.apply(self, guild.id, item)
+                    except Exception as exc:  # the row must never stay "working" for a bug
+                        log.warning("A website setting failed: %s", type(exc).__name__)
+                        done = web_settings.Outcome(web_settings.FAILED)
+                    try:
+                        await store.finish(guild.id, item, done)
+                    except Exception as exc:  # taken again later: apply() sees it already done
+                        log.warning("A website setting could not be marked: %s", type(exc).__name__)
+                        break
+                    log.info("Website setting %s: %s", item.setting, done.error or "done")
 
     async def run_recap_requests(self) -> None:
         store = self.recap_requests

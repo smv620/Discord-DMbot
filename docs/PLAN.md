@@ -1896,6 +1896,16 @@ names panel nor the speech-to-text hints can be a fixed list.
     4. **Settings** (the campaign's DMs only): who can see the DM screen (peek) · how much DMbot says ·
        transcript retention · game masters · hand over · pause · delete. These are the same choices as
        ⚙️ Settings in Discord, with the same words. Players see the groups they may use.
+       **Changing them from the site (#2463):** who can see the DM screen, how much DMbot says
+       (Quiet or Normal) and transcript retention are changed through the website's action queue
+       (`setting_actions`, the same pattern as the All names page). The DM is checked when the choice is
+       queued and again when the bot applies it, and the bot applies it exactly like the Discord button:
+       the same store calls, the channel permissions for visibility, the notice in the DM screen and the
+       same words back to the DM. A shorter transcript limit deletes old sessions, so it needs the DM's
+       yes sent with it, as Discord asks first. Only a campaign's DMs may use it (Discord also lets a
+       server manager change visibility; the site is narrower). The logs hold counts and outcome words,
+       never the choice. Game masters, hand over, pause and delete stay in Discord: the page says "Do this
+       in Discord: 👤 DMbot Main Menu → ⚙️ Settings → 🗂️ Campaign management → …".
   - **Story timeline:** the campaign's sessions in order, each with its number, date and length, its recap
     (linked) and what was revealed at the table that session. It's built after the other pages.
   - **Words:** a page is called by the same name everywhere: in Discord, on the tabs, in the breadcrumb, and on
