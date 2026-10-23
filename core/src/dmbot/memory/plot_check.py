@@ -145,12 +145,11 @@ def _finding(item: object, sentences: Sequence[str], shown: Sequence[Earlier]) -
     source = shown[which - 1]
     quote = " ".join(quote.split())
     # The quote must be the earlier recap's own words (up to case and spacing), so a source that
-    # was never written cannot reach the DM; it is stored as it stands in that recap.
+    # was never written cannot reach the DM; it is stored with its spacing tidied.
     if not QUOTE_MIN <= len(quote) <= QUOTE_MAX:
         return None
-    start = _squash(source.text).find(_squash(quote))
-    if start < 0:
-        return None
+    if _squash(quoted(source.text)[:EARLIER_CHARS]).find(_squash(quote)) < 0:
+        return None  # (only the part of the earlier recap the call was shown counts)
     reason = " ".join(reason.split())[:REASON_MAX]
     if not reason:
         return None

@@ -11,6 +11,7 @@ again. The findings are advice for the DM alone: nothing here is posted, logged 
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -27,7 +28,8 @@ log = logging.getLogger(__name__)
 PER_HOUR = 6  # checks that may begin for one campaign in an hour
 TRIES = 3
 STALE_S = 600  # a started check not finished in this long is tried again
-PER_ROUND = 3  # checks run in one round, across all servers
+PER_ROUND = 3  # checks run in one round in one server
+CALL_TIMEOUT_S = 120
 _HASH = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
 _JOB_HASH = "encode(sha256(convert_to(j.title || E'\\n' || j.summary, 'UTF8')), 'hex')"
 
@@ -43,11 +45,12 @@ class PlotStore:
 
     async def waiting(self, guild_id: int, *, limit: int = 5) -> list[tuple[str, int, str]]:
         """(campaign, session, text hash) of ready drafts whose text has no check, or whose check
-        began long ago and never finished, within each campaign's hourly allowance."""
+        began long ago and never finished, within each campaign's hourly allowance. One for each
+        campaign, so a round never goes past the allowance."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                f"SELECT j.campaign_id, j.session_at, {_JOB_HASH} AS h"
+                f"SELECT DISTINCT ON (j.campaign_id) j.campaign_id, j.session_at, {_JOB_HASH} AS h"
                 " FROM recap_jobs j LEFT JOIN plot_checks k ON k.guild_id = j.guild_id"
                 " AND k.campaign_id = j.campaign_id AND k.session_at = j.session_at"
                 f" AND k.text_hash = {_JOB_HASH}"
@@ -56,12 +59,22 @@ class PlotStore:
                 "   AND k.tries < %s))"
                 " AND (SELECT count(*) FROM plot_checks r WHERE r.guild_id = j.guild_id"
                 "   AND r.campaign_id = j.campaign_id AND r.created_at > %s) < %s"
-                " ORDER BY j.session_at LIMIT %s",
+                " ORDER BY j.campaign_id, j.session_at LIMIT %s",
                 (guild_id, now - STALE_S, TRIES, now - 3600, PER_HOUR, limit),
             )
             return [
                 (r["campaign_id"], int(r["session_at"]), str(r["h"])) for r in await cur.fetchall()
             ]
+
+    async def give_up_stale(self, guild_id: int) -> None:
+        """A check that began `TRIES` times and never finished (the bot died each time) is given
+        up, so the page reads 'failed' instead of waiting on it."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE plot_checks SET state = 'failed', finished_at = %s WHERE guild_id = %s"
+                " AND state = 'running' AND created_at < %s AND tries >= %s",
+                (int(self._now()), guild_id, int(self._now()) - STALE_S, TRIES),
+            )
 
     async def begin(self, guild_id: int, campaign_id: str, session_at: int, digest: str) -> bool:
         """Start (or start again) the check of this text. False: someone else has it."""
@@ -110,12 +123,26 @@ class PlotStore:
                 f" AND session_at = %s AND {_HASH} = %s",
                 (guild_id, campaign_id, session_at, digest),
             )
-            if await cur.fetchone() is None:
-                await conn.execute(
-                    "DELETE FROM plot_checks WHERE guild_id = %s AND campaign_id = %s"
-                    " AND session_at = %s AND text_hash = %s",
-                    (guild_id, campaign_id, session_at, digest),
-                )
+            same = await cur.fetchone() is not None
+            # Claim the check first: only the run that still holds it ('running') writes, so a
+            # late second run of the same text (a retry that raced the first) adds nothing. A
+            # check made for words that have changed since is kept as 'failed', not removed, so
+            # it still counts against the hour's allowance (every edit would otherwise be free).
+            cur = await conn.execute(
+                "UPDATE plot_checks SET state = %s, calls = %s, finished_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                " AND text_hash = %s AND state = 'running'",
+                (
+                    "done" if same else "failed",
+                    calls,
+                    now,
+                    guild_id,
+                    campaign_id,
+                    session_at,
+                    digest,
+                ),
+            )
+            if not cur.rowcount or not same:
                 return 0
             cur = await conn.execute(
                 "SELECT fine_key FROM plot_fine WHERE guild_id = %s AND campaign_id = %s",
@@ -126,6 +153,7 @@ class PlotStore:
             for f in findings:
                 if f.fine_key in fine:
                     continue  # the DM said "Not a problem" to this same point
+                # (`source_session` holds the earlier recap's title, which the page shows)
                 await conn.execute(
                     "INSERT INTO plot_issues (guild_id, campaign_id, id, session_at, text_hash,"
                     " kind, level, sentence, sentence_text, reason, source_text, source_session,"
@@ -138,11 +166,6 @@ class PlotStore:
                     ),
                 )  # fmt: skip
                 written += 1
-            await conn.execute(
-                "UPDATE plot_checks SET state = 'done', calls = %s, finished_at = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND text_hash = %s",
-                (calls, now, guild_id, campaign_id, session_at, digest),
-            )
             return written
 
     async def fail(self, guild_id: int, campaign_id: str, session_at: int, digest: str) -> None:
@@ -150,7 +173,8 @@ class PlotStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE plot_checks SET state = 'failed', finished_at = %s WHERE guild_id = %s"
-                " AND campaign_id = %s AND session_at = %s AND text_hash = %s",
+                " AND campaign_id = %s AND session_at = %s AND text_hash = %s"
+                " AND state = 'running'",  # (a late failure never undoes a finished check)
                 (int(self._now()), guild_id, campaign_id, session_at, digest),
             )
 
@@ -164,6 +188,7 @@ class PlotRunner:
     async def round(self, guild_id: int, *, limit: int = PER_ROUND) -> int:
         """Run the checks that wait in one server, at most `limit`. Returns how many ran."""
         ran = 0
+        await self._store.give_up_stale(guild_id)
         for campaign_id, session_at, digest in await self._store.waiting(guild_id, limit=limit):
             if await self._store.begin(guild_id, campaign_id, session_at, digest):
                 ran += 1
@@ -186,10 +211,12 @@ class PlotRunner:
                 found: list[pc.Finding] = []
                 calls = 0
             else:
-                reply = await self._ai.complete(
-                    pc.system(),
-                    pc.message(sentences, earlier),
-                    max_tokens=pc.TOKENS,
+                # A hung call must not stall the recap jobs it runs beside: well under STALE_S.
+                reply = await asyncio.wait_for(
+                    self._ai.complete(
+                        pc.system(), pc.message(sentences, earlier), max_tokens=pc.TOKENS
+                    ),
+                    CALL_TIMEOUT_S,
                 )
                 calls = 1
                 if getattr(reply, "refused", False) or getattr(reply, "cut", False):

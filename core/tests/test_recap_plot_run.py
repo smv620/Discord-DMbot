@@ -4,12 +4,15 @@ that cannot run being given up. The AI is a stand-in that returns what it is tol
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
+from dmbot.memory.plot_check import Earlier, parse
 from dmbot.recaps.accepted import AcceptedStore
-from dmbot.recaps.plot import PER_HOUR, STALE_S, PlotRunner, PlotStore
+from dmbot.recaps.plot import PER_HOUR, STALE_S, TRIES, PlotRunner, PlotStore
 from tests.test_recap_plot import PlotBase
 from tests.test_recap_web import NOW
 from tests.test_web_api import THURSDAY
@@ -124,7 +127,9 @@ class Running(PlotBase):
 
         await PlotRunner(store, self.accepted, Edits(self.finding())).round(THURSDAY.id)
         self.assertEqual(await self.rows("plot_issues"), [])
-        self.assertEqual(await self.rows("plot_checks"), [])  # so the new text is checked afresh
+        [old] = await self.rows("plot_checks")  # kept, so the edit still counts for the hour
+        self.assertEqual(old["state"], "failed")
+        self.assertEqual(await self.runner(Ai()).round(THURSDAY.id), 1)  # the new text is checked
 
     async def test_an_answer_that_cannot_be_used_gives_the_check_up(self) -> None:
         await self.earlier()
@@ -164,3 +169,48 @@ class Running(PlotBase):
     async def test_a_draft_not_ready_or_already_decided_is_not_checked(self) -> None:
         await self.store.update(THURSDAY.id, self.one.id, 100, state="prose")
         self.assertEqual(await self.plots.waiting(THURSDAY.id), [])
+
+    async def test_two_runs_of_the_same_text_write_its_issues_once(self) -> None:
+        await self.earlier()
+        digest = await self.hash_of()
+        await self.plots.begin(THURSDAY.id, self.one.id, 100, digest)
+        parsed = (
+            parse(Ai(self.finding()).reply, self.sentences(), [Earlier(50, "The Vault", FELL)])
+            or []
+        )
+        first = await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1)
+        again = await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1)
+        self.assertEqual((first, again), (1, 0))
+        self.assertEqual(len(await self.rows("plot_issues")), 1)
+
+    async def test_a_late_failure_does_not_undo_a_finished_check(self) -> None:
+        digest = await self.hash_of()
+        await self.plots.begin(THURSDAY.id, self.one.id, 100, digest)
+        await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, [], 0)
+        await self.plots.fail(THURSDAY.id, self.one.id, 100, digest)
+        [check] = await self.rows("plot_checks")
+        self.assertEqual(check["state"], "done")
+
+    async def test_a_check_that_never_finished_in_three_tries_is_given_up(self) -> None:
+        digest = await self.hash_of()
+        for n in range(TRIES):
+            await PlotStore(self.db, clock=lambda n=n: NOW + n * (STALE_S + 5)).begin(  # type: ignore[misc]
+                THURSDAY.id, self.one.id, 100, digest
+            )
+        late = PlotStore(self.db, clock=lambda: NOW + TRIES * (STALE_S + 5))
+        self.assertEqual(await late.waiting(THURSDAY.id), [])  # not tried a fourth time
+        await late.give_up_stale(THURSDAY.id)
+        [check] = await self.rows("plot_checks")
+        self.assertEqual(check["state"], "failed")
+
+    async def test_a_call_that_hangs_gives_the_check_up(self) -> None:
+        await self.earlier()
+
+        class Hangs(Ai):
+            async def complete(self, system: str, text: str, **kw: Any) -> Any:
+                await asyncio.sleep(60)
+
+        with patch("dmbot.recaps.plot.CALL_TIMEOUT_S", 0.05):
+            await self.runner(Hangs()).round(THURSDAY.id)
+        [check] = await self.rows("plot_checks")
+        self.assertEqual(check["state"], "failed")
