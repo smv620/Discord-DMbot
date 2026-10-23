@@ -169,6 +169,8 @@ export const importPage = {
   failedReason: {
     names_failed: "The check for new names failed. Import this file again on its own, later.",
     partly_labelled: "Some lines couldn't be sorted, so they count as game talk.",
+    error: "Something went wrong with this one. Import this file again on its own.",
+    recap_failed: "The recap couldn't be written. You can try again from the recap list.",
   } as Record<string, string>,
   // Where each session has got to (#2230). Simple words: what DMbot is doing, or what it needs.
   stage: {
@@ -188,6 +190,8 @@ export const importPage = {
   // Said when the server calls the import stalled: it can still move, and the files are safe.
   stalledDo: "Your files are safe, and you can leave and come back. If nothing moves in 5 more minutes, import the files that aren't done again, one at a time.",
   failedDo: "Import the files again, one at a time. Nothing already imported is lost.",
+  // How far a session's cleaning has got, by the API's counts (a unit of lines); only numbers, never a line of text.
+  lineCount: (done: number, total: number): string => `${done} of ${total} lines`,
   sessionStalled: "Not moving for a while. Try this one again, one at a time.",
   stoppedWatching: "We stopped checking after a long time with nothing new. Your files are safe. Press Check again to look once more.",
   gone: "This import is no longer listed. It may have finished. Check Transcripts to see what was imported.",

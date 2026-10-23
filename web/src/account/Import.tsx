@@ -117,6 +117,20 @@ interface Folded {
 
 /** What to add after a session's state: its reason, or the plain fallback for a failure with no
  * known reason. Nothing for any other state without one, so a line never ends in a bare " · ". */
+/** The words for why the whole import failed: the server sends a code, which is mapped to the page's own
+ * plain words (with a fallback), and never printed as it is. Only a failure has any. */
+function importReason(imp: JobProgress): string | undefined {
+  if (imp.state !== "failed") return undefined;
+  return (imp.reason && words.failedReason[imp.reason]) || words.failedFallback;
+}
+
+/** "120 of 400 lines" while a session is being cleaned (the API's counts, with `unit: "lines"`), else nothing. */
+function lineCount(s: Session): string {
+  const p = s.progress;
+  if (!p || p.state === "done" || typeof p.done !== "number" || typeof p.total !== "number" || p.total <= 0) return "";
+  return p.unit === "lines" ? words.lineCount(p.done, p.total) : "";
+}
+
 function reasonLine(state: string, reason: string | null): string {
   const known = reason ? words.failedReason[reason] : undefined;
   return known ?? (state === "failed" ? words.failedFallback : "");
@@ -653,7 +667,7 @@ export default function Import({
             waiting={progress.import.stage === "waiting_for_names"}
             frozen={problem !== null} // (gone, an error, or the page stopped looking: no clock keeps running beside it)
             // (the server's stall words are not shown: the page has its own; its failure reason is a fixed phrase)
-            reason={progress.import.reason}
+            reason={importReason(progress.import)}
             whatToDo={shownState(progress.import, progress.sessions) === "failed" ? words.failedDo : words.stalledDo}
           />
         ) : (
@@ -674,6 +688,7 @@ export default function Import({
                 {reasonLine(s.state, s.reason)
                   ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
+                {lineCount(s) ? ` · ${lineCount(s)}` : ""}
                 {s.progress?.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
               </span>
               {s.stage === "waiting_for_names" && (

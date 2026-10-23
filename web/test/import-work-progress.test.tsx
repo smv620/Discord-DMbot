@@ -121,12 +121,12 @@ describe("the whole import's progress", () => {
 
   it("says what happened and what to do when every session failed", async () => {
     const failed: ImportProgress = {
-      import: job({ state: "failed", stage: "failed", reason: "DMbot couldn't read the file." }),
+      import: job({ state: "failed", stage: "failed", reason: "error" }),
       sessions: [{ file: "a.txt", date: "2026-09-14", state: "failed", reason: "x", stage: "failed" }],
     };
     await importing([failed]);
     expect(await screen.findByText(ww.failed)).toBeTruthy();
-    expect(screen.getByText("DMbot couldn't read the file.")).toBeTruthy();
+    expect(screen.getAllByText(w.failedReason.error!, { exact: false }).length).toBeGreaterThan(0);
     expect(screen.getByText(w.failedDo)).toBeTruthy();
   });
 
@@ -148,6 +148,46 @@ describe("the whole import's progress", () => {
     expect(screen.queryByText(/Running for|Last progress/)).toBeNull();
     expect(screen.getByText(ww.stoppedLooking)).toBeTruthy();
   }, 15_000);
+
+  it("turns a failure code into plain words and never prints the code", async () => {
+    const one: ImportProgress = {
+      import: job({ state: "failed", stage: "failed", reason: "names_failed" }),
+      sessions: [
+        { file: "a.txt", date: "2026-09-14", state: "failed", reason: "names_failed", stage: "failed" },
+      ],
+    };
+    await importing([one]);
+    expect((await screen.findAllByText(w.failedReason.names_failed!, { exact: false })).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("names_failed"); // the code itself is never printed
+  });
+
+  it("says the fallback words for a failure code it doesn't know", async () => {
+    const one: ImportProgress = {
+      import: job({ state: "failed", stage: "failed", reason: "something_new" }),
+      sessions: [{ file: "a.txt", date: "2026-09-14", state: "failed", reason: null, stage: "failed" }],
+    };
+    await importing([one]);
+    expect((await screen.findAllByText(w.failedFallback)).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("something_new");
+  });
+
+  it("shows how many lines of a session are done while it is being cleaned", async () => {
+    const cleaning: ImportProgress = {
+      import: job(),
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "working",
+          reason: null,
+          stage: "cleaning",
+          progress: job({ stage: "cleaning", done: 120, total: 400, unit: "lines" }),
+        },
+      ],
+    };
+    await importing([cleaning]);
+    expect(await screen.findByText(w.lineCount(120, 400), { exact: false })).toBeTruthy();
+  });
 
   it("keeps the old count line when the API sends no progress object", async () => {
     await importing([answer(undefined)]);
