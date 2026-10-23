@@ -39,6 +39,9 @@ _COLUMNS = (
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
+    # The posting clock's columns (#2435): the page's `postingSince`, `postingStep` and `postedUrl`
+    # are made from them in `_view` (WebDev's #2436 owns those keys).
+    " r.posting_since, r.posting_step, r.posted_url,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
