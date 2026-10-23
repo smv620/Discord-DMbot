@@ -322,10 +322,10 @@ class OffTheRecord:
                 self._rearm((guild_id, who), max(0.0, ends - now_c))
         # A pause that ran out while DMbot was down still leaves its marker: from when it began
         # to when it ended, so the transcript doesn't show an unexplained silence.
-        ends = {str(u): e for u, e in dict(saved.get("people") or {}).items()}
+        stopped = {str(u): e for u, e in dict(saved.get("people") or {}).items()}
         if saved.get("table") is not None:
-            ends["table"] = saved["table"]
-        for key, end in ends.items():
+            stopped["table"] = saved["table"]
+        for key, end in stopped.items():
             who = 0 if key == "table" else int(key)
             at = began.get(key)
             if who not in back and isinstance(at, int | float) and isinstance(end, int | float):

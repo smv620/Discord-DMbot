@@ -25,6 +25,8 @@ C1 = "a1" * 16
 
 
 class Wake(unittest.IsolatedAsyncioTestCase):
+    bot: Any  # (a real DMBot whose methods the tests swap for stand-ins)
+
     async def asyncSetUp(self) -> None:
         self.consent = ConsentStore(cast(Any, None))
         self.consent._store(GUILD, frozenset({DM, MIA}))
@@ -32,12 +34,12 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         self.bot = DMBot(
             Settings(discord_token="t", ears_secret="s"),
             self.consent,
-            stores,
-            MagicMock(),  # type: ignore[arg-type]
+            cast(Any, stores),
+            MagicMock(),
         )
         self.bot.transcripts = MagicMock()  # (lines are only kept while there is a transcript)
         self.woken: list[tuple[int, int]] = []
-        self.bot._wake_off_the_record = lambda g, u: self.woken.append((g, u))  # type: ignore[method-assign]
+        self.bot._wake_off_the_record = lambda g, u: self.woken.append((g, u))
         self.table = Table(GUILD, VOICE, SCREEN, dm_user_id=DM, segmenter=Segmenter(GUILD))
         self.table.listening = True
         self.table.campaign_id = C1
@@ -84,7 +86,7 @@ class Wake(unittest.IsolatedAsyncioTestCase):
     async def test_the_tables_break_marks_only_those_at_the_table_who_agreed(self) -> None:
         stranger = 99  # in the voice channel but never agreed
         here = SimpleNamespace(members=[SimpleNamespace(id=DM), SimpleNamespace(id=stranger)])
-        self.bot.get_channel = lambda cid: here  # type: ignore[method-assign,assignment]
+        self.bot.get_channel = lambda cid: here
         self.bot._add_gaps(self.table, [(0, 1000.0, 1900.0), (MIA, 5000.0, 5000.5)])
         # Mia agreed but was not in the channel; a blink marks nobody; the stranger never agreed.
         self.assertEqual(
@@ -98,12 +100,14 @@ class Wake(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_phrase_pauses_for_five_minutes_and_tells_them_privately(self) -> None:
         pause = AsyncMock(return_value=Paused(True, 1_700_000_300, told=True))
-        self.bot.off_the_record.announce_pause = pause  # type: ignore[method-assign]
+        self.bot.off_the_record.announce_pause = pause
         sent = AsyncMock()
-        self.bot._dm_message = sent  # type: ignore[method-assign]
+        self.bot._dm_message = sent
         await DMBot._pause_by_phrase(self.bot, GUILD, MIA)
         pause.assert_awaited_once_with(GUILD, MIA, WAKE_MINUTES, said_it=True)
+        assert sent.await_args is not None
         self.assertIn("What you said just now was not saved.", sent.await_args.args[1])
+        assert sent.await_args is not None
         text, view = sent.await_args.args[1], sent.await_args.args[2]
         self.assertIn("off the record", text)
         self.assertIn("<t:1700000300:R>", text)
@@ -113,7 +117,7 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         """A line that arrives a moment after the phrase is dropped by the consent re-check."""
         real = DMBot._wake_off_the_record  # (the fixture stubs it)
         self.bot.off_the_record._listening = lambda g: True
-        self.bot._track = MagicMock()  # type: ignore[method-assign]
+        self.bot._track = MagicMock()
         real(self.bot, GUILD, MIA)
         self.assertFalse(self.consent.has_consent(GUILD, MIA))  # no await has run yet
         self.assertTrue(self.consent.has_consent(GUILD, DM))
@@ -121,7 +125,7 @@ class Wake(unittest.IsolatedAsyncioTestCase):
 
     async def test_someone_not_recorded_is_not_paused_and_nothing_is_said(self) -> None:
         real = DMBot._wake_off_the_record
-        self.bot._track = MagicMock()  # type: ignore[method-assign]
+        self.bot._track = MagicMock()
         real(self.bot, GUILD, 555)  # never agreed
         self.bot._track.assert_not_called()
 
@@ -143,7 +147,7 @@ class Wake(unittest.IsolatedAsyncioTestCase):
     async def test_typed_in_the_dmbot_chat_pauses_them_instead_of_asking_a_question(self) -> None:
         self.table.dmbchat_channel_id = 55
         asked: list[str] = []
-        self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)  # type: ignore[method-assign]
+        self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)
         self.bot._hear_dmbchat(self.chat(MIA, "Hey DMbot, off the record"))
         self.assertEqual((self.woken, asked), ([(GUILD, MIA)], []))
         self.bot._hear_dmbchat(self.chat(MIA, "does fireball need line of sight?"))
@@ -164,6 +168,6 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         self.table.dmbchat_channel_id = 55
         self.consent.pause(GUILD, MIA, 60)
         asked: list[str] = []
-        self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)  # type: ignore[method-assign]
+        self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)
         self.bot._hear_dmbchat(self.chat(MIA, "Hey DMbot, off the record"))
         self.assertEqual((self.woken, asked), ([(GUILD, MIA)], []))
