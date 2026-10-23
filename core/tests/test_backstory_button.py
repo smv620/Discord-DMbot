@@ -1,5 +1,5 @@
-"""📜 Upload backstory on the 👤 DMbot Main Menu (#2380): only the campaign's DMs get it, it opens
-the same backstory menu as 📝 Names > From my story, and the press asks again."""
+"""📜 Upload campaign lore on the 👤 DMbot Main Menu (#2380): only the campaign's DMs get it, it
+opens the same lore menu as 📝 Names > Add many, and the press asks again."""
 
 import unittest
 from typing import Any
@@ -33,7 +33,7 @@ class WhoGetsIt(unittest.TestCase):
 
     def test_it_is_labelled_in_plain_words(self) -> None:
         button = BackstoryButton(CAMPAIGN)
-        self.assertEqual(button.item.label, "Upload backstory")
+        self.assertEqual(button.item.label, "Upload campaign lore")
         self.assertEqual(str(button.item.emoji), "📜")
 
 
