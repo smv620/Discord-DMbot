@@ -14,6 +14,7 @@ from psycopg import errors, sql
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
+from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.ontology import MIGRATED_KINDS
 
@@ -698,6 +699,8 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
+    # a merge's notes and sheet live outside the log: they come back with the name (#2438)
+    await merge_restore.restore(conn, ids, batch)
 
 
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:

@@ -321,3 +321,26 @@ def party_knows(table: str = "memory_relations") -> str:
         "  WHERE x.guild_id = pb.guild_id AND x.campaign_id = pb.campaign_id"
         "  AND x.perspective_id = pb.perspective_id AND x.relation_id = pb.relation_id))"
     )
+
+
+async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
+    """A merged-away character's beliefs become the kept entry's (#2438, #2433). The kept entry
+    gets a perspective if it had none, and every belief of the other entry's moves onto it, so a
+    pair both believed keeps its newest belief (the highest `seq`). The beliefs move through the
+    change log, so Undo puts them back; the emptied perspective stays on the merged-away entry
+    (perspectives are not logged: an Undo never takes one from beliefs resting on it)."""
+    mine = await w.select(PERSPECTIVES, " AND entity_id = %s", [gone_id])
+    if not mine:
+        return
+    theirs = await w.select(PERSPECTIVES, " AND entity_id = %s", [keep_id])
+    if theirs:
+        target = theirs[0]["id"]
+    else:
+        target = new_id()
+        await w.insert(
+            PERSPECTIVES,
+            {"id": target, "kind": mine[0]["kind"], "entity_id": keep_id, "created_at": w.now},
+        )
+    await w.update_where(
+        BELIEFS, {"perspective_id": target}, " AND perspective_id = %s", [mine[0]["id"]]
+    )

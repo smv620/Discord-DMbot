@@ -1882,6 +1882,13 @@ names panel nor the speech-to-text hints can be a fixed list.
   A merge of different kinds (a place into an NPC) asks once more. A secret name merged into a known one stays
   a secret other name. Nothing is deleted: the merged names are kept as merged, so Undo is exact.
 
+  *Undo also hands back what a merge moves outside the change log (#2438, migration 0199):* the merged
+  name's private notes and its D&D Beyond sheet. A small record (`merge_restores`, kept as long as the batch
+  and deleted with it) holds those rows as they were; Undo puts a note or sheet back only if it is still as the
+  merge left it, so a note written on since stays where it is, and the Undo itself is never refused over it.
+  A merged character's beliefs (a character's own point of view) move to the kept entry through the change
+  log, so the same Undo returns them; a belief both held keeps the newest one.
+
   *Built (#2426, migration 0183):* `MemoryStore.merge_many` joins up to 50 names into one in a single write,
   all or nothing, so one Undo reverses it. The finder (`memory/lookalikes.py`) joins names that are the same
   letters (spaces, hyphens and a leading the/a/an ignored), a letter or two apart (one up to 8 letters, two

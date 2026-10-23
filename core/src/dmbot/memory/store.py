@@ -25,7 +25,7 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, notify, standing, states
+from dmbot.memory import beliefs, merge_restore, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
@@ -2571,6 +2571,9 @@ class MemoryStore:
             }
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
+        before_moves = await merge_restore.snapshot(
+            w.conn, w.ids, keep_id, gone_id, kept["played_by"]
+        )
         await _move_rule_links(w, keep_id, gone_id)
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
@@ -2579,8 +2582,8 @@ class MemoryStore:
         await _move_aliases(w, keep_id, gone_id, frozenset(confirm_keys))
         # A character's D&D Beyond sheet (#723) goes with it, unless the kept entry
         # has its own: then the merged one's is forgotten (nothing could show or
-        # remove it). Not in the change log: undoing the merge leaves it on the kept
-        # entry; if that entry then has no player, the sheet is left out everywhere.
+        # remove it). Not in the change log; `merge_restore` remembers the rows so Undo hands
+        # them back (#2438).
         # The kept entry's own sheet counts only if it's its player's (a sheet
         # left from an earlier player is shown nowhere): drop it first, so it can't
         # beat a visible one.
@@ -2615,6 +2618,7 @@ class MemoryStore:
         await _move_relations(w, keep_id, gone_id)
         await _move_standing(w, keep_id, gone_id)
         await _move_npc_notes(w, guild_id, campaign_id, keep_id, gone_id)
+        await beliefs.fold_perspective(w, keep_id, gone_id)
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
         await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
@@ -2627,6 +2631,8 @@ class MemoryStore:
         await _forget_quotes(w, [gone_id] if _note_cleared(gone) else [])
         await _sync_plays(w, keep_id)
         await _sync_plays(w, gone_id)
+        if w.batch is not None:  # the ENTITIES update above logged, so the batch is known
+            await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
 
     async def check_people(
         self, guild_id: int, campaign_id: str, dm_ids: Collection[int]
@@ -3516,7 +3522,15 @@ class MemoryStore:
                 " WHERE guild_id = %s AND campaign_id = %s AND made_at < %s",
                 (*scope.ids, cutoff),
             )
-            return cur.rowcount
+            pruned = cur.rowcount
+            # what a merge moved goes with the batch it belongs to (#2438)
+            await scope.conn.execute(
+                "DELETE FROM merge_restores r WHERE r.guild_id = %s AND r.campaign_id = %s"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes c WHERE c.guild_id = r.guild_id"
+                " AND c.campaign_id = r.campaign_id AND c.batch = r.batch)",
+                scope.ids,
+            )
+            return pruned
 
     async def resolve_stale_flags(self, guild_id: int, campaign_id: str) -> Written[list[Flag]]:
         """Close the open flags whose problem is gone (#164): an undo, a merge, an edit
@@ -4671,8 +4685,8 @@ async def _move_npc_notes(
     is not joined: it stays as a note on a name no longer listed (30 days, in the person's "Notes
     on names no longer listed", where they can copy it), so no word is lost. It is marked now
     only if it was not marked already. Nothing of a note is read here beyond its length, a note
-    never leaves its writer's rows, and nothing is logged. (Undoing a merge does not move notes
-    back: they stay on the kept entry.)"""
+    never leaves its writer's rows, and nothing is logged here: `merge_restore` keeps the rows as
+    they were so Undo moves them back (#2438)."""
     ids = (guild_id, campaign_id)
     now = int(time.time())
     cur = await w.conn.execute(

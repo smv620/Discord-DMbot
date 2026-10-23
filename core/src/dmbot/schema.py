@@ -10817,6 +10817,25 @@ UNREVEALED_CONNECTIONS = """
 assert UNREVEALED_CONNECTIONS.count("'revealed', NOT (e.hidden") == 1
 assert UNREVEALED_CONNECTIONS.count("'revealed', EXISTS") == 1
 
+MERGE_RESTORES = f"""
+    -- Where a merge moved a name's private notes and D&D Beyond sheet (#2438). Both live outside
+    -- the change log (a note is its writer's own, a sheet is refreshed by its player), so Undo had
+    -- no way to hand them back to the name they came from. One row per merged-away name per
+    -- batch: the rows as they were before the merge, nothing else (no new words). Undo reads it,
+    -- puts back only what is still as the merge left it, and never refuses because of it. Kept
+    -- as long as the batch is (pruned with it), deleted with the campaign.
+    CREATE TABLE merge_restores (
+        {_memory_scope()}
+        id       BIGSERIAL,
+        batch    BIGINT NOT NULL,
+        gone_id  TEXT NOT NULL,
+        keep_id  TEXT NOT NULL,
+        before   JSONB NOT NULL CHECK (octet_length(before::text) <= 1048576),
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    CREATE INDEX merge_restores_by_batch ON merge_restores (guild_id, campaign_id, batch);
+    """ + _isolate("merge_restores")
+
 # The website's recap check agrees with the bot's (#2404, Supervisor 2026-10-22): a name the players
 # haven't been shown yet counts as secret for a recap unless the table said it in that session. The
 # check's own door (`dmbot_recap_check_names`) keeps listing such names as secret; this new door,
@@ -11092,11 +11111,13 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "merge_restores",
     "transcript_respells",
     "test_voice_consent",
     "campaigns",
