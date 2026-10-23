@@ -16,8 +16,9 @@ choice itself is never logged, only the outcome word.
 
 from __future__ import annotations
 
+import logging
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -28,6 +29,9 @@ from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import CHOICES, _shorter, days_of, saved_text
 
+log = logging.getLogger(__name__)
+
+SETTINGS_PER_ROUND = 10  # choices applied for one server in one round
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 
@@ -146,21 +150,22 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
     campaign = await host.get_campaign(guild_id, item.campaign_id)
     if campaign is None:
         return Outcome(NOT_FOUND)
-    if item.user_id not in dm_ids(campaign):  # checked again: they may have handed over since
+    if item.user_id not in campaign.dm_user_ids:  # checked again: they may have handed over since
         return Outcome(NOT_ALLOWED)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
                 return Outcome(BAD_VALUE)
-            if item.value == campaign.dm_screen_visibility:
-                return Outcome(note=messages.visibility_changed(item.value, was=item.value))
+            # Always applied, even when it is the saved value: Discord's button does too, which
+            # repairs a channel whose permissions drifted, and a retry after a half-done try
+            # still catches the live session up.
             return Outcome(note=await host.apply_visibility(campaign, item.value))
         if item.setting == LEVEL:
             if item.value not in DM_SCREEN_LEVELS_OFFERED:
                 return Outcome(BAD_VALUE)
             if item.value != campaign.dm_screen_level:
                 await host.apply_level(campaign, item.value)
-            return Outcome()
+            return Outcome(note=messages.level_changed(item.value))  # (the line the screen gets)
         if item.setting == RETENTION:
             if item.value not in RETENTION_CHOICES:
                 return Outcome(BAD_VALUE)
@@ -175,5 +180,21 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
     return Outcome(BAD_VALUE)
 
 
-def dm_ids(campaign: Campaign) -> Collection[int]:
-    return campaign.dm_user_ids
+async def run_one(host: Host, store: SettingStore, guild_id: int, item: Setting) -> bool:
+    """Apply one claimed choice and mark it. A bug never leaves the row "working": it ends as
+    `failed` for the page to offer a retry. False when the row could not be marked (the loop
+    stops; the row is taken again later and `apply` sees it already done). Only the outcome word
+    is logged, never the choice."""
+    try:
+        done = await apply(host, guild_id, item)
+    except Exception as exc:
+        log.warning("A website setting failed: %s", type(exc).__name__)
+        done = Outcome(FAILED)
+    try:
+        if not await store.finish(guild_id, item, done):
+            log.info("A website setting was taken over by another worker")
+    except Exception as exc:
+        log.warning("A website setting could not be marked: %s", type(exc).__name__)
+        return False
+    log.info("Website setting %s: %s", item.setting, done.error or "done")
+    return True

@@ -10357,22 +10357,13 @@ class DMBot(commands.AutoShardedBot):
         if store is None:
             return
         for guild in list(self.guilds):
-            for _ in range(NAME_ANSWERS_PER_ROUND):
+            for _ in range(web_settings.SETTINGS_PER_ROUND):
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
                 with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
-                    try:
-                        done = await web_settings.apply(self, guild.id, item)
-                    except Exception as exc:  # the row must never stay "working" for a bug
-                        log.warning("A website setting failed: %s", type(exc).__name__)
-                        done = web_settings.Outcome(web_settings.FAILED)
-                    try:
-                        await store.finish(guild.id, item, done)
-                    except Exception as exc:  # taken again later: apply() sees it already done
-                        log.warning("A website setting could not be marked: %s", type(exc).__name__)
+                    if not await web_settings.run_one(self, guild.id, store, item):
                         break
-                    log.info("Website setting %s: %s", item.setting, done.error or "done")
 
     async def run_recap_requests(self) -> None:
         store = self.recap_requests

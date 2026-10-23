@@ -5,13 +5,16 @@ DM who made them. Invented names throughout."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
 import httpx
+import psycopg.errors
 
 from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
 from dmbot.dm_screen import messages, setup_dm_screen
 from dmbot.dm_screen import web_settings as ws
 from dmbot.dm_screen.channel import DMScreenError
@@ -139,12 +142,17 @@ class TheChoices(Settings):
         self.assertEqual((await self.campaign()).transcript_keep_days, 90)
         self.assertEqual((await self.poll(answer))["note"], ws.saved_text(90))
 
-    async def test_a_choice_that_is_already_set_changes_nothing(self) -> None:
+    async def test_a_choice_that_is_already_set_changes_no_stored_value(self) -> None:
         await self.queue(setting="level", value="normal")
         await self.queue(setting="retention", value="forever")
-        await self.queue(setting="visibility", value="peek")
         await self.run_bot()
         self.assertEqual(self.bot.calls, [])
+
+    async def test_visibility_is_applied_even_when_it_is_the_saved_value(self) -> None:
+        """Discord's button does too: it repairs a channel whose permissions drifted."""
+        await self.queue(setting="visibility", value="peek")  # (already peek)
+        await self.run_bot()
+        self.assertEqual(self.bot.calls, [("visibility", "peek")])
 
     async def test_choices_are_applied_in_the_order_made(self) -> None:
         await self.queue(setting="visibility", value="private")
@@ -165,10 +173,42 @@ class TheChoices(Settings):
         self.assertEqual(done["note"], "I can't change that channel's permissions.")
 
     async def test_a_bot_failure_is_a_word_the_page_can_retry(self) -> None:
-        item = await self._claim_after(setting="level", value="quiet")
+        answer = await self.queue(setting="level", value="quiet")
+        item = await self.items.claim_next(self.g)
+        assert item is not None
         self.bot.apply_level = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[method-assign]
-        with self.assertRaises(RuntimeError):
-            await ws.apply(self.bot, self.g, item)  # the bot's loop turns this into FAILED
+        self.assertTrue(await ws.run_one(self.bot, self.items, self.g, item))
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"]), ("failed", ws.FAILED))
+        self.assertEqual((await self.campaign()).dm_screen_level, "normal")
+
+    async def test_a_row_that_cannot_be_marked_stops_the_round(self) -> None:
+        await self.queue(setting="level", value="quiet")
+        item = await self.items.claim_next(self.g)
+        assert item is not None
+        broken = SimpleNamespace(finish=AsyncMock(side_effect=RuntimeError("db")))
+        self.assertFalse(await ws.run_one(self.bot, broken, self.g, item))  # type: ignore[arg-type]
+
+    async def test_the_level_note_is_the_line_the_screen_gets(self) -> None:
+        answer = await self.queue(setting="level", value="quiet")
+        await self.run_bot()
+        self.assertEqual((await self.poll(answer))["note"], messages.level_changed("quiet"))
+
+    async def test_a_later_choice_waits_for_an_earlier_one_being_worked_on(self) -> None:
+        await self.queue(setting="visibility", value="private")
+        await self.queue(setting="visibility", value="open")
+        first = await self.items.claim_next(self.g)
+        assert first is not None and first.value == "private"
+        self.assertIsNone(await self.items.claim_next(self.g))  # not past a live claim
+        await self.items.finish(self.g, first, ws.Outcome())
+        second = await self.items.claim_next(self.g)
+        assert second is not None and second.value == "open"
+
+    async def test_old_choices_are_swept(self) -> None:
+        await self.queue(setting="level", value="quiet")
+        late = ws.SettingStore(self.db, clock=lambda: 10**10)
+        self.assertEqual(await late.sweep(self.g), 1)
+        self.assertEqual(await late.sweep(self.g), 0)
 
     async def _claim_after(self, **body: Any) -> ws.Setting:
         await self.queue(**body)
@@ -185,6 +225,32 @@ class TheDoor(Settings):
         self.assertEqual(await self.refused(setting="retention", value="7"), "bad_value")
         self.assertEqual(await self.refused(setting="retention", value=True), "bad_value")
         self.assertIsNone(await self.items.claim_next(self.g))
+
+    async def test_the_door_and_the_page_accept_exactly_what_discord_offers(self) -> None:
+        offered = {
+            "visibility": ws.VISIBILITIES,
+            "level": tuple(DM_SCREEN_LEVELS_OFFERED),
+            "retention": ws.RETENTION_CHOICES,
+        }
+        self.assertEqual(campaign_settings.CHOICES, offered)
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            for setting, values in offered.items():
+                for value in values:
+                    cur = await conn.execute(
+                        "SELECT dmbot_web_setting_add(%s, %s, %s, %s, false) AS r",
+                        (self.g, self.one.id, setting, value),
+                    )
+                    row = await cur.fetchone()
+                    assert row is not None
+                    self.assertEqual(row["r"]["status"], "ok", (setting, value))
+
+    async def test_the_website_role_cannot_touch_the_table_itself(self) -> None:
+        await self.queue(setting="level", value="quiet")
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT * FROM setting_actions")
 
     async def test_the_database_door_refuses_what_the_page_check_missed(self) -> None:
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
