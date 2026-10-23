@@ -567,14 +567,15 @@ class Buttons(base.UsageTest):
         self.assertEqual(self.said(it), logic.NO_CAMPAIGN_ACCESS)
 
     async def read_with(self, bot: DMBot) -> Any:
+        from dmbot.memory import lore_read
         from dmbot.ui import name_background
 
         it = self.it(bot)
         with (
             patch.object(
-                name_background,
-                "read_piece",
-                new=AsyncMock(return_value=name_background.Piece([], [], False)),
+                lore_read,
+                "read_lore",
+                new=AsyncMock(return_value=lore_read.LoreRead([], [], False, lore_read.Stats())),
             ),
             patch.object(name_background, "store", new=AsyncMock(return_value={})),
             patch.object(name_background, "queue_links", new=AsyncMock(return_value=0)),

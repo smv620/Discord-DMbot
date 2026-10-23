@@ -86,7 +86,7 @@ def ai(
 
 
 async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreRead:
-    return await lr.read_lore(read_ai, shape_ai or read_ai, text, {}, Gate())  # type: ignore[arg-type]
+    return await lr.read_lore(read_ai, shape_ai or read_ai, text, {}, Gate())
 
 
 class TheExamples(unittest.TestCase):

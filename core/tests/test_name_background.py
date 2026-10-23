@@ -268,7 +268,7 @@ class ThePath(NamesTest):
         _ai_reads.clear()
         self.ai = lore_fake.lore_ai(ANSWER)
         self.bot.background_ai = self.ai  # type: ignore[assignment]
-        self.bot.background_read_ai = self.ai  # type: ignore[attr-defined]
+        self.bot.background_read_ai = self.ai  # type: ignore[assignment]
         self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
         self.confirmed = AsyncMock()
         self.bot.campaigns.record_confirmation = self.confirmed  # type: ignore[method-assign]
