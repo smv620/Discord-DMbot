@@ -246,8 +246,8 @@ database.
     transcript, consent, homebrew, timebot) follows the same shape. `setup(bot)` registers the recap buttons and
     `recap_tasks()` gives the loops; `bot.py` keeps startup, the `Table`, and loading the extension. Tests changed only in
     import and patch paths (the constants and the names the moved code reads now live in the new module) and in the
-    registered-buttons test, which also reads each feature's `setup`. The moved code's reads of the bot's fields are untyped
-    for now (a mypy override on that one module), until the Cog pass gives it a real bot to hold.
+    registered-buttons test, which also reads each feature's `setup`. The bot's fields and methods the moved code reads are declared on
+    `RecapFeatures` under `if TYPE_CHECKING:`, so it is type-checked as before, until the Cog pass gives it a real bot to hold.
 - **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
 - **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
 - **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.

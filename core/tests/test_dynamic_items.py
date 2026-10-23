@@ -63,8 +63,9 @@ def registered_items_in(module: Any) -> set[type]:
 
 def _registered(tree: ast.AST, namespace: dict[str, Any]) -> set[type]:
     found: set[type] = set()
-    # Only `setup_hook` registers (a call anywhere else would not run at start-up); a test's
-    # tiny source has a function of another name, so it is read whole.
+    # Only `setup_hook`, and a feature's `setup` that `setup_hook` awaits (checked in
+    # `test_setup_hook_awaits_each_features_setup`), register: a call anywhere else would not run
+    # at start-up. A test's tiny source has a function of another name, so it is read whole.
     hooks: list[ast.stmt] = [
         n
         for n in ast.walk(tree)
@@ -116,6 +117,28 @@ class RegisteredTest(unittest.TestCase):
             "not passed to add_dynamic_items in DMBot.setup_hook: after the next restart every "
             "old message's button shows 'This interaction failed'",
         )
+
+    def test_setup_hook_awaits_each_features_setup(self) -> None:
+        """A feature's `setup(bot)` registers its buttons only if `DMBot.setup_hook` awaits it:
+        deleting that line would pass the test above and break the buttons after a restart."""
+        tree = ast.parse(inspect.getsource(bot_module))
+        [hook] = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "setup_hook"
+        ]
+        awaited = {
+            getattr(call.value.func.value, "id", "")
+            for call in ast.walk(hook)
+            if isinstance(call, ast.Await)
+            and isinstance(call.value, ast.Call)
+            and isinstance(call.value.func, ast.Attribute)
+            and call.value.func.attr == "setup"
+            and isinstance(call.value.func.value, ast.Name)
+        }
+        for module in (recaps_discord,):  # (each feature that moves out of bot.py adds its own)
+            names = {n for n, v in vars(bot_module).items() if v is module}
+            self.assertTrue(names & awaited, f"{module.__name__}.setup is not awaited")
 
     def test_a_stand_in_that_is_not_registered_is_named(self) -> None:
         class Stray(

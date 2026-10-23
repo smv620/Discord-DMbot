@@ -72,10 +72,6 @@ from dmbot.transcription.base import (
     TranscriptionProblem,
 )
 from dmbot.ui import recap_feedback as recap_feedback_screen
-from dmbot.ui.homebrew import dmbot_homebrew  # noqa: F401 (registers it)
-from dmbot.ui.house_rules import dmbot_house_rules  # noqa: F401 (registers it)
-from dmbot.ui.import_command import dmbot_import  # noqa: F401 (registers it)
-from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.names import (
     RecapNamesButton,
     recap_names_dm_view,
@@ -83,15 +79,38 @@ from dmbot.ui.names import (
     recap_names_text,
     review_view,
 )
-from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
-from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
-    from dmbot.bot import DMBot, Table
+    from collections.abc import Coroutine, Hashable, Sequence
+
+    from dmbot import plan_rules
+    from dmbot.ai import TierClient
+    from dmbot.bot import DMBot, HintPeople, Table
+    from dmbot.campaigns.store import CampaignStore
+    from dmbot.config import Settings
+    from dmbot.consent import ConsentStore
+    from dmbot.dm_screen.peek_notices import PeekNotices
+    from dmbot.dm_screen.web_settings import SettingStore
+    from dmbot.mail import Mailer
+    from dmbot.memory.importance import ImportanceCache
+    from dmbot.memory.lookup import LookupCache
+    from dmbot.memory.store import MemoryStore
+    from dmbot.memory.web_actions import ActionStore
+    from dmbot.recaps.audio.worker import AudioWorker
+    from dmbot.recaps.pipeline import RecapWorker
+    from dmbot.recaps.store import RecapStore
+    from dmbot.recaps.style import NoteStore, StyleStore
+    from dmbot.timebot.store import ClockStore
+    from dmbot.transcript.import_job import ImportJob
+    from dmbot.transcript.store import TranscriptStore
+    from dmbot.transcript.waiting_questions import WaitingQuestionStore
+    from dmbot.transcription.pipeline import TranscriptionPipeline
+    from dmbot.ui.decision_lines import DecisionLines
+    from dmbot.usage import Meter
 
 # Logged under the bot's own name, so the lines and any filter on them stay as they were.
 log = logging.getLogger("dmbot.bot")
@@ -146,7 +165,104 @@ async def setup(bot: DMBot) -> None:
 class RecapFeatures:
     """The recap methods of `DMBot` (see the module note)."""
 
-    def recap_tasks(self: Any) -> list[asyncio.Task[None]]:
+    if TYPE_CHECKING:
+        # What these methods read of the bot, declared the way `DMBot.__init__` sets it, so the
+        # checker reads the moved code as it read it in `bot.py`. Each is `DMBot`'s own: a change
+        # there is a change here until the Cog pass gives this class a real bot to hold.
+        _clip_sweep_rounds: int
+        _group_locks: dict[str, asyncio.Lock]
+        _group_made: dict[str, list[int]]
+        _group_started: dict[tuple[int, str, str], float]
+        _import_queued: dict[str, list[int]]
+        _import_unhonoured: dict[str, list[str]]
+        _short_asks: dict[str, int]
+        _voice_next: int
+        _voice_tasks: dict[int, asyncio.Task[None]]
+        audio_worker: AudioWorker | None
+        campaigns: CampaignStore
+        clocks: ClockStore | None
+        consent: ConsentStore
+        decision_lines: DecisionLines
+        extractor_ai: TierClient | None
+        heard_questions: WaitingQuestionStore | None
+        import_job: ImportJob | None
+        importance: ImportanceCache | None
+        lookup: LookupCache | None
+        mailer: Mailer | None
+        memory: MemoryStore | None
+        meter: Meter | None
+        name_actions: ActionStore | None
+        name_answers: name_answers.AnswerStore | None
+        peek_notices: PeekNotices | None
+        pipeline: TranscriptionPipeline
+        recap_audio_files: AudioFiles
+        recap_feedback_ai: TierClient | None
+        recap_feedback_limit: recap_feedback.FeedbackLimit
+        recap_holds: recap_hold.HoldStore | None
+        recap_notes: NoteStore | None
+        recap_requests: recap_requests.RequestStore | None
+        recap_styles: StyleStore | None
+        recap_worker: RecapWorker | None
+        recaps: RecapStore | None
+        settings: Settings
+        tables: dict[int, Table]
+        transcripts: TranscriptStore | None
+        web_settings: SettingStore | None
+
+        @property
+        def guilds(self) -> Sequence[discord.Guild]: ...
+        def get_channel(
+            self, id: int, /
+        ) -> (
+            discord.VoiceChannel
+            | discord.StageChannel
+            | discord.ForumChannel
+            | discord.TextChannel
+            | discord.CategoryChannel
+            | discord.Thread
+            | discord.abc.PrivateChannel
+            | None
+        ): ...
+        async def fetch_user(self, user_id: int, /) -> discord.User: ...
+        @staticmethod
+        def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
+        async def _dm_message(
+            self, user_id: int, text: str, view: discord.ui.View | None
+        ) -> discord.Message | None: ...
+        async def _hint_people(self, guild_id: int, table: Table | None) -> HintPeople: ...
+        async def plan_allows(
+            self,
+            action: plan_rules.Action,
+            guild_id: int,
+            campaign: Campaign,
+            *,
+            fail_open: bool = True,
+        ) -> bool: ...
+        async def post(
+            self,
+            channel_id: int,
+            text: str,
+            view: discord.ui.View | None = None,
+            *,
+            remember: Hashable | None = None,
+            secret_of: tuple[int, str] | None = None,
+        ) -> bool: ...
+        async def post_message(
+            self,
+            channel_id: int,
+            text: str,
+            view: discord.ui.View | None = None,
+            *,
+            remember: Hashable | None = None,
+        ) -> discord.Message | None: ...
+        async def run_name_actions(self) -> None: ...
+        async def run_peek_notices(self) -> None: ...
+        async def run_web_settings(self) -> None: ...
+        async def sidebar_send_dm(
+            self, user_id: int, text: str, view: discord.ui.View | None = None
+        ) -> str: ...
+
+    def recap_tasks(self) -> list[asyncio.Task[None]]:
         """The recap loops that run beside the bot, each only where its worker or store exists.
         Started by `DMBot.setup_hook` with the others."""
         return [
