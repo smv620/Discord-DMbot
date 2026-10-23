@@ -82,6 +82,18 @@ def ordered(
     return subject_id, object_id
 
 
+def _same_order(old: Relation, new: Relation) -> bool:
+    """Do the two say it between the same names in the same order? A family role the DM gave a
+    direction to ("Mira is the niece of Aldric") is twin to a plain one with that role in either
+    order: the plain one has no direction, so the DM's word on it wins (#2457). Two with a
+    direction must agree on it."""
+    if (old.subject_id, old.object_id) == (new.subject_id, new.object_id):
+        return True
+    if new.predicate == "kin_of" and not (old.directional and new.directional):
+        return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
+    return False
+
+
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:
     """An existing fact saying the same thing at the same time: a live one if there is
     one, else a rejected one (so a fact the DM rejected doesn't quietly come back)."""
@@ -90,7 +102,7 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
         for old in existing
         if old.id != new.id
         and old.predicate == new.predicate
-        and (old.subject_id, old.object_id) == (new.subject_id, new.object_id)
+        and _same_order(old, new)
         and old.detail.casefold() == new.detail.casefold()
         and same_time(old, new)
     ]

@@ -118,6 +118,38 @@ class TheEdits(Editing):
         link = next(x for x in edge["links"] if x["words"] == "is the niece of")
         self.assertEqual(link["direction"], "a-b" if edge["a"] == self.hall else "b-a")
 
+    async def test_typing_the_role_over_an_old_row_that_says_the_word_gives_it_a_direction(
+        self,
+    ) -> None:
+        """#2509: the website's door. An older plain "niece" row, then "is the niece of" (the name
+        the link is filed under is the niece) and "has a niece" (the other end is)."""
+        old = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "kin_of", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", detail="niece",
+        )  # fmt: skip
+        link = old.value[0]
+        self.assertFalse(link.directional)
+        answer = await self.edit(link.id, action="words", words="is the niece of")
+        await self.apply_all()
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        [row] = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+            if r.predicate == "kin_of" and r.status == "confirmed"
+        ]
+        self.assertTrue(row.directional)
+        self.assertEqual((row.subject_id, row.object_id), (link.subject_id, link.object_id))
+        # now the other end is the niece: "has a niece" said over the connection
+        answer = await self.edit(row.id, action="words", words="has a niece")
+        await self.apply_all()
+        [again] = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+            if r.predicate == "kin_of" and r.status == "confirmed"
+        ]
+        self.assertTrue(again.directional)
+        self.assertEqual((again.subject_id, again.object_id), (row.object_id, row.subject_id))
+
     async def test_changing_the_words_replaces_the_connection_and_undo_takes_it_back(self) -> None:
         link = self.links["mira-keep"]
         before = await self.memory.version(self.g, self.one.id)

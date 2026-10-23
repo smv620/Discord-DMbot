@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 from dmbot.memory import link_edits
-from dmbot.memory.link_words import predicate_for, predicate_for_either
+from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -340,8 +340,17 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 return _failed(BAD_TARGET)
             await link_edits.remove(memory, guild_id, cid, link)
         elif a.action == "link-words":
-            predicate, detail = predicate_for(a.text)
-            await link_edits.change_words(memory, guild_id, cid, link, predicate, detail)
+            predicate, detail, swapped = predicate_for_either(a.text)
+            other_end = link.object_id if entity_id == link.subject_id else link.subject_id
+            await link_edits.change_words(
+                memory,
+                guild_id,
+                cid,
+                link,
+                predicate,
+                detail,
+                first=other_end if swapped else entity_id,
+            )  # (a family role is said from the name it belongs to, #2457)
         else:
             return _failed(FAILED)
     except MemoryRuleError:
@@ -356,7 +365,7 @@ async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation,
         return a.flag
     if a.action != "link-words":
         return False
-    predicate, detail = predicate_for(a.text)
+    predicate, detail, _ = predicate_for_either(a.text)
     return any(
         r.status == CONFIRMED
         and r.predicate == predicate

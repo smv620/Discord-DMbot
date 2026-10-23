@@ -170,8 +170,16 @@ class TheCard(unittest.TestCase):
 class TheStoredDirection(MemoryTest):
     """The order of the two names is the meaning for a role, so a write must never sort it."""
 
+    pairs_made = 0
+
     async def pair(self) -> tuple[str, str]:
-        return await self.add("Mira", status=CONFIRMED), await self.add("Aldric", status=CONFIRMED)
+        """Two new names each time, so a row rejected earlier in a test is never met again."""
+        TheStoredDirection.pairs_made += 1
+        n = TheStoredDirection.pairs_made
+        return (
+            await self.add(f"Mira{n}", status=CONFIRMED),
+            await self.add(f"Aldric{n}", status=CONFIRMED),
+        )
 
     async def test_the_niece_is_the_subject_whichever_id_sorts_first(self) -> None:
         a, b = await self.pair()
@@ -212,3 +220,68 @@ class TheStoredDirection(MemoryTest):
         moved = await self.memory.relation(GUILD_A, self.c, row.id)
         assert moved is not None
         self.assertEqual((moved.subject_id, moved.object_id), (a, b))
+
+    async def test_a_plain_family_row_and_a_directional_one_are_twins_in_either_order(self) -> None:
+        """Supervisor's ruling (#2509): the directional one wins, whichever way the ids sort."""
+        for niece_is_low in (True, False):
+            for plain_first in (True, False):
+                a, b = await self.pair()
+                low, high = sorted((a, b))
+                niece, uncle = (low, high) if niece_is_low else (high, low)
+                plain = self.relate(low, "kin_of", high, status=CONFIRMED, detail="niece")
+                sure = self.relate(
+                    niece, "kin_of", uncle, status=CONFIRMED, detail="niece", directional=True
+                )
+                for step in (plain, sure) if plain_first else (sure, plain):
+                    await step
+                live = [
+                    r
+                    for r in await self.memory.relations(GUILD_A, self.c)
+                    if r.predicate == "kin_of" and r.status == CONFIRMED
+                ]
+                self.assertEqual(len(live), 1, (niece_is_low, plain_first))
+                self.assertTrue(live[0].directional)
+                self.assertEqual((live[0].subject_id, live[0].object_id), (niece, uncle))
+                await self.memory.update_relation(
+                    GUILD_A, self.c, live[0].id, source="dm", status="rejected"
+                )
+
+    async def test_two_directional_rows_in_opposite_orders_are_not_twins(self) -> None:
+        a, b = await self.pair()
+        for niece, uncle in ((a, b), (b, a)):
+            await self.relate(
+                niece, "kin_of", uncle, status=CONFIRMED, detail="niece", directional=True
+            )
+        live = [r for r in await self.memory.relations(GUILD_A, self.c) if r.predicate == "kin_of"]
+        self.assertEqual(len(live), 2)  # each is true of a different name
+
+    async def test_typing_the_role_over_an_old_row_that_says_the_word_gives_it_a_direction(
+        self,
+    ) -> None:
+        """The Discord card's door and the website's (#2509): over an older "niece" row, whose
+        direction was arbitrary, "is the niece of" must set the direction and the DM's order."""
+        from dmbot.memory import link_edits
+
+        for first_is_low in (True, False):
+            a, b = await self.pair()
+            low, high = sorted((a, b))
+            first = low if first_is_low else high
+            old = (await self.relate(low, "kin_of", high, status=CONFIRMED, detail="niece")).value[
+                0
+            ]
+            self.assertFalse(old.directional)
+            moved = await link_edits.change_words(
+                self.memory, GUILD_A, self.c, old, "kin_of", "niece", first=first
+            )
+            assert moved is not None  # not "It already says that"
+            row = moved.value
+            other = high if first == low else low
+            self.assertTrue(row.directional)
+            self.assertEqual((row.subject_id, row.object_id), (first, other))
+            again = await link_edits.change_words(
+                self.memory, GUILD_A, self.c, row, "kin_of", "niece", first=first
+            )
+            self.assertIsNone(again)  # now it really says that
+            await self.memory.update_relation(
+                GUILD_A, self.c, row.id, source="dm", status="rejected"
+            )

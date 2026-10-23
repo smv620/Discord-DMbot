@@ -3398,7 +3398,9 @@ class MemoryStore:
         if same is not None:
             upgrade = _upgrade(_relation_row(same), status, secret, source)
             if new.directional and not same.directional:  # the DM's word on the direction wins
-                upgrade = {**upgrade, "directional": True}
+                upgrade = {
+                    **upgrade, "directional": True, "subject_id": s, "object_id": o,
+                }  # fmt: skip
             if not upgrade:
                 return same, []
             row = await w.update(RELATIONS, same.id, upgrade)
@@ -3572,6 +3574,7 @@ class MemoryStore:
         *,
         source: str,
         directional: bool = False,
+        swap: bool = False,
     ) -> Written[Relation]:
         """New words between the same two names, in ONE change, so one Undo puts the old words
         back whole. The new connection is added (keeping who sees it) and the old one ended in the
@@ -3587,8 +3590,15 @@ class MemoryStore:
                 r.id: r.status
                 for r in await _relations_touching(w, current["subject_id"], current["object_id"])
             }
+            # `swap`: the DM's words name the other name first ("Mira is the niece of Aldric" over a
+            # connection stored the other way round); it only matters to a family role (#2457)
+            first, second = (
+                (current["object_id"], current["subject_id"])
+                if swap
+                else (current["subject_id"], current["object_id"])
+            )
             new, _ = await self.add_relation_in(
-                w, current["subject_id"], predicate, current["object_id"], confidence=1.0,
+                w, first, predicate, second, confidence=1.0,
                 status=CONFIRMED, detail=detail, secret=bool(current["secret"]),
                 unrevealed=bool(current["unrevealed"]), directional=directional,
             )  # fmt: skip
@@ -4846,7 +4856,10 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         if twin is not None:  # both said the same: keep one, with the stronger status
             upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
             if moved.directional and not twin.directional:  # the one with a direction wins (#2457)
-                upgrade = {**upgrade, "directional": True}
+                upgrade = {
+                    **upgrade, "directional": True, "subject_id": moved.subject_id,
+                    "object_id": moved.object_id,
+                }  # fmt: skip
             gone_rows.append(moved.id)
             forget(moved)
             del state[moved.id]

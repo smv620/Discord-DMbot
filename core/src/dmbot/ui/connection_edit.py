@@ -249,8 +249,9 @@ class OneConnection(_Menu):
         c = found.campaign
         try:
             moved = await link_edits.change_words(
-                found.memory, c.guild_id, c.id, found.relation, predicate, detail
-            )
+                found.memory, c.guild_id, c.id, found.relation, predicate, detail,
+                first=self.entity_id,
+            )  # fmt: skip
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change that. {exc}")
             return

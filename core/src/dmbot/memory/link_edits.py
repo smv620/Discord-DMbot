@@ -40,14 +40,26 @@ async def change_words(
     link: Relation,
     predicate: str,
     detail: str,
+    first: str | None = None,
 ) -> Written[Relation] | None:
     """New words between the same two names, keeping who sees it, in ONE change (so one Undo
     puts the old words back). None when the words are the ones it already has, capitals aside:
-    nothing is written. The store does the work, for the website's edits too."""
-    if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()):
+    nothing is written. The store does the work, for the website's edits too.
+
+    A family role the DM types ("is the niece of") gives the connection a direction (#2457), even
+    over an older connection that already says "niece" (its direction was arbitrary): `first` is
+    the name the words are said from, who holds the role, and the connection is written in that
+    order."""
+    detail = detail[:100]
+    directional = predicate == "kin_of" and kin.role_of(detail) is not None
+    swap = directional and first is not None and first == link.object_id
+    if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()) and not (
+        directional and (not link.directional or swap)
+    ):
         return None
     written = await memory.change_relation_words(
-        guild_id, campaign_id, link.id, predicate, detail[:100], source=DM,
-        directional=predicate == "kin_of" and kin.role_of(detail[:100]) is not None,
+        guild_id, campaign_id, link.id, predicate, detail, source=DM,
+        directional=directional, swap=swap,
     )  # fmt: skip
-    return None if written.value.id == link.id else written
+    unchanged = written.value.id == link.id and written.value.directional == link.directional
+    return None if unchanged and not swap else written
