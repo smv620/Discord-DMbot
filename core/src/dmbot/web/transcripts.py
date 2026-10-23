@@ -188,6 +188,7 @@ def _line(row: dict[str, Any]) -> Line:
         ),
         entity=row["entity"] or "",
         typed=bool(row["typed"]),
+        image=bool(row.get("image", False)),  # an older door sends none
     )
 
 
