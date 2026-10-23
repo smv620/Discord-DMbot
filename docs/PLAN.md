@@ -4465,7 +4465,12 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     direction at all.
   **Two models, and style kept apart from content** (owner, 2026-10-20; details Supervisor's).
   - **A creative model writes, a small model formats.** The recap is written as plain text by the
-    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). The formatting model
+    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). *(Owner, 2026-10-23, #2575:)* **Gemini as
+    an option for the writer only**, off by default (`AI_PROVIDER_CREATIVE`), to compare on real recaps
+    with `recap_run --compare` (two drafts read blind). Every check after the writer is the same whichever
+    wrote it. It needs a **paid-tier** Gemini key (the free tier's terms allow using the data), the privacy
+    page naming Google as a processor when it writes, and its cost in docs/costs.md (#2574). Which writer
+    is the default is the owner's call after the comparison. The formatting model
     (`AI_MODEL_FORMATTING`, default Haiku 5.5, `claude-haiku-5-5`) then puts that text into the
     recap's fixed shape with the structured-output schema: sections, moods, cues and music prompts.
     - **The formatter changes no word of the story.** Code compares the narration's words before and
@@ -5311,7 +5316,13 @@ Supervisor's details marked).**
      fails, nothing is removed and the offer opens again with a plain reason. As after loading a backup,
      the old server's channels (DM screen, voice, chat) don't carry over; the new owner picks them with
      `/dmbot start`. Rulesets the campaign follows keep being followed; a ruleset it published moves with
-     it and the new owner becomes its publisher.
+     it and the new owner becomes its publisher. *(Supervisor, 2026-10-23, #2550:)* **for now** a campaign
+     that **shares** a rule set (`status = 'shared'`) can't move to another server: the hand-over page says
+     so before anyone accepts, and it can still be handed over on its own server. Moving a shared set with
+     its followers is #2551. **How the move is done (#2550):** the campaign's rows are moved, not copied: a
+     single change of its `guild_id`, carried into every row by `ON UPDATE CASCADE` (CLAUDE.md, Code
+     standards), with the busy checks (a session, a recap job or import at work) and the new owner's paid
+     slot checked in the same step, so nothing can be lost or left behind.
 - **One DMbot account, several Discord accounts.**
   1. **The key is the DMbot account** (the account number; today's DMbot ID). Everything a person has
      belongs to the account: the plan and hours, the campaigns they own, the campaigns they DM or
