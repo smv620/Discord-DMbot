@@ -117,14 +117,58 @@ class Accepting(Base):
         await self.campaigns.delete(THURSDAY.id, self.one.id)
         self.assertEqual(await self.accepted.newest(THURSDAY.id, self.one.id), [])
 
-    async def test_the_website_cannot_write_a_version_itself(self) -> None:
+    async def test_the_website_can_neither_read_nor_write_the_table_itself(self) -> None:
+        import psycopg.errors as pg_errors
+
+        for sql in (
+            "INSERT INTO recap_accepted VALUES (%s, %s, 1, 1, 'x', 'x', 'x', 1, 1)",
+            "SELECT * FROM recap_accepted WHERE guild_id = %s AND campaign_id = %s",
+        ):
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                with self.assertRaises(pg_errors.InsufficientPrivilege):
+                    await conn.execute(sql, (THURSDAY.id, self.one.id))
+
+    async def test_the_door_refuses_a_stranger_and_a_stale_text_and_writes_no_version(self) -> None:
+        from dmbot.web.recaps import RecapError
+
+        with self.assertRaises(RecapError):  # Alice asks about Bob's recap
+            await self.approve(self.other)
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
-            with self.assertRaises(Exception):  # noqa: B017 (the role has no right to the table)
-                await conn.execute(
-                    "INSERT INTO recap_accepted VALUES (%s, %s, 1, 1, 'x', 'x', 'x', 1, 1)",
-                    (THURSDAY.id, self.one.id),
-                )
+            cur = await conn.execute(
+                "SELECT dmbot_recap_approve(%s, %s, 100, 'text', %s) AS r",
+                (THURSDAY.id, self.one.id, "0" * 64),  # the text changed since the page read it
+            )
+            self.assertEqual((await cur.fetchone() or {}).get("r"), "not_allowed")
+        self.assertEqual(await self.accepted.newest(THURSDAY.id, self.one.id), [])
+        self.assertEqual(await self.accepted.newest(THURSDAY.id, self.two.id), [])
+
+    async def test_a_session_keeps_twenty_versions_and_then_replaces_the_newest(self) -> None:
+        from dmbot.recaps.accepted import VERSIONS_PER_SESSION
+
+        for n in range(VERSIONS_PER_SESSION + 3):
+            await self.edit(f"Version {n}.")
+            await self.approve()
+        versions = await self.accepted.versions(THURSDAY.id, self.one.id, 100)
+        self.assertEqual(len(versions), VERSIONS_PER_SESSION)
+        self.assertEqual(versions[0].summary, "Version 0.")  # the first is never lost
+        self.assertEqual(versions[-1].summary, f"Version {VERSIONS_PER_SESSION + 2}.")
+        async with self.db.guild(THURSDAY.id) as conn:  # and the backup of it restores
+            dumped = await AcceptedSection().dump(conn, THURSDAY.id, self.one.id)
+        AcceptedSection().check(dumped)
+
+    async def test_it_restores_through_the_campaign_backup(self) -> None:
+        self.campaigns.register_section(AcceptedSection())
+        await self.approve()
+        await self.edit(TEXT)
+        await self.approve()
+        data = await self.campaigns.export(THURSDAY.id, self.one.id)
+        restored = await self.campaigns.import_backup(THURSDAY.id, data, ALICE.id)
+        versions = await self.accepted.versions(THURSDAY.id, restored.id, 100)
+        self.assertEqual([v.version for v in versions], [1, 2])
+        data["sections"]["recap_accepted"][0]["summary"] = "tampered"  # the hash no longer fits
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(THURSDAY.id, data, ALICE.id)
 
 
 class Checking(unittest.TestCase):
@@ -132,7 +176,7 @@ class Checking(unittest.TestCase):
         return {
             "session_at": 100,
             "version": 1,
-            "text_hash": "a" * 64,
+            "text_hash": text_hash("The Silver Lock", "Mira drew her blade."),
             "title": "The Silver Lock",
             "summary": "Mira drew her blade.",
             "accepted_by": "7",
@@ -153,6 +197,8 @@ class Checking(unittest.TestCase):
             {**good, "version": 0},
             {**good, "version": True},
             {**good, "text_hash": "short"},
+            {**good, "text_hash": "b" * 64},  # not the text's own hash
+            {**good, "version": 21},  # more than a session keeps
             {**good, "title": ""},
             {**good, "summary": "x" * 6001},
             {**good, "accepted_by": "-1"},
@@ -165,4 +211,4 @@ class Checking(unittest.TestCase):
         with self.assertRaises(CampaignError):  # the same session and version twice
             AcceptedSection().check([good, dict(good)])
         with self.assertRaises(CampaignError):
-            AcceptedSection().check([good] * 401)
+            AcceptedSection().check([{**good, "session_at": n + 1} for n in range(5001)])

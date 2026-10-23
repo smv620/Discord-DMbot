@@ -15,8 +15,10 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.recaps.approval import text_hash
 
-MAX_VERSIONS = 400  # versions kept in one campaign's backup (a few per session, over many)
+VERSIONS_PER_SESSION = 20  # the approval door keeps this many of a session (migration 0209)
+MAX_VERSIONS = 5000  # in one campaign's backup: 250 sessions at the most each can hold
 INT64_MAX = 2**63 - 1
 DAMAGED = (
     "This backup file is damaged or isn't a DMbot campaign backup. "
@@ -117,23 +119,27 @@ class AcceptedSection:
             if (
                 any(type(n) is not int for n in (at, version, stamp))
                 or not 0 < at <= INT64_MAX
-                or not 1 <= version <= 10_000
                 or not 0 <= stamp <= INT64_MAX
                 or (at, version) in seen
                 or not (isinstance(by, str) and by.isascii() and by.isdigit())
                 or not 0 < int(by) <= INT64_MAX
-                or not (isinstance(digest, str) and len(digest) == 64)
+                or not 1 <= version <= VERSIONS_PER_SESSION
             ):
                 raise CampaignError(DAMAGED)
             for key, limit in (("title", 120), ("summary", 6000)):
                 value = row[key]
                 if not isinstance(value, str) or not 1 <= len(value) <= limit:
                     raise CampaignError(DAMAGED)
+            # The door decides "a new version" by this hash, so it must be the text's own.
+            if digest != text_hash(row["title"], row["summary"]):
+                raise CampaignError(DAMAGED)
             seen.add((at, version))
             out.append(Accepted(at, version, digest, row["title"], row["summary"], int(by), stamp))
         return out
 
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        # The store hands over what `check` returned (it checks in a worker thread before the
+        # transaction opens); a raw list is checked here.
         checked = (
             rows
             if isinstance(rows, list) and rows and all(isinstance(r, Accepted) for r in rows)

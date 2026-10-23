@@ -11715,14 +11715,13 @@ def _approve_with_versions() -> str:
     start = RECAP_APPROVAL.index("    CREATE FUNCTION dmbot_recap_approve(")
     end = RECAP_APPROVAL.index("    $fn$;", start) + len("    $fn$;")
     body = RECAP_APPROVAL[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
-    body = body.replace(
-        "        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;\n",
-        "        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;\n"
-        "        last_hash TEXT;\n        last_version INT;\n",
-        1,
-    )
+    declared = "        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;\n"
     keep = "        RETURN 'approved';\n    END"
-    assert keep in body
+    if declared not in body or keep not in body:  # (an earlier migration's text moved)
+        raise RuntimeError("dmbot_recap_approve changed: the version step needs a new anchor")
+    body = body.replace(
+        declared, declared + "        last_hash TEXT;\n        last_version INT;\n", 1
+    )
     return body.replace(
         keep,
         "        -- The text the DM approved becomes the session's summary in the campaign\n"
@@ -11730,7 +11729,15 @@ def _approve_with_versions() -> str:
         "        SELECT a.text_hash, a.version INTO last_hash, last_version FROM recap_accepted a\n"
         "            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_\n"
         "            ORDER BY a.version DESC LIMIT 1;\n"
-        "        IF NOT FOUND OR last_hash <> expected THEN\n"
+        "        IF FOUND AND last_hash <> expected AND last_version >= 20 THEN\n"
+        "            -- a session keeps at most 20 versions, so a backup always restores: past\n"
+        "            -- that the newest is replaced by the text approved now\n"
+        "            UPDATE recap_accepted SET text_hash = expected, title = job.title,\n"
+        "                summary = job.summary, accepted_by = dmbot_current_user(),\n"
+        "                accepted_at = now_s\n"
+        "                WHERE guild_id = g AND campaign_id = c AND session_at = at_\n"
+        "                AND version = last_version;\n"
+        "        ELSIF NOT FOUND OR last_hash <> expected THEN\n"
         "            INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version,\n"
         "                text_hash, title, summary, accepted_by, accepted_at)\n"
         "            VALUES (g, c, at_, COALESCE(last_version, 0) + 1, expected, job.title,\n"
