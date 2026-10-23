@@ -10687,9 +10687,11 @@ STORY_TIMELINE = """
     -- For one campaign of a server in the caller's own list, NULL otherwise (and for a campaign
     -- that is not there). Recaps: a game master sees every one that is approved or going out or
     -- posted; a player sees posted ones only, never a draft. Shown at the table: the names DMbot
-    -- showed the players after a session (the 'scan' writer's changes, #2404), unless the game
-    -- master undid that change or hid the name again, the same list for everyone: they are names
-    -- the players already see. A name whose own spelling is a secret one is left out for a player.
+    -- showed the players after a session (the 'scan' writer's changes, #2404) that the players can
+    -- still see: an Undo, or the game master hiding the name again, puts the entry back to hidden,
+    -- and a redo shows it again, so the entry's own state says it (no need to follow the undo
+    -- chain). The same list for everyone: they are names the players already see. A name whose own
+    -- spelling is a secret one is left out for a player.
     CREATE FUNCTION dmbot_web_story_timeline(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -10713,6 +10715,7 @@ STORY_TIMELINE = """
                     ORDER BY r.session_at)
                 FROM recap_jobs r
                 WHERE r.guild_id = g AND r.campaign_id = c AND r.title <> ''
+                  AND r.status <> 'dropped'
                   AND (r.status = 'posted'
                        OR (is_dm AND (r.status = 'posting' OR r.approved_at > 0)))
             ), '[]'::jsonb),
@@ -10730,9 +10733,6 @@ STORY_TIMELINE = """
                       AND ch.source = 'scan'
                       AND ch.before ->> 'hidden_from_players' = 'true'
                       AND ch.after ->> 'hidden_from_players' = 'false'
-                      AND NOT EXISTS (SELECT 1 FROM memory_changes u
-                                      WHERE u.guild_id = g AND u.campaign_id = c
-                                        AND u.undoes = ch.batch)
                       AND e.status = 'confirmed' AND NOT e.hidden_from_players
                       AND NOT e.audience_limited
                       AND (is_dm OR NOT EXISTS (

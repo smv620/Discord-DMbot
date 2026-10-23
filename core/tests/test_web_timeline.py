@@ -90,7 +90,11 @@ class TimelineBase(Base):
             source, at,
         )  # fmt: skip
 
-    async def undo(self, batch: int) -> None:
+    async def undo(self, batch: int, entity_id: str) -> None:
+        """An Undo of a reveal: its own change row and the entry hidden again, as the store does."""
+        await self.sql(
+            "UPDATE memory_entities SET hidden_from_players = TRUE WHERE id = %s", entity_id
+        )
         type(self).version += 1
         await self.sql(
             "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name, row_id,"
@@ -133,6 +137,34 @@ class TheSessions(TimelineBase):
             self.assertEqual(caught.exception.code, "not_found")
 
 
+class TheAttribution(TimelineBase):
+    """Which session a reveal belongs to, when sessions are close together or have no end."""
+
+    async def make_session(self, start: int, end: int | None) -> None:
+        store = TranscriptStore(self.db)
+        sid = await store.open_session(self.g, self.one.id, start)
+        await store.add_lines(self.g, sid, [Line(start * 1000 + 1000, ALICE.id, "x", "x")])
+        if end is not None:
+            await store.end_session(self.g, sid, end)
+
+    async def test_the_session_that_was_running_wins_over_an_earlier_ones_grace_window(
+        self,
+    ) -> None:
+        # Session 3 starts 30 minutes after session 2 ended; a name is shown during session 3.
+        await self.make_session(START + DAY + 7200 + 1800, START + DAY + 20_000)
+        shown = await self.entity("During")
+        await self.reveal(shown, START + DAY + 7200 + 2400, batch=1)
+        got = (await self.read(self.session))["sessions"]
+        self.assertEqual([s["revealed"] for s in got], [[], [], ["During"]])
+
+    async def test_a_session_still_listening_owns_the_names_shown_during_it(self) -> None:
+        await self.make_session(START + 2 * DAY, None)
+        shown = await self.entity("Midgame")
+        await self.reveal(shown, START + 2 * DAY + 3 * 3600, batch=1)  # three hours in
+        got = (await self.read(self.session))["sessions"]
+        self.assertEqual(got[2]["revealed"], ["Midgame"])
+
+
 class TheRecaps(TimelineBase):
     async def test_a_game_master_sees_approved_and_posted_recaps_with_their_address(self) -> None:
         await self.recap(START, "The river", status="posted", approved=True)
@@ -150,6 +182,11 @@ class TheRecaps(TimelineBase):
             got = (await self.read(who))["sessions"]
             self.assertEqual(got[0]["recap"], {"title": "The river", "posted": True, "ref": None})
             self.assertIsNone(got[1]["recap"])
+
+    async def test_a_dropped_recap_is_in_nobodys_timeline(self) -> None:
+        await self.recap(START, "Dropped", status="dropped", approved=True)
+        for who in (self.session, self.bob):
+            self.assertIsNone((await self.read(who))["sessions"][0]["recap"])
 
     async def test_a_draft_is_in_nobodys_timeline_and_an_untitled_recap_is_left_out(self) -> None:
         await self.recap(START, "A draft")  # not approved, not posted
@@ -190,7 +227,7 @@ class TheReveals(TimelineBase):
         by_dm = await self.entity("ByDm")
         kept = await self.entity("Kept")
         await self.reveal(undone, START + 3700, batch=10)
-        await self.undo(10)
+        await self.undo(10, undone)
         await self.reveal(hidden_again, START + 3700, batch=20)
         await self.sql(
             "UPDATE memory_entities SET hidden_from_players = TRUE WHERE id = %s", hidden_again
@@ -199,6 +236,22 @@ class TheReveals(TimelineBase):
         await self.reveal(kept, START + 3700, batch=40)
         got = (await self.read(self.carol))["sessions"]
         self.assertEqual(got[0]["revealed"], ["Kept"])
+
+    async def test_a_name_shown_again_by_a_redo_is_back_in_the_timeline(self) -> None:
+        redone = await self.entity("Redone")
+        await self.reveal(redone, START + 3700, batch=50)
+        await self.undo(50, redone)
+        self.assertEqual((await self.read(self.carol))["sessions"][0]["revealed"], [])
+        await self.sql(
+            "UPDATE memory_entities SET hidden_from_players = FALSE WHERE id = %s", redone
+        )  # the redo
+        self.assertEqual((await self.read(self.carol))["sessions"][0]["revealed"], ["Redone"])
+
+    async def test_a_name_shown_in_two_scans_is_listed_once(self) -> None:
+        twice = await self.entity("Twice")
+        await self.reveal(twice, START + 3700, batch=60)
+        await self.reveal(twice, START + 3800, batch=61)
+        self.assertEqual((await self.read(self.carol))["sessions"][0]["revealed"], ["Twice"])
 
     async def test_a_name_shown_at_some_other_time_is_not_put_under_a_session(self) -> None:
         late = await self.entity("Late")

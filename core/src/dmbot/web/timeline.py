@@ -28,13 +28,24 @@ from dmbot.web.transcripts import _parse
 SCAN_WINDOW = 3600
 
 
-def _session_of(sessions: list[dict[str, Any]], at: int) -> int | None:
-    """The number of the session a name shown at `at` belongs to, else None."""
-    for s in sessions:
-        end = s["endedAt"] if s["endedAt"] is not None else s["startedAt"]
-        if s["startedAt"] <= at <= end + SCAN_WINDOW:
-            return int(s["number"])
-    return None
+def _session_of(sessions: list[dict[str, Any]], at: int, now: int) -> int | None:
+    """The number of the session a name shown at `at` belongs to, else None. The session that was
+    running then wins (the latest to have started, if two overlap); failing that, the latest one
+    that ended in the hour before. A session with no end yet (still listening, or one that stopped
+    early) runs until the next one starts, or until `now` if it is the last."""
+    spans = []
+    for i, s in enumerate(sessions):
+        start = int(s["startedAt"])
+        if s["endedAt"] is not None:
+            end = int(s["endedAt"])
+        else:
+            end = int(sessions[i + 1]["startedAt"]) if i + 1 < len(sessions) else max(now, start)
+        spans.append((start, end, int(s["number"])))
+    running = [sp for sp in spans if sp[0] <= at <= sp[1]]
+    if running:
+        return max(running)[2]
+    after = [sp for sp in spans if sp[1] < at <= sp[1] + SCAN_WINDOW]
+    return max(after)[2] if after else None
 
 
 async def read_timeline(
@@ -60,9 +71,11 @@ async def read_timeline(
     sessions = sorted(listed["sessions"], key=lambda s: s["number"])
     shown: dict[int, list[str]] = {}
     for reveal in found["reveals"]:
-        number = _session_of(sessions, int(reveal["at"]))
+        number = _session_of(sessions, int(reveal["at"]), now)
         if number is not None:
-            shown.setdefault(number, []).extend(str(n) for n in reveal["names"])
+            names = shown.setdefault(number, [])
+            # A name shown twice (two scans) is listed once.
+            names.extend(n for n in (str(x) for x in reveal["names"]) if n not in names)
     out: list[dict[str, Any]] = []
     for s in sessions:
         recap = by_start.get(int(s["startedAt"]))
