@@ -36,6 +36,7 @@ import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapNameChecks from "./RecapNameChecks";
+import RecapPlotCheck from "./RecapPlotCheck";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
@@ -469,6 +470,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // The email switch as the DM has it now (null until the choices have loaded), so the line while a
   // recap is made follows it instead of the first read of the recap.
   const [emailOn, setEmailOn] = useState<boolean | null>(null);
+  // The Plot check (#2124): why Approve waits, and words its "Fix the recap" puts in the fix box.
+  const [plotWhy, setPlotWhy] = useState<string | null>(null);
+  const [fixPrefill, setFixPrefill] = useState<{ n: number; text: string } | null>(null);
   // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
   const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
 
@@ -843,14 +847,25 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
-      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} prefill={fixPrefill} />}
       <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />
+      {!editing && recap.status === "draft" && recap.canEdit && (
+        <RecapPlotCheck
+          key={`plot-${recap.ref}`}
+          api={api}
+          refId={recap.ref}
+          text={recap.text}
+          onBlocked={setPlotWhy}
+          onFix={(text) => setFixPrefill((was) => ({ n: (was?.n ?? 0) + 1, text }))}
+        />
+      )}
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
           recap={recap}
           onRecap={setRecap}
           pageFocus={() => headingRef.current}
+          blockedBy={plotWhy}
         />}
       {!editing && (
         <RecapShareControls

@@ -41,7 +41,7 @@ import type {
   MyNpcNote,
   NpcPage,
 } from "./api";
-import { ApiError } from "./api";
+import { ApiError, type PlotIssue } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -709,6 +709,32 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // and is gone on the one after, as the bot's queue would. `Garrick` answers with a failure.
   const nameLooks = new Map<string, number>();
   const nameFailed = new Set<string>();
+  // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
+  const plotText = new Map<string, string>();
+  const plotLooks = new Map<string, number>();
+  const plotIssues = new Map<string, PlotIssue[]>();
+  const seedPlot = (): PlotIssue[] => [
+    {
+      id: "i1",
+      kind: "dead_acts",
+      level: "high",
+      sentenceText: "Ulfgar opened the gate.",
+      reason: "Ulfgar died in session 6.",
+      source: { text: "Ulfgar fell to the ghoul at the bridge.", session: 6 },
+      answer: null,
+      thread: [],
+    },
+    {
+      id: "i2",
+      kind: "item_twice",
+      level: "medium",
+      sentenceText: "Mara kept the silver key.",
+      reason: "The silver key was last with Brannoch.",
+      source: { text: "Brannoch pocketed the silver key.", session: 5 },
+      answer: null,
+      thread: [],
+    },
+  ];
   const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
   // A recap asked to try again is "being made" for one more read, then ready (the real API takes
@@ -1485,6 +1511,73 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           { key: "thing", label: "A thing" },
         ],
       };
+    },
+    // The Plot check (#2124): two questions the first time; a recap whose text changed shows
+    // "checking" for one look, then the new question list. Answers and chats are kept per recap.
+    async plotCheck(ref) {
+      calls.push(`plotCheck:${ref}`);
+      await reachable();
+      signedIn();
+      const r = await find(ref);
+      const seen = plotText.get(ref);
+      if (seen !== undefined && seen !== r.text) {
+        plotText.set(ref, r.text);
+        plotIssues.delete(ref);
+        plotLooks.set(ref, 0);
+      }
+      if (seen === undefined) plotText.set(ref, r.text);
+      const looks = plotLooks.get(ref);
+      if (looks !== undefined && looks < 1) {
+        plotLooks.set(ref, looks + 1);
+        return { state: "checking" as const, approveBlocked: true, issues: [], versions: [] };
+      }
+      const issues = plotIssues.get(ref) ?? seedPlot();
+      plotIssues.set(ref, issues);
+      return {
+        state: "ready" as const,
+        approveBlocked: issues.some((i) => i.answer === null),
+        issues: issues.map((i) => ({ ...i })),
+        versions: [{ version: 1, acceptedBy: "You", acceptedAt: "2026-10-01" }],
+      };
+    },
+    async answerPlotIssue(ref, issue, answer) {
+      calls.push(`answerPlotIssue:${ref}:${issue}:${JSON.stringify(answer)}`);
+      await reachable();
+      signedIn();
+      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
+      if (!found) throw new ApiError("not-found");
+      found.answer = answer.note ? { kind: answer.kind, note: answer.note } : { kind: answer.kind };
+      return { ...found };
+    },
+    async plotChat(ref, issue, message) {
+      calls.push(`plotChat:${ref}:${issue}`);
+      await reachable();
+      signedIn();
+      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
+      if (!found) throw new ApiError("not-found");
+      if (message.trim() === "") throw new ApiError("bad-text");
+      found.thread = [
+        ...found.thread,
+        { from: "dm", text: message },
+        {
+          from: "plotbot",
+          text: "Thanks. If Ulfgar is alive again from session 7, I can suggest a note. You decide.",
+          proposal: { id: `p${found.thread.length}`, text: "Ulfgar: alive again from session 7", state: "open" },
+        },
+      ];
+      return found.thread.map((l) => ({ ...l }));
+    },
+    async decidePlotProposal(ref, issue, proposal, action) {
+      calls.push(`decidePlotProposal:${ref}:${issue}:${proposal}:${action}`);
+      await reachable();
+      signedIn();
+      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
+      if (!found) throw new ApiError("not-found");
+      for (const line of found.thread) {
+        if (line.proposal?.id === proposal) line.proposal.state = action === "save" ? "saved" : "declined";
+      }
+      if (action === "save") found.answer = { kind: "changed" };
+      return { ...found, thread: found.thread.map((l) => ({ ...l })) };
     },
     async answerNameCheck(ref, id, answer) {
       calls.push(`answerNameCheck:${ref}:${id.slice(0, 1)}:${JSON.stringify(answer)}`);

@@ -547,6 +547,32 @@ export interface NameCheck {
   answering: boolean;
   error: string;
 }
+/** The Plot check of a recap (#2124; core #2122, #2123): PlotBot's questions, shown to the DM only. */
+export type PlotAnswerKind = "fix" | "changed" | "fine" | "leave";
+export interface PlotChatLine {
+  from: "dm" | "plotbot";
+  text: string;
+  /** A change PlotBot suggests keeping; nothing is saved unless the DM presses Save. */
+  proposal?: { id: string; text: string; state: "open" | "saved" | "declined" };
+}
+export interface PlotIssue {
+  id: string;
+  kind: string;
+  level: "high" | "medium" | "low";
+  sentenceText: string;
+  reason: string;
+  source: { text: string; session: number | null };
+  answer: { kind: PlotAnswerKind; note?: string } | null;
+  thread: PlotChatLine[];
+}
+export interface PlotCheck {
+  state: "checking" | "ready";
+  /** The API's own word on whether Approve must wait; the page also counts unanswered questions. */
+  approveBlocked: boolean;
+  issues: PlotIssue[];
+  versions: { version: number; acceptedBy: string; acceptedAt: string }[];
+}
+
 export interface NameCheckList {
   names: NameCheck[];
   /** The known names an answer can say a name is the same as. */
@@ -1324,6 +1350,13 @@ export interface AccountApi {
    * the DM kept. Missing from an API older than #2113. */
   /** The recap's new names to check, and the choices for answering them (#2114 part 3). */
   nameChecks?(ref: string): Promise<NameCheckList>;
+  /** The Plot check (#2124). Missing from an API older than #2122. */
+  plotCheck?(ref: string): Promise<PlotCheck>;
+  answerPlotIssue?(ref: string, issue: string, answer: { kind: PlotAnswerKind; note?: string }): Promise<PlotIssue>;
+  /** Talk an issue through: the DM's message goes in, the thread comes back with PlotBot's reply. */
+  plotChat?(ref: string, issue: string, message: string): Promise<PlotChatLine[]>;
+  /** Save or decline a suggested note; saving also answers the issue "the story changed". */
+  decidePlotProposal?(ref: string, issue: string, proposal: string, action: "save" | "decline"): Promise<PlotIssue>;
   /** Queue one answer for the bot; the name leaves the list once it is applied. */
   answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -1835,6 +1868,26 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    plotCheck: async (ref) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/plot`)) as PlotCheck,
+    answerPlotIssue: async (ref, issue, answer) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/answer`,
+        answer,
+      )) as PlotIssue,
+    plotChat: async (ref, issue, message) =>
+      ((await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/chat`,
+        { message },
+      )) as { thread: PlotChatLine[] }).thread,
+    decidePlotProposal: async (ref, issue, proposal, action) =>
+      (await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/plot/${encodeURIComponent(issue)}/proposals/${encodeURIComponent(proposal)}`,
+        { action },
+      )) as PlotIssue,
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
     answerNameCheck: async (ref, id, answer) => {

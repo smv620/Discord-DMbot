@@ -45,12 +45,15 @@ export default function RecapApprove({
   recap,
   onRecap,
   pageFocus,
+  blockedBy,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
   /** Where focus goes when this part is gone (the recap was posted): the page's own heading. */
   pageFocus?: () => HTMLElement | null | undefined;
+  /** Why Approve is waiting (the Plot check still has questions, #2124): the buttons stay, greyed, with this line. */
+  blockedBy?: string | null;
 }) {
   const [picking, setPicking] = useState(false);
   // Why the narration can't be made: undefined while it is being asked, "" when it can be.
@@ -291,7 +294,8 @@ export default function RecapApprove({
                   type="button"
                   class="button"
                   aria-busy={busy === "post"}
-                  disabled={busy !== null}
+                  aria-describedby={blockedBy ? "recap-approve-blocked" : undefined}
+                  disabled={busy !== null || !!blockedBy}
                   onClick={approveAndPost}
                 >
                   {busy === "post" ? words.busy : words.postText}
@@ -300,8 +304,10 @@ export default function RecapApprove({
                   type="button"
                   class="button"
                   ref={audioBtnRef}
-                  aria-describedby={why !== "" ? "recap-audio-why" : undefined}
-                  disabled={busy !== null || why !== ""}
+                  aria-describedby={
+                    [blockedBy ? "recap-approve-blocked" : "", why !== "" ? "recap-audio-why" : ""].filter(Boolean).join(" ") || undefined
+                  }
+                  disabled={busy !== null || why !== "" || !!blockedBy}
                   onClick={() => {
                     setPicking(true);
                     setProblem(null);
@@ -314,12 +320,18 @@ export default function RecapApprove({
                   type="button"
                   class="button secondary"
                   aria-busy={busy === "text"}
-                  disabled={busy !== null}
+                  aria-describedby={blockedBy ? "recap-approve-blocked" : undefined}
+                  disabled={busy !== null || !!blockedBy}
                   onClick={() => approve("text")}
                 >
                   {busy === "text" ? words.busy : words.keepIt}
                 </button>
               </div>
+              {blockedBy && (
+                <p id="recap-approve-blocked" class="note" role="status">
+                  {blockedBy}
+                </p>
+              )}
               {why !== "" && (
                 <p id="recap-audio-why" class="muted small">
                   {why === undefined
