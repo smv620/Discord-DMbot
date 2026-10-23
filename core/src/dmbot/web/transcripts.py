@@ -486,7 +486,8 @@ async def _session_id(
     db: Database, session: Session, ref: str, number: int, *, now: int, enforce_plans: bool
 ) -> tuple[int, str, str, int]:
     """(server, campaign, the session's id, when it started in Unix seconds) for a numbered
-    session, or a refusal. A session whose transcript was deleted has nothing to change, and counts as not found."""
+    session, or a refusal. A session whose transcript was deleted has nothing to change, and
+    counts as not found."""
     guild_id, campaign_id, found = await _sessions(
         db, session, ref, now=now, enforce_plans=enforce_plans
     )

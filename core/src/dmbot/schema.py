@@ -12022,8 +12022,8 @@ TOPIC_CHOICES = """
     -- them up) or leaves it out again. Only that person's spoken lines between the two start
     -- times; "put back" changes lines that are left out, "leave out" only lines a DM put back,
     -- never a plain game line or one the filter itself kept. Who and when are kept. Answers the
-    -- number of lines changed, 'not_allowed' for anyone who is not a DM of the campaign, NULL when the
-    -- caller is not in the server or there is no such session.
+    -- number of lines changed, 'not_allowed' for anyone who is not a DM of the campaign, NULL
+    -- when the caller is not in the server or there is no such session.
     CREATE FUNCTION dmbot_web_transcript_choose(
         g BIGINT, c TEXT, sid TEXT, who BIGINT, from_ms BIGINT, to_ms BIGINT, back BOOLEAN)
     RETURNS JSONB
