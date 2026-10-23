@@ -127,7 +127,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
       <LinkList heading={words.groups.story} id="story" links={story} />
       <LinkList heading={words.groups.table} id="table" links={table} />
       <LinkList heading={words.groups.rules} id="rules" links={rules} />
-      {isDm && <CampaignSettings api={api} campaignRef={ref} page={page} />}
+      {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
     </div>
   );
 }

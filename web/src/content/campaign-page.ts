@@ -70,7 +70,7 @@ export const campaignPage = {
   sharedRulesNote: "Share these, or follow another table's.",
   // The Settings group: the current choice of each, read-only for now. Where the website cannot
   // change it yet, it says where to in Discord, with the names of Discord's own menus.
-  settingsLead: "These are your campaign's choices. Only game masters see this. To change one, follow the Discord steps under it.",
+  settingsLead: "Your campaign's choices. Only game masters see this. Tap a choice to change it here. The rest is done in Discord.",
   settingsLabels: {
     visibility: "Who can see the DM screen",
     level: "How much DMbot says",
@@ -132,20 +132,20 @@ export const campaignPage = {
     ],
   } as Record<string, [string, string][]>,
   saving: "Saving…",
-  slow: "This is taking longer than usual.",
-  offline: "DMbot will change this when it's back. Open this page again later to see it.",
+  slow: "This is taking longer than usual. Keep this page open.",
+  offline: "DMbot isn't answering. Your choice waits up to an hour. Reload this page later to check.",
   saved: "Saved.",
-  timedOut: "That choice timed out. Try again.",
-  refused: "Discord didn't allow this change:",
-  notAllowed: "Only this campaign's DM can change this. Ask them, or use ⚙️ Settings in Discord.",
-  campaignGone: "DMbot can't find this campaign any more.",
-  failed: "Something went wrong. Try again.",
+  timedOut: "DMbot didn't answer in time. Check the choice above, then try again.",
+  refused: "DMbot didn't change this:",
+  notAllowed: "You can't change this. Ask this campaign's DM.",
+  campaignGone: "DMbot can't find this campaign. Go back to your campaigns list.",
+  failed: "That didn't work and nothing changed. Try again.",
   badChoice: "That choice isn't available. Reload the page and try again.",
-  tooSoon: "Slow down a moment.",
+  tooSoon: "Please wait a few seconds, then try again.",
   // The same warning as Discord's before a shorter limit is saved (transcript_keep.warning_text).
   retentionWarning: (label: string): string =>
     `Sessions older than ${label} will be deleted every night, with their downloads on the website. The first clean-up is tonight. Recaps and the facts you confirmed stay. Nobody can get the deleted transcripts back.`,
   deleteAfter: (label: string): string => `Delete after ${label}`,
-  keepAsIs: "Keep as it is",
-  ownerOnlyNote: "The campaign's owner does these in Discord.",
+  keepAsIs: "Keep current",
+  ownerOnlyNote: "Hand over, pause and delete are done in Discord by the campaign's owner.",
 };

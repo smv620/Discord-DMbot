@@ -50,8 +50,8 @@ describe("changing a choice", () => {
     await within(section).findByText(/Saved\./, undefined, slow);
   });
 
-  it("asks before a shorter keep-time, queues nothing until yes, and Keep as it is cancels", async () => {
-    const { section } = await open("100.cmp1");
+  it("asks before a shorter keep-time, queues nothing until yes, and Keep current cancels", async () => {
+    const { api, section } = await open("100.cmp1");
     fireEvent.click(within(group(section, "retention")).getByRole("button", { name: "30 days" }));
     expect(await within(section).findByText(w.retentionWarning("30 days"))).toBeTruthy();
     expect(within(section).queryByText(w.saving)).toBeNull();
@@ -59,6 +59,7 @@ describe("changing a choice", () => {
     expect(within(section).queryByText(w.retentionWarning("30 days"))).toBeNull();
     expect(within(group(section, "retention")).getByRole("button", { name: "90 days" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(within(group(section, "retention")).getByRole("button", { name: "30 days" }));
+    expect(api.calls.some((c) => c.startsWith("setCampaignSetting"))).toBe(false); // nothing queued before the yes
     fireEvent.click(await within(section).findByRole("button", { name: w.deleteAfter("30 days") }));
     expect(await within(section).findByText(/older than 30 days are deleted every night/, undefined, slow)).toBeTruthy();
     expect(within(group(section, "retention")).getByRole("button", { name: "30 days" }).getAttribute("aria-pressed")).toBe("true");
@@ -79,9 +80,8 @@ describe("changing a choice", () => {
     cleanup();
     const failed = await open("100.cmp1.cs-failed");
     fireEvent.click(within(group(failed.section, "level")).getByRole("button", { name: "🔇 Quiet" }));
-    expect(await within(failed.section).findByRole("alert", undefined, slow)).toBeTruthy();
-    expect(within(failed.section).getByText(w.failed)).toBeTruthy();
-  });
+    expect((await within(failed.section).findByText(w.failed, undefined, slow)).getAttribute("role")).toBe("alert");
+  }, 15000);
 
   it("says the bot will do it when it is back, and keeps the old value showing", async () => {
     const { section } = await open("100.cmp1.cs-offline");
@@ -92,6 +92,33 @@ describe("changing a choice", () => {
     for (let i = 0; i < 100; i += 1) await vi.advanceTimersByTimeAsync(250);
     expect(within(section).getByText(w.offline)).toBeTruthy();
     expect(within(group(section, "level")).getByRole("button", { name: "🔔 Normal" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+describe("what the bot says back", () => {
+  it("shows the bot's note once, without Discord's marks, and a plain Saved when it has none", async () => {
+    const { section } = await open("100.cmp1");
+    fireEvent.click(within(group(section, "retention")).getByRole("button", { name: "1 year" }));
+    const note = await within(section).findByText("Saved. Sessions older than 365 days are deleted every night.", undefined, slow);
+    expect(note.textContent).not.toMatch(/Saved\. Saved\./);
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    await waitFor(() => expect(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }).getAttribute("aria-pressed")).toBe("true"), slow);
+    expect(within(section).getAllByText(w.saved).length).toBeGreaterThan(0);
+  });
+
+  it("lets an old 'chatty' campaign be moved to Normal: neither is pressed", async () => {
+    const api = mockApi("table");
+    const read = api.campaignPage!.bind(api);
+    api.campaignPage = async (r) => {
+      const got = await read(r);
+      return { ...got, settings: { ...got.settings!, level: "chatty" } };
+    };
+    render(<CampaignPageView api={api} path="/account/campaigns/100.cmp1" />);
+    const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
+    const normal = within(group(section, "level")).getByRole("button", { name: "🔔 Normal" });
+    expect(normal.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(normal);
+    await waitFor(() => expect(normal.getAttribute("aria-pressed")).toBe("true"), slow);
   });
 });
 

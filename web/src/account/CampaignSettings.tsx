@@ -25,7 +25,7 @@ type Phase =
 
 const current = (s: NonNullable<CampaignPage["settings"]>): Record<CampaignSettingName, string> => ({
   visibility: s.visibility,
-  level: s.level === "quiet" ? "quiet" : "normal", // "chatty" is an old choice that Discord no longer offers
+  level: s.level === "quiet" || s.level === "normal" ? s.level : "", // "chatty" is an old choice Discord no longer offers: press neither, so both can be chosen
   retention: s.keepDays === null ? "forever" : String(s.keepDays),
 });
 
@@ -40,7 +40,12 @@ function shorter(now: string, next: string): boolean {
 }
 
 /** Discord's words with its `**bold**` marks taken out: the page shows plain text. */
-const plain = (note: string): string => note.replaceAll("**", "");
+const plain = (note: string): string =>
+  note
+    .replaceAll("**", "")
+    .replace(/<[@#][&!]?\d+>/g, "") // channel and role mentions mean nothing on a web page
+    .replace(/\s*\n+\s*/g, " ")
+    .trim();
 
 function refusal(kind: string): string {
   if (kind === "not-allowed") return words.notAllowed;
@@ -75,7 +80,7 @@ function Control({
   onConfirm: (v: string) => void;
   onKeep: () => void;
 }) {
-  const busy = phase.kind === "saving";
+  const busy = phase.kind === "saving" || phase.kind === "offline"; // offline: a second tap would queue a second change
   const options = words.options[setting] ?? [];
   const line =
     phase.kind === "saving"
@@ -85,7 +90,7 @@ function Control({
       : phase.kind === "offline"
         ? words.offline
         : phase.kind === "saved"
-          ? `${words.saved} ${phase.note}`.trim()
+          ? phase.note || words.saved // the bot's own note already starts with "Saved."
           : phase.kind === "error"
             ? phase.message
             : "";
@@ -111,8 +116,8 @@ function Control({
         </span>
       </div>
       {phase.kind === "confirm" && (
-        <div class="panel" role="group" aria-label={words.controls[setting]}>
-          <p>{words.retentionWarning(label(setting, phase.value))}</p>
+        <div class="panel" role="group" aria-labelledby={`${id}-warning`}>
+          <p id={`${id}-warning`}>{words.retentionWarning(label(setting, phase.value))}</p>
           <p class="row">
             <button type="button" class="button" onClick={() => onConfirm(phase.value)}>
               {words.deleteAfter(label(setting, phase.value))}
@@ -123,8 +128,12 @@ function Control({
           </p>
         </div>
       )}
-      <p class={phase.kind === "error" ? "warn small" : "small muted"} role={phase.kind === "error" ? "alert" : "status"}>
-        {line}
+      {/* Two steady live regions: a region whose role changes after it appears is often not read out. */}
+      <p class="small muted" role="status">
+        {phase.kind === "error" ? "" : line}
+      </p>
+      <p class="warn small" role="alert">
+        {phase.kind === "error" ? line : ""}
       </p>
     </li>
   );
@@ -177,6 +186,8 @@ export default function CampaignSettings({
       } catch (error) {
         // The queue forgets a choice after an hour; before that a look that fails is tried again.
         if (error instanceof ApiError && error.kind === "not-found") return set(setting, { kind: "error", message: words.timedOut });
+        // Being signed out or no longer a game master will not mend by waiting.
+        if (error instanceof ApiError && (error.kind === "not-allowed" || error.kind === "signed-out")) return set(setting, { kind: "error", message: refusal(error.kind) });
         if (waited > OFFLINE_AFTER_MS) return set(setting, { kind: "error", message: words.failed });
         continue;
       }
