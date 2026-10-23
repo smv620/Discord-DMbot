@@ -3150,6 +3150,10 @@ class AfterSession(NamesTest):
         await self.bot.suggest_names(table)
         waiting = await self.names((PROPOSED,))
         self.assertEqual(set(waiting), {"Bryn Shander"})  # not a known name, not a stranger's
+        posted.assert_not_awaited()  # the summary tells it (#2410); the "new names" step is the net
+        self.assertEqual(table.new_names, ["Bryn Shander"])
+        await self.bot.post_new_names(table)
+        self.assertEqual(table.new_names, [])  # told once
         text = posted.await_args.args[1]  # type: ignore[union-attr]
         self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]

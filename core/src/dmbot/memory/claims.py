@@ -172,6 +172,7 @@ class Proposed:
 class Confirmed:
     claim: Claim
     flags: tuple[Flag, ...]  # problems the store's checks raised for the DM
+    batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
 
 
 def _field(value: object) -> str | None:
@@ -930,6 +931,17 @@ class ClaimStore:
             row = await w.update(CLAIMS, claim_id, {"status": CLAIM_REJECTED, "decided_at": w.now})
             return claim_of(row)
 
+    @staticmethod
+    async def reopen_in(w: Changes, claim_id: str) -> None:
+        """The DM took its answer back (↩️ Undo on a remembered fact, #2410): the fact is gone, so
+        the question waits again. The claims are not in the change log, so the undo's own write
+        (`MemoryStore.undo(after=...)`) puts it back, and a failure rolls both back."""
+        row = await w.get(CLAIMS, claim_id)
+        if row is not None and row["status"] == CLAIM_CONFIRMED:
+            await w.update(
+                CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None}
+            )
+
     async def confirm(
         self,
         guild_id: int,
@@ -938,6 +950,7 @@ class ClaimStore:
         *,
         opted_in: Collection[int],
         before: Callable[[Changes], Awaitable[None]] | None = None,
+        secret: bool = False,
     ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
@@ -945,7 +958,10 @@ class ClaimStore:
         recorded now: if anyone whose words it holds has stopped, the claim is deleted instead
         (the stored row is untrusted too, so the plan and instruction checks run again).
         `before` runs first inside the same transaction (a continuity answer, #1320, ends the
-        fact it replaces or brings back what had ended): all of it happens, or none."""
+        fact it replaces or brings back what had ended): all of it happens, or none.
+        `secret`: the DM's "truth but secret" (#2410): The truth holds the connection and the
+        players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
+        never written secret."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
@@ -1013,6 +1029,7 @@ class ClaimStore:
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or claim.details, from_session_at=claim.session_started_at,
+                    secret=secret,
                 )  # fmt: skip
                 fact_id = relation.id
             row = await w.update(
@@ -1020,4 +1037,5 @@ class ClaimStore:
                 claim_id,
                 {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
             )
-        return Confirmed(claim_of(row), tuple(flags))
+            batch = w.batch
+        return Confirmed(claim_of(row), tuple(flags), batch)
