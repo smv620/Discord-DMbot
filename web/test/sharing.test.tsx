@@ -4,6 +4,7 @@
 // the exact Discord path to change it; no share code on the page.
 import { cleanup, render, screen, within } from "@testing-library/preact";
 import axe from "axe-core";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError, type AccountApi } from "../src/account/api";
@@ -100,5 +101,12 @@ describe("the Shared rules page", () => {
     expect(
       result.violations.filter((v) => v.impact === "serious" || v.impact === "critical"),
     ).toEqual([]);
+  });
+});
+
+describe("the site's rules for the page", () => {
+  it("never stores or indexes it (it is your own signed-in page)", () => {
+    const headers = readFileSync(`${process.cwd()}/public/_headers`, "utf8");
+    expect(headers).toMatch(/\/account\/sharing\*\n {2}Cache-Control: no-store\n {2}X-Robots-Tag: noindex, nofollow/);
   });
 });
