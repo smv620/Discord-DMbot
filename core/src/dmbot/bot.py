@@ -11031,7 +11031,7 @@ class DMBot(commands.AutoShardedBot):
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Plot talk failed for a server: %s", type(exc).__name__)
 
-    async def _plot_talk_step(self, step: Any, guild_id: int) -> None:
+    async def _plot_talk_step(self, step: Callable[[int], Awaitable[int]], guild_id: int) -> None:
         """One part of a talk round, on its own: if it fails (say the AI is down), the rest run."""
         try:
             await step(guild_id)

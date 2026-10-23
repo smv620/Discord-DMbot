@@ -387,3 +387,89 @@ class Saving(TalkBase):
         await self.runner(Ai(good())).apply_round(THURSDAY.id)
         states = [p["state"] for p in (await self.messages())[-1]["proposals"]]
         self.assertEqual(states, ["open", "saved"])
+
+    async def test_a_stopped_dm_fails_the_proposal_with_its_reason(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM campaign_dms WHERE campaign_id = %s", (self.one.id,))
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT proposals FROM plot_chat WHERE role = 'bot'")
+            [row] = await cur.fetchall()
+        self.assertEqual(row["proposals"][0]["state"], "failed")
+        self.assertIn("DM", row["proposals"][0]["error"])
+
+    async def test_a_failure_part_way_leaves_nothing_changed_and_a_retry_works(self) -> None:
+        from unittest.mock import patch
+
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        runner = self.runner(Ai(good()))
+        with patch.object(TalkStore, "mark_in", side_effect=RuntimeError("boom")):
+            await runner.apply_round(THURSDAY.id)
+        self.assertEqual(await self.condition(), "dead")  # the condition rolled back with it
+        history = await self.memory.state_history(THURSDAY.id, self.one.id, self.ulfgar.value.id)
+        self.assertEqual(len(history), 1)
+        # (the patch breaks closing it too: it stays `saving`, and the next round does it all)
+        [waiting] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(waiting["state"], "saving")
+        await runner.apply_round(THURSDAY.id)
+        self.assertEqual(await self.condition(), "alive")
+        [saved] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(saved["state"], "saved")
+
+    async def test_the_saved_proposal_keeps_the_id_of_the_state_it_became(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT proposals FROM plot_chat WHERE role = 'bot'")
+            [row] = await cur.fetchall()
+        held = await self.memory.states(THURSDAY.id, self.one.id)
+        self.assertEqual(row["proposals"][0]["state_id"], held[self.ulfgar.value.id].id)
+
+    async def test_an_entry_of_another_campaign_is_never_changed(self) -> None:
+        zed = await self.memory.add_entity(
+            THURSDAY.id, self.two.id, type="character", name="Zed", source="dm", status=CONFIRMED
+        )
+        await self.memory.set_condition(THURSDAY.id, self.two.id, zed.value.id, "dead", source="dm")
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        async with self.db.guild(THURSDAY.id) as conn:  # the proposal's data is only data
+            await conn.execute(
+                "UPDATE plot_chat SET proposals = jsonb_set(proposals, '{0,data,entity_id}',"
+                " to_jsonb(%s::text)) WHERE role = 'bot'",
+                (zed.value.id,),
+            )
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        [failed] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(failed["state"], "failed")
+        held = await self.memory.states(THURSDAY.id, self.two.id)
+        self.assertEqual(held[zed.value.id].condition, "dead")
+        history = await self.memory.state_history(THURSDAY.id, self.two.id, zed.value.id)
+        self.assertEqual(len(history), 1)
+
+    async def test_a_condition_the_kind_cannot_have_fails_in_plain_words(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        async with self.db.guild(THURSDAY.id) as conn:  # (a character is never "destroyed")
+            await conn.execute(
+                "UPDATE plot_chat SET proposals = jsonb_set(proposals, '{0,data,condition}',"
+                " '\"destroyed\"') WHERE role = 'bot'"
+            )
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        [failed] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(failed["state"], "failed")
+        self.assertTrue(failed["error"])
+        self.assertEqual(await self.condition(), "dead")
+
+    async def test_already_so_is_said_as_already_so(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.memory.set_condition(
+            THURSDAY.id, self.one.id, self.ulfgar.value.id, "alive", source="dm"
+        )
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
+        self.assertIn("Already so", issue["answer"]["note"])
