@@ -78,6 +78,9 @@ def recap_people(
     means that name") counts as another spelling when it points at exactly one name."""
     ok = set(allowed)
     entities = getattr(names, "entities", {})  # (a stand-in in a test may have none)
+    real = {
+        name_key(e.name) for e in entities.values()
+    }  # a spelling that is a real name is not an alias
     aliases: dict[str, str] = {}
     for entry in names.names:
         entity = entities.get(entry.entity_id)
@@ -88,20 +91,25 @@ def recap_people(
             and not entry.person
             and entity.name in ok
             and entry.text != entity.name
+            and name_key(entry.text) not in real
         ):
             aliases[entry.text] = entity.name
     for heard, entity_ids in getattr(names, "fixes", {}).items():
         only = {i for i in entity_ids if i in entities}
         if len(only) == 1:
             entity = entities[next(iter(only))]
-            if entity.name in ok and heard != name_key(entity.name):
+            if entity.name in ok and heard != name_key(entity.name) and heard not in real:
                 aliases.setdefault(heard, entity.name)
     pcs: list[str] = []
     party: dict[int, list[str]] = {}
     for entity in sorted(entities.values(), key=lambda e: e.name):
         if entity.played_by and entity.role == "player_character" and entity.name in ok:
+            try:
+                player = int(entity.played_by)
+            except (TypeError, ValueError):
+                continue  # a bad value costs the presence list, never the recap
             pcs.append(entity.name)
-            party.setdefault(int(entity.played_by), []).append(entity.name)
+            party.setdefault(player, []).append(entity.name)
     return aliases, pcs, {u: tuple(v) for u, v in party.items()}
 
 

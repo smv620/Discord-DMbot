@@ -786,7 +786,7 @@ def respelled(
     from dmbot.recaps.unknown_names import canonical, respell
 
     names = {*allowed_names, *(w for b in beats for w in b.who)}
-    ordinary = _english() | set(_LOWER_WORD.findall(transcript))
+    plain = ordinary(transcript)
     summary = prose.summary
     if aliases:
         summary = canonical(
@@ -794,7 +794,8 @@ def respelled(
             aliases,
             names=sorted(allowed_names),
             secret_names=secret_names,
-            ordinary_words=ordinary,
+            ordinary_words=plain,
+            sound_names=[*aliases.values()],
         )
     done = respell(
         summary,
@@ -997,7 +998,8 @@ def check_prose(
         problems.append("it names something the DM keeps secret: leave it out")
     elif refused and any(r in "".join(words(narration)) for r in refused):
         problems.append("a name is too like one the DM keeps secret: leave it out")
-    problems.extend(presence_problems(narration, beats, pcs))
+    if not last:  # a recap that passes everything else is not ended by a doubtful scene check
+        problems.extend(presence_problems(narration, beats, pcs))
     copied = copied_run(narration, transcript)
     if copied:
         # The hint is the run's first words; a run that starts with a secret name gets none.
@@ -1022,25 +1024,37 @@ def check_prose(
 
 
 _CONTENT_MIN = 4  # letters: shorter words are too common to say which beat a sentence is about
-PRESENCE_MIN_SHARED = 2  # words a sentence and a beat share before the sentence is "about" it
+_STEM = 5  # letters compared, so "travelled" meets "travels"
+PRESENCE_MIN_SHARED = 3  # stems a sentence and a beat share before the sentence is "about" it
+PRESENCE_MARGIN = 1  # ... and the best beat must beat the next one by this many
 MAX_PRESENCE_PROBLEMS = 2  # a retry message names a couple, not every sentence
+
+
+def _norm(name: str) -> str:
+    return " ".join(words(name))
 
 
 def _mentions(sentence: str, pcs: Collection[str]) -> list[str]:
     """The player characters a sentence names, in the order of `pcs`."""
-    said = f" {' '.join(words(sentence))} "
-    return [pc for pc in pcs if f" {' '.join(words(pc))} " in said]
+    said = f" {_norm(sentence)} "
+    return [pc for pc in pcs if f" {_norm(pc)} " in said]
+
+
+def _stems(text: str) -> set[str]:
+    return {w[:_STEM] for w in words(text) if len(w) >= _CONTENT_MIN}
 
 
 def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str]) -> list[str]:
-    """Who was there, held to the beats' `present` lists (#2573). A sentence is matched to the beat
-    it shares the most words with (at least `PRESENCE_MIN_SHARED`), and then:
-    - a sentence that names two or more of the characters present, but not all of them, and does
-      not say "the party", is refused: it names only some as the ones who were there;
+    """Who was there, held to the beats' `present` lists (#2573). A sentence is matched to the
+    beat it clearly shares the most words with (`PRESENCE_MIN_SHARED`, and ahead of the next beat
+    by `PRESENCE_MARGIN`: an unclear match is not judged), and then:
+    - a sentence that names every character present but one, and does not say "the party", is
+      refused: it names almost everyone as the ones who were there and leaves one out;
     - a character named in a scene they were not present for (not in the beat's `present` nor in
       its names) is refused.
-    A beat with no `present` list (a recap made before this, or nobody spoke) is not checked.
-    The DM's own word on who was there wins: it is the list on the beat. Pure."""
+    A beat with no `present` list (a recap made before this, or nobody spoke) is not checked. The
+    DM's own word on who was there wins: it is the list on the beat. The messages name characters
+    only, never quote the sentence (it may open with a secret name). Pure."""
     if not pcs or not beats:
         return []
     problems: list[str] = []
@@ -1048,37 +1062,38 @@ def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str
         named = _mentions(sentence, pcs)
         if not named:
             continue
-        mine = {w for w in words(sentence) if len(w) >= _CONTENT_MIN}
-        best: Beat | None = None
-        top = PRESENCE_MIN_SHARED - 1
-        for beat in beats:
-            if not beat.present:
-                continue
-            shared = len(mine & {w for w in words(beat.what) if len(w) >= _CONTENT_MIN})
-            if shared > top:
-                best, top = beat, shared
-        if best is None:
+        mine = _stems(sentence)
+        scored = sorted(
+            ((len(mine & _stems(b.what)), b) for b in beats if b.present),
+            key=lambda pair: pair[0],
+            reverse=True,
+        )
+        if not scored or scored[0][0] < PRESENCE_MIN_SHARED:
             continue
-        there = set(best.present) | {pc for pc in pcs if pc in set(best.who)}
-        absent = [pc for pc in named if pc not in there]
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < PRESENCE_MARGIN:
+            continue
+        best = scored[0][1]
+        there = {_norm(p) for p in best.present} | {_norm(w) for w in best.who}
+        absent = [pc for pc in named if _norm(pc) not in there]
+        left = [pc for pc in best.present if pc not in named]
         if absent:
             problems.append(
-                f'{absent[0]} was not there in the scene that begins "{_start(sentence)}": '
-                "leave them out of it"
+                f"{absent[0]} was not there in one of the scenes: leave {absent[0]} out of the "
+                "sentence that tells it"
             )
-        elif len(named) >= 2 and len(there) > len(named) and "the party" not in sentence.lower():
-            left = [pc for pc in best.present if pc not in named]
+        elif len(named) >= 2 and len(left) == 1 and "the party" not in sentence.lower():
             problems.append(
-                f'"{_start(sentence)}" names only some of the characters who were there: '
-                f'also name {", ".join(left)}, or say "the party"'
+                f"a sentence names {', '.join(named)} as the ones who were there, but "
+                f'{left[0]} was there too: name {left[0]} as well, or say "the party"'
             )
         if len(problems) >= MAX_PRESENCE_PROBLEMS:
             break
     return problems
 
 
-def _start(sentence: str) -> str:
-    return " ".join(sentence.split()[:6])
+def ordinary(transcript: str) -> frozenset[str]:
+    """Words that are plain English or that the table says in lower case: never a name."""
+    return frozenset(_english() | set(_LOWER_WORD.findall(transcript)))
 
 
 @functools.cache

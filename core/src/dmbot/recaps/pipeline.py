@@ -664,6 +664,7 @@ class RecapWorker:
             aliases=inputs.aliases,
             party=inputs.party,
             pcs=inputs.pcs,
+            ordinary_words=rd.ordinary("\n".join(s.text for s in said)),
         )
         usable = len(kept) >= bt.MIN_BEATS and not any("in no beat" in p for p in problems)
         # (a long session reads in windows; the check is of the whole sheet: it marks the last)

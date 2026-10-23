@@ -40,6 +40,7 @@ def room(attempt: int) -> int:
 
 
 BEAT_MAX = 240  # characters of one beat
+PRESENT_PAD = 5  # lines on each side of a beat in which a speaking player counts as there
 MIN_LINES_FOR_A_PLAYER = 8  # a player with this many lines must appear in some beat
 KINDS = ("event", "moment", "state")
 
@@ -241,6 +242,7 @@ def check(
     aliases: Mapping[str, str] | None = None,
     party: Mapping[int, Sequence[str]] | None = None,
     pcs: Sequence[str] = (),
+    ordinary_words: Collection[str] = (),
 ) -> tuple[list[Beat], list[str]]:
     """The beats that pass, renumbered, and what was wrong (plain words, for the retry and the
     log). `lines`: line number → cleaned text. `speakers`: line number → speaker. A beat is cut
@@ -259,6 +261,8 @@ def check(
     canon: dict[str, Collection[str]] = {
         "names": set(allowed_names) | set(pcs),
         "secret_names": secret_names,
+        "ordinary_words": ordinary_words,
+        "sound_names": [*(aliases or {}).values(), *pcs],
     }
     for raw in raw_beats:
         what = " ".join(str(raw.get("what", "")).split())
@@ -342,13 +346,14 @@ def present_in(
     pcs: Sequence[str],
 ) -> tuple[str, ...]:
     """The player characters present in a beat (#2573): those whose players spoke anywhere between
-    its first and last cited line (the stretch, not only the lines it cites: a player who spoke
-    during it was at the table), and any the beat itself names. In the order of `pcs`. A player
+    its first and last cited line, a few lines either side included (the stretch, not only the
+    lines it cites: a DM narrating a scene is cited at one line, but the players answering
+    around it were at the table), and any the beat itself names. In the order of `pcs`. A player
     who spoke is taken as there unless the DM's lines say otherwise; the recap page lets the DM
     fix a scene."""
     if not numbers:
         return ()
-    low, high = min(numbers), max(numbers)
+    low, high = min(numbers) - PRESENT_PAD, max(numbers) + PRESENT_PAD
     here: set[str] = set()
     for line, user in speakers.items():
         if low <= line <= high:
@@ -375,6 +380,11 @@ def as_json(beats: Sequence[Beat]) -> list[dict[str, object]]:
     ]
 
 
+def _present_of(raw: object) -> tuple[str, ...]:
+    """The stored `present` list, or nothing for anything else (a string is not a list)."""
+    return tuple(str(p) for p in raw if isinstance(p, str)) if isinstance(raw, list) else ()
+
+
 def from_json(data: object) -> list[Beat]:
     """Beats back from storage; anything that does not fit is dropped (the row is ours, but a
     restored or edited row is not trusted)."""
@@ -395,7 +405,13 @@ def from_json(data: object) -> list[Beat]:
                     str(item.get("where") or ""),
                     str(item.get("note") or ""),
                     item.get("keep") is True,
-                    tuple(str(p) for p in item.get("present") or [] if isinstance(p, str)),
+                    tuple(
+                        str(p)
+                        for p in (
+                            item.get("present") if isinstance(item.get("present"), list) else []
+                        )
+                        if isinstance(p, str)
+                    ),
                 )
             )
         except (KeyError, TypeError, ValueError):

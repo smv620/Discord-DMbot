@@ -106,7 +106,8 @@ class ThePresence(unittest.TestCase):
     def test_present_is_who_spoke_in_the_stretch_and_who_the_beat_names(self) -> None:
         got = bt.present_in((2, 5), SPEAKERS, PARTY, ("Ysolde",), PCS)
         self.assertEqual(got, ("Belleros", "Greyfen", "Tavin", "Ysolde"))
-        self.assertEqual(bt.present_in((1, 1), SPEAKERS, PARTY, (), PCS), ("Belleros",))
+        far = {1: 1, 40: 2}  # a player who spoke far from the beat was not in its scene
+        self.assertEqual(bt.present_in((1, 1), far, PARTY, (), PCS), ("Belleros",))
 
     def test_a_beat_keeps_its_present_list_in_storage_and_the_writer_sees_it(self) -> None:
         beat = bt.Beat(1, "The party camps.", (), (1, 8), "event", present=("Belleros", "Tavin"))
@@ -131,7 +132,7 @@ class ThePresence(unittest.TestCase):
         )
         self.assertEqual(kept[0].who, ("Tavin",))
         self.assertIn("Tavin and Belleros", kept[0].what)
-        self.assertEqual(kept[0].present, ("Belleros", "Greyfen", "Tavin"))
+        self.assertEqual(kept[0].present, ("Belleros", "Greyfen", "Tavin", "Ysolde"))
 
 
 CAMP = bt.Beat(
@@ -147,7 +148,8 @@ class TheCheck(unittest.TestCase):
     def test_a_camp_scene_naming_three_of_four_present_fails(self) -> None:
         got = self.problems("Belleros, Greyfen and Tavin travelled to the river and made camp.")
         self.assertEqual(len(got), 1)
-        self.assertIn("Ysolde", got[0])
+        self.assertIn("Ysolde was there too", got[0])
+        self.assertNotIn("travelled", got[0])  # the sentence is never quoted (it may open secret)
 
     def test_naming_everyone_or_the_party_passes(self) -> None:
         self.assertEqual(
@@ -191,7 +193,7 @@ class TheCheck(unittest.TestCase):
             rd.Prose(text, ["soft"]), beats=[CAMP], transcript="", allowed_names=PCS,
             secret_names=[], pcs=PCS,
         )  # fmt: skip
-        self.assertTrue(any("names only some of the characters" in p for p in got))
+        self.assertTrue(any("was there too" in p for p in got))
 
 
 class TheWritersNames(unittest.TestCase):
@@ -203,3 +205,78 @@ class TheWritersNames(unittest.TestCase):
         self.assertIn("Tavin", listed)
         self.assertNotIn("Sarek", listed)
         self.assertIn("Present: Tavin.", message)
+
+
+class TheDoubts(unittest.TestCase):
+    """Places the check must not refuse a healthy recap."""
+
+    def test_a_pair_sentence_in_a_bigger_scene_passes(self) -> None:
+        got = rd.presence_problems(
+            "Belleros handed Greyfen the key at the river camp.", [CAMP], PCS
+        )
+        self.assertEqual(got, [])
+
+    def test_a_vague_match_is_not_judged(self) -> None:
+        got = rd.presence_problems("Belleros, Greyfen and Tavin sat down.", [CAMP], PCS)
+        self.assertEqual(got, [])
+
+    def test_the_last_try_is_not_ended_by_the_scene_check(self) -> None:
+        text = "《Calm》 Belleros, Greyfen and Tavin travelled to the river and made camp."
+        prose = rd.Prose(text, ["soft"])
+        kw = dict(beats=[CAMP], transcript="", allowed_names=PCS, secret_names=[], pcs=PCS)
+        self.assertTrue(any("was there too" in p for p in rd.check_prose(prose, **kw)))  # type: ignore[arg-type]
+        self.assertFalse(
+            any("was there too" in p for p in rd.check_prose(prose, last=True, **kw))  # type: ignore[arg-type]
+        )
+
+    def test_a_secret_name_opening_the_sentence_is_never_in_the_message(self) -> None:
+        text = "Vaelor, Belleros, Greyfen and Tavin travelled to the river and made camp."
+        got = rd.presence_problems(text, [CAMP], PCS)
+        self.assertEqual(len(got), 1)
+        self.assertNotIn("Vaelor", got[0])
+
+    def test_a_dm_narrated_scene_cited_at_one_line_counts_the_players_around_it(self) -> None:
+        speakers = {10: 0, 11: 1, 12: 2, 13: 3}  # the DM (0) narrates; three players answer
+        party = {1: ("Belleros",), 2: ("Greyfen",), 3: ("Tavin",)}
+        got = bt.present_in((10,), speakers, party, (), PCS)
+        self.assertEqual(got, ("Belleros", "Greyfen", "Tavin"))
+
+    def test_a_stored_present_that_is_not_a_list_is_nothing(self) -> None:
+        beat = {"n": 1, "what": "x", "who": [], "lines": [1], "kind": "event", "present": "Tavin"}
+        self.assertEqual(bt.from_json([beat])[0].present, ())
+
+
+class TheAliasEdges(unittest.TestCase):
+    def test_an_alias_that_starts_a_longer_known_name_leaves_it_alone(self) -> None:
+        got = canonical(
+            "Sarek Dawnbringer opened the gate.",
+            ALIASES,
+            names=[*NAMES, "Sarek Dawnbringer"],
+            secret_names=[],
+        )
+        self.assertEqual(got, "Sarek Dawnbringer opened the gate.")
+
+    def test_a_new_name_is_never_turned_into_an_npc(self) -> None:
+        got = canonical(
+            "Brandy lit the lamp.",
+            ALIASES,
+            names=[*NAMES, "Brand"],
+            secret_names=[],
+            sound_names=["Tavin"],
+        )
+        self.assertEqual(got, "Brandy lit the lamp.")
+
+    def test_a_spelling_that_is_another_entrys_real_name_is_not_an_alias(self) -> None:
+        tavin = entity("Tavin", 7)
+        sarek = entity("Sarek", None, "npc")
+        names = SimpleNamespace(
+            entities={"e1": tavin, "e2": sarek},
+            names=[entry("Sarek")],  # an alias row of e1 spelt like the NPC "Sarek"
+            fixes={},
+        )
+        aliases, _, _ = recap_people(names, ["Tavin", "Sarek"])
+        self.assertEqual(aliases, {})
+
+    def test_a_bad_played_by_costs_the_presence_list_not_the_recap(self) -> None:
+        names = SimpleNamespace(entities={"e1": entity("Tavin", "x")}, names=[], fixes={})
+        self.assertEqual(recap_people(names, ["Tavin"]), ({}, [], {}))

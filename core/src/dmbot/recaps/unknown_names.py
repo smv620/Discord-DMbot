@@ -119,6 +119,7 @@ def canonical(
     names: Collection[str],
     secret_names: Collection[str],
     ordinary_words: Collection[str] = (),
+    sound_names: Collection[str] | None = None,
 ) -> str:
     """A character called by a spelling that is not its story-memory name, put right (#2573).
 
@@ -130,7 +131,10 @@ def canonical(
     2. a single word that sounds like exactly one known name or alias (the same sound codes and
        first letter, a few letters apart) is that name, unless it is an ordinary word or sounds
        like (or is spelt near) a secret name, which is left alone and never printed.
-    Only names of the recap's own list (`names`) are put in, never a secret one. Pure."""
+    Only names of the recap's own list (`names`) are put in, never a secret one. `sound_names`
+    narrows the names rule 2 may turn a word into (the player characters and the alias targets, so
+    a new NPC is never turned into one); a token that is part of a longer known name ("Sarek
+    Dawnbringer") is left alone. Pure."""
     # `names` holds every spelling the recap may use, the other spellings among them: a spelling
     # that is another name's alias is not a name of its own to match against.
     alias_letters = {_letters(a) for a in aliases}
@@ -142,9 +146,10 @@ def canonical(
         if len(_letters(a)) >= MIN_ALIAS_LETTERS and c in real
     }
     sounds: dict[str, set[tuple[str, str]]] = {}
+    sound_real = real if sound_names is None else real & set(sound_names)
     for spelled, name in [
-        *((a, c) for a, c in aliases.items() if c in real),
-        *((n, n) for n in real),
+        *((a, c) for a, c in aliases.items() if c in sound_real),
+        *((n, n) for n in sound_real),
     ]:
         letters = _letters(spelled)
         if len(words(spelled)) == 1 and len(letters) >= MIN_LETTERS:
@@ -155,10 +160,20 @@ def canonical(
     ordinary = set(ordinary_words)
     out = text
     seen: set[str] = set()
+    longer = sorted({_letters(n) for n in real if len(words(n)) > 1})
     for run in _RUN.finditer(narration_of(text)):
         tokens = [(m.start(), m.end()) for m in re.finditer(r"\S+", run.group())]
+        # Tokens that belong to a longer known name ("Sarek Dawnbringer") are not rewritten.
+        inside: set[int] = set()
+        for size in {len(words(n)) for n in real if len(words(n)) > 1}:
+            for i in range(len(tokens) - size + 1):
+                span = run.group()[tokens[i][0] : tokens[i + size - 1][1]]
+                if _letters(_POSSESSIVE.sub("", span).strip(".,;:!?")) in longer:
+                    inside.update(range(i, i + size))
         for size in {len(words(a)) for a in aliases} | {1}:
             for i in range(len(tokens) - size + 1):
+                if inside.intersection(range(i, i + size)):
+                    continue
                 found = run.group()[tokens[i][0] : tokens[i + size - 1][1]]
                 bare = _POSSESSIVE.sub("", found).strip(".,;:!?")
                 joined = _letters(bare)
@@ -181,7 +196,8 @@ def canonical(
                     spelled = next(iter(hits)) if len(hits) == 1 else None
                 if spelled is not None:
                     seen.add(bare)
-                    out = re.sub(rf"(?<![\w'’-]){re.escape(bare)}(?![\w-])", _put(spelled), out)
+                    flexible = r"\s+".join(re.escape(w) for w in bare.split())
+                    out = re.sub(rf"(?<![\w'’-]){flexible}(?![\w-])", _put(spelled), out)
     return out
 
 
