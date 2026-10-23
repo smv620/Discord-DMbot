@@ -63,6 +63,15 @@
     margin: 0;
   }
 
+  /* The Shared rules page (#2460): a set or pack, its facts under it, and where to change it. */
+  .account .shared-rules {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    display: grid;
+    gap: var(--space-3);
+  }
+
   .account .panel h2,
   .account .panel h3 {
     font-size: var(--text-lg);

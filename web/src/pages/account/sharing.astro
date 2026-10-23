@@ -1,0 +1,20 @@
+---
+import SharingIsland from "../../account/SharingIsland";
+import { text } from "../../content/sharing";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Shared rules"
+  description="The house rules and homebrew your campaigns share with other tables, and the ones they use."
+  noindex
+>
+  <div class="account">
+    <h1>{text.heading}</h1>
+    <SharingIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show your shared rules. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

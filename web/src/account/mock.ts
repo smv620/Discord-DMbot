@@ -1191,6 +1191,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         type: "text/plain",
       });
     },
+    async sharedRules() {
+      calls.push("sharedRules");
+      await reachable();
+      signedIn();
+      return [
+        {
+          ref: "200000000000000001.cmp1",
+          name: "The Brynwater Crossing",
+          serverName: "Thursday Table",
+          publishes: [
+            { kind: "house-rules", name: "Brynwater table rules", version: 3, shared: true, hasCode: true },
+            { kind: "homebrew", name: "Marsh creatures", version: 1, shared: false, hasCode: false },
+          ],
+          follows: [
+            { kind: "homebrew", name: "Frostmaiden pack", publisher: "The Long Winter", version: 4, updating: true },
+            { kind: "house-rules", name: "Old Guard rules", publisher: "Grey Keep", version: 2, updating: false },
+          ],
+        },
+      ];
+    },
     async houseRuleCampaigns() {
       calls.push("houseRuleCampaigns");
       await reachable();

@@ -6,6 +6,7 @@ import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
 import { recapCard } from "../content/account-cards";
+import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
@@ -531,6 +532,7 @@ function SignedIn({
       )}
       <CampaignsSection me={me} />
       <CharactersSection />
+      <SharedRulesSection me={me} />
       <PlanSection me={me} />
       <h2 id="my-account-heading">{text.myAccountHeading}</h2>
       {me.dmbotId !== undefined && <IdSection me={me} />}
@@ -1293,6 +1295,22 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
 
 /** My characters (#1164): the person's own sheets, read-only. Loaded once the page is up; an
  * API older than this, or a failed load, shows nothing rather than an error. */
+/** The way in to the Shared rules page (#2460). Only a person who runs a campaign has rules to
+ * share or use, and only an API that can say what they share has the page. */
+function SharedRulesSection({ me }: { me: Me }) {
+  const { api } = useShared();
+  if (!api.sharedRules || !me.campaigns.some((c) => c.role !== "player")) return null;
+  return (
+    <section aria-labelledby="shared-rules-heading" class="panel">
+      <h2 id="shared-rules-heading">{sharingCard.heading}</h2>
+      <p>{sharingCard.lead}</p>
+      <p>
+        <a href="/account/sharing">{sharingCard.link}</a>
+      </p>
+    </section>
+  );
+}
+
 function CharactersSection() {
   const { api } = useShared();
   const [list, setList] = useState<Character[] | null>(null);

@@ -58,6 +58,10 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
 
+/account/sharing*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
 /account/campaigns*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
