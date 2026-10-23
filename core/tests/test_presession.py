@@ -18,7 +18,7 @@ from dmbot.memory.claims import ClaimStore, Extracted
 from dmbot.memory.models import DEAD, Heard
 from dmbot.memory.presession import Due, Facts, Note, PreSession, compose
 from dmbot.memory.recall import RecallService
-from tests import test_recall
+from tests import speed, test_recall
 from tests.test_config import BASE
 from tests.test_memory_store import GUILD_A, MemoryTest
 from tests.test_recall import AGREED, S1, S2
@@ -510,13 +510,18 @@ class FastEnough(test_recall.Speed):
         assert first is not None  # it really found something to say
         self.assertGreater(len(first.lines), 0)
         self.assertLessEqual(len(first.text), presession.MAX_CHARS)
+        busy = speed.slowdown()  # how slow this machine is right now (#2490)
         times = []
         for _ in range(7):
             started = time.perf_counter()
             await fresh().note(GUILD_A, self.c, now=LATER, opted_in=AGREED)
             times.append((time.perf_counter() - started) * 1000)
+        ceiling = speed.allowed(100, busy)
         self.assertLess(
-            min(times), 100, f"best {min(times):.1f} ms, median {statistics.median(times):.1f} ms"
+            min(times),
+            ceiling,
+            f"best {min(times):.1f} ms, median {statistics.median(times):.1f} ms,"
+            f" ceiling {ceiling:.0f} ms",
         )
 
 
