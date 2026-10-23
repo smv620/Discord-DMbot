@@ -521,6 +521,7 @@ PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
 SOUND_CLOSE = 0.6
 # ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
 SOUND_LENGTH_GAP = 1
+IMAGE_REPLIES_KEPT = 200  # pictures whose reply is remembered, so a delete can take it back
 DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
@@ -1417,6 +1418,9 @@ class DMBot(commands.AutoShardedBot):
         # Messages deleted lately, so a picture still being described when its poster deletes it
         # is not written down afterwards (#2450); id → when.
         self._deleted_messages: dict[int, float] = {}
+        # the "Text in this image" replies by the picture's message, so deleting the picture takes
+        # its words out of the chat too (#2450); the newest few, in memory only
+        self._image_replies: dict[int, list[discord.Message]] = {}
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -5328,11 +5332,33 @@ class DMBot(commands.AutoShardedBot):
             or not self.consent.has_image_consent(table.guild_id, user_id)
         ):
             return
-        await self.post_message(
+        sent = await self.post_message(
             channel_id,
             image_fix.reply_text(read.text),
             image_fix.fix_view(session_id, user_id, started_ms),
         )
+        if sent is None or not message_id:
+            return
+        if message_id in self._deleted_messages:  # deleted while the reply was being sent
+            await self._delete_reply(sent)
+            return
+        self._image_replies.setdefault(message_id, []).append(sent)
+        while len(self._image_replies) > IMAGE_REPLIES_KEPT:  # the oldest picture's go first
+            del self._image_replies[next(iter(self._image_replies))]
+
+    async def _delete_reply(self, reply: discord.Message) -> None:
+        """Take one of DMbot's own replies back. Never raises (it may be gone already)."""
+        try:
+            await reply.delete()
+        except discord.HTTPException:
+            log.info("Table image: a reply could not be deleted")
+
+    async def _forget_image_replies(self, message_ids: Iterable[int]) -> None:
+        """Pictures were deleted: so are the words DMbot said about them (#2450). A deleted
+        picture leaves nothing in the chat, as it leaves nothing in the unsaved transcript."""
+        for message_id in message_ids:
+            for reply in self._image_replies.pop(message_id, []):
+                await self._delete_reply(reply)
 
     def _deliver_typed(
         self,
@@ -5410,18 +5436,22 @@ class DMBot(commands.AutoShardedBot):
 
     async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
         """Several typed messages deleted at once (a moderator's purge): the same as one."""
+        for message_id in payload.message_ids:
+            self._note_deleted(message_id)
+        await self._forget_image_replies(payload.message_ids)
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
             for message_id in payload.message_ids:
-                self._note_deleted(message_id)
                 table.unsaved.drop_message(message_id)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         """A typed message deleted before its line was saved is taken back (#1118). A line
-        already saved stays in the raw transcript, as PLAN says."""
+        already saved stays in the raw transcript, as PLAN says. DMbot's reply about a picture
+        goes with the picture."""
+        self._note_deleted(payload.message_id)
+        await self._forget_image_replies([payload.message_id])
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
-            self._note_deleted(payload.message_id)
             table.unsaved.drop_message(payload.message_id)
 
     def _note_deleted(self, message_id: int) -> None:
@@ -7140,9 +7170,13 @@ class DMBot(commands.AutoShardedBot):
                     own = await self.suggestions.line(guild_id, session_id, user_id, started_ms)
                 if noted:
                     asked = table.questions.open
+                    # A picture's words corrected before are replaced by the new correction (the
+                    # Undo of the new one puts back the words as first read), not refused: only
+                    # a DM's Undo could ever clear the old note.
+                    earlier = table.fix_notes.picture_edits(user_id, started_ms) if image else []
                     if (
                         own is None
-                        or table.fix_notes.on_line(user_id, started_ms)
+                        or (table.fix_notes.on_line(user_id, started_ms) and not earlier)
                         # An open "Did they mean…?" about this line would write over the edit
                         # from the words as heard when it is answered.
                         or (
@@ -7154,17 +7188,21 @@ class DMBot(commands.AutoShardedBot):
                         return False
                     # The note is over the line's words now (not as heard), so an Undo puts
                     # those back and keeps any name already fixed in it.
+                    base = earlier[0].fix.heard if earlier else own.text
                     edit = Fix(
-                        0, len(own.text), own.text, text, "",
+                        0, len(base), base, text, "",
                         IMAGE_EDIT if image else DM_EDIT, sure=False,
                     )  # fmt: skip
-                    added = table.fix_notes.add(user_id, started_ms, own.text, (edit,))
-                    words = table.fix_notes.words_now(user_id, started_ms, own.text, (edit,))
+                    table.fix_notes.notes = [n for n in table.fix_notes.notes if n not in earlier]
+                    added = table.fix_notes.add(user_id, started_ms, base, (edit,))
+                    words = table.fix_notes.words_now(user_id, started_ms, base, (edit,))
                     done = await self._rewrite_line(table, user_id, started_ms, words, image=image)
                     if done:
                         self._redraw_fix_notes(table)
-                    else:  # nothing changed: nothing to undo
-                        table.fix_notes.notes = [n for n in table.fix_notes.notes if n not in added]
+                    else:  # nothing changed: nothing to undo, and the earlier notes stay
+                        table.fix_notes.notes = [
+                            n for n in table.fix_notes.notes if n not in added
+                        ] + earlier
                     return done
                 if own is not None:
                     # Like an answer to "Did they mean…?": the notes know the line's words

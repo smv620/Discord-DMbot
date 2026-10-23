@@ -275,6 +275,68 @@ class TableImages(chat.AtTheTableTyped):
         # the key of the line it fixes: the session, the poster and the moment
         self.assertEqual(button.custom_id, f"dmbot:imgfix:{'a' * 32}:{DM}:{line.started_ms}")
 
+    async def test_deleting_the_picture_takes_the_reply_back(self) -> None:
+        said = self.say_into()
+        reply = SimpleNamespace(delete=AsyncMock())
+        said.return_value = reply
+        self.reads("text")
+        msg = picture(channel=EXTRA)
+        await self.hear(msg)
+        payload = SimpleNamespace(message_id=msg.id, guild_id=GUILD_A)
+        await self.bot.on_raw_message_delete(cast(Any, payload))
+        reply.delete.assert_awaited_once()
+        await self.bot.on_raw_message_delete(
+            cast(Any, payload)
+        )  # (a second delete event finds nothing)
+        reply.delete.assert_awaited_once()
+
+    async def test_a_purge_takes_the_replies_back_too(self) -> None:
+        said = self.say_into()
+        reply = SimpleNamespace(delete=AsyncMock())
+        said.return_value = reply
+        self.reads("text")
+        first, second = picture(channel=EXTRA), picture(channel=EXTRA)
+        await self.hear(first)
+        await self.hear(second)
+        await self.bot.on_raw_bulk_message_delete(
+            cast(Any, SimpleNamespace(message_ids={first.id, second.id}, guild_id=GUILD_A))
+        )
+        self.assertEqual(reply.delete.await_count, 2)
+
+    async def test_a_picture_deleted_while_the_reply_is_sent_loses_the_reply(self) -> None:
+        said = self.say_into()
+        reply = SimpleNamespace(delete=AsyncMock())
+
+        async def post_then_delete(*args: Any, **kw: Any) -> Any:
+            self.bot._note_deleted(77)  # the picture was deleted meanwhile
+            return reply
+
+        said.side_effect = post_then_delete
+        await self.bot._say_image_text(
+            self.live, DM, 5, EXTRA, images.Read("text", "x", "words"), message_id=77
+        )
+        reply.delete.assert_awaited_once()
+
+    async def test_a_reply_that_cannot_be_deleted_is_let_go(self) -> None:
+        import discord
+
+        said = self.say_into()
+        reply = SimpleNamespace(
+            delete=AsyncMock(
+                side_effect=discord.HTTPException(
+                    cast(Any, SimpleNamespace(status=404, reason="gone")), "gone"
+                )
+            )
+        )
+        said.return_value = reply
+        self.reads("text")
+        msg = picture(channel=EXTRA)
+        await self.hear(msg)
+        await self.bot.on_raw_message_delete(
+            cast(Any, SimpleNamespace(message_id=msg.id, guild_id=GUILD_A))
+        )
+        reply.delete.assert_awaited_once()  # (and nothing raised)
+
     async def test_a_picture_that_is_not_writing_gets_no_reply(self) -> None:
         said = self.say_into()
         for kind in ("picture", "map"):

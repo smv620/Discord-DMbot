@@ -16,7 +16,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
-from dmbot.transcript import export
+from dmbot.transcript import export, fix_notes
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_QUESTION, VIA_VOICE, Line, Lineage
 from dmbot.transcript.store import TranscriptStore
@@ -1067,6 +1067,38 @@ class BotTests(DatabaseTest):
         self.assertIsNone(allow)  # no name was learned
         rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
         self.assertIn("old mill", next(t for h, t in rows.items() if "mill" in h))
+
+    async def test_a_second_picture_fix_replaces_the_first_and_undo_restores_the_original(
+        self,
+    ) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        first = 'a picture: A note. Text written on it: "Meet at the new mill."'
+        second = 'a picture: A note. Text written on it: "Meet at the river."'
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            for words in (first, second):
+                self.assertTrue(
+                    await self.bot.apply_line_fix(
+                        GUILD, table.campaign_id or "", sid, PLAYER, started, words, image=True
+                    )
+                )
+            (note,) = table.fix_notes.shown()  # one note, not two: the second replaced the first
+            self.assertEqual(note.fix.written, second)
+            text, _ = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertIn("Undone", text)
+        rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+        self.assertIn("old mill", next(t for h, t in rows.items() if "mill" in h))  # as first read
+
+    async def test_a_name_fix_on_the_same_line_is_not_replaced_by_a_picture_fix(self) -> None:
+        table, sid, started = await self.image_setup()
+        table.fix_notes.answered(
+            fix_notes.Answer(None, PLAYER, started, "x", (), 0, 1, "y")  # an answer on the line
+        )
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            done = await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, "a picture: z", image=True
+            )
+        self.assertFalse(done)
 
     async def test_undo_of_a_picture_fix_also_needs_the_posters_yes_to_pictures(self) -> None:
         table, sid, started = await self.image_setup()

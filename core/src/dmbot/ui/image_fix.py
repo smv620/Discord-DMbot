@@ -200,7 +200,9 @@ async def submit(
     running = any(
         t is not None and t.transcript_session_id == session_id for t in (bot.tables.get(guild.id),)
     )
-    await _tell(interaction, DONE + (f"\n{UNDO_HERE}" if running else ""))
+    # Undo is on the DM screen, which a player cannot see: only a DM is pointed to it.
+    pointed = running and who in campaign.dm_user_ids
+    await _tell(interaction, DONE + (f"\n{UNDO_HERE}" if pointed else ""))
 
 
 def fix_view(session_id: str, user_id: int, started_ms: int) -> discord.ui.View:

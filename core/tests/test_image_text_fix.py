@@ -171,12 +171,45 @@ class TheChecks(unittest.IsolatedAsyncioTestCase):
         bot.apply_line_fix = AsyncMock(return_value=False)
         self.assertEqual(await fix(bot, PLAYER, "Meet at the new mill."), image_fix.NOT_WRITTEN)
 
-    async def test_undo_is_pointed_to_only_while_the_session_runs(self) -> None:
-        bot = _bot()
+    async def test_undo_is_pointed_to_only_a_dm_and_only_while_the_session_runs(self) -> None:
+        bot = _bot(dms=(DM,))
         bot.tables = {1: SimpleNamespace(transcript_session_id=SESSION)}
-        self.assertIn("Undo", await fix(bot, PLAYER, "Meet at the new mill."))
+        self.assertNotIn("Undo", await fix(bot, PLAYER, "Meet at the new mill."))  # can't see it
+        self.assertIn("Undo", await fix(bot, DM, "Meet at the new mill."))
         bot.tables = {}
-        self.assertNotIn("Undo", await fix(bot, PLAYER, "Meet at the new mill."))
+        self.assertNotIn("Undo", await fix(bot, DM, "Meet at the new mill."))
+
+
+class ThePress(unittest.IsolatedAsyncioTestCase):
+    def press_by(self, user: int, **kw: Any) -> tuple[Any, Any]:
+        bot = _bot(**kw)
+        bot.transcripts.image_line = AsyncMock(return_value=(LINE, LINE))
+        it = SimpleNamespace(
+            user=SimpleNamespace(id=user),
+            guild=SimpleNamespace(id=1),
+            client=bot,
+            response=SimpleNamespace(
+                is_done=lambda: False, send_message=AsyncMock(), send_modal=AsyncMock()
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+        )
+        return it, image_fix.FixTextButton(SESSION, PLAYER, 1000)
+
+    async def test_the_poster_is_given_the_form(self) -> None:
+        it, button = self.press_by(PLAYER)
+        await button.callback(it)
+        it.response.send_modal.assert_awaited_once()
+
+    async def test_a_dm_is_given_the_form(self) -> None:
+        it, button = self.press_by(DM)
+        await button.callback(it)
+        it.response.send_modal.assert_awaited_once()
+
+    async def test_a_stranger_is_refused_and_shown_nothing(self) -> None:
+        it, button = self.press_by(999)
+        await button.callback(it)
+        it.response.send_modal.assert_not_awaited()
+        self.assertEqual(it.response.send_message.await_args.args[0], image_fix.NOT_YOURS)
 
 
 class TheStore(DatabaseTest):

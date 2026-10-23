@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, replace
 
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory.models import name_key
-from dmbot.transcript.cleaner import Fix
+from dmbot.transcript.cleaner import IMAGE_EDIT, Fix
 
 SHOWN = 10  # lines in the message (the newest); older ones are no longer undoable here
 ANSWERS_KEPT = 20  # answers (a batch is one answer, with the earlier lines it wrote, #127) whose
@@ -228,6 +228,16 @@ class FixNotes:
         """Whether any fix note or answer is already on this line (so it isn't written again)."""
         line = (speaker, started_ms)
         return any(n.line == line for n in self.notes) or any(a.line == line for a in self.answers)
+
+    def picture_edits(self, speaker: int, started_ms: int) -> list[Note]:
+        """The earlier corrections of a picture's words on this line, if they are all there is on
+        it (#2450). A second correction replaces them; a line with a name fix or an answer on it
+        is not a picture's to replace, so that gives none."""
+        line = (speaker, started_ms)
+        on = [n for n in self.notes if n.line == line]
+        if any(a.line == line for a in self.answers) or any(n.fix.how != IMAGE_EDIT for n in on):
+            return []
+        return on
 
     def take_back(self, batch: int) -> Answer | None:
         """Its Undo was pressed: the answer no longer fixes its line (returned, so the
