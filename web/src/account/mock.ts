@@ -34,6 +34,7 @@ import type {
   WebNode,
   WebQuery,
   CampaignPage,
+  Timeline,
   WebRevealTarget,
   MyNpcNote,
   NpcPage,
@@ -1146,6 +1147,40 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return new Blob([[...view.notes, "", ...view.lines].join("\n") + "\n"], {
         type: "text/plain",
       });
+    },
+    // The pretend Story timeline (#2462): a campaign ending `.tl-empty` has no sessions, `.tl-player`
+    // is a player's view (posted recaps only, no address).
+    async timeline(campaignRef): Promise<Timeline> {
+      calls.push(`timeline:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (/\.tl-none$/.test(campaignRef)) throw new ApiError("not-found");
+      const player = /\.tl-player$/.test(campaignRef);
+      const base = {
+        ref: campaignRef,
+        name: "The Brynwater Crossing",
+      };
+      if (/\.tl-empty$/.test(campaignRef)) return { ...base, sessions: [] };
+      return {
+        ...base,
+        sessions: [
+          {
+            number: 1,
+            startedAt: 1_790_000_000,
+            endedAt: 1_790_010_800,
+            recap: { title: "The river crossing", posted: true, ref: player ? null : `${campaignRef}.1790000000` },
+            revealed: ["Ferryman Odo", "Hollow Mill"],
+          },
+          {
+            number: 2,
+            startedAt: 1_790_600_000,
+            endedAt: 1_790_607_200,
+            recap: player ? null : { title: "The abbey at dusk", posted: false, ref: `${campaignRef}.1790600000` },
+            revealed: [],
+          },
+          { number: 3, startedAt: 1_791_200_000, endedAt: null, recap: null, revealed: [] },
+        ],
+      };
     },
     async sharedRules() {
       calls.push("sharedRules");

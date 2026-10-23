@@ -52,6 +52,7 @@ function fileFor(url) {
   }
   if (/^\/account\/recaps\/[^/]+$/.test(path)) path = "/account/recaps";
   if (/^\/account\/house-rules\/[^/]+$/.test(path)) path = "/account/house-rules";
+  if (/^\/account\/timeline\/[^/]+$/.test(path)) path = "/account/timeline";
   if (/^\/account\/homebrew\/[^/]+$/.test(path)) path = "/account/homebrew";
   if (/^\/account\/import\/[^/]+$/.test(path)) path = "/account/import";
   if (/^\/account\/names\/[^/]+$/.test(path)) path = "/account/names";
@@ -178,6 +179,7 @@ const pages = [
     await page.getByText(/^Checked:/).first().waitFor();
   }],
   ["shared rules: what a campaign shares and uses", "/account/sharing?demo=table"],
+  ["timeline: sessions with recaps and reveals", "/account/timeline/100.cmp1?demo=table"],
   ["names: the list", "/account/names/100.cmp1?demo=table"],
   ["names: a name open to change", "/account/names/100.cmp1?demo=table", async (page) => {
     // The longest name's row, so a long unbroken name is measured; open its editor, search for a

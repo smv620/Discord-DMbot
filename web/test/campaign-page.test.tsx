@@ -23,6 +23,7 @@ import Names from "../src/account/Names";
 import Npc from "../src/account/Npc";
 import Recaps, { campaignFromSearch } from "../src/account/Recaps";
 import Transcripts from "../src/account/Transcripts";
+import Timeline from "../src/account/Timeline";
 import Web from "../src/account/Web";
 import { campaignPage as w } from "../src/content/campaign-page";
 
@@ -72,9 +73,9 @@ describe("the page", () => {
       ]),
     );
     // Words equal Discord's and the PLAN's (#2461 item 4).
-    for (const label of ["Recaps", "Story graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
+    for (const label of ["Recaps", "Story timeline", "Story graph", "Names and NPCs", "Transcripts", "Import a past session", "House rules", "Homebrew", "Shared rules"])
       expect(screen.getByRole("link", { name: label }), label).toBeTruthy();
-    expect(screen.queryByRole("link", { name: w.pages.timeline })).toBeNull(); // shown once that page exists
+    expect(screen.getByRole("link", { name: w.pages.timeline }).getAttribute("href")).toBe("/account/timeline/100.cmp1");
   });
 
   it("shows the heading's facts and who you are to the campaign, when the account knows them", async () => {
@@ -145,6 +146,7 @@ describe("the page", () => {
         "/account/homebrew/100.cmp1.cp-player",
         "/account/transcripts/100.cmp1.cp-player",
         "/account/web/100.cmp1.cp-player",
+        "/account/timeline/100.cmp1.cp-player", // for the whole table
       ]),
     );
     for (const dmPage of ["recaps", "names", "import", "sharing"]) {
@@ -256,6 +258,7 @@ describe("the breadcrumb and the four tabs on every campaign page (#2461)", () =
     ["the homebrew", () => <Homebrew api={mockApi("table")} path={`/account/homebrew/${REFC}`} />, w.pages.homebrew, w.groups.rules],
     ["the transcripts", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}`} />, w.pages.transcripts, w.groups.table],
     ["a transcript", () => <Transcripts api={mockApi("table")} path={`/account/transcripts/${REFC}/1`} />, w.pages.transcripts, w.groups.table],
+    ["the timeline", () => <Timeline api={mockApi("table")} path="/account/timeline/100.cmp1" />, w.pages.timeline, w.groups.story],
     ["the story graph", () => <Web api={mockApi("table")} path="/account/web/100.cmp1" />, w.pages.graph, w.groups.story],
     ["the import page", () => <Import api={mockApi("table")} path="/account/import/100.cmp1" />, w.pages.import, w.groups.table],
     ["the names", () => <Names api={mockApi("table")} path="/account/names/100.cmp1" />, w.pages.names, w.groups.story],
