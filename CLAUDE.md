@@ -325,6 +325,13 @@ terminal output or Discord screenshots copied to it.
   on 2026-10-18, #1966, so it no longer looks like ⚙️ Settings). Stopping shows one short, factual warning
   and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
+- **Every wait shows that DMbot is still working** (owner, 2026-10-23, #2564): whenever someone waits
+  for DMbot to process something, on the website or in Discord (an import, a long document, a recap, a
+  backup, a move, an AI answer that takes more than a few seconds), DMbot shows **what stage it is at**,
+  **how far along** where it knows (part 1 of 2, 3 of 10), **how long it has been running**, and **when it
+  last moved forward**, updated while it runs. A wait that stops making progress says so, and a failure
+  says what happened and what to do next. Progress shows counts and stages only, never the words of a
+  transcript or document. A new feature with a wait ships with this, or the reviewer sends it back.
 - **Quick, short and on topic** (owner, 2026-10-09): DMbot is there to help the game move
   quickly, never to bog it down or distract. AI answers to the DM are as short as possible
   ("yes" when yes answers it), elaborate only when asked, and stay on the campaign, the
