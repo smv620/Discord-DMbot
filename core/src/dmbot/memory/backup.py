@@ -203,6 +203,7 @@ def _valid(column: str, value: object) -> bool:
         "hidden_from_players",
         "made_before_name_gate",
         "unrevealed",
+        "directional",
         "pinned",
     ):
         return isinstance(value, bool)
@@ -429,8 +430,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             top = known.get(name, 1) if isinstance(name, str) else 1
             if isinstance(version, int) and not isinstance(version, bool) and version > top:
                 version = 1
-            # from before #2404: every connection a file holds had been shown to the players
-            raw = {"unrevealed": False, **raw, "definition_version": version}
+            # from before #2404: every connection a file holds had been shown to the players;
+            # from before #2457: no family role had a direction
+            raw = {"unrevealed": False, "directional": False, **raw, "definition_version": version}
         out.append(raw)
     return out
 

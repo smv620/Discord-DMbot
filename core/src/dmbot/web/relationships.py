@@ -19,7 +19,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.link_words import BOTH_WAYS, link_words
+from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -50,14 +50,19 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
-        if row["predicate"] in BOTH_WAYS:
+        directional = bool(row.get("directional", False))
+        if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional):
             direction = "both"
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
-                "words": link_words(str(row["predicate"]), str(row["detail"] or "")),
+                "words": link_words(str(row["predicate"]), str(row["detail"] or ""), directional),
+                # how it reads from the second name when that differs ("has a niece"), else None
+                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional)
+                if str(row["predicate"]) == "kin_of"
+                else None,
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
@@ -79,6 +84,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                     {
                         "id": x["id"],
                         "words": x["words"],
+                        "back": x["back"],
                         "secret": x["secret"] if can_edit else False,
                         "revealed": x["revealed"] if can_edit else True,
                         "pinned": x["pinned"] if can_edit else False,
