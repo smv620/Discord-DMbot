@@ -24,7 +24,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.memory import plot_talk as pt
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
 from dmbot.memory.ontology import conditions_for
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,17 @@ class Memory(Protocol):
         self, guild_id: int, campaign_id: str, *, statuses: Sequence[str]
     ) -> Any: ...
     async def states(self, guild_id: int, campaign_id: str, entity_ids: Any = ...) -> Any: ...
+    async def entity(self, guild_id: int, campaign_id: str, entity_id: str) -> Any: ...
+    async def set_condition(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        condition: str,
+        *,
+        source: str,
+        from_session_at: int | None = ...,
+    ) -> Any: ...
     async def ontology(self, guild_id: int, campaign_id: str) -> Any: ...
 
 
@@ -55,6 +66,18 @@ class Message:
     user_id: int
     text: str
     claimed_at: int  # this worker's claim: only it may finish the row
+
+
+@dataclass(frozen=True, slots=True)
+class Saving:
+    """A proposal the DM pressed Save on, with the message and issue it belongs to."""
+
+    message_id: str
+    campaign_id: str
+    session_at: int
+    issue_id: str
+    user_id: int
+    proposal: dict[str, Any]
 
 
 class TalkStore:
@@ -139,6 +162,81 @@ class TalkStore:
             )  # fmt: skip (created a second later so the answer sorts after its question)
             return True
 
+    async def saving(self, guild_id: int, *, limit: int = PER_ROUND) -> list[Saving]:
+        """The proposals the DM pressed Save on that the bot has not made yet, oldest first."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT m.id, m.campaign_id, m.session_at, m.issue_id, m.user_id, p.value AS p"
+                " FROM plot_chat m, jsonb_array_elements(m.proposals) AS p(value)"
+                " WHERE m.guild_id = %s AND m.role = 'bot' AND p.value->>'state' = 'saving'"
+                " ORDER BY m.created_at, m.id LIMIT %s",
+                (guild_id, limit),
+            )
+            return [
+                Saving(
+                    r["id"], r["campaign_id"], int(r["session_at"]), r["issue_id"],
+                    int(r["user_id"]), dict(r["p"]),
+                )
+                for r in await cur.fetchall()
+            ]  # fmt: skip
+
+    async def mark(self, guild_id: int, s: Saving, state: str, error: str = "") -> bool:
+        """Close a proposal as `saved` or `failed` (with a short plain reason). Only one that is
+        still `saving`: a second worker, or a repeat, changes nothing."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE plot_chat SET proposals = (SELECT jsonb_agg(CASE WHEN e->>'id' = %s"
+                " AND e->>'state' = 'saving' THEN e || jsonb_build_object('state', %s::text,"
+                " 'error', %s::text) ELSE e END ORDER BY ord)"
+                " FROM jsonb_array_elements(proposals) WITH ORDINALITY AS t(e, ord))"
+                " WHERE guild_id = %s AND id = %s AND proposals @> jsonb_build_array("
+                " jsonb_build_object('id', %s::text, 'state', 'saving'))",
+                (s.proposal["id"], state, error[:200], guild_id, s.message_id, s.proposal["id"]),
+            )
+            return bool(cur.rowcount)
+
+    async def is_dm(self, guild_id: int, campaign_id: str, user_id: int) -> bool:
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s",
+                (guild_id, campaign_id, user_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def still_current(self, guild_id: int, s: Saving) -> bool:
+        """Is the issue still about the recap's text as it is now (an edit makes it stale)?"""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM plot_issues i JOIN recap_jobs j ON j.guild_id = i.guild_id"
+                " AND j.campaign_id = i.campaign_id AND j.session_at = i.session_at"
+                " WHERE i.guild_id = %s AND i.campaign_id = %s AND i.id = %s"
+                " AND i.text_hash = encode(sha256(convert_to(j.title || E'\\n' || j.summary,"
+                " 'UTF8')), 'hex')",
+                (guild_id, s.campaign_id, s.issue_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def answer_changed(self, guild_id: int, s: Saving, note: str) -> bool:
+        """Answer the issue "the story changed" (the DM's own answer, made by Save), unless the DM
+        has answered it already. The same point is no longer remembered as "not a problem"."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE plot_issues SET answer_kind = 'changed', answer_note = %s,"
+                " answered_by = %s, answered_at = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s AND answer_kind IS NULL RETURNING fine_key",
+                (note[:500], s.user_id, now, guild_id, s.campaign_id, s.issue_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return False
+            await conn.execute(
+                "DELETE FROM plot_fine WHERE guild_id = %s AND campaign_id = %s AND fine_key = %s",
+                (guild_id, s.campaign_id, row["fine_key"]),
+            )
+            return True
+
     async def fail(self, guild_id: int, m: Message, error: str) -> None:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
@@ -169,6 +267,55 @@ class TalkRunner:
             done += 1
             await self._answer(guild_id, m)
         return done
+
+    async def apply_round(self, guild_id: int, *, limit: int = PER_ROUND) -> int:
+        """Make the changes the DM saved, at most `limit`. Returns how many were looked at."""
+        done = 0
+        for s in await self._store.saving(guild_id, limit=limit):
+            done += 1
+            await self._apply(guild_id, s)
+        return done
+
+    async def _apply(self, guild_id: int, s: Saving) -> None:
+        """One saved proposal, as the DM's own fact. The change is the memory store's own
+        (`set_condition`: the old condition closes and stays as history, and the rules of the
+        table refuse what a kind cannot be); a repeat is harmless, since the same condition
+        again changes nothing. Whatever happens the proposal ends `saved` or `failed`."""
+        try:
+            data = s.proposal.get("data") or {}
+            entity_id, condition = data.get("entity_id"), data.get("condition")
+            at = data.get("from_session_at")
+            if not isinstance(entity_id, str) or not isinstance(condition, str):
+                return await self._finish(
+                    guild_id, s, "failed", "That change isn't one I can make."
+                )
+            if not await self._store.is_dm(guild_id, s.campaign_id, s.user_id):
+                return await self._finish(guild_id, s, "failed", "Only a DM of this campaign can.")
+            if not await self._store.still_current(guild_id, s):
+                return await self._finish(
+                    guild_id, s, "failed", "The recap changed. Check it again."
+                )
+            entity = await self._memory.entity(guild_id, s.campaign_id, entity_id)
+            if entity is None or entity.status != CONFIRMED:
+                return await self._finish(guild_id, s, "failed", "That entry isn't there any more.")
+            try:
+                await self._memory.set_condition(
+                    guild_id, s.campaign_id, entity_id, condition, source=DM,
+                    from_session_at=at if type(at) is int else None,
+                )  # fmt: skip
+            except MemoryRuleError as rule:  # plain words, written for a DM
+                return await self._finish(guild_id, s, "failed", str(rule))
+            await self._finish(guild_id, s, "saved")
+            await self._store.answer_changed(guild_id, s, f"Saved: {s.proposal.get('label', '')}")
+        except Exception as exc:  # the type only: an error can quote a row
+            log.warning("A saved plot proposal failed: %s", type(exc).__name__)
+            try:
+                await self._finish(guild_id, s, "failed", "That didn't work. Please try again.")
+            except Exception:
+                log.warning("A saved plot proposal could not be closed")
+
+    async def _finish(self, guild_id: int, s: Saving, state: str, error: str = "") -> None:
+        await self._store.mark(guild_id, s, state, error)
 
     async def _entries(self, guild_id: int, campaign_id: str, about: str) -> list[pt.Entry]:
         """The campaign entries the talk is about: those whose name appears in its words."""

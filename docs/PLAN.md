@@ -4781,6 +4781,14 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     condition its kind can have (alive, dead, resolved…) and its label is written by code. A message the bot cannot answer
     is marked failed with a short code and the DM can send it again; nothing is saved to the campaign. A talk is kept for
     thirty days.
+  - *Built, #2123 slice 3 (CloudDev, 2026-10-23): Save.* Pressing Save marks the proposal `saving`; the bot (in the same
+    loop) makes the change through the memory store's own `set_condition` as the DM's own fact (source `dm`, from the
+    session the recap is about; the old condition closes and stays in the entry's history, so it is undoable from the name
+    card), marks the proposal `saved`, and answers the issue "the story changed" (unless the DM already answered it). It
+    checks again, at that moment, that the person is still a DM of the campaign, the recap's text is the one PlotBot read and
+    the entry is still confirmed; a change the table of conditions refuses (for example dead to missing) fails that proposal
+    with the rule's plain words and answers nothing. Repeats are harmless. Not that writes nothing. Other kinds of
+    proposal (a new entry, a link, a thread started) follow when they are asked for.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap

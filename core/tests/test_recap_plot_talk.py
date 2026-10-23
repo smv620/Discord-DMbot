@@ -31,7 +31,7 @@ def good(*proposals: Any, reply: str = "That would be a change in the story.") -
     return json.dumps({"reply": reply, "proposals": list(proposals)})
 
 
-class Answering(PlotBase):
+class TalkBase(PlotBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await self.checked()
@@ -58,6 +58,8 @@ class Answering(PlotBase):
     async def messages(self) -> list[dict[str, Any]]:
         return list((await self.client.get(self.url())).json()["messages"])
 
+
+class Answering(TalkBase):
     async def test_the_message_is_answered_and_the_page_reads_it(self) -> None:
         await self.say()
         ai = Ai(good({"entry": 1, "condition": "alive"}))
@@ -171,3 +173,107 @@ class Answering(PlotBase):
         await self.runner(ai).round(THURSDAY.id)
         self.assertNotIn("Ann (character)", ai.sent)
         self.assertIn("Ulfgar (character)", ai.sent)  # (named in the issue's own sentence)
+
+
+class Saving(TalkBase):
+    """Save: the bot makes the change as the DM's own fact, then answers the issue "changed"."""
+
+    async def reply_with_proposal(self, condition: str = "alive") -> dict[str, Any]:
+        await self.say()
+        await self.runner(Ai(good({"entry": 1, "condition": condition}))).round(THURSDAY.id)
+        [p] = (await self.messages())[-1]["proposals"]
+        return dict(p)
+
+    async def press(self, proposal: dict[str, Any], action: str) -> Any:
+        return await self.client.post(
+            self.url(f"proposals/{proposal['id']}"), json={"action": action}
+        )
+
+    async def condition(self) -> str:
+        held = await self.memory.states(THURSDAY.id, self.one.id)
+        return str(held[self.ulfgar.value.id].condition)
+
+    async def test_nothing_is_saved_until_save_is_pressed(self) -> None:
+        await self.reply_with_proposal()
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
+        self.assertEqual(await self.condition(), "dead")
+
+    async def test_not_that_saves_nothing_and_the_bot_has_nothing_to_do(self) -> None:
+        p = await self.reply_with_proposal()
+        self.assertEqual((await self.press(p, "decline")).status_code, 200)
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
+        self.assertEqual(await self.condition(), "dead")
+        [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
+        self.assertIsNone(issue["answer"])
+
+    async def test_save_makes_the_change_as_the_dms_own_fact_and_answers_the_issue(self) -> None:
+        p = await self.reply_with_proposal()
+        self.assertEqual((await self.press(p, "save")).json()["state"], "saving")
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 1)
+        self.assertEqual(await self.condition(), "alive")
+        history = await self.memory.state_history(THURSDAY.id, self.one.id, self.ulfgar.value.id)
+        # (history is kept; two changes in one second have no fixed order, so look by condition)
+        self.assertEqual({h.condition for h in history}, {"dead", "alive"})
+        [now] = [h for h in history if h.condition == "alive"]
+        self.assertEqual(now.source, "dm")
+        self.assertEqual(now.from_session_at, 100)  # the session the DM said it from
+        [saved] = (await self.messages())[-1]["proposals"]
+        self.assertEqual((saved["state"], saved["error"]), ("saved", ""))
+        [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
+        self.assertEqual(issue["answer"]["kind"], "changed")
+        self.assertIn("Ulfgar: alive", issue["answer"]["note"])
+
+    async def test_a_repeat_changes_nothing_more(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        runner = self.runner(Ai(good()))
+        await runner.apply_round(THURSDAY.id)
+        self.assertEqual(await runner.apply_round(THURSDAY.id), 0)  # nothing is saving any more
+        history = await self.memory.state_history(THURSDAY.id, self.one.id, self.ulfgar.value.id)
+        self.assertEqual(len(history), 2)
+
+    async def test_a_change_the_rules_refuse_fails_that_proposal_in_plain_words(self) -> None:
+        p = await self.reply_with_proposal("missing")  # dead -> missing: the table does not allow
+        await self.press(p, "save")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        self.assertEqual(await self.condition(), "dead")
+        [failed] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(failed["state"], "failed")
+        self.assertTrue(failed["error"])  # plain words for the DM
+        [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
+        self.assertIsNone(issue["answer"])  # a refused change answers nothing
+
+    async def test_an_entry_that_is_gone_fails_the_proposal(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE memory_entities SET status = 'rejected'")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        [failed] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(failed["state"], "failed")
+
+    async def test_someone_who_stopped_being_a_dm_cannot_have_it_saved(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM campaign_dms WHERE campaign_id = %s", (self.one.id,))
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        self.assertEqual(await self.condition(), "dead")
+
+    async def test_a_recap_that_changed_since_fails_the_save(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="A different recap.")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        self.assertEqual(await self.condition(), "dead")
+        [failed] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(failed["state"], "failed")
+
+    async def test_save_leaves_a_dms_earlier_answer_alone(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.client.post(self.url("answer"), json={"kind": "leave", "note": ""})
+        await self.press(p, "save")
+        await self.runner(Ai(good())).apply_round(THURSDAY.id)
+        [issue] = (await self.client.get(f"/me/recaps/{self.ref}/plot")).json()["issues"]
+        self.assertEqual(issue["answer"]["kind"], "leave")
+        self.assertEqual(await self.condition(), "alive")  # the change was still made
