@@ -1580,14 +1580,14 @@ class Lists(NamesTest):
         self.assertIn("Sera the rogue", {a.text for a in aliases})
         question = sent[-1]
         self.assertIn("Is (YOR-vick) how to say **Jorvik**?", question.args[0])
-        await self.press(question.kwargs["view"], "1. Yes, how to say it")
+        await self.press(question.kwargs["view"], "1. It's how to say it")
         self.assertEqual(
             await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id), "YOR-vick"
         )
 
     async def test_the_other_answer_keeps_the_bracket_as_another_name(self) -> None:
         sent = await self.add_many("Jorvik (YOR-vick) | npc")
-        await self.press(sent[-1].kwargs["view"], "1. No, another name")
+        await self.press(sent[-1].kwargs["view"], "1. It's another name")
         aliases = await self.memory.aliases(GUILD, self.campaign.id)
         self.assertIn("Jorvik YOR-vick", {a.text for a in aliases})
         names = await self.names()
