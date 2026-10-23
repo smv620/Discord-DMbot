@@ -80,6 +80,10 @@ class TheCampaignPage(Base):
         self.assertFalse(got["settings"]["paused"])
         self.assertIsNone(got["settings"]["keepDays"])  # kept for ever until the DM sets a time
         self.assertEqual(got["settings"]["level"], "normal")
+        # A player of "One" (Bob only runs "Two") gets none; he is made a co-DM just below.
+        bob = await self.session_of(BOB)
+        self.assertNotIn("settings", await read_campaign(self.web, bob, self.ref_of(self.one)))
+        self.assertIn("settings", await read_campaign(self.web, bob, self.ref_of(self.two)))
         # A co-DM gets them too, and each value comes from its own column.
         await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
         async with self.db.guild(THURSDAY.id) as conn:
@@ -89,15 +93,12 @@ class TheCampaignPage(Base):
                 " WHERE guild_id = %s AND id = %s",
                 (THURSDAY.id, self.one.id),
             )
-        co = await read_campaign(self.web, await self.session_of(BOB), self.ref_of(self.one))
+        co = await read_campaign(self.web, bob, self.ref_of(self.one))
         self.assertEqual(
             co["settings"],
             {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
              "gameMasters": 2},
         )  # fmt: skip
-        bob = await self.session_of(BOB)  # plays in "One", runs "Two"
-        self.assertNotIn("settings", await read_campaign(self.web, bob, self.ref_of(self.one)))
-        self.assertIn("settings", await read_campaign(self.web, bob, self.ref_of(self.two)))
 
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
         got = await read_campaign(
@@ -165,6 +166,13 @@ class TheCampaignRoute(Base):
                 "serverName": THURSDAY.name,
                 "role": "owner",
                 "importsOn": True,
+                "settings": {
+                    "visibility": "peek",
+                    "level": "normal",
+                    "keepDays": None,
+                    "paused": False,
+                    "gameMasters": 1,
+                },
             },
         )
 
