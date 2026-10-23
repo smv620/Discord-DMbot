@@ -6,16 +6,20 @@ deleted. Invented names throughout."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
+import discord
 import httpx
 
 from dmbot.bot import register_backup_sections
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import npc_pages as npg
 from dmbot.dm_screen import npcs_channel as nc
+from dmbot.dm_screen.rules_channel import MAX_SENDS
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.recall import RosterEntry
 from dmbot.memory.store import MemoryStore
@@ -552,8 +556,49 @@ class TheRoutes(WithNpcs):
         self.assertIn(429, codes)
 
 
+class V2Message(Msg):
+    """A list message that can hold the name-button layout (components v2) as Discord keeps it:
+    no content, the view's parts as its components, and a flag that cannot be changed by an edit."""
+
+    def __init__(self, *a: Any) -> None:
+        super().__init__(*a)
+        self.components: list[Any] = []
+        self.flags = SimpleNamespace(components_v2=False)
+
+    async def edit(self, *, content: str | None = None, view: Any = None, **kw: Any) -> None:
+        self.channel.edits += 1
+        if isinstance(view, discord.ui.LayoutView):
+            assert self.flags.components_v2, "a message cannot gain the v2 flag by an edit"
+            self.components = list(view.children)
+            return
+        assert not self.flags.components_v2, "a v2 message cannot go back to plain text"
+        assert content is not None
+        self.content = content
+        self.components = [] if view is None else [SimpleNamespace(children=list(view.children))]
+
+
+class V2Channel(Chan):
+    def say(self, author: int, content: str) -> V2Message:
+        self._next += 1
+        msg = V2Message(self, self._next, author, content)
+        self.messages.append(msg)
+        return msg
+
+    async def send(self, content: str | None = None, **kw: Any) -> V2Message:
+        self.sent += 1
+        view = kw.get("view")
+        if isinstance(view, discord.ui.LayoutView):
+            assert content is None, "a v2 message has no content"
+            msg = self.say(ME, "")
+            msg.flags = SimpleNamespace(components_v2=True)
+            msg.components = list(view.children)
+            return msg
+        assert content is not None
+        return self.say(ME, content)
+
+
 class TheButton(WithNpcs):
-    """The list's 📖 Open button, through the fake channel."""
+    """The list's message for an entry with a page: the name is the button (#2425)."""
 
     def test_the_link_names_the_server_the_campaign_and_the_entry(self) -> None:
         self.assertEqual(
@@ -562,91 +607,236 @@ class TheButton(WithNpcs):
         )
         for bad in ("", "http://dmbot.example", "not a link"):
             self.assertEqual(npg.page_url(bad, 5, "c" * 32, "e" * 32), "")
-            self.assertIsNone(npg.open_view(npg.page_url(bad, 5, "c" * 32, "e" * 32)))
 
-    async def test_existing_messages_gain_the_button_by_an_edit_and_lose_it_without_a_site(
+    def test_the_label_is_the_name_and_the_kind(self) -> None:
+        self.assertEqual(npg.button_label("Mira", "NPC"), "Mira · NPC")
+        self.assertEqual(npg.button_label("Cult of the Ash", "group"), "Cult of the Ash · group")
+
+    def test_a_long_name_is_cut_at_a_word_within_discords_80_letters(self) -> None:
+        name = "The Most Honourable and Ever Faithful Order of the Silver Lantern and Its Keepers"
+        label = npg.button_label(name, "group")
+        self.assertLessEqual(len(label), 80)
+        self.assertTrue(label.endswith("… · group"), label)
+        self.assertFalse(label.split("…")[0].endswith(" "))
+        self.assertTrue(name.startswith(label.split("…")[0]))
+        self.assertIn(label.split("…")[0][-4:], name)  # whole words only
+        self.assertLessEqual(len(npg.button_label("x" * 200, "NPC")), 80)  # no spaces: still cut
+
+    def test_markdown_characters_in_a_name_are_shown_plainly(self) -> None:
+        self.assertEqual(
+            npg.button_label("**Mira** _the_ [bold]", "NPC"), "**Mira** _the_ [bold] · NPC"
+        )
+
+    def layout(self, entry: RosterEntry, others: str = "") -> Any:
+        return npg.layout_for(entry, others, "https://dmbot.example/account/npc/1.x/y")
+
+    def test_the_button_carries_the_icon_the_name_and_the_page(self) -> None:
+        person = self.layout(entry(1, "Mira"))
+        (row,) = person.children
+        (button,) = row.children
+        self.assertEqual((str(button.emoji), button.label), ("👤", "Mira · NPC"))
+        self.assertEqual(button.url, "https://dmbot.example/account/npc/1.x/y")
+        group = RosterEntry("e" * 32, "Ash Cult", "group", True)
+        (grow,) = self.layout(group).children
+        self.assertEqual(str(grow.children[0].emoji), "👥")
+
+    def test_other_lines_sit_beside_the_button_in_a_section_and_without_them_it_stands_alone(
         self,
     ) -> None:
-        class Message(Msg):
-            def __init__(self, *a: Any) -> None:
-                super().__init__(*a)
-                self.components: list[Any] = []
+        with_lines = self.layout(entry(1, "Mira"), "Also called: The Monk")
+        (section,) = with_lines.children
+        self.assertIsInstance(section, discord.ui.Section)
+        self.assertEqual([t.content for t in section.children], ["Also called: The Monk"])
+        self.assertEqual(section.accessory.label, "Mira · NPC")
+        alone = self.layout(entry(1, "Mira"))
+        (row,) = alone.children
+        self.assertIsInstance(row, discord.ui.ActionRow)
 
-            async def edit(self, *, content: str, **kw: Any) -> None:
-                await super().edit(content=content)
-                if "view" in kw:
-                    self.components = _rows(kw["view"])
+    async def run_sync(self, chan: Any, mapping: Any, entries: list[RosterEntry], site: str) -> Any:
+        return await nc.sync_roster(
+            cast(Any, chan), ME, entries, mapping, guild_id=1, campaign_id="c" * 32, site_url=site
+        )
 
-        def _rows(view: Any) -> list[Any]:
-            return [] if view is None else [SimpleNamespace(children=list(view.children))]
+    def shown(self, chan: Any) -> list[tuple[str, str, str]]:
+        """(layout, text, button label) of the list, in channel order."""
+        return [
+            (look.layout, look.text, look.label)
+            for look in (npg.look_of(cast(Any, m)) for m in chan.messages)
+        ]
 
-        class Channel(Chan):
-            def say(self, author: int, content: str) -> Message:
-                self._next += 1
-                msg = Message(self, self._next, author, content)
-                self.messages.append(msg)
-                return msg
-
-            async def send(self, content: str, **kw: Any) -> Message:
-                self.sent += 1
-                msg = self.say(ME, content)
-                if kw.get("view") is not None:
-                    msg.components = _rows(kw["view"])
-                return msg
-
-        chan = Channel()
-        mapping = MemMap()
+    async def test_a_list_with_a_site_is_name_buttons_and_stays_put_when_nothing_changed(
+        self,
+    ) -> None:
+        chan, mapping = V2Channel(), MemMap()
         entries = [entry(1, "Mira"), entry(2, "Oskar")]
-
-        async def run(site: str) -> Any:
-            return await nc.sync_roster(
-                cast(Any, chan),
-                ME,
-                entries,
-                mapping,
-                guild_id=1,
-                campaign_id="c" * 32,
-                site_url=site,
-            )
-
-        first = await run("")  # no site: no button
-        self.assertEqual((first.sent, first.edited), (2, 0))
-        self.assertTrue(all(not getattr(m, "components", None) for m in chan.messages))
-        again = await run("")
-        self.assertEqual((again.sent, again.edited), (0, 0))
-        gained = await run("https://dmbot.example")  # an edit gives each its button
-        self.assertEqual((gained.sent, gained.edited), (0, 2))
+        first = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual((first.sent, first.edited, first.deleted), (2, 0, 0))
+        self.assertTrue(all(m.content == "" for m in chan.messages))  # (v2: no content)
+        self.assertEqual([label for _, _, label in self.shown(chan)], ["Mira · NPC", "Oskar · NPC"])
         urls = [npg.message_link(cast(Any, m)) for m in chan.messages]
         self.assertEqual(
-            urls,
-            [f"https://dmbot.example/account/npc/1.{'c' * 32}/{e.id}" for e in entries],
+            urls, [f"https://dmbot.example/account/npc/1.{'c' * 32}/{e.id}" for e in entries]
         )
-        self.assertEqual([m.content for m in chan.messages], [nc.entry_text(e) for e in entries])
-        settled = await run("https://dmbot.example")
-        self.assertEqual((settled.sent, settled.edited), (0, 0))
-        lost = await run("")  # and the button goes if the site address does
+        again = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual((again.sent, again.edited, again.deleted, again.replaced), (0, 0, 0, 0))
+
+    async def test_today_s_messages_are_replaced_once_in_order_and_not_again_after_a_restart(
+        self,
+    ) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n, f"Name {n}") for n in range(1, 6)]
+        await self.run_sync(chan, mapping, entries, "")  # plain text, no site
+        old = [m.id for m in chan.messages]
+        self.assertTrue(all(layout == "text" for layout, _, _ in self.shown(chan)))
+        gained = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual((gained.replaced, gained.deleted, gained.edited), (5, 5, 0))
+        self.assertTrue(set(old).isdisjoint(m.id for m in chan.messages))
         self.assertEqual(
-            (lost.edited, [npg.message_link(cast(Any, m)) for m in chan.messages]), (2, ["", ""])
+            [label for _, _, label in self.shown(chan)], [f"Name {n} · NPC" for n in range(1, 6)]
+        )  # the same order
+        self.assertEqual(
+            set((await mapping.load(1, "c" * 32)).values()), {m.id for m in chan.messages}
         )
-        # a message posted new gets its button at once
-        entries.append(entry(3, "Cerric"))
-        await run("https://dmbot.example")
+        restarted = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual((restarted.sent, restarted.replaced, restarted.deleted), (0, 0, 0))
+
+    async def test_a_replacement_cut_short_carries_on_and_keeps_the_order(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n, f"Name {n}") for n in range(1, 8)]
+        await self.run_sync(chan, mapping, entries, "")
+        with patch("dmbot.dm_screen.npcs_channel.MAX_SENDS", 3):
+            first = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+            self.assertEqual((first.replaced, first.left_for_next_time), (3, 4))
+            second = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+            third = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual((second.replaced, third.replaced), (3, 1))
+        self.assertEqual(len(chan.messages), 7)  # one message for each entry, never two
         self.assertEqual(
-            npg.message_link(cast(Any, chan.messages[-1])).rsplit("/", 1)[1], entries[-1].id
+            [label for _, _, label in self.shown(chan)], [f"Name {n} · NPC" for n in range(1, 8)]
+        )
+
+    async def test_other_lines_change_by_an_edit_and_the_site_going_away_puts_text_back(
+        self,
+    ) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        mira = entry(1, "Mira")
+        await self.run_sync(chan, mapping, [mira], "https://dmbot.example")
+        self.assertEqual(self.shown(chan)[0][1], "")
+        named = replace(mira, also_called=("The Monk",))
+        edited = await self.run_sync(chan, mapping, [named], "https://dmbot.example")
+        self.assertEqual((edited.edited, edited.replaced), (1, 0))
+        self.assertEqual(self.shown(chan)[0][1], "Also called: The Monk")
+        back = await self.run_sync(chan, mapping, [named], "")
+        self.assertEqual((back.replaced, back.edited), (1, 0))
+        self.assertEqual(chan.messages[0].content, nc.entry_text(named))
+        self.assertEqual(npg.message_link(cast(Any, chan.messages[0])), "")
+
+    async def test_a_secret_name_leaves_the_old_message_at_once_when_the_swap_is_cut_short(
+        self,
+    ) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [replace(entry(n, f"Name {n}"), also_called=(f"Alias {n}",)) for n in range(1, 8)]
+        await self.run_sync(chan, mapping, entries, "")
+        entries[5] = replace(entries[5], also_called=())  # the DM made "Alias 6" secret
+        with patch("dmbot.dm_screen.npcs_channel.MAX_SENDS", 2):
+            await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        shown = [npg.look_of(cast(Any, m)).text for m in chan.messages]
+        self.assertFalse([t for t in shown if "Alias 6" in t])  # gone at once, swapped or not
+        self.assertTrue(any("Alias 7" in t for t in shown))  # the others are still there
+
+    async def test_the_more_message_stays_last_after_the_swap(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n, f"Name {n}") for n in range(1, nc.MAX_ENTRIES + 4)]
+        with patch("dmbot.dm_screen.npcs_channel.MAX_SENDS", 1000):
+            await self.run_sync(chan, mapping, entries, "")
+            await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+            await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        last = chan.messages[-1]
+        self.assertIn("+3 more", last.content)
+        self.assertEqual(len(chan.messages), nc.MAX_ENTRIES + 1)
+
+    async def test_a_changed_icon_is_noticed(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        person = entry(1, "Ash")
+        await self.run_sync(chan, mapping, [person], "https://dmbot.example")
+        group = replace(person, is_group=True)
+        done = await self.run_sync(chan, mapping, [group], "https://dmbot.example")
+        self.assertEqual(done.edited, 1)
+        self.assertEqual(npg.look_of(cast(Any, chan.messages[0])).mark, "👥")
+
+    async def test_no_right_to_delete_stops_the_swap_instead_of_posting_copies(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n, f"Name {n}") for n in range(1, 5)]
+        await self.run_sync(chan, mapping, entries, "")
+
+        async def refuse(self: Any) -> None:
+            raise discord.Forbidden(SimpleNamespace(status=403, reason="no"), "no")
+
+        with patch.object(V2Message, "delete", refuse):
+            done = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertTrue(done.stopped)
+        self.assertEqual(done.replaced, 1)  # one copy, then it stopped
+
+    async def test_an_entry_with_a_button_shows_players_only_what_the_list_shows(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        listed = RosterEntry(
+            "e" * 32, "Mira", "NPC", False, also_called=("The Monk",), groups=("Ash Cult",),
+            ties=("Oskar",),
+        )  # fmt: skip
+        await self.run_sync(chan, mapping, [listed], "https://dmbot.example")
+        text = self.shown(chan)[0][1]
+        self.assertEqual(text, nc.other_lines(listed))
+        self.assertEqual(text, "Also called: The Monk\nIn: Ash Cult\nConnected to: Oskar")
+
+    async def test_without_a_site_the_message_is_today_s_text_with_the_name_in_bold(self) -> None:
+        chan, mapping = V2Channel(), MemMap()
+        await self.run_sync(chan, mapping, [entry(1, "Mira")], "")
+        self.assertEqual(chan.messages[0].content, nc.entry_text(entry(1, "Mira")))
+        self.assertIn("**Mira**", chan.messages[0].content)
+
+    async def test_the_replacements_are_paced_like_any_other_posting(self) -> None:
+        chan = V2Channel()
+        mapping = MemMap()
+        entries = [entry(n) for n in range(1, MAX_SENDS + 6)]
+        for _ in range(3):  # (posting is paced too: a few passes to put them all out)
+            await self.run_sync(chan, mapping, entries, "")
+        self.assertEqual(len(chan.messages), len(entries))
+
+        done = await self.run_sync(chan, mapping, entries, "https://dmbot.example")
+        self.assertEqual(done.replaced, MAX_SENDS)
+        self.assertEqual(done.left_for_next_time, 5)
+        self.assertEqual(len(chan.messages), len(entries))  # never two for one entry
+
+    async def test_the_deploy_pass_that_reorders_never_blanks_the_list_mid_swap(self) -> None:
+        """The deploy asks for a reorder; with more entries than one pass can replace, the list
+        is mid-swap and out of its old order, which must not look like a list to put in order."""
+        chan, mapping = V2Channel(), MemMap()
+        entries = [entry(n) for n in range(1, MAX_SENDS * 2 + 6)]
+        for _ in range(4):  # (posting is paced too: a few passes to put them all out)
+            await self.run_sync(chan, mapping, entries, "")
+        self.assertEqual(len(chan.messages), len(entries))
+        lowest = len(chan.messages)
+        for _ in range(6):
+            await nc.sync_roster(
+                cast(Any, chan), ME, entries, mapping, guild_id=1, campaign_id="c" * 32,
+                reorder=True, site_url="https://dmbot.example",
+            )  # fmt: skip
+            lowest = min(lowest, len(chan.messages))
+        self.assertEqual(lowest, len(entries))  # never fewer messages than entries
+        self.assertTrue(all(layout == "v2" for layout, _, _ in self.shown(chan)))
+        self.assertEqual(
+            [label for _, _, label in self.shown(chan)], [f"{e.name} · NPC" for e in entries]
         )
 
     async def test_the_edits_are_paced_like_any_other(self) -> None:
-        chan = Chan()
+        chan = V2Channel()
         mapping = MemMap()
         entries = [entry(n) for n in range(1, nc.MAX_EDITS + 6)]
-        for _ in range(3):  # (posting is paced too: a few passes to put them all out)
-            await nc.sync_roster(chan, ME, entries, mapping, guild_id=1, campaign_id="c" * 32)  # type: ignore[arg-type]
-        self.assertEqual(len(chan.messages), len(entries))
-
-        done = await nc.sync_roster(
-            chan, ME, entries, mapping, guild_id=1, campaign_id="c" * 32,  # type: ignore[arg-type]
-            site_url="https://dmbot.example",
-        )  # fmt: skip
+        site = "https://dmbot.example"
+        for _ in range(4):  # (posting is paced too: a few passes to put them all out)
+            await self.run_sync(chan, mapping, entries, site)
+        renamed = [replace(e, also_called=("A new name",)) for e in entries]
+        done = await self.run_sync(chan, mapping, renamed, site)
         self.assertEqual(done.edited, nc.MAX_EDITS)
         self.assertEqual(done.left_for_next_time, 5)
 
@@ -666,7 +856,7 @@ class TheListPass(WithNpcs):
         aldric = await self.npc()
         guild = SimpleNamespace(id=GUILD, me=SimpleNamespace(id=ME))
         recall = SimpleNamespace(roster=AsyncMock(return_value=[aldric]))
-        chan = Chan()
+        chan = V2Channel()
         with mock.patch.object(nc, "_fresh", AsyncMock(return_value=chan)):
             done = await nc.sync_campaign(
                 guild,  # type: ignore[arg-type]
