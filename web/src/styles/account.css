@@ -82,9 +82,17 @@
   }
 
   .account .crumbs li + li::before {
-    content: "›";
+    content: "›" / "";
     margin-right: var(--space-2);
     color: var(--text-muted);
+  }
+
+  /* The story timeline's sessions carry their own "Session N", so the browser's "1." is hidden
+     (list-style none drops the number from some screen readers' lists too; the heading holds it). */
+  .account ol.timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
 
   .account .tabs a {

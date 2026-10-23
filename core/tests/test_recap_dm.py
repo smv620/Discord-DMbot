@@ -274,13 +274,20 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
             [b.item.custom_id for b in old],
             [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
         )
-        self.assertEqual(len(ready_view(CID, AT).children), 5)  # no site: the Discord buttons stay
+        # (#2420) a new line: the three ways to approve, then Read it with no website address, or
+        # the review link and Share a recap with one
+        self.assertEqual(len(ready_view(CID, AT).children), 4)
         new = ready_view(CID, AT, "https://site.example.com").children
         self.assertEqual(
-            [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new],
-            [("Open recaps", "https://site.example.com/account/recaps"), ("Share a recap", None)],
+            [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new][
+                3:
+            ],
+            [
+                ("Review the recap", "https://site.example.com/account/recaps"),
+                ("Share a recap", None),
+            ],
         )
-        self.assertEqual(cast(Any, new[1]).item.custom_id, f"dmbot:recapshare:{CID}")
+        self.assertEqual(cast(Any, new[4]).item.custom_id, f"dmbot:recapshare:{CID}")
         self.assertEqual(len(confirm_view(CID, AT).children), 2)
         longest = f"dmbot:recap:post:{CID}:{10**11}"
         self.assertLessEqual(len(longest), 100)
@@ -334,6 +341,51 @@ class TheStoresMove(Base):
         later = await self.store.get(1, self.one.id, 200)
         assert other is not None and later is not None
         self.assertEqual((other.status, later.status), ("draft", "draft"))
+
+    async def test_approve_and_post_hands_it_over_in_the_one_statement(self) -> None:
+        # (#2420) the page's "Approve and post text only": approved and 'posting' together
+        from dmbot.recaps.approval import text_hash
+
+        await self.store.update(1, self.one.id, AT, state="ready", title="T", summary="S")
+        got = await self.store.approve(
+            1, self.one.id, AT, fx.DM, "text", expected=text_hash("T", "S"), post=True
+        )
+        self.assertTrue(got)
+        job = await self.store.get(1, self.one.id, AT)
+        assert job is not None
+        self.assertEqual((job.status, job.approved, job.audio_choice), ("posting", True, "text"))
+
+    async def test_a_changed_text_approves_and_posts_nothing(self) -> None:
+        from dmbot.recaps.approval import text_hash
+
+        await self.store.update(1, self.one.id, AT, state="ready", title="T", summary="S")
+        self.assertFalse(
+            await self.store.approve(
+                1, self.one.id, AT, fx.DM, "text", expected=text_hash("T", "old"), post=True
+            )
+        )
+        job = await self.store.get(1, self.one.id, AT)
+        assert job is not None
+        self.assertEqual((job.status, job.approved), ("draft", False))
+
+    async def test_only_text_only_can_be_posted_on_the_spot(self) -> None:
+        with self.assertRaises(ValueError):
+            await self.store.approve(1, self.one.id, AT, fx.DM, "voice", expected="x", post=True)
+
+    async def test_approve_but_dont_post_leaves_it_a_draft_the_page_shows_as_approved(self) -> None:
+        # The page and Discord share this one store path: what Discord's "Approve but don't post"
+        # records is exactly what the page reads as "Approved. Not posted".
+        from dmbot.recaps.approval import text_hash
+
+        await self.store.update(1, self.one.id, AT, state="ready", title="T", summary="S")
+        self.assertTrue(
+            await self.store.approve(
+                1, self.one.id, AT, fx.DM, "text", expected=text_hash("T", "S")
+            )
+        )
+        job = await self.store.get(1, self.one.id, AT)
+        assert job is not None
+        self.assertEqual((job.status, job.approved, job.approved_by), ("draft", True, fx.DM))
 
     async def test_an_unknown_action_is_refused(self) -> None:
         with self.assertRaises(ValueError):

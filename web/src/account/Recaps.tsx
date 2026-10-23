@@ -658,6 +658,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           campaignRef={recap.ref.slice(0, recap.ref.lastIndexOf("."))}
           page="recaps"
           name={recap.campaign}
+          label={heading}
         />
       )}
       <div class="hello">

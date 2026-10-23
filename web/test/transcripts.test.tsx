@@ -397,14 +397,14 @@ describe("opening at a moment (#2402)", () => {
     const marked = await screen.findByText("[0:00:40] (Speaker 2): Ka'zeth draws his sword.");
     expect(marked.getAttribute("aria-current")).toBe("location");
     expect(marked.className).toBe("moment");
-    expect(document.querySelectorAll("[aria-current='location']")).toHaveLength(1);
+    expect(document.querySelectorAll(".transcript-lines [aria-current='location']")).toHaveLength(1);
     await waitFor(() => expect(scroll).toHaveBeenCalled());
     cleanup();
     window.location.hash = "";
     scroll.mockClear();
     page(mockApi("table"), `/account/transcripts/${REF}/2`);
     await screen.findByText("[0:00:40] (Speaker 2): Ka'zeth draws his sword.");
-    expect(document.querySelectorAll("[aria-current='location']")).toHaveLength(0);
+    expect(document.querySelectorAll(".transcript-lines [aria-current='location']")).toHaveLength(0);
     expect(scroll).not.toHaveBeenCalled();
   });
 

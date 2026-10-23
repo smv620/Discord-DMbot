@@ -57,6 +57,7 @@ def fake_bot(drafts: list[tuple[int, str]], *, on: bool = True, text: bool = Tru
         campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(recaps_text=text))),
         tables={GUILD: table},
         post=AsyncMock(return_value=True),
+        recap_audio_why=AsyncMock(return_value=""),
     )
     return bot, table
 
@@ -76,9 +77,13 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
             "📜 Last session's recap is still waiting: **The Silver Lock**. "
             "Nothing has gone to the players.",
         )
-        children = kwargs["view"].children  # the website link, then Share a recap (#2118)
-        self.assertEqual(children[0].url, "https://site.example.com/account/recaps")
-        self.assertEqual(cast(Any, children[1]).item.custom_id, f"dmbot:recapshare:{'c' * 32}")
+        # the three ways to approve (#2420), the website link, then Share a recap (#2118)
+        children = kwargs["view"].children
+        self.assertEqual(
+            [cast(Any, c).item.custom_id.split(":")[2] for c in children[:3]], ["ap", "aa", "ak"]
+        )
+        self.assertTrue(children[3].url.startswith("https://site.example.com/account/recaps"))
+        self.assertEqual(cast(Any, children[4]).item.custom_id, f"dmbot:recapshare:{'c' * 32}")
         self.assertEqual(bot.post.await_count, 1)
 
     async def test_at_most_two_one_line_each_newest_first(self) -> None:
