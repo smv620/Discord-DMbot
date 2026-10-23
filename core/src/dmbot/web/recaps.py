@@ -594,6 +594,7 @@ async def approve_recap(
     audio_unavailable: str = "",
     post: bool = False,
     outside_engine: str | None = None,
+    plot_gate: bool = False,
 ) -> dict[str, Any]:
     """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
     database's door (`dmbot_recap_approve`) records who and when and the hash of this very text and
@@ -604,7 +605,9 @@ async def approve_recap(
     it can't be ("not_set_up", "allowance", "unavailable") is refused ("audio_unavailable").
     `post` (#2419, "Approve and post text only"): approve a text-only choice and hand it to the bot
     to post in the same transaction, so a failure leaves nothing approved and half-posted; it is
-    only for the text-only choice, since audio is made and reviewed before anything is posted."""
+    only for the text-only choice, since audio is made and reviewed before anything is posted.
+    `plot_gate` (#2122): PlotBot's check is on, so the door refuses ("plot_open") while an issue it
+    found has no answer, under the same lock as the approval."""
     if choice not in CHOICES or (post and choice != TEXT):
         raise RecapError("bad_choice")
     if choice != TEXT and not audio_in_plan:
@@ -616,11 +619,15 @@ async def approve_recap(
         if refusal := cue_refusal(row["summary"]):
             raise refusal
         await post_checks(conn, gid, cid, row, outside_engine)
+        if plot_gate:
+            await conn.execute("SELECT set_config('dmbot.plot_gate', 'on', true)")
         cur = await conn.execute(
             "SELECT dmbot_recap_approve(%s, %s, %s, %s, %s) AS r",
             (gid, cid, at, choice, text_hash(row["title"], row["summary"])),
         )  # (the hash of the very text whose cues were just checked)
         outcome = (await cur.fetchone() or {}).get("r")
+        if outcome == "plot_open":
+            raise RecapError("plot_open")
         if outcome != "approved":
             raise RecapError("not_allowed")
         if post:  # the same hand-over as `decide(..., "post")`, in this transaction

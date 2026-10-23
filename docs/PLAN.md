@@ -4740,7 +4740,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     doors: `dmbot_plot_read` (state checking, ready or unavailable; the issues with their level, sentence and
     quoted source; the approved versions) and `dmbot_plot_answer` (fix, changed, fine or leave, with the DM's
     note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
-    `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` while an issue has
+    `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` (checked inside the approval door, under its lock) while an issue has
     no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
     missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
   - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot's recap loop runs `PlotRunner` (when

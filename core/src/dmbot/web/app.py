@@ -89,7 +89,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
-from dmbot.web.plot import answer_issue, plot_blocks, read_plot
+from dmbot.web.plot import answer_issue, read_plot
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -981,8 +981,6 @@ def create_app(
         if not isinstance(choice, str) or not isinstance(post, bool):
             raise HTTPException(status_code=422, detail="bad_choice")
         try:
-            if await plot_blocks(db, session, ref, on=settings.plot_check_on):
-                raise RecapError("plot_open")  # PlotBot's issues need an answer first (#2122)
             facts = await read_choices(
                 db, session, ref.rsplit(".", 1)[0], now=int(clock()),
                 enforce_plans=settings.enforce_plans,
@@ -998,6 +996,7 @@ def create_app(
                 audio_unavailable=str(facts["audioUnavailable"]),
                 post=post,
                 outside_engine=settings.outside_engine,
+                plot_gate=settings.plot_check_on,  # (checked inside the approval's own lock)
             )
         except RecapError as err:
             if err.problems is not None:

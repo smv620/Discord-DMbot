@@ -242,6 +242,19 @@ class Answering(PlotBase):
         ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
         self.assertEqual(ok.status_code, 200, ok.text)
 
+    async def test_an_issue_found_after_the_page_was_read_still_holds_the_approval(self) -> None:
+        """The check is made inside the approval itself, not before it: an issue that appears
+        between the page's read and the press (here: after a read that showed none) is caught."""
+        await self.checked()
+        self.assertFalse((await self.plot()).json()["approveBlocked"])  # the page saw none
+        await self.issue("late")  # ... then the check's issue lands
+        blocked = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
+        self.assertEqual((blocked.status_code, blocked.json()["error"]), (409, "plot_open"))
+        self.assertFalse((await self.state(self.one.id)).approved_hash)  # nothing was approved
+        await self.answer("late", "leave")
+        ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+
     async def test_approve_while_the_check_is_still_running_goes_ahead(self) -> None:
         await self.checked(state="running")
         ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
