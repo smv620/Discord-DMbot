@@ -20,7 +20,7 @@ const cards: (Feature & { live?: boolean })[] = [
   },
   {
     title: "Only people who said yes",
-    what: "Nobody is recorded until they say yes. That covers what you say, what you type in the table's chat and pictures you post there. Anyone can stop at any time.",
+    what: "Nobody is recorded until they say yes. That covers what you say and what you type in the table's chat. Anyone can stop at any time.",
     example: "To stop, press 🗂️ Menu in DMbot's private message, then Stop recording me.",
   },
   {

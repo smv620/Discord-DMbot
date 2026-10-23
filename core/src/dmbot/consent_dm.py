@@ -121,9 +121,8 @@ def _date(timestamp: int) -> str:
 # It explains rather than adds terms, so it isn't part of the pinned wording.
 RENEWED = (
     "**What's new:** anyone at the table can now ask DMbot a quick rules question. DMbot also "
-    "reads what you type in its chat channel while it is listening. When you post a picture "
-    "there, the AI looks at it and DMbot writes down what it shows (the picture is not kept). "
-    "That is why it is asking you again. Until you press "
+    "reads what you type in its chat channel while it is listening. That is why it is "
+    "asking you again. Until you press "
     f"**{CONSENT_LABEL}**, it records nothing from you. Don't want that? Press "
     f"**{DECLINE_LABEL}** and keep playing."
 )
@@ -180,8 +179,6 @@ def request_text(
         "in one more channel if your DM picks one. It turns it all into text. "
         "Anyone in this server can read and download that text. It stays there even if you "
         f"stop later. {AI_NOTE}",
-        "• If you post a picture in those chats, the AI company (Anthropic) looks at it and "
-        "writes what it shows. DMbot keeps those words, not the picture.",
         "• If you ask DMbot a question in its chat channel, your name and question are posted "
         "there for everyone to read.",
         f"• Press **{DECLINE_LABEL}** and DMbot ignores your voice and your typing. "

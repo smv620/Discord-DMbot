@@ -170,6 +170,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "recap_audio_per_month": "a limit",
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
+    "table_images_on": "not live yet: the owner switches it on at go-live, so it is never listed",
+    "table_images_per_day": "a limit",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }

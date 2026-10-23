@@ -245,7 +245,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
-from dmbot.image_desk import ImageDesk
+from dmbot.image_desk import ImageDesk, ImageUseStore
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -5116,7 +5116,12 @@ class DMBot(commands.AutoShardedBot):
         if not self.consent.has_consent(table.guild_id, author.id):
             return  # nothing of a message, picture or words, is read for someone who didn't agree
         start_ms = int(message.created_at.timestamp() * 1000)
-        links = self._image_links(message) if self.image_desk is not None else []
+        links = (
+            self._image_links(message)
+            if self.image_desk is not None
+            and self.consent.has_image_consent(table.guild_id, author.id)
+            else []
+        )
         if links:
             self._track(
                 self._hear_images(table, author.id, start_ms, message.id, links), "table-images"
@@ -5144,15 +5149,24 @@ class DMBot(commands.AutoShardedBot):
         used; consent is checked again after the slow steps, so someone who stopped meanwhile
         gets no line. The picture is read once and kept nowhere."""
         desk, gid, cid = self.image_desk, table.guild_id, table.campaign_id
-        if desk is None or cid is None or not self._still_recorded(table, user_id):
+
+        def still_ok() -> bool:
+            # Asked before every download and AI call: the yes must be to wording that mentions
+            # pictures (IMAGE_TERMS_VERSION), still given, the session still going, and the
+            # message still there.
+            return (
+                self._still_recorded(table, user_id)
+                and self.consent.has_image_consent(gid, user_id)
+                and message_id not in self._deleted_messages
+            )
+
+        if desk is None or cid is None or not still_ok():
             return
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return
-        if not self._still_recorded(table, user_id):
-            return
-        reads = await desk.describe(gid, cid, links)
-        if not self._still_recorded(table, user_id) or message_id in self._deleted_messages:
+        reads = await desk.describe(gid, cid, links, still_ok)
+        if not still_ok():
             return
         for n, read in enumerate(reads):
             self._deliver_typed(
@@ -12589,6 +12603,8 @@ async def run(settings: Settings) -> None:
             backstory_links=BackstoryLinks(db),
         )
         bot.house_wins = WinsStore(db)
+        if bot.image_desk is not None:  # the day's count lives in the database (#2450)
+            bot.image_desk.counter = ImageUseStore(db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

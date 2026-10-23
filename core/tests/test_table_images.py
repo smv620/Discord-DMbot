@@ -4,17 +4,19 @@ the fetch are stand-ins; invented names only."""
 
 from __future__ import annotations
 
+import asyncio
 import json
-import unittest
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import patch
 
 from dmbot import images, table_chat
 from dmbot.ai import Image
-from dmbot.image_desk import DAY_S, ImageDesk
+from dmbot.consent import IMAGE_TERMS_VERSION
+from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
 from tests import test_table_chat as chat
 from tests.test_table_chat import EXTRA, VOICE, message
-from tests.test_timebot import DM, GUILD_A, NOON4, PLAYER
+from tests.test_timebot import DM, GUILD_A, GUILD_B, NOON4, PLAYER, Clocks
 
 PNG = Image("image/png", b"\x89PNG\r\n\x1a\nxx")
 LINK = "https://cdn.discordapp.com/attachments/1/2/map.png"
@@ -51,11 +53,18 @@ class TableImages(chat.AtTheTableTyped):
 
         self.vision = Vision()
         self.fetcher = fetcher
+        # Pictures are read only for a yes given under wording that mentions them (a later change
+        # brings that wording): these tests act as if it were live.
+        patcher = patch("dmbot.consent.TERMS_VERSION", IMAGE_TERMS_VERSION)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.bot.image_desk = self.make_desk()
 
     def make_desk(self, per_day: int = 40, vision: Vision | None = None) -> ImageDesk:
         ai = vision or self.vision
-        return ImageDesk(ai, ai, per_day=per_day, fetcher=self.fetcher)
+        return ImageDesk(
+            ai, ai, per_day=per_day, counter=ImageUseStore(self.db), fetcher=self.fetcher
+        )
 
     def lines(self) -> list[Any]:
         return self.live.unsaved.take(lambda _user: True)
@@ -84,6 +93,27 @@ class TableImages(chat.AtTheTableTyped):
         self.bot.consent.has_consent = lambda guild_id, user_id: user_id != PLAYER  # type: ignore[method-assign]
         await self.hear(picture(author=PLAYER))
         self.assertEqual((self.fetched, self.vision.calls, self.lines()), ([], 0, []))
+
+    async def test_a_yes_under_wording_that_does_not_mention_pictures_reads_none(self) -> None:
+        with patch("dmbot.consent.TERMS_VERSION", IMAGE_TERMS_VERSION - 1):
+            await self.hear(picture("hello"))
+        self.assertEqual((self.fetched, self.vision.calls), ([], 0))
+        [line] = self.lines()  # the words they typed are read as before; only the picture is not
+        self.assertEqual(line.text, "hello")
+
+    async def test_consent_is_asked_again_before_every_download_and_every_ai_call(self) -> None:
+        msg = picture()
+        msg.attachments = msg.attachments * 3
+        asked = {"n": 0}
+
+        def stops_after_two_questions(guild_id: int, user_id: int) -> bool:
+            asked["n"] += 1
+            return asked["n"] <= 3  # the entry checks and the first picture's, then no more
+
+        self.bot.consent.has_image_consent = stops_after_two_questions  # type: ignore[method-assign]
+        await self.hear(msg)
+        self.assertLess(len(self.fetched), 3)  # the later pictures were never even downloaded
+        self.assertEqual(self.lines(), [])  # and a stopped message leaves no line at all
 
     async def test_a_bot_and_a_webhook_are_never_read(self) -> None:
         await self.hear(picture(author=PLAYER, bot=True))
@@ -211,27 +241,69 @@ class TableImages(chat.AtTheTableTyped):
         self.assertEqual((self.fetched, self.lines()), ([], []))
 
 
-class TheDay(unittest.IsolatedAsyncioTestCase):
+class TheDay(Clocks):
+    """The day's count is in the database: it outlives a desk, and each campaign has its own."""
+
     def desk(self, now: list[float], per_day: int = 2) -> ImageDesk:
         async def fetcher(link: str) -> Image:
             return PNG
 
         vision = Vision()
-        return ImageDesk(vision, vision, per_day=per_day, clock=lambda: now[0], fetcher=fetcher)
+        return ImageDesk(
+            vision,
+            vision,
+            per_day=per_day,
+            counter=ImageUseStore(self.db),
+            clock=lambda: now[0],
+            fetcher=fetcher,
+        )
 
-    async def test_each_campaign_has_its_own_count_and_the_day_starts_again(self) -> None:
+    async def test_the_count_survives_a_new_desk_and_the_day_starts_again(self) -> None:
         now = [10 * DAY_S + 5.0]
-        desk = self.desk(now)
+        store = ImageUseStore(self.db)
         for _ in range(3):
-            await desk.describe(1, "a", [LINK])
-        self.assertEqual(desk.used_today(1, "a"), 2)
-        self.assertEqual(desk.used_today(1, "b"), 0)  # another campaign
-        self.assertEqual(desk.used_today(2, "a"), 0)  # another server
+            await self.desk(now).describe(GUILD_A, self.a.id, [LINK])  # a new desk each time
+        self.assertEqual(await store.used(GUILD_A, self.a.id, 10), 2)
         now[0] += DAY_S
-        self.assertEqual(desk.used_today(1, "a"), 0)
-        self.assertIsNotNone((await desk.describe(1, "a", [LINK]))[0])
+        self.assertIsNotNone((await self.desk(now).describe(GUILD_A, self.a.id, [LINK]))[0])
+        self.assertEqual(await store.used(GUILD_A, self.a.id, 11), 1)
+        self.assertEqual(await store.used(GUILD_A, self.a.id, 10), 0)  # the old day is cleared
+
+    async def test_each_campaign_and_server_has_its_own_count(self) -> None:
+        now = [10 * DAY_S + 5.0]
+        desk = self.desk(now, per_day=1)
+        self.assertIsNotNone((await desk.describe(GUILD_A, self.a.id, [LINK]))[0])
+        self.assertIsNone((await desk.describe(GUILD_A, self.a.id, [LINK]))[0])  # used up
+        other = (await self.campaigns.create(GUILD_A, "Gamma", DM)).id
+        self.assertIsNotNone((await desk.describe(GUILD_A, other, [LINK]))[0])  # another campaign
+        self.assertIsNotNone((await desk.describe(GUILD_B, self.b.id, [LINK]))[0])  # another server
+
+    async def test_two_pictures_at_once_cannot_both_take_the_last_place(self) -> None:
+        now = [10 * DAY_S + 5.0]
+        desk = self.desk(now, per_day=1)
+        got = await asyncio.gather(
+            desk.describe(GUILD_A, self.a.id, [LINK]), desk.describe(GUILD_A, self.a.id, [LINK])
+        )
+        self.assertEqual(sorted(r[0] is not None for r in got), [False, True])
+
+    async def test_a_limit_of_nothing_reads_nothing(self) -> None:
+        self.assertEqual(await self.desk([DAY_S * 1.0], per_day=0).describe(1, "a", [LINK]), [None])
+
+    async def test_without_a_counter_nothing_is_read(self) -> None:
+        desk = ImageDesk(Vision(), Vision(), per_day=5)
+        self.assertEqual(await desk.describe(1, "a", [LINK]), [])
 
     async def test_a_link_that_is_not_discords_is_never_opened(self) -> None:
-        desk = ImageDesk(Vision(), Vision(), per_day=5)
-        self.assertEqual(await desk.describe(1, "a", ["https://example.com/x.png"]), [None])
-        self.assertEqual(desk.used_today(1, "a"), 1)  # a link that fails still takes its place
+        desk = ImageDesk(Vision(), Vision(), per_day=5, counter=ImageUseStore(self.db))
+        got = await desk.describe(GUILD_A, self.a.id, ["https://example.com/x.png"])
+        self.assertEqual(got, [None])
+
+    async def test_the_count_goes_with_its_campaign(self) -> None:
+        now = [10 * DAY_S + 5.0]
+        await self.desk(now).describe(GUILD_A, self.a.id, [LINK])
+        await self.campaigns.delete(GUILD_A, self.a.id)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM image_day_use")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)

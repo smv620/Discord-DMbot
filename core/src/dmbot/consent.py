@@ -53,9 +53,13 @@ from dmbot.db import Conn, Database
 # confirmation. Version 5: DMbot also reads what is typed in the table's chat while it is
 # listening (owner, 2026-10-13; #1118), so everyone is asked again. Version 6: it also reads
 # what is typed in the campaign's DMbot chat channel, where anyone at the table may ask it a
-# question and the answer is posted for everyone (owner, 2026-10-14; #1187). Version 7: it also
-# reads pictures posted in the table chat, by sending each one to the AI to be described (#2450).
-TERMS_VERSION = 7
+# question and the answer is posted for everyone (owner, 2026-10-14; #1187).
+TERMS_VERSION = 6
+# Pictures posted in the table chat are read (sent to the AI to be described) only for a yes given
+# under this wording or a later one (#2450; Supervisor's ruling, 2026-10-23). The wording itself,
+# the version bump and the website's promises go in a separate go-live PR that merges only on the
+# owner's word, so until then nobody has a yes at this version and no picture is ever read.
+IMAGE_TERMS_VERSION = 7
 # How someone said yes: the button in DMbot's private message, or in the reply to
 # /consent give in the server.
 ConsentMethod = Literal["private_message", "consent_command"]
@@ -385,6 +389,12 @@ class ConsentStore:
         """Fast, synchronous check for the audio path. Unknown servers deny, and so does anyone
         off the record."""
         return user_id in self.consenting_now(guild_id)
+
+    def has_image_consent(self, guild_id: int, user_id: int) -> bool:
+        """May this person's pictures be sent to the AI? Only with a yes under wording that says
+        so (`IMAGE_TERMS_VERSION`): `has_consent` counts yeses at the current version only, so
+        this is false while the current wording is older than that."""
+        return TERMS_VERSION >= IMAGE_TERMS_VERSION and self.has_consent(guild_id, user_id)
 
     def _lock(self, guild_id: int) -> asyncio.Lock:
         return self._locks.setdefault(guild_id, asyncio.Lock())

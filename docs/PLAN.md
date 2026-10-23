@@ -3163,14 +3163,19 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     `DMBOT_TABLE_IMAGES` is on, 40 pictures per campaign per day (`DMBOT_TABLE_IMAGES_PER_DAY`). Only a message from
     someone who agreed, in the table's chat while listening, never a bot or webhook, has its attachments (up to 4,
     each up to 3.75 MB (what encodes to the AI service's 5 MB), by what Discord says the file is) looked at; the poster's consent is checked before anything
-    is fetched and again after each slow step, and the campaign's plan must have AI. Each becomes a line tagged
-    `(image)` in the raw and cleaned transcripts (a map says "a map"; a picture of text carries its words), or
-    "an image was posted (not described)" past the day's limit or when the picture could not be read. A described
-    picture is a **record only**: its names count as said, but it never runs a clock phrase, a house rule, the
-    sidebar or the off-topic filter. The count is in memory per server and campaign (a restart can only let a few
-    more through) and the log holds counts only. The consent terms version goes to 7 and the request and the
-    "asked again" note say pictures are sent to the AI to be described in words. The website's transcript view
-    still tags these lines "(typed)" until its database functions learn the flag (follow-up).
+    is fetched and again before every download and every AI call (a person who presses Stop meanwhile gets no
+    line), and the campaign's plan must have AI. Each becomes a line tagged `(image)` in the raw and cleaned
+    transcripts (a map says "a map"; a picture of text carries its words), or "a picture was posted (not
+    described)" past the day's limit or when the picture could not be read. A described picture is a **record
+    only**: its names count as said, but it never runs a clock phrase, a house rule, the sidebar or the off-topic
+    filter. The day's count is a row per campaign and day in the database (`image_day_use`, a count only, deleted
+    with the campaign), so the limit holds across restarts; the log holds counts only.
+  - *Consent for pictures (Supervisor's ruling, 2026-10-23):* pictures are read only from a yes given under wording
+    that says so (`consent.IMAGE_TERMS_VERSION` = 7). `TERMS_VERSION` stays 6 in this change, so nobody has such a
+    yes and nothing is read. The go-live change (the terms bump to 7, the request and "asked again" wording, the
+    website's `pictures` promise, privacy page, help and features lines) is a separate PR that merges only on the
+    owner's word. The website's transcript view still tags these lines "(typed)" until its database functions
+    learn the flag (follow-up).
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
