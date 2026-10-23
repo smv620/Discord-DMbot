@@ -7,17 +7,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import discord
 import httpx
 import psycopg.errors
 
+from dmbot import bot as bot_module
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
+from dmbot.config import Settings as BotSettings
 from dmbot.dm_screen import messages, setup_dm_screen
 from dmbot.dm_screen import web_settings as ws
 from dmbot.dm_screen.channel import DMScreenError
+from dmbot.dm_screen.transcript_keep import saved_text
 from dmbot.web import campaign_settings, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
@@ -129,7 +133,7 @@ class TheChoices(Settings):
         answer = await self.queue(setting="retention", value="forever")
         await self.run_bot()
         self.assertIsNone((await self.campaign()).transcript_keep_days)
-        self.assertEqual((await self.poll(answer))["note"], ws.saved_text(None))
+        self.assertEqual((await self.poll(answer))["note"], saved_text(None))
 
     async def test_a_shorter_limit_needs_the_yes_the_discord_warning_asks_for(self) -> None:
         answer = await self.queue(setting="retention", value="90")  # no yes sent
@@ -140,7 +144,7 @@ class TheChoices(Settings):
         answer = await self.queue(setting="retention", value=90, confirm=True)  # (a number is ok)
         self.assertEqual([o.error for o in await self.run_bot()], [""])
         self.assertEqual((await self.campaign()).transcript_keep_days, 90)
-        self.assertEqual((await self.poll(answer))["note"], ws.saved_text(90))
+        self.assertEqual((await self.poll(answer))["note"], saved_text(90))
 
     async def test_a_choice_that_is_already_set_changes_no_stored_value(self) -> None:
         await self.queue(setting="level", value="normal")
@@ -215,6 +219,54 @@ class TheChoices(Settings):
         item = await self.items.claim_next(self.g)
         assert item is not None
         return item
+
+
+class ThroughTheRealBot(Settings):
+    """The bot's own loop, not a stand-in: `run_web_settings` claims each queued choice, applies it
+    with the bot's real methods and leaves a `done` row, with the stored setting changed."""
+
+    async def test_every_setting_is_applied_by_the_running_bot(self) -> None:
+        bot = DMBot(
+            BotSettings(discord_token="t", ears_secret="s"),
+            SimpleNamespace(),  # type: ignore[arg-type]
+            self.campaigns,
+            MagicMock(),
+        )
+        bot.web_settings = self.items
+
+        async def fake_screen(guild: Any, campaign_id: str, store: Any, *, visibility: str) -> Any:
+            saved = await store.set_dm_screen_visibility(self.g, campaign_id, visibility)
+            return SimpleNamespace(
+                channel=MagicMock(send=AsyncMock()), campaign=saved, warning=None
+            )
+
+        bot.get_guild = lambda guild_id: SimpleNamespace(id=guild_id)  # type: ignore[method-assign,assignment]
+        bot.after_screen_change = AsyncMock()  # type: ignore[method-assign]
+        bot.post = AsyncMock()  # type: ignore[method-assign]
+        waiting = {
+            "visibility": await self.queue(setting="visibility", value="open"),
+            "level": await self.queue(setting="level", value="quiet"),
+            "retention": await self.queue(setting="retention", value=30, confirm=True),
+        }
+        with (
+            patch.object(
+                DMBot,
+                "guilds",
+                new_callable=PropertyMock,
+                return_value=[SimpleNamespace(id=self.g)],
+            ),
+            patch.object(bot_module, "setup_dm_screen", fake_screen),
+        ):
+            await bot.run_web_settings()
+        for setting, answer in waiting.items():
+            done = await self.poll(answer)
+            self.assertEqual((done["state"], done["error"]), ("done", ""), setting)
+        saved = await self.campaign()
+        self.assertEqual(
+            (saved.dm_screen_visibility, saved.dm_screen_level, saved.transcript_keep_days),
+            ("open", "quiet", 30),
+        )
+        bot.after_screen_change.assert_awaited_once()  # a live session catches up, as in Discord
 
 
 class TheDoor(Settings):

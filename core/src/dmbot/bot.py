@@ -10362,7 +10362,7 @@ class DMBot(commands.AutoShardedBot):
                 if item is None:
                     break
                 with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
-                    if not await web_settings.run_one(self, guild.id, store, item):
+                    if not await web_settings.run_one(self, store, guild.id, item):
                         break
 
     async def run_recap_requests(self) -> None:
