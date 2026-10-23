@@ -3,7 +3,7 @@
 // The hand-over accept page (#2534; core #2532): the emailed link's token is read from the hash, the
 // offer is looked at, and the person accepts onto a server or says no thanks. The API decides who may
 // accept; the page says what it is told. Shown only while HANDOVER_LIVE is true (false today).
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -92,6 +92,40 @@ describe("the hand-over accept page", () => {
     await open(`#${token}`);
     expect(await screen.findByText(w.why[why] as string)).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.accept })).toBeNull();
+  });
+
+  it("lets someone who can't take it say no thanks, and says something for a reason it doesn't know", async () => {
+    const api = mockApi("table");
+    const real = api.handoverLook!;
+    api.handoverLook = async (t) => {
+      const look = await real(t);
+      return look.status === "open" ? { ...look, canAccept: false, why: "something_new" as never } : look;
+    };
+    await open("#open", api);
+    expect(await screen.findByText(w.cantNow)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.decline }));
+    expect(await screen.findByText(w.declined)).toBeTruthy();
+    expect(calls(api, "handoverDecline")).toEqual(["handoverDecline:open"]);
+  });
+
+  it("tries again after a failed look", async () => {
+    const api = mockApi("table");
+    const real = api.handoverLook!;
+    let asked = 0;
+    api.handoverLook = async (t) => {
+      asked += 1;
+      if (asked === 1) throw new ApiError("network");
+      return real(t);
+    };
+    await open("#open", api);
+    fireEvent.click(await screen.findByRole("button", { name: w.tryAgain }));
+    expect(await screen.findByText(w.offer("The Silver Hall", "Mira"))).toBeTruthy();
+  });
+
+  it("says what taking the campaign means, in normal-size text, before the buttons", async () => {
+    await open("#open");
+    const note = await screen.findByText(w.acceptNote);
+    expect(note.className).not.toContain("small");
   });
 
   it("links to the plans when a plan is what is missing, but not for the owner", async () => {

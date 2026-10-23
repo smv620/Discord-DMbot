@@ -61,6 +61,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
   const token = useRef<string | null>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
   const inFlight = useRef(false);
+  const [tryNo, setTry] = useState(0); // "Try again" after a failed look
 
   useEffect(() => {
     if (!HANDOVER_LIVE) return;
@@ -91,7 +92,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
+  }, [api, tryNo]);
 
   if (!HANDOVER_LIVE || !api.handoverLook || !api.handoverAccept || !api.handoverDecline) {
     return <p role="status">{words.notOpen}</p>;
@@ -169,9 +170,16 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
       );
     case "down":
       return (
-        <p class="warn" role="alert">
-          {words.loadFailed}
-        </p>
+        <div class="stack">
+          <p class="warn" role="alert">
+            {words.loadFailed}
+          </p>
+          <p>
+            <button type="button" class="button secondary" onClick={() => setTry((n) => n + 1)}>
+              {words.tryAgain}
+            </button>
+          </p>
+        </div>
       );
     case "ended":
       return (
@@ -207,7 +215,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
       );
     case "open": {
       const { look } = view;
-      const reason = look.why ? (words.why[look.why] ?? null) : null;
+      const reason = look.why ? (words.why[look.why] ?? words.cantNow) : words.cantNow;
       const anyServer = look.servers.some((s) => s.botIn);
       return (
         <section class="panel stack" aria-labelledby="handover-heading">
@@ -220,7 +228,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
           <p>{words.runsOn(look.server.name)}</p>
           {!look.canAccept ? (
             <>
-              {reason && <p role="status">{reason}</p>}
+              <p role="status">{reason}</p>
               {(look.why === "try_it" || look.why === "no_plan" || look.why === "no_slot") && (
                 <p>
                   <a class="button" href="/pricing">
@@ -229,6 +237,13 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                 </p>
               )}
               {look.why !== "owner" && <p class="muted small">{words.linkKept}</p>}
+              {look.why !== "owner" && (
+                <p>
+                  <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void decline()}>
+                    {busy === "decline" ? words.declining : words.decline}
+                  </button>
+                </p>
+              )}
             </>
           ) : (
             <>
@@ -249,26 +264,26 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                         onChange={() => setServer(s.id)}
                       />{" "}
                       {s.name} {s.current && <span class="muted small">{words.current}</span>}
+                      {!s.botIn && <span class="muted small"> {words.needsBot}</span>}
                     </label>
                     {!s.botIn && (
                       <>
                         {" "}
-                        <span class="muted small">{words.needsBot}</span>{" "}
-                        <a href={api.installUrl(s.id)} aria-label={words.addBotFor(s.name)}>
-                          {words.addBot}
-                        </a>
+                        <a href={api.installUrl(s.id)}>{words.addBotFor(s.name)}</a>
                       </>
                     )}
                   </div>
                 ))}
-                {look.servers.length === 0 && <p>{words.noServers}</p>}
+                {!anyServer && <p>{words.noServers}</p>}
+                {look.servers.some((s) => !s.botIn) && <p class="muted small">{words.comeBack}</p>}
               </fieldset>
-              <p class="muted small">{words.acceptNote}</p>
+              <p>{words.acceptNote}</p>
               {problem && (
                 <p class="note bad" role="alert">
                   {problem}
                 </p>
               )}
+              {anyServer && !server && <p class="muted small">{words.pickFirst}</p>}
               <div class="row">
                 <button
                   type="button"

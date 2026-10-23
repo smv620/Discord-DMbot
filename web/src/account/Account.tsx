@@ -517,7 +517,7 @@ function SignedIn({
       <Notice message={notice} />
       {HANDOVER_LIVE && handoverToken("") !== null && (
         // An offer link was opened before signing in: its code was kept, so the way back is here.
-        <p class="ok" role="status">
+        <p class="note" role="status">
           {handoverWords.waitingOnAccount} <a href="/handover">{handoverWords.waitingLink}</a>
         </p>
       )}
