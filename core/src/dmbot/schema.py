@@ -3154,6 +3154,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
     ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
     ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
+    (
+        "dmbot_handover_request_move",
+        "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)",
+    ),  # #2532
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11887,6 +11891,70 @@ HANDOVER_CLAIM = """
     REVOKE ALL ON FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT) FROM PUBLIC;
 """
 
+HANDOVER_MOVE = """
+    -- A campaign handed over by email to a person who wants it in another server (#2532, slice C;
+    -- docs/PLAN.md, "Hand-over by email", point 7). The website cannot copy a campaign between
+    -- servers (it must never read or write another server's tables), so it only records the wish
+    -- here: `move_to_guild_id`. DMbot's bot then moves the campaign like loading a backup into that
+    -- server, and records the copy it made in `moved_campaign_id`, so a retry reuses it and never
+    -- makes a second. While a move is asked for, the offer stays 'open' but cannot be answered,
+    -- taken back or run out. Two new columns on an existing table: no rows change.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN move_to_guild_id BIGINT
+            CHECK (move_to_guild_id IS NULL OR move_to_guild_id > 0),
+        ADD COLUMN moved_campaign_id TEXT;
+
+    -- Claims the link for this person and asks for the move, in one step (#2532). Same rules as
+    -- dmbot_handover_open with a claim, and the target must be one of the session's own servers
+    -- with DMbot installed. NULL, whatever the reason, the same as any ended link.
+    CREATE FUNCTION dmbot_handover_request_move(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_target BIGINT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ready BOOLEAN;
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
+            RETURN false;
+        END IF;
+        IF NOT (p_target = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', p_target::text, true);
+        SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
+            INTO ready;
+        IF NOT ready THEN
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers f
+            SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80),
+                move_to_guild_id = p_target
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND f.move_to_guild_id IS NULL
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)
+        FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -12119,6 +12187,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
     ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
     ("0213_handover_claim", HANDOVER_CLAIM),  # opening a hand-over link on the website (#2532)
+    ("0214_handover_move", HANDOVER_MOVE),  # a hand-over to another server is asked for (#2532)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
