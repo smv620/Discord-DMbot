@@ -365,7 +365,11 @@ class RecapStore:
                 # waiting recap's lifetime spend does not stay in "today" (#2308). The new total
                 # minus the old is the calls just made; stamps older than two days are dropped.
                 parts.append(
-                    "spent = %s, spent_log = ARRAY(SELECT t FROM unnest(spent_log) AS t"
+                    "spent = %s, spent_log = ARRAY(SELECT t FROM unnest("
+                    # a job from before the calls were dated: its earlier calls are dated by the
+                    # last time it was updated, so gaining one stamp does not lose them
+                    "CASE WHEN cardinality(spent_log) = 0 AND spent > 0"
+                    " THEN array_fill(updated_at, ARRAY[spent]) ELSE spent_log END) AS t"
                     " WHERE t >= %s) || array_fill(%s::bigint, ARRAY[GREATEST(%s - spent, 0)])"
                 )
                 values += [value, now - LOG_KEPT_S, now, value]
@@ -707,11 +711,10 @@ class RecapStore:
         dated is counted by its total while it was updated since then."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT COALESCE(sum(CASE WHEN cardinality(spent_log) = 0"
-                " THEN (CASE WHEN updated_at >= %s THEN spent ELSE 0 END)"
+                "SELECT COALESCE(sum(CASE WHEN cardinality(spent_log) = 0 THEN spent"
                 " ELSE (SELECT count(*) FROM unnest(spent_log) AS t WHERE t >= %s) END), 0) AS n"
-                " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s",
-                (since, since, guild_id, campaign_id),
+                " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s AND updated_at >= %s",
+                (since, guild_id, campaign_id, since),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
@@ -744,7 +747,7 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET state = 'queued', attempt = 0, errors = 0, restarts = 0,"
-                " next_at = 0, calls = 0, spent = 0, spent_log = '{}', window_count = 0,"
+                " next_at = 0, calls = 0, spent = 0, window_count = 0,"
                 " window_done = 0,"
                 " last_error = '', problems = '{}', beats = '[]', split = NULL, critics = NULL,"
                 " tries = 0, approved_by = 0, approved_at = 0, approved_hash = '',"

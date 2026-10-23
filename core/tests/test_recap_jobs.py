@@ -188,6 +188,28 @@ class Keeping(Base):
         self.clock.now += 3 * 86400
         self.assertEqual(await self.store.calls_since(1, self.one.id, int(self.clock.now)), 0)
 
+    async def test_a_job_waiting_at_deploy_keeps_its_earlier_calls_when_it_gains_one(
+        self,
+    ) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 100, spent=7)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET spent_log = '{}'")  # as it was before 0205
+        self.clock.now += 60
+        await self.store.update(1, self.one.id, 100, spent=8)
+        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 8)
+
+    async def test_a_requeue_keeps_the_days_dated_calls(self) -> None:
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 100, spent=4)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'failed'")  # only a failed one
+        self.assertTrue(await self.store.requeue(1, self.one.id, 100))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.spent, 0)
+        self.assertEqual(await self.store.calls_since(1, self.one.id, NOW - 10), 4)
+
     async def test_it_goes_in_a_backup_and_comes_back_as_a_draft_never_posted(self) -> None:
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
         await self.store.update(
