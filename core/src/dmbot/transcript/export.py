@@ -50,8 +50,8 @@ DMBOT_NAME = "DMbot"
 TABLE_Q_NAME = "Table Q"  # a player's question to DMbot (#1187), apart from the DM's sidebar
 TYPED_TAG = "(typed)"
 TYPED_NOTE = (
-    "(typed) lines were typed in the table's chat, not said. Typing clearly not about the game "
-    "is left out of the Cleaned version."
+    "(typed) lines were typed in the table's chat, not said. In the Cleaned version, DMbot leaves "
+    "out chat that is clearly not about the game."
 )
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. A person marked "
@@ -371,7 +371,7 @@ def render(
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
         *([SIDEBAR_NOTE] if shown_sidebar else []),
-        *([TYPED_NOTE] if shown_typed else []),
+        *([TYPED_NOTE] if typed_lines else []),  # (also when the Cleaned one hides them all)
     ]
     if running:
         header.append(
