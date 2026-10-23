@@ -1595,6 +1595,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (token !== "good-link") throw new ApiError("bad-link");
       me = scenarioMe("table");
     },
+    // The owner's side of a hand-over by email (#2534): one open offer per campaign, and an answer that
+    // never says anything about the address. `bad` is not an address; `many@example.com` is over the limit.
+    async offerHandover(ref, email) {
+      calls.push(`offerHandover:${ref}:${email}`);
+      await reachable();
+      signedIn();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ApiError("bad-email");
+      if (email.startsWith("many@")) throw new ApiError("too-soon");
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      // (copied, never changed in place: the pretend campaigns are shared by every test)
+      const open = { sentAt: "2026-10-23T12:00:00Z", expiresAt: "2026-10-30T12:00:00Z" };
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: open } : x)) };
+    },
+    async takeBackHandover(ref) {
+      calls.push(`takeBackHandover:${ref}`);
+      await reachable();
+      signedIn();
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: null } : x)) };
+    },
     // The hand-over accept page (#2534). Tokens: `open` (can accept), `no-plan`, `try-it`, `own`, `late`
     // (ended); `gone-after` looks open and ends before accepting.
     async handoverLook(token) {

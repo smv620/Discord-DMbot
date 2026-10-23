@@ -59,6 +59,9 @@ export interface Campaign {
   players?: number;
   npcs?: number;
   startedAt?: string;
+  /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
+   * when it was sent and when it ends, never the address. Missing from an older API. */
+  handover?: { sentAt: string; expiresAt: string } | null;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -1192,6 +1195,11 @@ export interface AccountApi {
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
+  /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
+   * address is: the page never learns whether it has an account or a plan. */
+  offerHandover?(ref: string, email: string): Promise<void>;
+  /** Take the open offer back. */
+  takeBackHandover?(ref: string): Promise<void>;
   handoverLook?(token: string): Promise<HandoverLook>;
   handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
   handoverDecline?(token: string): Promise<void>;
@@ -1628,6 +1636,12 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    offerHandover: async (ref, email) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
+    },
+    takeBackHandover: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
     },
     handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
     handoverAccept: async (token, serverId) =>

@@ -10,10 +10,10 @@ import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
-import { HANDOVER_LIVE, handoverWords } from "../content/handover-words";
+import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
 import { handoverToken } from "./Handover";
 import { keepFocus } from "./focus";
-import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -1120,6 +1120,9 @@ function CampaignRow({
           </div>
         </>
       )}
+      {HANDOVER_LIVE && campaign.role === "owner" && campaign.ref && api.offerHandover && api.takeBackHandover && (
+        <EmailHandover campaign={campaign} refId={campaign.ref} />
+      )}
       {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
@@ -1206,6 +1209,97 @@ function CampaignRow({
         </form>
       )}
     </li>
+  );
+}
+
+/** Hand a campaign over by email (#2534; core #2532): the owner types the new owner's address, and sees only
+ * "We've emailed the offer". While an offer is open it shows when it ends and a Take back button. The
+ * answer never says whether the address has an account or a plan (#437). */
+function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [asking, setAsking] = useState(false);
+  const [email, setEmail] = useState("");
+  const [said, setSaid] = useState<string | null>(null);
+  const saidRef = useRef<HTMLParagraphElement>(null);
+  const words = handoverOwnerWords;
+  const open = campaign.handover ?? null;
+  const explain = (error: ApiError): string | null => {
+    if (error.kind === "not-found") void refresh();
+    return words.problem[error.kind] ?? words.problem["server"] ?? null;
+  };
+  return (
+    <div class="stack">
+      <Notice message={notice} />
+      <p class="small" role="status" tabIndex={-1} ref={saidRef}>
+        {said}
+      </p>
+      {open ? (
+        <>
+          <p class="small">{words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt))}</p>
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            onClick={() =>
+              void run(async () => {
+                await api.takeBackHandover!(refId);
+                setSaid(words.takenBack);
+                await refresh();
+                keepFocus(() => saidRef.current);
+              }, explain)
+            }
+          >
+            {words.takeBack}
+          </ActionButton>
+        </>
+      ) : asking ? (
+        <form
+          class="handover"
+          noValidate // the API checks the address and our own plain words say what is wrong
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (email.trim() === "") return;
+            void run(async () => {
+              await api.offerHandover!(refId, email.trim());
+              setAsking(false);
+              setEmail("");
+              setSaid(words.emailed);
+              await refresh();
+              keepFocus(() => saidRef.current);
+            }, explain);
+          }}
+        >
+          <fieldset disabled={busy}>
+            <legend>{words.question(campaign.name)}</legend>
+            <label class="field">
+              {words.label}
+              <input type="email" autocomplete="off" value={email} onInput={(e) => setEmail((e.target as HTMLInputElement).value)} />
+            </label>
+            <p class="muted small">{words.note}</p>
+          </fieldset>
+          <div class="row">
+            <button type="submit" class="button" disabled={busy || email.trim() === ""} aria-busy={busy}>
+              {busy ? words.sending : words.send}
+            </button>
+            <button type="button" class="button secondary" disabled={busy} onClick={() => setAsking(false)}>
+              {words.cancel}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          type="button"
+          class="button secondary"
+          aria-label={words.buttonFor(campaign.name)}
+          onClick={() => {
+            setAsking(true);
+            setSaid(null);
+          }}
+        >
+          {words.button}
+        </button>
+      )}
+    </div>
   );
 }
 

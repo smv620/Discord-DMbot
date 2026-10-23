@@ -3,14 +3,15 @@
 // The hand-over accept page (#2534; core #2532): the emailed link's token is read from the hash, the
 // offer is looked at, and the person accepts onto a server or says no thanks. The API decides who may
 // accept; the page says what it is told. Shown only while HANDOVER_LIVE is true (false today).
-import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
+import Account from "../src/account/Account";
 import Handover, { handoverToken } from "../src/account/Handover";
 import { mockApi } from "../src/account/mock";
-import { handoverWords as w } from "../src/content/handover-words";
+import { handoverOwnerWords as o, handoverWords as w } from "../src/content/handover-words";
 
 const live = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/handover-words", async (original) => {
@@ -229,5 +230,73 @@ describe("the real client", () => {
     const api = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: code }), { status })) as typeof fetch);
     await expect(api.handoverAccept!("tok", "s1")).rejects.toMatchObject({ kind });
     expect(w.problem[kind]).toBeTruthy();
+  });
+});
+
+describe("the owner's side: hand over by email", () => {
+  async function card(api: AccountApi = mockApi("table")) {
+    live.on = true;
+    render(<Account api={api} go={vi.fn()} search="" />);
+    const link = await screen.findByRole("link", { name: "The Brynwater Crossing" });
+    return { api, row: link.closest("li") as HTMLElement };
+  }
+
+  it("shows nothing while it is switched off", async () => {
+    render(<Account api={mockApi("table")} go={vi.fn()} search="" />);
+    await screen.findByRole("link", { name: "The Brynwater Crossing" });
+    expect(screen.queryByRole("button", { name: /Hand over by email/ })).toBeNull();
+  });
+
+  it("is offered on a campaign you own, and not on one you only help run", async () => {
+    const { row } = await card();
+    expect(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") })).toBeTruthy();
+    const coDm = (await screen.findByRole("link", { name: "Shrine of Varrow" })).closest("li") as HTMLElement;
+    expect(within(coDm).queryByRole("button", { name: /Hand over by email/ })).toBeNull();
+  });
+
+  it("sends the offer to the typed address, and says only that it was emailed", async () => {
+    const { api, row } = await card();
+    fireEvent.click(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") }));
+    fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "new@example.com" } });
+    fireEvent.click(within(row).getByRole("button", { name: o.send }));
+    await waitFor(() => expect(calls(api, "offerHandover")).toEqual(["offerHandover:100.cmp1:new@example.com"]));
+    // the list is read again: an open offer now shows its end and Take back (never the address)
+    expect(await screen.findByText(/We emailed the offer on/)).toBeTruthy();
+    expect(screen.queryByText(/new@example\.com/)).toBeNull();
+    expect(screen.getByText(o.emailed)).toBeTruthy();
+  });
+
+  it("takes an open offer back", async () => {
+    const { api, row } = await card();
+    fireEvent.click(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") }));
+    fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "new@example.com" } });
+    fireEvent.click(within(row).getByRole("button", { name: o.send }));
+    fireEvent.click(await screen.findByRole("button", { name: o.takeBack }));
+    await waitFor(() => expect(calls(api, "takeBackHandover")).toEqual(["takeBackHandover:100.cmp1"]));
+    expect(await screen.findByText(o.takenBack)).toBeTruthy();
+    expect(screen.getByRole("button", { name: o.buttonFor("The Brynwater Crossing") })).toBeTruthy();
+  });
+
+  it("says why an offer wasn't sent, and keeps the form", async () => {
+    const { row } = await card();
+    fireEvent.click(within(row).getByRole("button", { name: o.buttonFor("The Brynwater Crossing") }));
+    fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "bad" } });
+    fireEvent.click(within(row).getByRole("button", { name: o.send }));
+    expect(await within(row).findByText(o.problem["bad-email"] as string)).toBeTruthy();
+    fireEvent.input(within(row).getByLabelText(o.label), { target: { value: "many@example.com" } });
+    fireEvent.click(within(row).getByRole("button", { name: o.send }));
+    expect(await within(row).findByText(o.problem["too-soon"] as string)).toBeTruthy();
+    expect(within(row).getByLabelText(o.label)).toBeTruthy();
+  });
+
+  it("the real client posts the address and deletes to take back", async () => {
+    const seen: string[] = [];
+    const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
+      seen.push(`${init?.method} ${new URL(url).pathname} ${init?.body ?? ""}`);
+      return new Response(JSON.stringify({ status: "emailed" }), { status: 200 });
+    }) as typeof fetch);
+    await api.offerHandover!("100.cmp1", "a@example.com");
+    await api.takeBackHandover!("100.cmp1");
+    expect(seen).toEqual(['POST /me/campaigns/100.cmp1/handover {"email":"a@example.com"}', "DELETE /me/campaigns/100.cmp1/handover "]);
   });
 });

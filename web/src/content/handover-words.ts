@@ -6,6 +6,34 @@
 // with the What's new entry "Receive a campaign by email".
 export const HANDOVER_LIVE = false;
 
+/** The owner's side: handing a campaign over by email from My Account (#2534; PLAN, "Hand-over by email").
+ * The owner sees only "We've emailed the offer", never whether the address has an account or a plan. */
+export const handoverOwnerWords = {
+  button: "Hand over by email",
+  buttonFor: (name: string): string => `Hand over by email: ${name}`,
+  question: (name: string): string => `Who should take ${name}?`,
+  label: "Their email address",
+  note: "We email them a link that works for 7 days. Nothing changes until they accept. You stay a co-DM.",
+  send: "Send the offer",
+  sending: "Sending…",
+  cancel: "Cancel",
+  emailed: "We've emailed the offer.",
+  waiting: (sent: string, ends: string): string =>
+    `We emailed the offer on ${sent}. It ends on ${ends} if they don't answer. The campaign stays yours until they accept.`,
+  takeBack: "Take back the offer",
+  takeBackFor: (name: string): string => `Take back the offer: ${name}`,
+  takingBack: "Taking it back…",
+  takenBack: "Done. You took the offer back.",
+  problem: {
+    "bad-email": "That doesn't look like an email address. It should look like name@example.com.",
+    "too-soon": "You can send 5 offers a day. Try again tomorrow.",
+    "not-found": "That campaign is no longer yours to hand over. The list is up to date now.",
+    "not-allowed": "This campaign can't be handed over. A Try It campaign can't be, and one with nothing to hand over can't either.",
+    network: "We couldn't reach DMbot, so nothing was changed. Try again in a moment.",
+    server: "That didn't work, and nothing was changed. Try again in a moment.",
+  } as Record<string, string>,
+};
+
 export const handoverWords = {
   heading: "A campaign for you",
   loading: "Opening the offer…",
