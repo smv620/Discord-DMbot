@@ -8,6 +8,7 @@ import { QABOT_LIVE } from "../../content/qabot";
 import { initiativeLine, peopleListLine, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
+  geminiPrivacy,
   keepAfterStopPaying,
   minimumAge,
   operator,
@@ -276,6 +277,10 @@ import {
       text it needs, not sound. That text isn't used to train Anthropic's AI.{
         SUPPORT_AI_LIVE ? anthropicAddition : ""
       }
+    </li>
+    <li>
+      <strong>{geminiPrivacy.name}</strong>, {geminiPrivacy.lead} {geminiPrivacy.body}
+      {geminiPrivacy.country} <a href={geminiPrivacy.termsUrl} rel="noopener noreferrer">{geminiPrivacy.termsText}</a>.
     </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
