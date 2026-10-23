@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 
 from dmbot.campaigns import CampaignStore
-from dmbot.web.sessions import DiscordUser
+from dmbot.web.discord import DiscordUser
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_api import ALICE, THURSDAY
