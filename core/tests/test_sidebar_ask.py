@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import unittest
 
-from dmbot.sidebar.ask import ASK_PER_MINUTE, ASK_PER_SESSION, AskLimiter, request_in
+from dmbot.sidebar.ask import (
+    ASK_PER_MINUTE,
+    ASK_PER_SESSION,
+    AskLimiter,
+    asks_off_record,
+    request_in,
+)
 
 
 class RequestInTests(unittest.TestCase):
@@ -228,6 +234,33 @@ class AskLimiterTests(unittest.TestCase):
         limit = AskLimiter()
         self.assertTrue(limit.allow(100.0))
         self.assertTrue(limit.allow(101.0))
+
+
+class OffTheRecord(unittest.TestCase):
+    """#2466: only a call to DMbot goes off the record, never the phrase alone (an NPC says it)."""
+
+    def test_a_call_to_dmbot_that_asks_goes_off_the_record(self) -> None:
+        for said in (
+            "Hey DMbot, off the record",
+            "hey dm bot please go off the record",
+            "Okay, hey DMbot off the record for a bit",
+            "so hey DM bot, we're going off the record now",
+        ):
+            self.assertTrue(asks_off_record(said), said)
+
+    def test_the_phrase_alone_never_does(self) -> None:
+        for said in (
+            "This is off the record, but the baron is a spy.",
+            "Off the record, I never saw him.",
+            "DMbot is off the record",  # no hey: a story about it
+            "DMbot, off the record",  # a bare name needs its hey here
+            "Hey DMbot, is this off the record?",
+            "hey DMbot the spy said off the record",
+        ):
+            self.assertFalse(asks_off_record(said), said)
+
+    def test_an_ordinary_question_is_not_it(self) -> None:
+        self.assertFalse(asks_off_record("Hey DMbot, what is the range of fireball"))
 
 
 if __name__ == "__main__":

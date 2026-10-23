@@ -9,6 +9,7 @@ import { price as narrationPrice } from "./recap-audio";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps as baseRecapSteps } from "./recap-words";
 import { SUPPORT_AI_LIVE, helpNote } from "./support-words";
 import { portalLoginSteps, portalLoginUrl } from "./billing-login";
+import { liveFeatureSteps } from "./help-features";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -900,6 +901,8 @@ export const dmSteps: Step[] = [
     text: "To give a campaign to another game master, press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
+  // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
+  ...liveFeatureSteps("gameMaster"),
 ];
 
 // The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
@@ -1041,6 +1044,8 @@ export const playerSteps: Step[] = [
   {
     text: "If your sheet is linked online, your spell slots show on your character card. About a minute after someone at the table says a slot was used, DMbot looks at your sheet again to keep up. It never changes your sheet.",
   },
+  // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
+  ...liveFeatureSteps("player"),
 ];
 
 /** Your account (#1215): DMbot has no password of its own, and a new Discord account starts clean. */
@@ -1062,6 +1067,8 @@ export const accountSteps: Step[] = [
   },
   // Only when the build has Stripe's billing login link (#1711).
   ...portalLoginSteps(portalLoginUrl()),
+  // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
+  ...liveFeatureSteps("account"),
 ];
 
 /** Emails from DMbot (#1283): every sentence is read from core/src/dmbot/mail.py, trial_jobs.py and

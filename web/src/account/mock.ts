@@ -570,6 +570,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     pending: null,
   };
   const memory = startNames();
+  // How each listed name is said (#2317), by the name's id; the id the said-as calls take is `al-<id>`.
+  const memorySaid = new Map<string, string | null>();
+  /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
+  const sayable = (id: string): { text: string; set: (v: string | null) => void } | undefined => {
+    const recap = names.find((n) => n.id === id);
+    if (recap) return { text: recap.text, set: (v) => void (recap.saidAs = v) };
+    const row = memory.find((n) => `al-${n.id}` === id);
+    return row ? { text: row.name, set: (v) => void memorySaid.set(row.id, v) } : undefined;
+  };
   // My private notes on NPCs, by entry id (#2266). "old" is one on a name no longer listed.
   const npcNotes = new Map<string, string>([["old", "He owed me a favour."]]);
   // One pretend web per campaign address, started on first use.
@@ -1115,7 +1124,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return {
         campaign: "The Brynwater Crossing",
         canEdit: view === "dm",
-        names: sorted.slice((query.page - 1) * pageSize, query.page * pageSize).map((n) => ({ ...n, others: [...n.others] })),
+        // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
+        names: sorted
+          .slice((query.page - 1) * pageSize, query.page * pageSize)
+          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
@@ -1397,7 +1409,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`suggestSaidAs:${campaignRef}:${nameId}`);
       await reachable();
       signedIn();
-      const found = names.find((n) => n.id === nameId);
+      const found = sayable(nameId);
       if (!found) throw new ApiError("not-found");
       const half = Math.ceil(found.text.length / 2);
       return `${found.text.slice(0, half).toUpperCase()}-${found.text.slice(half).toLowerCase()}`;
@@ -1406,7 +1418,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`respellFromVoice:${campaignRef}:${nameId}:${clip.type}`);
       await reachable();
       signedIn();
-      const found = names.find((n) => n.id === nameId);
+      const found = sayable(nameId);
       if (!found) throw new ApiError("not-found");
       if (clip.size === 0) throw new ApiError("bad-clip");
       const half = Math.ceil(found.text.length / 2);
@@ -1416,9 +1428,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`saveSaidAs:${campaignRef}:${nameId}:${saidAs ?? ""}`);
       await reachable();
       signedIn();
-      const found = names.find((n) => n.id === nameId);
+      const found = sayable(nameId);
       if (!found) throw new ApiError("not-found");
-      found.saidAs = saidAs === null || saidAs.trim() === "" ? null : saidAs.trim();
+      found.set(saidAs === null || saidAs.trim() === "" ? null : saidAs.trim());
     },
     async recapAudioLinks(ref) {
       calls.push(`recapAudioLinks:${ref}`);

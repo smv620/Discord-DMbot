@@ -1154,17 +1154,26 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   transcribed or stored, and core re-checks the pause after every async step as it does consent. The
   DM also has **⏸️ Pause the table** for breaks. The table chat says "⏸️ <name> is off the record for 5
   minutes." and "▶️ <name> is back on the record.", and both transcripts get one marker line, "(<name>
-  was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
+  was off the record, nothing recorded, 20:14–20:19 UTC)". Nothing is cut from a transcript, because nothing was recorded, so
   this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
   DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
-  is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
-  (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
-  they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
-  the pause stays on the record. A paused person's **typed** question to DMbot is still answered
-  privately (typing to DMbot is deliberate), but nothing of it is written to any transcript or stored
-  (Supervisor, 2026-10-23, #2470). A pause has no lasting effect: it changes no stored consent or
-  choice, a restart while paused keeps the pause (it never starts recording someone who was told they
-  are off the record), and stopping during a pause ends it at once.
+  is never acted on, because NPCs say it in the story; the call must carry its "Hey". (The other spoken
+  triggers do not fire on a line said as a named NPC, #1624; this one is not held for that label, see
+  below: a wrongly paused person only presses ▶️.) There is no spoken "back on the record", since DMbot
+  hears nothing from a paused person; they come back with ▶️, the timer, or the session's end. It is
+  not retroactive: what was said before the pause stays on the record. A paused person's **typed**
+  question to DMbot is still answered privately (typing to DMbot is deliberate), but nothing of it is
+  written to any transcript or stored (Supervisor, 2026-10-23, #2470). A pause has no lasting effect:
+  it changes no stored consent or choice, a restart while paused keeps the pause (it never starts
+  recording someone who was told they are off the record), and stopping during a pause ends it at once.
+  - *Built (2026-10-23, CloudDev, #2466 slice 2):* the spoken phrase is not held for the speaker label
+    that decides "as a named NPC": a wrongly paused person only presses ▶️, while waiting would keep
+    recording them (accepted by Supervisor, as is not counting the phrase toward the question limit).
+    The person is off the record in core at once, before anything is awaited; the line that said it,
+    and anything of theirs written down after it, reaches neither transcript nor memory. Saying it
+    while already off the record for longer changes nothing (it never shortens a pause). The table's
+    break is marked for the people in the voice channel who agreed. A pause that ran out while DMbot
+    was down still leaves its marker, from its start to its real end.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -1850,8 +1859,8 @@ names panel nor the speech-to-text hints can be a fixed list.
     - *Built, slice 3 (CloudDev, 2026-10-23, #2410):* the **🆕 new names** list rides in that same
       message (up to five names and "and N more", with the **📝 Check new names** button on its own row),
       so the DM gets one message after a session instead of two. It does not replace the check itself:
-      the button opens the same private check. When the session said no secrets, or the summary could not
-      be sent, the names go out on their own exactly as before, so a list is never lost to the summary.
+      the button opens the same private check. When the summary could not be sent (or the
+      session said no secrets, before slice 4), the names go out on their own exactly as before, so a list is never lost to the summary.
       The count of things said at the table that wait for the check (🔗) rides in the same message when
       it is on the DM screen, with the 🗣️ Check what was said button (a private copy has no server for
       that button, so the screen post keeps telling it). The check now has the connection choices:
@@ -1859,8 +1868,16 @@ names panel nor the speech-to-text hints can be a fixed list.
       shown it) and **❌ Not true**. An answer that remembers a fact has its own **↩️ Undo** while the page is
       open (the change log's Undo; the question then waits again). A state ("Roan is dead") has no secret flag, so it has no 🤫.
       **❓ Party theory** (The party at 0.5, Theory) waits for guesses (#2412): until then a party belief
-      below 1.0 is refused. Listing each connection in the summary, with who believes it and the line it
-      came from, is the next step.
+      below 1.0 is refused.
+    - *Built, slice 4 (CloudDev, 2026-10-23, #2410):* the summary also goes when no secret was said, if
+      there are new names or things to check (no Recant part then). The things to check are **spelled
+      out in words** (the first five, with who said each: "you" or "a player"), in the DM-only copies of
+      the message only (the DM screen while it is private, and the private copy). Anywhere players can
+      read, the post says the count and never what. If the message would pass Discord's 2,000
+      characters the words go and the count stays. Not done: the line each came from. A claim holds
+      references to the extractor's numbered lines, not the transcript's words, so quoting the line
+      needs those lines kept with the claim; that is its own step, and until then the check says who
+      said it.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.

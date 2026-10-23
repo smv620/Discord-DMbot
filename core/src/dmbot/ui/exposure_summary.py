@@ -21,6 +21,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory._changes import ALREADY_UNDONE
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
@@ -61,30 +62,67 @@ def summary_text(
     private: bool = False,
     new_names: Sequence[str] = (),
     claims_waiting: int = 0,
+    claim_lines: Sequence[str] = (),
+    can_check: bool = True,
 ) -> str:
     """The message. `items`: one plain line each, in order (a name, or two names and how they are
     tied); `waiting`: how many more there are than listed. Short and plain: what was said, that the
     players can see it now, and what the button does. `new_names`: names DMbot heard for the first
-    time this session (the 📝 Check new names list rides here so the DM gets one message)."""
-    where = (
-        f" (campaign {discord.utils.escape_markdown(campaign_name)})"
-        if private and campaign_name
-        else ""
+    time this session (the 📝 Check new names list rides here so the DM gets one message).
+    `claims_waiting`: how many things said at the table wait for the DM's check; `claim_lines`:
+    the first few in words and who said them. **Every copy of this message is for the DM alone**
+    (the DM screen while it is private, else a private message), which is why the words may be
+    here: the posts anyone can read say the count only. `can_check`: the 🗣️ button is on this
+    copy (a private message has no server for it). The words are dropped if the message would
+    pass Discord's limit."""
+    text = _compose(
+        items, waiting, campaign_name, private, new_names, claims_waiting, claim_lines, can_check
     )
-    lines = [f"🤫 **Said at the table, now shown to your players**{where}"]
-    lines += [f"{n}. {discord.utils.escape_markdown(_short(i))}" for n, i in enumerate(items, 1)]
-    if waiting > 0:
-        lines.append(
-            f"…and {waiting} more. They come in your next summary, and your players don't see "
-            "them until then."
+    if len(text) > MESSAGE_MAX and claim_lines:  # too long: the count alone says enough
+        text = _compose(
+            items, waiting, campaign_name, private, new_names, claims_waiting, (), can_check
         )
-    lines.append("Press ↩️ Recant for a slip, a misheard word, or a name you'll change.")
+    return text
+
+
+def _compose(
+    items: Sequence[str],
+    waiting: int,
+    campaign_name: str,
+    private: bool,
+    new_names: Sequence[str],
+    claims_waiting: int,
+    claim_lines: Sequence[str],
+    can_check: bool,
+) -> str:
+    lines: list[str] = []
+    if items:
+        where = (
+            f" (campaign {discord.utils.escape_markdown(campaign_name)})"
+            if private and campaign_name
+            else ""
+        )
+        lines.append(f"🤫 **Said at the table, now shown to your players**{where}")
+        lines += [
+            f"{n}. {discord.utils.escape_markdown(_short(i))}" for n, i in enumerate(items, 1)
+        ]
+        if waiting > 0:
+            lines.append(
+                f"…and {waiting} more. They come in your next summary, and your players don't see "
+                "them until then."
+            )
+        lines.append("Press ↩️ Recant for a slip, a misheard word, or a name you'll change.")
     if new_names:
-        lines.append("")
-        lines.append(names_line(new_names))
+        lines += ["", names_line(new_names)] if lines else [names_line(new_names)]
     if claims_waiting:
-        lines.append("")
+        if lines:
+            lines.append("")
         lines.append(claims_line(claims_waiting))
+        lines += [f"• {line}" for line in claim_lines]
+        if len(claim_lines) < claims_waiting and claim_lines:
+            lines.append(f"…and {claims_waiting - len(claim_lines)} more in the check.")
+        if not can_check:
+            lines.append("Open 🗣️ Check what was said on your DM screen to answer.")
     if private:
         lines.append(PRIVATE_NOTE)
     return "\n".join(lines)
@@ -209,6 +247,56 @@ class RecantButton(
         )
 
 
+class SeenButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:xs:(?P<campaign>[0-9a-f]{32}):(?P<guild>[0-9]{1,20})",
+):
+    """ "👍 Got it" on every variant of the summary (#2410). Pressing it only greys the button and
+    relabels it "👍 Seen"; it stays on the message. It is the summary's mark: a message with no
+    ↩️ Recant on it (only new names or things to check) is found after a restart by this button's
+    id, and pulled back if the DM screen opens up to players, because the words of what was said
+    are in it. So the button must never be taken off, only closed, like Recant."""
+
+    def __init__(self, campaign_id: str, guild_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="👍 Got it",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:xs:{campaign_id}:{guild_id}",
+                row=3,  # after the Recant rows and the check buttons
+            )
+        )
+        self.campaign_id, self.guild_id = campaign_id, guild_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> SeenButton:
+        return cls(match["campaign"], int(match["guild"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await interaction.response.defer()
+        bot = _bot(interaction)
+        here = interaction.guild.id if interaction.guild is not None else self.guild_id
+        campaign = (
+            await bot.campaigns.get(self.guild_id, self.campaign_id)
+            if here == self.guild_id
+            else None
+        )
+        if campaign is None:
+            await _tell(interaction, NO_CAMPAIGN)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, NOT_YOURS)
+            return
+        view = discord.ui.View.from_message(interaction.message, timeout=None)  # type: ignore[arg-type]
+        for item in view.children:
+            if getattr(item, "custom_id", None) == self.item.custom_id:
+                item.disabled = True  # type: ignore[attr-defined]
+                item.label = "👍 Seen"  # type: ignore[attr-defined]
+        await interaction.edit_original_response(view=view, allowed_mentions=NO_PINGS)
+
+
 def summary_view(
     exposure_ids: Sequence[int],
     campaign_id: str,
@@ -234,4 +322,5 @@ def summary_view(
         check_claims = ClaimsReviewButton(campaign_id)
         check_claims.item.row = 2
         view.add_item(check_claims)
+    view.add_item(SeenButton(campaign_id, guild_id))  # the mark every variant carries
     return view
