@@ -1031,6 +1031,9 @@ MAX_PRESENCE_PROBLEMS = 2  # a retry message names a couple, not every sentence
 
 
 _GROUP = re.compile(r"\b(party|everyone|together|all of them|the group)\b", re.IGNORECASE)
+# What lets a sentence name only some of them: it says the whole group by another name. Not
+# "together": "Belleros and Greyfen together" still leaves the others out.
+_WAY_OUT = re.compile(r"\b(the party|everyone|the group|all of them)\b", re.IGNORECASE)
 
 
 def _norm(name: str) -> str:
@@ -1051,9 +1054,10 @@ def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str
     """Who was there, held to the beats' `present` lists (#2573). A sentence is matched to the
     beat it clearly shares the most words with (`PRESENCE_MIN_SHARED`, and ahead of the next beat
     by `PRESENCE_MARGIN`: an unclear match is not judged), and then:
-    - when the beat says the group acted together ("the party", "together"), a sentence that names
-      every character present but one, and does not say "the party", is refused: it names almost
-      everyone as the ones who were there and leaves one out;
+    - when the beat says the group acted together ("the party", "together"), or itself names the
+      one left out, a sentence that names every character present but one, and does not say "the
+      party", "everyone" or "the group", is refused: it names almost everyone as the ones who were
+      there and leaves one out;
     - a character named in a scene they were not present for (not in the beat's `present` nor in
       its names) is refused.
     A beat with no `present` list (a recap made before this, or nobody spoke) is not checked. The
@@ -1088,8 +1092,11 @@ def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str
         elif (
             len(named) >= 2
             and len(left) == 1
-            and _GROUP.search(best.what)  # the beat says the group acted together
-            and "the party" not in sentence.lower()
+            and (
+                _GROUP.search(best.what)  # the beat says the group acted together, or
+                or _norm(left[0]) in {_norm(w) for w in best.who}  # names the one left out
+            )
+            and not _WAY_OUT.search(sentence)
         ):
             problems.append(
                 f"a sentence names {', '.join(named)} as the ones who were there, but "

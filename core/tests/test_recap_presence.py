@@ -233,6 +233,32 @@ class TheDoubts(unittest.TestCase):
         )
         self.assertEqual(got, [])
 
+    def test_a_beat_that_names_all_four_is_enough_without_a_group_word(self) -> None:
+        """The owner's case: the beat names every character, no "party", no "together"."""
+        beat = bt.Beat(
+            1, "Belleros, Greyfen, Tavin and Ysolde ride to the river and make camp.",
+            ("Belleros", "Greyfen", "Tavin", "Ysolde"), (1, 8), "event", present=tuple(PCS),
+        )  # fmt: skip
+        text = "Belleros, Greyfen and Tavin rode to the river and made camp."
+        got = rd.presence_problems(text, [beat], PCS)
+        self.assertEqual(len(got), 1)
+        self.assertIn("Ysolde was there too", got[0])
+        ways = (
+            "The party rode to the river and made camp.",
+            "Everyone rode to the river and made camp.",
+            "Belleros, Greyfen and Tavin, with the group, rode to the river and made camp.",
+        )
+        for way_out in ways:
+            self.assertEqual(rd.presence_problems(way_out, [beat], PCS), [], way_out)
+
+    def test_together_is_not_a_way_out(self) -> None:
+        beat = bt.Beat(
+            1, "Belleros, Greyfen, Tavin and Ysolde ride to the river and make camp.",
+            ("Belleros", "Greyfen", "Tavin", "Ysolde"), (1, 8), "event", present=tuple(PCS),
+        )  # fmt: skip
+        text = "Belleros, Greyfen and Tavin together rode to the river and made camp."
+        self.assertEqual(len(rd.presence_problems(text, [beat], PCS)), 1)
+
     def test_a_vague_match_is_not_judged(self) -> None:
         got = rd.presence_problems("Belleros, Greyfen and Tavin sat down.", [CAMP], PCS)
         self.assertEqual(got, [])
