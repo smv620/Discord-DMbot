@@ -944,8 +944,11 @@ class CampaignStore:
             # deadlock while the sections clear their rows.
             await self._lock(conn, guild_id, campaign_id)
             current = await self._require(conn, guild_id, campaign_id)
+            # The holder is the owner or, with no owner yet, any game master (#2556); this is the
+            # check of `delete_campaign.holder_may`, made again under the lock.
             if only_if_owner is not None and (
-                current.owner_user_id != only_if_owner or only_if_owner not in current.dm_user_ids
+                only_if_owner not in current.dm_user_ids
+                or (current.owner_user_id is not None and current.owner_user_id != only_if_owner)
             ):
                 raise CampaignError(PLAN_HOLDER_CHANGED)
             for section in self._sections.values():
