@@ -29,6 +29,7 @@ const SCRIPTED = new Set([
   "account/web.html", // the relationship web (#2324)
   "account/campaigns.html", // a campaign's own page (#2416)
   "account/npc.html", // an NPC's page and my notes (#2266)
+  "handover.html", // the hand-over accept page (#2534)
   "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
   "hello.html",
@@ -74,4 +75,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/names, /account/web, /account/campaigns, /account/npc, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/names, /account/web, /account/campaigns, /account/npc, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");

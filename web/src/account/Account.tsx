@@ -10,9 +10,11 @@ import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
+import { handoverToken } from "./Handover";
 import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
 import { keepFocus } from "./focus";
-import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -190,16 +192,19 @@ function ActionButton({
   busy,
   onClick,
   kind = "primary",
+  label,
   children,
 }: {
   busy: boolean;
   onClick: () => void;
   kind?: "primary" | "secondary" | "danger";
+  /** A spoken name that starts with the visible words but says which thing, when there are several. */
+  label?: string;
   children: ComponentChildren;
 }) {
   const classes = kind === "primary" ? "button" : `button ${kind}`;
   return (
-    <button type="button" class={classes} disabled={busy} aria-busy={busy} onClick={onClick}>
+    <button type="button" class={classes} disabled={busy} aria-busy={busy} aria-label={busy ? undefined : label} onClick={onClick}>
       {busy ? text.busy : children}
     </button>
   );
@@ -519,6 +524,12 @@ function SignedIn({
         <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
+      {HANDOVER_LIVE && handoverToken("") !== null && (
+        // An offer link was opened before signing in: its code was kept, so the way back is here.
+        <p class="note" role="status">
+          {handoverWords.waitingOnAccount} <a href="/handover">{handoverWords.waitingLink}</a>
+        </p>
+      )}
       {installMessage && <ForgetInstallResult />}
       {installMessage && (
         <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
@@ -1034,6 +1045,7 @@ function CampaignsSection({ me }: { me: Me }) {
             <CampaignRow
               key={c.id}
               campaign={c}
+              tryIt={me.plan?.id === "try-it"}
               offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
               onWithdrawn={async (person) => {
                 setDone(text.withdrawn(person));
@@ -1072,6 +1084,7 @@ function CampaignRow({
   offer,
   onWithdrawn,
   onHandedOver,
+  tryIt = false,
 }: {
   campaign: Campaign;
   /** A hand-over of this campaign you offered and nobody has answered yet. */
@@ -1079,6 +1092,8 @@ function CampaignRow({
   /** Gets the name of the person the offer was for, to say they'll be told. */
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
+  /** A Try It account: a Try It campaign can't be handed over (#2534). */
+  tryIt?: boolean;
 }) {
   const { api, refresh, noLimits } = useShared();
   const { busy, notice, run } = useAction();
@@ -1121,7 +1136,10 @@ function CampaignRow({
           </div>
         </>
       )}
-      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
+      {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
+        <EmailHandover campaign={campaign} refId={campaign.ref} />
+      )}
+      {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
           kind="secondary"
@@ -1134,7 +1152,7 @@ function CampaignRow({
           {text.handOver}
         </ActionButton>
       )}
-      {people !== null && (
+      {!HANDOVER_LIVE && people !== null && (
         <form
           id={formId}
           class="handover"
@@ -1207,6 +1225,145 @@ function CampaignRow({
         </form>
       )}
     </li>
+  );
+}
+
+/** Hand a campaign over by email (#2534; core #2532): the owner types the new owner's address, and sees only
+ * "We've emailed the offer". While an offer is open it shows when it ends and a Take back button. The
+ * answer never says whether the address has an account or a plan (#437). */
+function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [asking, setAsking] = useState(false);
+  const [email, setEmail] = useState("");
+  const [said, setSaid] = useState<string | null>(null);
+  const saidRef = useRef<HTMLParagraphElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const [badEmail, setBadEmail] = useState(false);
+  const words = handoverOwnerWords;
+  const open = campaign.handover ?? null;
+  const errorId = `handover-email-error-${campaign.id}`;
+  const explain = (error: ApiError): string | null => {
+    if (error.kind === "not-found") void refresh();
+    setBadEmail(error.kind === "bad-email");
+    if (error.kind === "bad-email") keepFocus(() => emailRef.current);
+    return words.problem[error.kind] ?? words.problem["server"] ?? null;
+  };
+  return (
+    <div class="stack">
+      <div id={errorId}>
+        <Notice message={notice} />
+      </div>
+      {/* One status line: what was just done, or the open offer once there is one. */}
+      <p class="small" role="status" tabIndex={-1} ref={saidRef}>
+        {open ? words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt)) : said}
+      </p>
+      {open && !asking ? (
+        <>
+          <p class="muted small">{words.elsewhere}</p>
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            label={words.takeBackFor(campaign.name)}
+            onClick={() =>
+              void run(async () => {
+                await api.takeBackHandover!(refId);
+                setSaid(words.takenBack);
+                await refresh();
+                keepFocus(() => saidRef.current);
+              }, explain)
+            }
+          >
+            {words.takeBack}
+          </ActionButton>
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setAsking(true);
+              keepFocus(() => emailRef.current);
+            }}
+          >
+            {words.sendElsewhere}
+          </button>
+        </>
+      ) : asking ? (
+        <form
+          class="handover"
+          noValidate // the API checks the address and our own plain words say what is wrong
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (email.trim() === "") return;
+            void run(async () => {
+              // A light check first, so an obvious slip doesn't use one of the day's five offers.
+              if (!/^\S+@\S+\.\S+$/.test(email.trim())) throw new ApiError("bad-email");
+              await api.offerHandover!(refId, email.trim());
+              setAsking(false);
+              setEmail("");
+              setSaid(words.emailed);
+              await refresh();
+              keepFocus(() => saidRef.current);
+            }, explain);
+          }}
+        >
+          <fieldset disabled={busy}>
+            <legend>{words.question(campaign.name)}</legend>
+            <label class="field">
+              {words.label}
+              <input
+                ref={emailRef}
+                type="email"
+                inputMode="email"
+                autocomplete="off"
+                autoCapitalize="none"
+                spellcheck={false}
+                aria-invalid={badEmail}
+                aria-describedby={badEmail ? errorId : undefined}
+                value={email}
+                onInput={(e) => {
+                  setEmail((e.target as HTMLInputElement).value);
+                  setBadEmail(false);
+                }}
+              />
+            </label>
+            <p class="muted small">{words.note}</p>
+            {open && <p class="muted small">{words.replaces}</p>}
+          </fieldset>
+          <div class="row">
+            <button type="submit" class="button" disabled={busy || email.trim() === ""} aria-busy={busy}>
+              {busy ? words.sending : words.send}
+            </button>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                setAsking(false);
+                setBadEmail(false);
+                keepFocus(() => startRef.current);
+              }}
+            >
+              {words.cancel}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          type="button"
+          class="button secondary"
+          ref={startRef}
+          aria-label={words.buttonFor(campaign.name)}
+          onClick={() => {
+            setAsking(true);
+            setSaid(null);
+            keepFocus(() => emailRef.current);
+          }}
+        >
+          {words.button}
+        </button>
+      )}
+    </div>
   );
 }
 

@@ -606,6 +606,50 @@ class Beliefs(MemoryTest):
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(backup)), DM)
 
+    async def test_a_family_roles_direction_survives_a_backup_and_an_old_backup_has_none(
+        self,
+    ) -> None:
+        """#2457: `directional` is carried; a backup from before it reads as false."""
+        a, b = await self.pair()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, a, "kin_of", b, source="dm", confidence=1.0, status=CONFIRMED,
+            detail="niece", directional=True,
+        )  # fmt: skip
+        self.assertTrue(made.value[0].directional)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        kept = [r for r in self.memory_rows(backup) if r["table"] == "relation"]
+        self.assertEqual([r["directional"] for r in kept], [True])
+        restored = await self.campaigns.import_backup(
+            GUILD_B, decode_backup(encode_backup(backup)), DM
+        )
+        [copy] = [r for r in await self.memory.relations(GUILD_B, restored.id)]
+        self.assertTrue(copy.directional)
+        for r in kept:  # an older file has no such field
+            del r["directional"]
+        older = await self.campaigns.import_backup(
+            GUILD_B, decode_backup(encode_backup(backup)), DM
+        )
+        [old_copy] = [r for r in await self.memory.relations(GUILD_B, older.id)]
+        self.assertFalse(old_copy.directional)
+
+    async def test_when_two_merged_family_rows_say_the_same_the_directional_one_wins(self) -> None:
+        a, b = await self.pair()
+        twin = await self.add("Aldrick", status=CONFIRMED)
+        plain = (await self.memory.add_relation(
+            GUILD_A, self.c, a, "kin_of", twin, source="dm", confidence=1.0,
+            status=CONFIRMED, detail="niece",
+        )).value[0]  # fmt: skip
+        sure = (await self.memory.add_relation(
+            GUILD_A, self.c, a, "kin_of", b, source="dm", confidence=1.0,
+            status=CONFIRMED, detail="niece", directional=True,
+        )).value[0]  # fmt: skip
+        await self.memory.merge(GUILD_A, self.c, b, twin, source="dm", dm_said_same=True)
+        left = [r for r in await self.memory.relations(GUILD_A, self.c) if r.predicate == "kin_of"]
+        self.assertEqual(len(left), 1)
+        self.assertTrue(left[0].directional)
+        self.assertEqual((left[0].subject_id, left[0].object_id), (a, b))
+        self.assertIn(left[0].id, (plain.id, sure.id))
+
     # ---- the DM's 📌 100% truth (#2447) ----
 
     async def test_a_pin_is_the_dms_word_one_change_and_undo_takes_it_back(self) -> None:
