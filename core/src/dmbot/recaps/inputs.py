@@ -81,6 +81,7 @@ async def load_inputs(
     styles: StyleStore | None = None,
     notes: NoteStore | None = None,
     with_earlier: bool = True,
+    importance: Any | None = None,
 ) -> Inputs | None:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
@@ -102,6 +103,8 @@ async def load_inputs(
         else None
     )
     stored = await clocks.get(guild_id, campaign_id) if clocks is not None else None
+    # How connected each name is in The truth (#2411): ranks the beats, gives the writer nothing.
+    scores = await importance.get(guild_id, campaign_id) if importance is not None else {}
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),
@@ -111,6 +114,7 @@ async def load_inputs(
         previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
         campaign_name=campaign.name,
         earlier=earlier,
+        importance=dict(scores),
         # Which of the ten closing lines: by this session's place in the campaign (#2253).
         ending=fixed_lines.ending_for(sum(1 for s in sessions if s.started_at < session_at)),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,

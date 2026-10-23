@@ -267,6 +267,7 @@ from dmbot.memory.exposures import (
     secret_connections,
 )
 from dmbot.memory.heard_backup import HeardSection
+from dmbot.memory.importance import ImportanceCache
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
@@ -1122,6 +1123,9 @@ class DMBot(commands.AutoShardedBot):
         self.recap_holds = recap_holds  # recaps waiting for the DM's name answers (#2169)
         self.recap_feedback_limit = recap_feedback.FeedbackLimit()
         self.recap_notes = recap_notes  # the DM's standing style notes (#2076)
+        # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
+        # after each session.
+        self.importance = ImportanceCache(memory) if memory is not None else None
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources = sources  # which sites a campaign approved, imported pages (#1633)
@@ -3004,6 +3008,8 @@ class DMBot(commands.AutoShardedBot):
             ("definitions", lambda: self.recheck_definitions(table)),
             ("stale flags", lambda: self.close_stale_flags(table)),
             ("old undo history", lambda: self.prune_old_changes(table)),
+            # The names' importance for the recap's beats (#2411), from the story as it is now.
+            ("name importance", lambda: self.refresh_importance(table)),
             # Queues or holds the recap (#2169): held at once while the extractor is still to run.
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
@@ -3033,6 +3039,12 @@ class DMBot(commands.AutoShardedBot):
                 await step()
             except Exception:
                 log.exception("After the session: %s failed", name)
+
+    async def refresh_importance(self, table: Table) -> None:
+        """After a session (#2411): read how connected each name is again, so the recap that is
+        about to be written ranks its beats by the story as it is now."""
+        if self.importance is not None and table.campaign_id is not None:
+            await self.importance.refresh(table.guild_id, table.campaign_id)
 
     async def post_session_summary(
         self, table: Table, ended_at: int, caught_up: bool, downloads_sent: int
@@ -9053,6 +9065,7 @@ class DMBot(commands.AutoShardedBot):
             session_at=job.session_at,
             styles=self.recap_styles,
             notes=self.recap_notes,
+            importance=self.importance,
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
@@ -9066,6 +9079,11 @@ class DMBot(commands.AutoShardedBot):
         between "keep this" and "this may be explained"; it is made here, in code."""
         if self.memory is None or not seeds:
             return []
+        if self.importance is not None:
+            # The names that matter most to the story come first (#2411), so the recall's budget
+            # is spent on them; this only orders names the beats already had.
+            scores = await self.importance.get(gid, cid)
+            seeds = sorted(dict.fromkeys(seeds), key=lambda n: -scores.get(name_key(n), 0.0))
         service = RecallService(self.memory)
         everything = await service.recall(
             gid, cid, seeds=seeds, audience=DM_SCREEN, budget=RECAP_RECALL_BUDGET,
