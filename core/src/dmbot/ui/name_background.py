@@ -71,12 +71,12 @@ ONLY_DMS = "Only a DM of this campaign can do that."
 QUOTE_SHOWN = 200  # a long quote must not push the buttons off a phone
 MAX_BULK_BUTTONS = 4
 CUT_NOTE = (
-    "\nThis text was very long and DMbot stopped before the end, so some names or connections "
-    "may be missing."
+    "\nPart of this text couldn't be read in time, so some names or connections may be missing. "
+    "Run the same background again to get the rest: names already found are skipped."
 )
 CUT_NOTHING = (
-    "🤖 DMbot stopped reading {label} before it finished, so it has nothing to show yet. "
-    "Nothing was added. Try again in a minute."
+    "🤖 DMbot ran out of time reading {label}, so it has nothing to show yet. "
+    "Nothing was added. Run it again in a minute."
 )
 CONNECTIONS_NOTE = (
     '\n📜 {count} connection{s} found too (like "A is the boss of B"). You\'ll be asked about '
@@ -344,8 +344,8 @@ class BackgroundOffer(_Menu):
             if read_ai is None:  # never for a real bot: said once so a misconfiguration shows
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
-            async with asyncio.timeout(lore_read.LORE_TIME_LIMIT_S):
-                read = await lore_read.read_lore(read_ai, ai, self.upload.text, own, AI_AT_ONCE)
+            # (The read keeps its own deadline and returns what it shaped, marked cut.)
+            read = await lore_read.read_lore(read_ai, ai, self.upload.text, own, AI_AT_ONCE)
             found = bg.merge(
                 [read.names],
                 known,
@@ -366,12 +366,6 @@ class BackgroundOffer(_Menu):
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
-        except TimeoutError:
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.edit_original_response(
-                    content="Reading took too long. Nothing was added. Split the background into "
-                    "smaller parts and try again."
-                )
         except Exception:
             log.exception("Reading a background with the AI failed")
             with contextlib.suppress(discord.HTTPException):

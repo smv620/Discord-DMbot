@@ -694,7 +694,7 @@ class ThePath(NamesTest):
         press = await self.read()
         text = shown(press)
         self.assertNotIn("found no new names", text)
-        self.assertIn("stopped reading", text)
+        self.assertIn("ran out of time", text)
         self.assertEqual(await self.waiting(), [])
 
     async def test_a_cut_off_reading_gives_the_names_it_got_and_says_it_may_be_missing_some(
@@ -704,7 +704,7 @@ class ThePath(NamesTest):
         press = await self.read()
         text = shown(press)
         self.assertIn("names to check", text)
-        self.assertIn("stopped before the end", text)
+        self.assertIn("be read in time", text)
 
     async def test_a_stated_relationship_with_no_fixed_kind_is_kept_on_the_catch_all(self) -> None:
         text = "Brother Aldric secretly pays the Ashen Hand."
