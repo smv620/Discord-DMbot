@@ -115,7 +115,7 @@ export function Support({ api, siteKey, tryIt, onSent }: Props) {
   if (sent) {
     return (
       <section class="panel" aria-labelledby="support-heading">
-        <h2 id="support-heading">{text.supportHeading}</h2>
+        <h3 id="support-heading">{text.supportHeading}</h3>
         <p class="ok" role="status" tabIndex={-1} ref={thanks}>
           {sent.reply ? text.supportSent : text.supportSentNoEmail}
         </p>
@@ -136,7 +136,7 @@ export function Support({ api, siteKey, tryIt, onSent }: Props) {
   const left = MAX_TICKET - letters(message.trim());
   return (
     <section class="panel" aria-labelledby="support-heading">
-      <h2 id="support-heading">{text.supportHeading}</h2>
+      <h3 id="support-heading">{text.supportHeading}</h3>
       <p>{text.supportIntro}</p>
       {tryIt && <p>{text.supportIntroTryIt}</p>}
       <form onSubmit={submit} onFocusIn={() => setStarted(true)} noValidate>
@@ -220,7 +220,7 @@ export function Support({ api, siteKey, tryIt, onSent }: Props) {
 export function PublicQuestions() {
   return (
     <section class="panel" aria-labelledby="qa-heading">
-      <h2 id="qa-heading">{text.qaHeading}</h2>
+      <h3 id="qa-heading">{text.qaHeading}</h3>
       <p>{text.qaText}</p>
       <p>
         <a href={QA_URL}>{text.qaLink}</a> · <a href="/hello">{text.helloLink}</a>

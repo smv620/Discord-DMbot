@@ -71,6 +71,8 @@ class Feature(enum.StrEnum):
 
     NAMES = "names"  # Find names: a document into a names list
     NAMES_BACKGROUND = "names_background"  # the names in a DM's own campaign background (#2167)
+    # Pass 1 of the same read (#2454): the whole text into a plain list; pass 2 is the job above.
+    NAMES_BACKGROUND_READ = "names_background_read"
     TOPIC = "topic"  # the off-topic filter
     AUDIO_CHECK = "audio_check"  # is the audio bad, or just quiet talk
     SIDEBAR = "sidebar"  # quick answers for the DM
@@ -98,6 +100,8 @@ FEATURE_TIERS = {
     Feature.NAMES: AIModelTier.CAREFUL,  # its proposals go into the campaign's memory
     # Suggestions only, each checked against the text, and the DM answers every one (#2167).
     Feature.NAMES_BACKGROUND: AIModelTier.FAST,
+    # The careful model reads the whole text once; the code checks everything it says (#2454).
+    Feature.NAMES_BACKGROUND_READ: AIModelTier.CAREFUL,
     Feature.TOPIC: AIModelTier.FAST,
     Feature.AUDIO_CHECK: AIModelTier.FAST,
     Feature.SIDEBAR: AIModelTier.FAST,
@@ -186,6 +190,22 @@ PRICE_PER_MILLION: dict[str, tuple[float, float]] = {
     "claude-opus-5-5": (4, 20),  # the recap's creative model (#2074)
 }
 DEFAULT_PRICE = (15, 75)
+
+# The most each model can write in one answer, in tokens (the model table at
+# https://platform.claude.com/docs/en/about-claude/models, Sonnet 5.5, Haiku 5.5 and Opus 5.5
+# checked 2026-10-22). A job that sizes its answer's room reads this, never a number of its own;
+# a model that is not here (an override in .env) gets the cautious default.
+MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "claude-sonnet-5-5": 64_000,
+    "claude-haiku-5-5": 64_000,
+    "claude-opus-5-5": 64_000,
+    "claude-haiku-4-5-20251001": 64_000,
+}
+DEFAULT_MAX_OUTPUT = 16_000
+
+
+def max_output(model: str) -> int:
+    return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
 
 
 BUSY = (
