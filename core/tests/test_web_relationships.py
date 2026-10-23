@@ -101,6 +101,38 @@ class TheShape(Web):
         self.assertEqual(by_id[self.links["old-feud"]]["direction"], "both")  # reads either way
         self.assertEqual(by_id[self.links["mira-keep"]]["words"], "knows")
 
+    async def test_a_member_sees_the_connections_the_party_believes_as_the_flag_flips(self) -> None:
+        """#2409: the door reads The party's beliefs; it must show what the flag showed."""
+        secret = await self.link("owns", self.mira, self.keep, "hidden", secret=True)
+
+        async def seen() -> set[str]:
+            got = await self.graph(self.player, center=self.mira, hops=1)
+            return {x["id"] for e in got["edges"] for x in e["links"]}
+
+        before = await seen()
+        self.assertNotIn(secret, before)
+        self.assertIn(self.links["mira-keep"], before)
+        await self.memory.update_relation(self.g, self.one.id, secret, source="dm", secret=False)
+        self.assertIn(secret, await seen())
+        await self.memory.update_relation(self.g, self.one.id, secret, source="dm", secret=True)
+        self.assertEqual(await seen(), before)
+        # reworded: a shown one stays shown (as the new connection), a hidden one stays hidden
+        shown = await self.memory.change_relation_words(
+            self.g, self.one.id, self.links["mira-keep"], "ally_of", "", source="dm"
+        )
+        hidden = await self.memory.change_relation_words(
+            self.g, self.one.id, secret, "enemy_of", "", source="dm"
+        )
+        now = await seen()
+        self.assertIn(shown.value.id, now)
+        self.assertNotIn(hidden.value.id, now)
+        dm_sees = {
+            x["id"]
+            for e in (await self.graph(center=self.mira, hops=1))["edges"]
+            for x in e["links"]
+        }
+        self.assertIn(hidden.value.id, dm_sees)
+
     async def test_direction_says_which_way_the_words_read(self) -> None:
         got = await self.graph(center=self.keep, hops=1)
         edge = next(e for e in got["edges"] if {e["a"], e["b"]} == {self.rook, self.keep})
@@ -388,6 +420,30 @@ class TheRoute(Web):
                 self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_hops"), hops)
             gone = await client.get(f"/me/campaigns/{self.g}.nope/web")
             self.assertEqual(gone.status_code, 404)
+
+    async def test_the_view_switch_and_the_peek_over_http(self) -> None:
+        from dmbot.campaigns import CampaignStore
+
+        async with await self.client(self.player) as client:
+            base = f"/me/campaigns/{self.cref}/web"
+            got = await client.get(base, params={"view": "full", "hops": "1"})
+            self.assertEqual((got.status_code, got.json()["view"]), (200, "full"))  # peek is on
+            bad = await client.get(base, params={"view": "everything"})
+            self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_view"))
+            noted = await client.post(f"{base}/peek")
+            # (the full view above already told the DM for this visit)
+            self.assertEqual((noted.status_code, noted.json()), (200, {"noted": False}))
+            again = await client.post(f"{base}/peek")
+            self.assertEqual(again.json(), {"noted": False})
+            await CampaignStore(self.db).set_dm_screen_visibility(self.g, self.one.id, "private")
+            off = await client.get(base, params={"view": "full"})
+            self.assertEqual((off.status_code, off.json()["error"]), (403, "peek_off"))
+            off_peek = await client.post(f"{base}/peek")
+            self.assertEqual((off_peek.status_code, off_peek.json()["error"]), (403, "peek_off"))
+            normal = await client.get(base, params={"hops": "1"})
+            self.assertEqual((normal.status_code, normal.json()["canPeek"]), (200, False))
+            cross = await client.post(f"/me/campaigns/{self.g}.nope/web/peek")
+            self.assertEqual(cross.status_code, 404)
 
 
 if __name__ == "__main__":

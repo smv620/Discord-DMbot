@@ -103,6 +103,11 @@ async function everything(): Promise<[string, string][]> {
   const found: [string, string][] = [];
   for (const path of walk(join(WEB, "src", "content"), /\.ts$/)) {
     const { held: _held, ...shown } = await import(/* @vite-ignore */ path); // "held" is a note for the editors
+    // A What's new file keeps its held reason inside `entry` (#2468): the same note for the editors.
+    if (shown.entry && typeof shown.entry === "object") {
+      const { held: _reason, ...visible } = shown.entry as Record<string, unknown>;
+      shown.entry = visible;
+    }
     for (const text of stringsIn(shown)) found.push([rel(path), text]);
   }
   for (const path of walk(join(WEB, "src"), /\.astro$/)) {
