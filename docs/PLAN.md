@@ -1823,6 +1823,14 @@ names panel nor the speech-to-text hints can be a fixed list.
       for a slip, a misheard word, or a name the DM will change to keep the mystery. A player's **guess** is
       never a reveal: it becomes a theory, drawn as uncertain. Red herrings and lies are beliefs the truth
       disagrees with. See docs/STORY_MEMORY.md section 9, "Assertions, perspectives and evidence".
+    - *Built, slice 1 (CloudDev, 2026-10-23, #2410, migration 0200):* **nothing becomes revealed before the
+      DM is told.** After a session DMbot only **records** the secret names (the whole-name matcher) and the
+      secret connections (one line naming both ends, by any of their names) that people recorded now said
+      or typed, the DM's own table words too (a DM slip is the first case), never the DM sidebar or the DM screen, and nobody who is not recorded now, in
+      `secret_exposures`: which secret and how often, never a line or who said it. Nothing is applied and the
+      players see no change. An answer the DM gives another way (the live "Is it revealed now?", or the
+      after-session "keep it secret?") settles the exposure so the summary will not ask again; an answer during the session is kept for it, so the recording at the end leaves it settled. A later session that says the name again is a new exposure. An exposure holds a count only, so a person who stops being recorded afterwards leaves no words behind; the summary (next slice) reads the exposures again before it applies them. The summary
+      that tells the DM and applies the exposures (with Recant) is the next slice.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.
