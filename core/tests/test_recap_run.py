@@ -267,6 +267,16 @@ class TheGoldenSet(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(rows), 4)  # the header and at least three invented sessions
 
 
+class TheSettingsStayWithTheRun(unittest.IsolatedAsyncioTestCase):
+    async def test_a_run_leaves_the_writer_settings_as_it_found_them(self) -> None:
+        # (#2496) `main_async` turned the critics on for the whole process, so a later test that
+        # canned four answers got the critics' extra calls and failed, but only after this one.
+        before = dict(run._WRITERS)
+        with patch.object(run, "clients_from_env", return_value=(happy(), fx.Canned(), ("a", "b"))):
+            await run.main_async(run.parse_args(["--golden"]))
+        self.assertEqual(run._WRITERS, before)
+
+
 class TheAudio(unittest.IsolatedAsyncioTestCase):
     async def test_it_makes_the_files_in_a_temporary_folder_and_prints_lengths_and_credits(
         self,
