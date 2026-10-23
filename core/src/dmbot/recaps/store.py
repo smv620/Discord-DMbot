@@ -228,6 +228,16 @@ _WRITABLE = frozenset(
 _LISTS = frozenset({"problems", "housekeeping", "music", "speakers", "to_confirm"})
 
 
+# An issue PlotBot found for the exact text `{hash}` that the DM has not answered yet (#2122).
+_PLOT_OPEN = (
+    "EXISTS (SELECT 1 FROM plot_checks k JOIN plot_issues i ON i.guild_id = k.guild_id"
+    " AND i.campaign_id = k.campaign_id AND i.session_at = k.session_at"
+    " AND i.text_hash = k.text_hash WHERE k.guild_id = recap_jobs.guild_id"
+    " AND k.campaign_id = recap_jobs.campaign_id AND k.session_at = recap_jobs.session_at"
+    " AND k.text_hash = {hash} AND k.state = 'done' AND COALESCE(i.answer_kind, '') = '')"
+)
+
+
 class RecapStore:
     def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
         self._db = db
@@ -495,6 +505,7 @@ class RecapStore:
         *,
         expected: str,
         post: bool = False,
+        plot_gate: bool = False,
     ) -> bool:
         """The DM approved the text as it is now and picked what to make (#2083). Records who and
         when, and the hash of the text, and for any choice but text queues the audio. `expected`:
@@ -504,7 +515,9 @@ class RecapStore:
         older text may be made again. The caller has checked the DM.
         `post` (#2420, "Approve and post text only"): hand the recap to the bot to post in the same
         statement, as the website does, so a refusal leaves nothing approved and half-posted. Only
-        for a text-only choice: audio is made and reviewed before anything is posted."""
+        for a text-only choice: audio is made and reviewed before anything is posted.
+        `plot_gate` (#2122): PlotBot's check is on, so nothing is approved while an issue it found
+        for this very text has no answer (the website's rule, in the same statement)."""
         if choice not in CHOICES or (post and choice != TEXT):
             raise ValueError(choice)
         queue = choice != TEXT
@@ -520,6 +533,8 @@ class RecapStore:
             f" WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
             f" AND status = 'draft' AND audio <> 'queued' AND {now_hash} = %s"
         )
+        if plot_gate:
+            where += f" AND NOT ({_PLOT_OPEN.format(hash=now_hash)})"
         if queue:
             where += (
                 " AND (audio IN ('off', 'failed')"
@@ -539,6 +554,17 @@ class RecapStore:
                 (guild_id, campaign_id, session_at, user_id, int(self._now())),
             )
             return True
+
+    async def plot_open(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """Does PlotBot have an issue for this recap's text that the DM has not answered (#2122)?"""
+        now_hash = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                f" AND session_at = %s AND {_PLOT_OPEN.format(hash=now_hash)}",
+                (guild_id, campaign_id, session_at),
+            )
+            return await cur.fetchone() is not None
 
     async def respell(
         self,
