@@ -59,6 +59,9 @@ export interface Campaign {
   players?: number;
   npcs?: number;
   startedAt?: string;
+  /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
+   * when it was sent and when it ends, never the address. Missing from an older API. */
+  handover?: { sentAt: string; expiresAt: string } | null;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -152,6 +155,30 @@ export interface RecapAudio {
   /** Can be bought now: for sale, a paid plan that works, and not already had. */
   canBuy: boolean;
 }
+
+/** One server a person could take a handed-over campaign to (#2534; core #2532). */
+export interface HandoverServer {
+  id: string;
+  name: string;
+  /** Where the campaign runs now. */
+  current: boolean;
+  /** False: DMbot has to be added to it first. */
+  botIn: boolean;
+}
+
+/** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
+ * alike, so the page can't tell anyone which. */
+export type HandoverLook =
+  | { status: "ended" }
+  | {
+      status: "open";
+      campaign: { name: string };
+      from: { name: string };
+      server: { id: string; name: string };
+      canAccept: boolean;
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      servers: HandoverServer[];
+    };
 
 /** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
  * Discord number; the page shows `name` only. */
@@ -1135,6 +1162,9 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "ended" // a hand-over offer that has ended (#2534)
+  | "owner-offer" // the person is the campaign's own owner (#2534)
+  | "bad-server" // a server DMbot can't run the campaign on (#2534)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1178,6 +1208,15 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
+   * address is: the page never learns whether it has an account or a plan. */
+  offerHandover?(ref: string, email: string): Promise<void>;
+  /** Take the open offer back. */
+  takeBackHandover?(ref: string): Promise<void>;
+  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
+  handoverLook?(token: string): Promise<HandoverLook>;
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  handoverDecline?(token: string): Promise<void>;
   /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
   addDiscordUrl?(): string;
   /** Take one Discord account off this DMbot account; never the last (#2534). */
@@ -1420,6 +1459,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  ended: "ended",
+  owner: "owner-offer",
+  bad_server: "bad-server",
   last_account: "last-account",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
@@ -1613,6 +1655,18 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    offerHandover: async (ref, email) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
+    },
+    takeBackHandover: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
+    },
+    handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
+    handoverAccept: async (token, serverId) =>
+      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverDecline: async (token) => {
+      await call("POST", "/me/handover/decline", { token });
     },
     addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
     removeDiscordAccount: async (key) => {
