@@ -236,3 +236,16 @@ class Running(PlotBase):
             await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1), 0
         )
         self.assertEqual(await self.rows("plot_issues"), [])
+
+    async def test_nothing_is_written_onto_a_recap_approved_while_the_check_ran(self) -> None:
+        await self.earlier()
+        digest = await self.hash_of()
+        await self.plots.begin(THURSDAY.id, self.one.id, 100, digest)
+        self.assertTrue(
+            await self.store.approve(THURSDAY.id, self.one.id, 100, 1, "text", expected=digest)
+        )  # approved (still a 'draft', same text) while the check was running
+        parsed = parse(Ai(self.finding()).reply, self.sentences(), [Earlier(50, "T", FELL)]) or []
+        self.assertEqual(
+            await self.plots.finish(THURSDAY.id, self.one.id, 100, digest, parsed, 1), 0
+        )
+        self.assertEqual(await self.rows("plot_issues"), [])

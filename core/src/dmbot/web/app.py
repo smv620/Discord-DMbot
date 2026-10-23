@@ -1761,12 +1761,19 @@ def create_app(
         )
 
     @app.post("/me/recaps/{ref}/{action}")
-    async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
+    async def me_recap_decide(ref: str, action: str, signed: Signed) -> Any:
         """Post to the table (the bot sends it), Try again, or Don't post."""
         session, _token = signed
         try:
-            return await decide(db, session, ref, action)
+            return await decide(
+                db, session, ref, action,
+                plot_gate=settings.plot_check_on, outside_engine=settings.outside_engine,
+            )  # fmt: skip
         except RecapError as err:
+            if err.problems is not None:  # posting an unapproved draft checks its cues first
+                return JSONResponse(
+                    {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
+                )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
