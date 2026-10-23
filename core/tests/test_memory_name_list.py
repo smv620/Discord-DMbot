@@ -22,6 +22,7 @@ from dmbot.memory.name_list import (
     OutPerson,
     header,
     judge_bracket,
+    lines_for,
     parse,
     render,
     render_files,
@@ -103,6 +104,47 @@ class Pronunciation(unittest.TestCase):
     def test_an_aside_with_a_comma_stays_one_name(self) -> None:
         one = self.read("Vex (the boss, retired) | npc | Vexa")
         self.assertEqual((one.name, one.others), ("Vex", ("Vex the boss, retired", "Vexa")))
+
+    def test_a_download_uploaded_again_gives_the_same_names(self) -> None:
+        """Other and secret names with a comma, a semicolon or a quote in them survive (#2482)."""
+        others = ("Vex the boss, retired", "Vexa; the Younger", '"Vexx"', 'Old "Vex"', "Plain")
+        secrets = ("Mr. Black, the broker", 'He said "no", twice')
+        text = "\n".join(lines_for("Vex", "npc", others, secrets))
+        (one,) = parse(text, secrets=True).lines
+        self.assertEqual((one.others, one.secrets), (others, secrets), text)
+
+    def test_a_player_row_with_separators_in_its_names_comes_back_the_same(self) -> None:
+        from dmbot.memory.name_list import OutPerson, person_lines
+
+        for names in (("Bob, the Bold", "Bobby; B"), ('"Bob"', 'The "Bob"'), ("Bob",)):
+            text = "\n".join(
+                person_lines(OutPerson(123456789012345678, names, ("Vex, Jr.",), "Player 1234"))
+            )
+            (back,) = parse(text, secrets=True).people
+            self.assertEqual((back.names, back.plays), (names, ("Vex, Jr.",)), text)
+
+    def test_a_hand_written_player_row_splits_its_first_part_unless_it_is_quoted(self) -> None:
+        who = "123456789012345678"
+        (plain,) = parse(f"Bob, Bobby | player or DM | | | {who}", secrets=True).people
+        self.assertEqual(plain.names, ("Bob", "Bobby"))
+        (quoted,) = parse(f'"Bob, Bobby" | player or DM | | | {who}', secrets=True).people
+        self.assertEqual(quoted.names, ("Bob, Bobby",))
+
+    def test_more_names_than_a_line_holds_still_read_back_as_one_entry(self) -> None:
+        others = tuple(f"Alias {n}, the {n}th" for n in range(MAX_PER_LINE + 1))
+        text = "\n".join(lines_for("Vex", "npc", others, ()))
+        self.assertEqual(len(text.splitlines()), 2)
+        (one,) = parse(text, secrets=True).lines
+        self.assertEqual(one.others, others)
+
+    def test_an_empty_quoted_piece_is_dropped(self) -> None:
+        self.assertEqual(self.read('Vex | npc | "", "Vexa" ;').others, ("Vexa",))
+
+    def test_quotes_that_do_not_wrap_a_whole_name_stay_as_they_were(self) -> None:
+        one = self.read('Vex | npc | Old "Vex", "Vexa" extra, "open')
+        self.assertEqual(one.others, ('Old "Vex"', '"Vexa" extra', '"open'))
+        one = self.read('Vex | npc | "Vexa, the Younger", Vexi')
+        self.assertEqual(one.others, ("Vexa, the Younger", "Vexi"))
 
     def test_no_bracket_and_a_bracket_not_at_the_end_are_left_alone(self) -> None:
         self.assertEqual(self.read("Tavin | npc").said_as, "")

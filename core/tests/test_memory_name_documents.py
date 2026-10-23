@@ -150,3 +150,10 @@ class Request(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MergeKeepsQuotes(unittest.TestCase):
+    def test_a_quoted_name_with_a_comma_survives_a_merge(self) -> None:
+        merged = merge_lists(['Vex | npc | "Vex the boss, retired"', "Vex | npc | Vexa"])
+        self.assertIn('"Vex the boss, retired"', merged)
+        self.assertIn("Vexa", merged)
