@@ -1868,8 +1868,7 @@ names panel nor the speech-to-text hints can be a fixed list.
       shown it) and **❌ Not true**. An answer that remembers a fact has its own **↩️ Undo** while the page is
       open (the change log's Undo; the question then waits again). A state ("Roan is dead") has no secret flag, so it has no 🤫.
       **❓ Party theory** (The party at 0.5, Theory) waits for guesses (#2412): until then a party belief
-      below 1.0 is refused. Listing each connection in the summary, with who believes it and the line it
-      came from, is the next step.
+      below 1.0 is refused.
     - *Built (CloudDev, 2026-10-23, #2411):* **recaps rank by how connected a name is.** `importance` is the
       number of live connections an entry has in The truth, secret ones included, plus a quarter for each
       entry two steps out, capped at 20 (`memory/importance.py`, computed in code from the connections and
@@ -1883,7 +1882,6 @@ names panel nor the speech-to-text hints can be a fixed list.
       **PlotBot is DM-only, so it may read DM-only connections** (it has since #2254, and is told which
       memory the players know); the recap **writer** and every other call never get them, and a test
       proves it with a real store behind PlotBot's story memory.
-      below 1.0 is refused.
     - *Built, slice 4 (CloudDev, 2026-10-23, #2410):* the summary also goes when no secret was said, if
       there are new names or things to check (no Recant part then). The things to check are **spelled
       out in words** (the first five, with who said each: "you" or "a player"), in the DM-only copies of
