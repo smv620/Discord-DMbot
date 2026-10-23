@@ -11657,6 +11657,13 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+TIMELINE_STABLE = """
+    -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
+    -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
+    -- keeps its pinned search_path, its owner and its grants. No rows change.
+    ALTER FUNCTION dmbot_web_story_timeline(BIGINT, TEXT) STABLE;
+"""
+
 IMAGE_LINES = """
     -- A transcript line that describes an image posted in the table chat (#2450, docs/PLAN.md,
     -- "Images posted there"): stored as a typed line (everything that treats typed lines apart
@@ -11908,6 +11915,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
+    ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
