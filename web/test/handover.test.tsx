@@ -447,7 +447,7 @@ describe("moving to another server (#2550)", () => {
   it("the real client reads 202 moving and 409 shares_rules", async () => {
     const moving = httpApi("https://api.example", (async () => new Response(JSON.stringify({ status: "moving" }), { status: 202 })) as typeof fetch);
     expect(await moving.handoverAccept!("tok", "s2")).toEqual({ moving: true });
-    const shares = httpApi("https://api.example", (async () => new Response(JSON.stringify({ error: "shares_rules" }), { status: 409 })) as typeof fetch);
+    const shares = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: "shares_rules" }), { status: 409 })) as typeof fetch);
     await expect(shares.handoverAccept!("tok", "s2")).rejects.toMatchObject({ kind: "shares-rules" });
     expect(w.problem["shares-rules"]).toBeTruthy();
   });
@@ -466,10 +466,77 @@ describe("moving to another server (#2550)", () => {
     expect(screen.getByRole("button", { name: w.accept })).toBeTruthy();
   });
 
-  it("gives up looking after about three minutes and points to My Account", async () => {
+  it("goes back to the offer, with the reason, when the move did not happen", async () => {
+    const api = await open("#movefail");
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByText(w.moving)).toBeTruthy();
+    expect(await screen.findByText("A session is running. Try again after it ends.", undefined, { timeout: 15_000 })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.accept })).toBeTruthy(); // usable again
+    expect(screen.queryByText(w.moving)).toBeNull();
+    expect(screen.queryByText(w.movingSlow)).toBeNull();
+    expect(calls(api, "handoverLook").length).toBeGreaterThan(2); // it looked at the offer while it waited
+  }, 25_000);
+
+  it("never starts on a server the campaign can't move to, and offers no Accept when only those are left", async () => {
+    await open("#greyonly");
+    expect(await screen.findByText(w.onlyHere)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.accept })).toBeNull();
+    expect(screen.getByRole("button", { name: w.decline })).toBeTruthy();
+    expect(screen.queryByText(w.noServers)).toBeNull();
+  });
+
+  it("does not hide the current server's choice behind a greyed one", async () => {
+    await open("#shares");
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    expect((screen.getByRole("radio", { name: /Friday Night Dice/ }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByRole("link", { name: /Add DMbot to Sunday Table/ })).toBeNull(); // (it has a reason, and DMbot is there)
+  });
+
+  it("a failed read of /me before accepting does not block the accept", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const real = api.me.bind(api);
+    let n = 0;
+    api.me = async () => {
+      n += 1;
+      if (n === 1) return real(); // the page's own look
+      throw new ApiError("network");
+    };
+    render(<Handover api={api} hash="#open" />);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByText(w.accepted)).toBeTruthy();
+  });
+
+  it("stops looking when the page goes away", async () => {
     live.on = true;
     const api = mockApi("table");
     api.handoverAccept = async () => ({ moving: true });
+    const view = render(<Handover api={api} hash="#open" />);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
+      fireEvent.click(screen.getByRole("button", { name: w.accept }));
+      await vi.advanceTimersByTimeAsync(4000);
+      view.unmount();
+      const before = calls(api, "handoverLook").length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(calls(api, "handoverLook").length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up looking after about three minutes and says the email link still works", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const real = api.handoverLook!.bind(api);
+    let looks = 0;
+    api.handoverAccept = async () => ({ moving: true });
+    api.handoverLook = async (token) => (looks++ === 0 ? real(token) : { status: "ended" });
     render(<Handover api={api} hash="#open" />);
     await screen.findByText(w.offer("The Silver Hall", "Mira"));
     vi.useFakeTimers();
@@ -478,7 +545,7 @@ describe("moving to another server (#2550)", () => {
       fireEvent.click(screen.getByRole("button", { name: w.accept }));
       await vi.advanceTimersByTimeAsync(200_000);
       expect(screen.getByText(w.movingSlow)).toBeTruthy();
-      expect(screen.getByRole("link", { name: w.myAccount }).getAttribute("href")).toBe("/account");
+      expect(w.movingSlow).toContain("open the link in the offer email again");
     } finally {
       vi.useRealTimers();
     }
