@@ -418,6 +418,7 @@ from dmbot.ui.name_card import (
     FinishPastButton,
     UndoButton,
     UndoConnectionButton,
+    UndoManyButton,
     UndoRunButton,
     UndoSpellingButton,
 )
@@ -1500,6 +1501,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             UndoButton,
             UndoConnectionButton,
+            UndoManyButton,
             UndoListButton,
             UndoSpellingButton,
             FinishPastButton,

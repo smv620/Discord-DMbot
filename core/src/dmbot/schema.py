@@ -10180,6 +10180,103 @@ WEB_LINK_ACTIONS = r"""
     REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
 """
 
+# Merging several names at once (#2426, migration 0183). Three things:
+# 1. the website's All names queue takes `merge-many`: the kept name is the row's entry and `text`
+#    holds the other names' ids, space apart (at most 50 of 32 letters), so the column is wider for
+#    that one action only;
+# 2. the DM's "Not the same" for two names, remembered so the look-alike finder never offers the
+#    pair again (the DM's alone; never in backups, recall, transcripts or any player view);
+# 3. the All names list says how many times each name was heard (`mentions`), so the page can put
+#    the most used first under "Keep which name?".
+_NAME_ACTION_DOOR = WEB_LINK_ACTIONS[
+    WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(") : (
+        WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read")
+    )
+]
+_MANY = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"
+_WITH_MANY = (
+    "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',"
+    " 'remove',\n         'link-add', 'link-words', 'link-secret', 'link-remove')"
+)
+assert "'merge', 'remove',\n                'link-add'" in _NAME_ACTION_DOOR
+MERGE_MANY = (
+    r"""
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        """
+    + _WITH_MANY
+    + r""");
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check
+        CHECK (char_length(text) <= CASE WHEN action = 'merge-many' THEN 1700 ELSE 100 END);
+    """
+    + _NAME_ACTION_DOOR.replace(
+        "'merge', 'remove',\n                'link-add'",
+        "'merge', 'merge-many', 'remove',\n                'link-add'",
+    )
+    .replace(
+        "char_length(clean) > 100",
+        # (in brackets: plpgsql would take the CASE's THEN for the end of the IF's test)
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+    )
+    .replace(
+        "           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)",
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~ " + _MANY + "))\n"
+        "           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)",
+        1,
+    )
+    .replace(
+        "        PERFORM pg_advisory_xact_lock(",
+        """        IF act = 'merge-many' AND (
+               ent = ANY (string_to_array(clean, ' '))
+               OR (SELECT count(DISTINCT x) FROM unnest(string_to_array(clean, ' ')) x)
+                  <> cardinality(string_to_array(clean, ' '))
+               OR (SELECT count(*) FROM memory_entities t
+                   WHERE t.guild_id = g AND t.campaign_id = c
+                     AND t.id = ANY (string_to_array(clean, ' '))
+                     AND t.status = 'confirmed' AND t.type <> 'person')
+                  <> cardinality(string_to_array(clean, ' '))) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(""",
+        1,
+    )
+    + f"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+
+    -- Two names the DM said are not the same: `a_id` sorts before `b_id`, so a pair is one row.
+    -- Gone with either name (and its campaign); isolated per server; not in backups.
+    CREATE TABLE name_not_same (
+        {_memory_scope()}
+        a_id        TEXT NOT NULL,
+        b_id        TEXT NOT NULL,
+        decided_by  BIGINT NOT NULL CHECK (decided_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_id, b_id),
+        CHECK (a_id < b_id),
+        {_entity_link("a_id")},
+        {_entity_link("b_id")}
+    );
+    CREATE INDEX name_not_same_b ON name_not_same (guild_id, campaign_id, b_id);
+    """
+    + _isolate("name_not_same")
+)
+_MENTIONS_OF = """'hidden', p.hidden,
+                    'mentions', (SELECT count(*) FROM memory_mentions m
+                                 WHERE m.guild_id = g AND m.campaign_id = c
+                                   AND m.entity_id = p.id),"""
+assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
+ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
+
+
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
     -- session when the start-up fill-in found them. The website's transcripts show these instead
@@ -10989,6 +11086,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0179_beliefs", BELIEFS),  # perspectives, beliefs and the backfill (#2409)
     ("0180_shared_recap_session", SHARED_RECAP_SESSION),  # a shared recap's session (#2418)
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
+    ("0183_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
@@ -11067,6 +11165,7 @@ ISOLATED_TABLES = (
     "recap_style_notes",
     "recap_requests",
     "recap_name_checks",
+    "name_not_same",
     "name_answers",
     "name_actions",
     "web_peeks",
