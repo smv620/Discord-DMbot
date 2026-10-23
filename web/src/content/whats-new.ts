@@ -231,6 +231,12 @@ export interface Held extends Entry {
 export const held: Held[] = [
   {
     date: "2026-10-22",
+    title: "See your recap going out",
+    what: "After you post a recap or ask for its audio, the page shows it working: what step it is on, a running clock that is still right when you come back, and then a link to the message in Discord, or what went wrong.",
+    reason: "In review (#2436); held until dev1 deploys it and the bot records the steps (#2435).",
+  },
+  {
+    date: "2026-10-22",
     title: "The name is the button in the NPC list",
     what: "In the NPC channel, each NPC's name is now the button that opens its page, with its other names beside it, instead of a 📖 Open button under every entry. The list tidies itself once, in the same order.",
     reason: "In review (#2425); held until dev1 deploys it.",
