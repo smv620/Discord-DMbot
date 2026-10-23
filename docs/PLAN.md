@@ -5179,6 +5179,14 @@ Supervisor's details marked).**
      🗂️ Campaign management → 🤝 Hand over, or from your account page."
   6. *(Supervisor:)* Offers still open on the day this ships keep their Discord buttons until they end
      (at most 7 days); no new Discord offers are made.
+  7. *(Supervisor, 2026-10-23, #2532 slice C):* a move to another server is recorded on the offer by the
+     website, in the same step that takes the link, and **the bot** does the move, because only the bot may
+     read and write a whole campaign: export, import into the new server as the new owner's campaign (the
+     old owner a co-DM), check the copy, then remove the old server's copy and tell both people. If any step
+     fails, nothing is removed and the offer opens again with a plain reason. As after loading a backup,
+     the old server's channels (DM screen, voice, chat) don't carry over; the new owner picks them with
+     `/dmbot start`. Rulesets the campaign follows keep being followed; a ruleset it published moves with
+     it and the new owner becomes its publisher.
 - **One DMbot account, several Discord accounts.**
   1. **The key is the DMbot account** (the account number; today's DMbot ID). Everything a person has
      belongs to the account: the plan and hours, the campaigns they own, the campaigns they DM or
@@ -5199,6 +5207,13 @@ Supervisor's details marked).**
      (`account_id_history`) keeps recording each add and remove.
   7. *(Supervisor, build order):* first the hand-over by email (#2532, which keys the new owner by the
      signed-in DMbot account), then the account key change (#2533 core, #2534 website).
+  8. *(Supervisor, 2026-10-23, #2533):* the account's number stays its first Discord ID (the DMbot ID is
+     that number in base 36), so every table that already names an owner, a DM or a plan holder keeps
+     its rows unchanged; a second Discord ID is a row pointing at the account, and one lookup answers
+     "which account is this Discord ID". **The first Discord ID may be removed** like any other (never
+     the last), but the account keeps its number, and that Discord ID is **reserved for good**: signing
+     in with it later says it was removed from a DMbot account and can be added back from there; it
+     can never start a second account, which would reuse the same number.
 
 **Accounts: the DMbot ID, email sign-in, moving to a new Discord account, trial emails,
 experience points and the trial extension (owner, 2026-10-14; Supervisor's details marked).**
