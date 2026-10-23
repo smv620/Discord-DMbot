@@ -139,7 +139,9 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         import_job=SimpleNamespace(store=store),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         **{"memory": object(), **kw},
-        consent=SimpleNamespace(consenting=AsyncMock(return_value={MIRA})),
+        consent=SimpleNamespace(
+            consenting=AsyncMock(return_value={MIRA}), agreed=AsyncMock(return_value={MIRA})
+        ),
         recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
         plan_allows=AsyncMock(return_value=True),
         recap_holds=None,
@@ -218,6 +220,16 @@ class ThePlaysChoices(WithImports):
         bot, _ = fake_bot(self.store, memory=idle)
         await bot.run_import_followups(GUILD)  # a second round does nothing
         idle.apply_import_plays.assert_not_awaited()
+
+    async def test_a_choice_for_someone_off_the_record_is_kept_not_dropped(self) -> None:
+        """Off the record (#2466) has no lasting effect: Mira is paused (not recorded now) but
+        agreed, so the DM's choice still becomes a link."""
+        cerric = await self.character()
+        await self.wait(cerric)
+        bot, _ = fake_bot(self.store, memory=self.memory)
+        bot.consent.consenting = AsyncMock(return_value=frozenset())  # the recordable list: empty
+        await bot.run_import_followups(GUILD)
+        self.assertEqual((await self.row(cerric))["played_by"], MIRA)
 
     async def test_a_character_given_to_someone_else_since_is_not_taken_back(self) -> None:
         cerric = await self.character()

@@ -101,6 +101,10 @@ class FakeHost:
     guide_asked: list[int] = field(default_factory=list)
     guide_raises: bool = False
     guide_withdraws: bool = False  # consent goes while the answer is being made
+    paused: set[int] = field(default_factory=set)  # off the record (#2466)
+
+    def sidebar_paused(self, guild_id: int, user_id: int) -> bool:
+        return user_id in self.paused
 
     def sidebar_has_consent(self, guild_id: int, user_id: int) -> bool:
         return (guild_id, user_id) in self.agreed
@@ -221,6 +225,32 @@ class PrivateMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(question_line.text, "find if you need line of sight for Fireball")
         self.assertEqual((answer_line.user_id, answer_line.sidebar), (DM, SIDEBAR_ANSWER))
         self.assertEqual(answer_line.heard, FakeAnswer().text)
+
+    async def test_a_paused_dms_typed_question_is_answered_but_nothing_is_stored(self) -> None:
+        """Off the record (#2466): a question to DMbot is a deliberate act and is answered, but no
+        line of it reaches the transcript."""
+        self.host.paused.add(DM)
+        message = dm_message(content="find if you need line of sight for Fire ball")
+        await self.sidebar.on_dm_message(message)
+        self.assertEqual(sent(message), [FakeAnswer().text])
+        self.assertEqual(self.host.saved, [])
+
+    async def test_a_question_asked_while_paused_is_never_stored_even_if_answered_after_a_resume(
+        self,
+    ) -> None:
+        """#2466: whether it is stored is decided when it is asked, not when the answer arrives."""
+        self.host.paused.add(DM)
+        self.answerer.gate = asyncio.Event()  # the answer waits
+        message = dm_message(content="find if you need line of sight for Fire ball")
+        task = asyncio.create_task(self.sidebar.on_dm_message(message))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        self.host.paused.discard(DM)  # they resume while the answer is still being made
+        self.answerer.gate.set()
+        await task
+        self.assertEqual(sent(message), [FakeAnswer().text])  # answered
+        self.assertEqual(self.host.saved, [])  # and not stored
+        self.assertEqual(self.sidebar._unstored, set())  # nothing left behind
 
     async def test_every_line_records_where_it_came_from(self) -> None:
         await self.sidebar.on_dm_message(dm_message(content="check how grappling works"))
@@ -1052,6 +1082,17 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(len(self.host.chat), 1)
         self.assertEqual(self.answerer.asked[0][1], "does fireball need line of sight?")
+
+    async def test_a_paused_players_typed_question_is_answered_but_nothing_is_stored(self) -> None:
+        """Off the record (#2466): they agreed, so the question gets its answer in the chat; no
+        line of it, and no agree button, reaches the transcript."""
+        self.host.paused.add(PLAYER)  # (paused: not counted as recorded)
+        self.assertTrue(
+            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
+        )
+        await self.settle()
+        self.assertEqual(len(self.host.chat), 1)
+        self.assertEqual((self.host.saved, self.host.nudged), ([], []))
 
     async def test_someone_who_has_not_agreed_is_shown_the_button_once_and_nothing_is_asked(
         self,

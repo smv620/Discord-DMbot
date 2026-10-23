@@ -12,6 +12,7 @@ import { RECAPS_LIVE } from "../content/recap-words";
 import { type AccountApi, ApiError, type Campaign, type CampaignPage } from "./api";
 import CampaignFacts from "./CampaignFacts";
 import CampaignNav from "./CampaignNav";
+import CampaignSettings from "./CampaignSettings";
 
 /** The campaign in the address: `/account/campaigns/<server>.<campaign>`. */
 export function campaignRefFromPath(path: string): string | null {
@@ -126,7 +127,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
       <LinkList heading={words.groups.story} id="story" links={story} />
       <LinkList heading={words.groups.table} id="table" links={table} />
       <LinkList heading={words.groups.rules} id="rules" links={rules} />
-      {isDm && <SettingsGroup page={page} />}
+      {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
     </div>
   );
 }
@@ -140,37 +141,6 @@ function LinkList({ heading, id, links }: { heading: string; id: string; links: 
           <li key={href}>
             <a href={href}>{label}</a>
             <span class="small muted block">{note}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-/** The campaign's current choices, for its game masters. Read-only: where the website cannot change
- * one yet, the line says where to in Discord (the same names as Discord's ⚙️ Settings). */
-function SettingsGroup({ page }: { page: CampaignPage }) {
-  const s = page.settings;
-  const rows: [key: keyof typeof words.paths, value: string | null][] = [
-    ["visibility", s ? ((words.visibility as Record<string, string>)[s.visibility] ?? null) : null],
-    ["level", s ? ((words.level as Record<string, string>)[s.level] ?? null) : null],
-    ["retention", s ? (s.keepDays === null ? words.retentionForever : words.retentionDays(s.keepDays)) : null],
-    ["gameMasters", s ? words.gameMastersCount(s.gameMasters) : null],
-    ["handOver", null],
-    ["pause", s ? (s.paused ? words.pausedYes : words.pausedNo) : null],
-    ["delete", null],
-  ];
-  return (
-    <section class="stack" aria-labelledby="settings-heading" id="settings">
-      <h2 id="settings-heading">{words.groups.settings}</h2>
-      <p class="muted small">{words.settingsLead}</p>
-      <ul class="campaigns">
-        {rows.map(([key, value]) => (
-          <li key={key}>
-            <span class="campaign-name">{words.settingsLabels[key]}</span>
-            {value !== null && <span class="block">{value}</span>}
-            <span class="small muted block">{words.doThisInDiscord(words.paths[key])}</span>
-            {key === "delete" && <span class="small muted block">{words.deleteWarning}</span>}
           </li>
         ))}
       </ul>
