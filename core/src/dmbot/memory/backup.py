@@ -202,6 +202,7 @@ def _valid(column: str, value: object) -> bool:
         "party",
         "hidden_from_players",
         "made_before_name_gate",
+        "unrevealed",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -349,7 +350,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     # One left from another player, or on an entry with no player (an undone merge), is
     # shown nowhere: dropped, not a reason to refuse the backup. One for an entry not in
     # the file is damage.
-    secret = {r["id"] for r in by_tag["relation"] if r["secret"]}
+    secret = {r["id"] for r in by_tag["relation"] if r["secret"] or r["unrevealed"]}
     party = {p["id"] for p in by_tag["perspective"] if p["kind"] == "party"}
     newest: dict[str, dict[str, Any]] = {}  # the players' current belief in each connection
     for b in sorted(by_tag["belief"], key=lambda b: b["seq"]):
@@ -420,7 +421,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             top = known.get(name, 1) if isinstance(name, str) else 1
             if isinstance(version, int) and not isinstance(version, bool) and version > top:
                 version = 1
-            raw = {**raw, "definition_version": version}
+            # from before #2404: every connection a file holds had been shown to the players
+            raw = {"unrevealed": False, **raw, "definition_version": version}
         out.append(raw)
     return out
 
