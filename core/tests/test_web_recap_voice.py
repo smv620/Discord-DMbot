@@ -354,10 +354,13 @@ class TheClip(WithClips):
     def test_nothing_is_left_on_disk(self) -> None:
         import os
         import tempfile
+        from unittest import mock
 
-        before = set(os.listdir(tempfile.gettempdir()))
-        voice.decode(tone("webm", 1.0), "audio/webm")
-        self.assertEqual(set(os.listdir(tempfile.gettempdir())) - before, set())
+        # The test's own temp folder, not the shared /tmp: other processes (the CI runner's) write
+        # there while this runs, and a file they make is not the clip code's (#2512).
+        with tempfile.TemporaryDirectory() as own, mock.patch.object(tempfile, "tempdir", own):
+            voice.decode(tone("webm", 1.0), "audio/webm")
+            self.assertEqual(os.listdir(own), [])
 
 
 KNOWN = "m" * 32
