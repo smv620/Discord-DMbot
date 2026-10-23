@@ -3108,8 +3108,10 @@ the session is listening, the campaign's Table chat switch is on, the author is 
 slash command (only plain messages and replies are read), and the author has consent (`has_consent`, the same
 check as a voice line). A typed line goes through `_act_on_line` like a spoken one (rules cards, house rules,
 the game clock), and also into names heard, vocabulary, the sidebar's "Hey DMbot" and the raw transcript as a
-`Line(typed=True)`: tagged `(typed)` in the as-heard file, never in the cleaned one and never in the live transcript
-channel; it has no audio check and no cleaning. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
+`Line(typed=True)`: tagged `(typed)` in both files (2026-10-23, #2447: the cleaned one leaves out typing the
+off-topic filter labels off-topic, through the same window as talk; its words reach the names scan and the word
+list when typed, never again at the label or at "Put it back"), never in the live transcript channel; it has no
+audio check and no cleaning. Typing over the rate limit skips the filter, so it always shows. ⚙️ Settings has **💬 Table chat** (campaign DMs and server managers): a
 private panel that says which channels are read, picks the one extra text channel of this server, and turns it off.
 Migration 0052: `campaigns.table_chat` (default on) and `table_chat_channel_id`, `transcript_lines.typed`, and a new
 sidebar way-in `table-chat` (a typed "Hey DMbot" has no speech-to-text in its lineage). A backup carries the on/off
