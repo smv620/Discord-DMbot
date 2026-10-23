@@ -69,6 +69,18 @@ export interface CampaignPage {
   /** "owner" and "co-dm" are the campaign's DMs; "player" is anyone else in its server. */
   role: "owner" | "co-dm" | "player";
   importsOn?: boolean;
+  /** The campaign's current choices, for its game masters only (#2461). */
+  settings?: CampaignSettings;
+}
+
+/** What ⚙️ Settings holds for a campaign today, read-only on the website. */
+export interface CampaignSettings {
+  visibility: "private" | "peek" | "open";
+  level: "quiet" | "normal" | "chatty";
+  /** How long transcripts are kept (30, 90 or 365 days), or null for ever. */
+  keepDays: number | null;
+  paused: boolean;
+  gameMasters: number;
 }
 
 /** A Discord server you manage. */

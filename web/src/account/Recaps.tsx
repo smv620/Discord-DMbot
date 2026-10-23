@@ -37,11 +37,10 @@ import RecapFix from "./RecapFix";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
-import { campaignHref } from "./campaignLinks";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
 import RecapPlayer from "./RecapPlayer";
-import BackToCampaign from "./BackToCampaign";
+import CampaignNav from "./CampaignNav";
 
 const POLL_MS = 5000;
 /** Waits between looks while something is going out: soon at first, then settling to POLL_MS. */
@@ -162,10 +161,10 @@ function List({ api, campaign }: { api: AccountApi; campaign: string | null }) {
       {(RECAPS_LIVE || load.recaps.length > 0) && (
         <p class="lead">{text.lead}</p>
       )}
+      {campaign && <CampaignNav api={api} campaignRef={campaign} page="recaps" />}
       {campaign && (
         <p class="small">
-          <a href={campaignHref(campaign)}>{campaignWords.backToThis}</a> · {campaignWords.onlyThisCampaign}{" "}
-          <a href="/account/recaps">{campaignWords.showAllRecaps}</a>
+          {campaignWords.onlyThisCampaign} <a href="/account/recaps">{campaignWords.showAllRecaps}</a>
         </p>
       )}
       {shown.length === 0 ? (
@@ -653,7 +652,12 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   return (
     <>
       {recap.ref.includes(".") && (
-        <BackToCampaign campaignRef={recap.ref.slice(0, recap.ref.lastIndexOf("."))} name={recap.campaign} />
+        <CampaignNav
+          api={api}
+          campaignRef={recap.ref.slice(0, recap.ref.lastIndexOf("."))}
+          page="recaps"
+          name={recap.campaign}
+        />
       )}
       <div class="hello">
         <h2 tabIndex={-1} ref={headingRef}>

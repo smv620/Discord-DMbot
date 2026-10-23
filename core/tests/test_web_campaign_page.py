@@ -69,6 +69,19 @@ class TheCampaignPage(Base):
                 await read_campaign(self.web, self.session, ref)
             self.assertEqual(refused.exception.code, "not_found")
 
+    async def test_a_dm_gets_the_current_settings_and_a_player_gets_none(self) -> None:
+        got = await read_campaign(self.web, self.session, self.ref_of(self.one))
+        self.assertEqual(
+            set(got["settings"]),
+            {"visibility", "level", "keepDays", "paused", "gameMasters"},
+        )
+        self.assertEqual(got["settings"]["gameMasters"], 1)
+        self.assertIn(got["settings"]["visibility"], ("private", "peek", "open"))
+        self.assertFalse(got["settings"]["paused"])
+        bob = await self.session_of(BOB)  # plays in "One", runs "Two"
+        self.assertNotIn("settings", await read_campaign(self.web, bob, self.ref_of(self.one)))
+        self.assertIn("settings", await read_campaign(self.web, bob, self.ref_of(self.two)))
+
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
         got = await read_campaign(
             self.web, self.session, self.ref_of(self.one), imports_for=lambda g: g == THURSDAY.id
