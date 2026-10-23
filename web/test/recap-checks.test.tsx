@@ -51,9 +51,10 @@ describe("a recap waiting for its last check", () => {
     const api = pageWith([waitingRecap(), gap, gap, waitingRecap(), { ...base, text: "The party crossed the river." }]);
     render(<Recaps api={api} path={path} />);
     expect(await screen.findByText(text.waitingForCheck)).toBeTruthy();
-    for (let i = 0; i < 3; i += 1) {
+    // The page looks at 3, 6 and 10 seconds, then every 5 (#2419): one look per step here.
+    for (const wait of [3000, 3000, 4000]) {
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(5000);
+        await vi.advanceTimersByTimeAsync(wait);
       });
       expect(screen.getByText(text.waitingForCheck)).toBeTruthy();
       expect(screen.queryByText(text.working)).toBeNull();
