@@ -988,7 +988,7 @@ class CampaignStore:
         if row is None:
             raise CampaignError(NOT_HERE)
         await _scope(conn, target)
-        name = await self._free_name(conn, target, str(row["name"]))  # a clash is renamed
+        name = await self._free_name(conn, target, str(row["name"]), "moved")  # a clash is renamed
         await _scope(conn, guild_id)
         # What is only about the old server's Discord messages is dropped before the move.
         await conn.execute(
@@ -1856,14 +1856,14 @@ class CampaignStore:
         )
         return campaign_id
 
-    async def _free_name(self, conn: Conn, guild_id: int, base: str) -> str:
+    async def _free_name(self, conn: Conn, guild_id: int, base: str, word: str = "restored") -> str:
         """`base`, or `base (restored)`, `base (restored 2)`, … whichever is free."""
         cur = await conn.execute("SELECT name_key FROM campaigns WHERE guild_id = %s", (guild_id,))
         taken = {r["name_key"] for r in await cur.fetchall()}
         if name_key(base) not in taken:
             return base
         for n in range(1, 1000):
-            suffix = " (restored)" if n == 1 else f" (restored {n})"
+            suffix = f" ({word})" if n == 1 else f" ({word} {n})"
             candidate = clean_name(base[: NAME_MAX - len(suffix)].rstrip() + suffix)
             if name_key(candidate) not in taken:
                 return candidate

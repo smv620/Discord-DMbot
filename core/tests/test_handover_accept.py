@@ -437,10 +437,7 @@ class Moving(LinkBase):
         look = (await self.post(bob, "look", token=token)).json()
         [here, there] = look["servers"]
         self.assertIsNone(here.get("why"))  # it can still be handed over on this server
-        self.assertEqual(
-            there["why"],
-            "can't move to another server yet, but it can be handed over on this server",
-        )
+        self.assertEqual(there["why"], "shares_rules")  # a code; the page owns the words
         self.assertTrue(look["canAccept"])
         got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
         self.assertEqual((got.status_code, got.json()["error"]), (409, "shares_rules"))

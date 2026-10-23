@@ -130,7 +130,9 @@ async def _bot_in(db: Database, session: Session, guild_id: int) -> bool:
     return bool(row and row["yes"])
 
 
-MOVE_REFUSED = "can't move to another server yet, but it can be handed over on this server"
+# A code, as every other `why`; the page owns the words ("can't move to another server yet, but it
+# can be handed over on this server").
+MOVE_REFUSED = "shares_rules"
 
 
 async def _servers(

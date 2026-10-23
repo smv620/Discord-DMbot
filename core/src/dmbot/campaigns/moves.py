@@ -7,17 +7,25 @@ off it follows (migration 0215 makes the foreign keys carry the update), so noth
 and written again, nothing can be left behind, and a failure at any point leaves the campaign
 exactly where it was. The rules, in order of importance:
 
-- **Nothing is lost.** Every table keyed by the campaign moves (`campaigns/tables.py` lists them,
-  and a schema test fails for a table that is on neither list). What does not carry over is what is
+- **Nothing is lost.** Every table that belongs to the campaign moves, through the foreign keys
+  (`tests/test_campaign_move_cascade.py` fails for a key that does not cascade, and the move test
+  compares every table found in the schema, not a hand-kept list). What does not carry over is what is
   only about the old server: its channels and messages, which `/dmbot start` makes again.
 - **One move at a time, on a campaign nobody is using.** The offer carries a short lease
   (`move_claimed_at`), so two sweeps, or two bot processes, cannot both move it. Inside the
   transaction the campaign is locked `FOR UPDATE` (as `delete` does, so even a child-row insert
-  waits), the offer is read again and must still be open, for this server and this run's lease, and
-  a running session stops the move (it tries again after the session ends).
+  waits), the offer is read again and must still be open, for this server and this run's lease,
+  and a running session, a recap job a worker holds or has due for audio, an import being read or
+  a session still winding down stops the move: the offer opens again and the person who accepted
+  is told to try again in a few minutes.
+- **The write is gated by the move itself.** No SECURITY DEFINER door: the bot already holds the
+  campaign's rows, so migration 0215's `campaign_move` policy lets that one campaign's row change
+  server only while this transaction has set the two settings naming it and its target. Every
+  check above shares that transaction, which a door could not do.
 - **Recap audio is copied before and removed after.** The files are not in the database; they are
-  copied to the new server's folder before the move and the old ones are removed only once it has
-  committed, so a failure in between leaves the old files where they were.
+  copied to the new server's folder before the move; after the commit a second pass copies any
+  file finished meanwhile, and only then are the old ones removed. A failure in between leaves the
+  old files where they were.
 - **Players are asked again.** Consent records belong to the voices and the server; they are not
   moved, and counts of names said are kept only for who is recorded in the new server.
 - **Not yet:** a campaign that has published a rule set is not moved (#2551), and the website
@@ -41,7 +49,7 @@ log = logging.getLogger(__name__)
 
 LEASE_S = 600  # a move that did not finish in this long is taken up again
 STUCK_S = 3600  # an offer that has waited this long for its move is opened again
-Result = Literal["moved", "reopened", "skipped"]
+Result = Literal["moved", "reopened", "ended", "skipped"]
 
 # What the new owner is told when a move does not happen (the old owner is told only that it did
 # not, never why: a reason can be about the new owner's plan).
@@ -52,6 +60,7 @@ SHARES_RULES = (
 CHANGED_HANDS = "The campaign changed hands while the move was waiting."
 NO_PAID_ROOM = "Your plan has no room for one more campaign, so the move did not happen."
 SESSION_RUNNING = "A session is running. Try again after it ends."
+BUSY = "DMbot is still finishing the last session. Try again in a few minutes."
 STUCK = "DMbot couldn't reach the other server in time, so the move did not happen."
 COULD_NOT = "DMbot couldn't move it this time."
 
@@ -61,11 +70,18 @@ class AudioFolders(Protocol):
 
     def copy_campaign(self, from_guild: int, to_guild: int, campaign_id: str) -> None: ...
 
+    def catch_up(self, from_guild: int, to_guild: int, campaign_id: str) -> None: ...
+
     def forget_campaign(self, guild_id: int, campaign_id: str) -> None: ...
 
 
 class Refused(Exception):
     """The move cannot happen now; the message is for the new owner, in plain words."""
+
+
+class Ended(Refused):
+    """The move can never happen (the campaign changed hands): the offer ends instead of opening
+    again, and only the person who accepted is told."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,15 +107,17 @@ class HandoverMover:
         consenting: Consenting | None = None,
         audio: AudioFolders | None = None,
         forgotten: Callable[[str], None] | None = None,
+        busy: Callable[[int, str], bool] | None = None,
         told: Told | None = None,
     ) -> None:
         self._store = store
         self._clock = clock
         self._consenting = consenting
         self._audio = audio
-        self._forgotten = (
-            forgotten  # caches kept by campaign id alone (the bot's `_forget_campaign`)
-        )
+        self._forgotten = forgotten  # what the bot keeps by campaign id alone
+        # True while the bot is still winding a session of this server's campaign down (its
+        # after-session work runs in this process; the database cannot see it).
+        self._busy = busy or (lambda guild_id, campaign_id: False)
         self.told = told  # set by whoever can reach the two people (the bot's SiteOffers)
 
     @property
@@ -129,6 +147,8 @@ class HandoverMover:
                 moved = await self._run(offer, target, now)
             except _Changed:
                 return "skipped"  # ended, taken back or opened again since the lease
+            except Ended as ended:
+                moved = await self._end(offer, str(ended))
             except Refused as refusal:
                 moved = await self._reopen(offer, str(refusal))
             except Exception as exc:  # the type only: an error can quote a row
@@ -191,8 +211,11 @@ class HandoverMover:
             if copied and self._audio is not None:
                 self._audio.forget_campaign(target, c)  # (the campaign did not arrive: no use)
             raise
-        # Committed. The old files go only now; a failure here leaves harmless leftovers.
+        # Committed. A file written in the old folder after the first copy (a recap's audio that
+        # was finishing) is copied across now; only then do the old files go. A failure here leaves
+        # harmless leftovers.
         if self._audio is not None:
+            self._audio.catch_up(g, target, c)
             self._audio.forget_campaign(g, c)
         if self._forgotten is not None:
             self._forgotten(c)
@@ -207,6 +230,8 @@ class HandoverMover:
         consenting: frozenset[int],
     ) -> str:
         g, c = offer.guild_id, offer.campaign_id
+        if self._busy(g, c):
+            raise Refused(BUSY)
         # The lock first, as `delete` takes it: FOR UPDATE also makes a child-row insert wait.
         cur = await conn.execute(
             "SELECT owner_user_id FROM campaigns WHERE guild_id = %s AND id = %s FOR UPDATE",
@@ -230,12 +255,29 @@ class HandoverMover:
         ):
             raise _Changed
         if int(row["owner_user_id"]) != offer.from_user_id:
-            raise Refused(CHANGED_HANDS)
+            raise Ended(CHANGED_HANDS)
         cur = await conn.execute(
             "SELECT 1 FROM active_sessions WHERE guild_id = %s AND campaign_id = %s", (g, c)
         )
         if await cur.fetchone() is not None:
             raise Refused(SESSION_RUNNING)
+        # Work that writes to the campaign without holding its row: a recap job a worker has
+        # leased, or one waiting for its audio, and an import being read. Their rows would be
+        # left behind, or an audio file would land in the folder that is about to go.
+        cur = await conn.execute(
+            "SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+            " AND (leased_to > %s OR (state = 'audio' AND audio_next_at <= %s)) LIMIT 1",
+            (g, c, now, now),
+        )
+        if await cur.fetchone() is not None:
+            raise Refused(BUSY)
+        cur = await conn.execute(
+            "SELECT 1 FROM session_imports WHERE guild_id = %s AND campaign_id = %s"
+            " AND state = 'working' LIMIT 1",
+            (g, c),
+        )
+        if await cur.fetchone() is not None:
+            raise Refused(BUSY)
         cur = await conn.execute(
             "SELECT 1 FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
             " AND status = 'shared' LIMIT 1",
@@ -259,6 +301,21 @@ class HandoverMover:
             old_owner=offer.from_user_id,
             consenting=consenting,
         )
+
+    async def _end(self, offer: HandoverOffer, reason: str) -> Moved:
+        """The move can never happen: the offer ends (it is no one's to answer any more)."""
+        async with self._db.guild(offer.guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET status = 'withdrawn', move_claimed_at = NULL,"
+                " decided_at = %s WHERE guild_id = %s AND id = %s AND status = 'open'",
+                (int(self._clock()), offer.guild_id, offer.id),
+            )
+            cur = await conn.execute(
+                "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s",
+                (offer.guild_id, offer.campaign_id),
+            )
+            row = await cur.fetchone()
+        return Moved("ended", offer, "" if row is None else str(row["name"]), reason)
 
     async def _reopen(self, offer: HandoverOffer, reason: str, name: str = "") -> Moved:
         """The move did not happen: the offer is open again for the owner to see, with nothing

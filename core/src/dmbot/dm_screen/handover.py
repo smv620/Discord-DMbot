@@ -152,6 +152,9 @@ MOVED_NEW_OWNER = (
 # The owner is told only that it did not happen, never why: a reason can be about the other
 # person's plan. That person is told the reason, privately, and their page shows it too.
 MOVE_FAILED = "They couldn't take **{campaign}** over this time. Nothing was lost. " + _OFFER_AGAIN
+MOVE_ENDED_NEW_OWNER = (
+    "DMbot couldn't move **{campaign}** to your other server: {reason} The offer has ended."
+)
 MOVE_FAILED_NEW_OWNER = (
     "DMbot couldn't move **{campaign}** to your other server: {reason} The offer is open "
     "again; open the link in your email to try again."

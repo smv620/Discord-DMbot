@@ -1536,9 +1536,10 @@ class DMBot(commands.AutoShardedBot):
             mover=HandoverMover(
                 campaigns,
                 clock=time.time,
-                consenting=lambda guild: consent.consenting(guild),
+                consenting=lambda guild: consent.agreed(guild),  # who agreed there, as a restore
                 audio=self.recap_audio_files,
-                forgotten=self._forget_campaign,
+                forgotten=self._forget_moved,
+                busy=self._winding_down,
             ),
         )
         # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
@@ -12495,6 +12496,19 @@ class DMBot(commands.AutoShardedBot):
         if complete:  # (a lock for a campaign that is gone, or one a pass holds, is left)
             npcs_prune_locks(alive)
             rules_prune_locks(alive)
+
+    def _winding_down(self, guild_id: int, campaign_id: str) -> bool:
+        """Is a session of this campaign still finishing its after-session work (#2532)?"""
+        return any(t.campaign_id == campaign_id for t in self._ending.get(guild_id, []))
+
+    def _forget_moved(self, campaign_id: str) -> None:
+        """A campaign moved to another server: drop what is kept by its id alone, and its loaded
+        names. The caches keyed by (server, campaign) need nothing: the campaign no longer exists
+        under the old server, so nothing asks for those keys again (as for a deleted campaign),
+        and under the new server they start empty."""
+        self._forget_campaign(campaign_id)
+        if self.lookup is not None:
+            self.lookup.drop([campaign_id])
 
     def _forget_campaign(self, campaign_id: str) -> None:
         """A campaign is gone: drop what the NPC list and the rules channel kept for it in

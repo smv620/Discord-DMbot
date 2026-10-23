@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.moves import (
+    BUSY,
+    CHANGED_HANDS,
     NO_PAID_ROOM,
     SESSION_RUNNING,
     SHARES_RULES,
@@ -282,11 +284,11 @@ class Moving(HandoverTest):
         [told] = self.told
         self.assertEqual(told.result, "moved")
 
-    async def test_a_name_the_new_server_already_has_is_renamed_like_a_restore(self) -> None:
+    async def test_a_name_the_new_server_already_has_is_renamed_with_moved(self) -> None:
         await self.store.create(OTHER_GUILD, "Frostmaiden", CO_DM)
         self.assertEqual(await self.move(), "moved")
         names = sorted(c["name"] for c in await self.campaigns_in(OTHER_GUILD))
-        self.assertEqual(names, ["Frostmaiden", "Frostmaiden (restored)"])
+        self.assertEqual(names, ["Frostmaiden", "Frostmaiden (moved)"])
 
     async def test_counts_of_names_said_are_kept_only_for_who_is_recorded_in_the_new_server(
         self,
@@ -459,3 +461,76 @@ class Moving(HandoverTest):
             NOW, GUILD,
         )  # fmt: skip
         self.assertEqual(await self.mover.reopen_stuck(GUILD), 0)
+
+    # ---- work in the background --------------------------------------------
+
+    async def test_a_recap_job_a_worker_holds_stops_the_move(self) -> None:
+        await self.seed()
+        await self.sql(
+            GUILD,
+            "UPDATE recap_jobs SET leased_to = %s WHERE guild_id = %s AND session_at = 100",
+            NOW + 300, GUILD,
+        )  # fmt: skip
+        self.assertEqual(await self.move(), "reopened")
+        await self.assertWhole(BUSY)
+
+    async def test_a_recap_waiting_for_its_audio_stops_the_move(self) -> None:
+        await self.seed()
+        await self.sql(
+            GUILD,
+            "UPDATE recap_jobs SET state = 'audio', audio_next_at = 0"
+            " WHERE guild_id = %s AND session_at = 100",
+            GUILD,
+        )  # fmt: skip
+        self.assertEqual(await self.move(), "reopened")
+        await self.assertWhole(BUSY)
+
+    async def test_an_import_being_read_stops_the_move(self) -> None:
+        await self.seed()
+        sid = (await self.snapshot(GUILD, ["transcript_sessions"]))["transcript_sessions"][0]
+        session_id = json.loads(sid)["id"]
+        await self.sql(
+            GUILD,
+            "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id, file_name,"
+            " imported_by, imported_at, state, claimed_at) VALUES (%s, %s, %s, %s, 'f.txt', %s, 1,"
+            " 'working', 1)",
+            GUILD, self.campaign.id, session_id, "a" * 32, OWNER,
+        )  # fmt: skip
+        self.assertEqual(await self.move(), "reopened")
+        await self.assertWhole(BUSY)
+
+    async def test_a_session_winding_down_in_the_bot_stops_the_move(self) -> None:
+        self.mover._busy = lambda guild, campaign: True
+        self.assertEqual(await self.move(), "reopened")
+        await self.assertWhole(BUSY)
+
+    async def test_an_audio_file_finished_after_the_copy_still_arrives(self) -> None:
+        await self.seed()
+        real = CampaignStore.move_in
+
+        async def late_file(store: CampaignStore, *a: Any, **kw: Any) -> str:
+            self.audio_file(GUILD, "recaps/300/recap-mix.mp3")  # the worker finishes meanwhile
+            return await real(store, *a, **kw)
+
+        with patch.object(CampaignStore, "move_in", late_file):
+            self.assertEqual(await self.move(), "moved")
+        base = self.audio_root / str(OTHER_GUILD) / self.campaign.id / "recaps"
+        self.assertTrue((base / "300/recap-mix.mp3").is_file())
+        self.assertTrue((base / "100/recap-voice.mp3").is_file())
+        self.assertFalse((self.audio_root / str(GUILD) / self.campaign.id).exists())
+
+    async def test_a_campaign_that_changed_hands_ends_the_offer_and_tells_only_the_new_owner(
+        self,
+    ) -> None:
+        await self.sql(
+            GUILD,
+            "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
+            CO_DM, GUILD, self.campaign.id,
+        )  # fmt: skip
+        self.assertEqual(await self.move(), "ended")
+        offer = await self.row_of_offer()
+        assert offer is not None
+        self.assertEqual(offer["status"], "withdrawn")
+        [told] = self.told
+        self.assertEqual((told.result, told.reason), ("ended", CHANGED_HANDS))
+        self.assertEqual(await self.campaigns_in(OTHER_GUILD), [])

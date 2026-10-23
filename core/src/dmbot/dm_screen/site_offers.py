@@ -32,6 +32,7 @@ from dmbot.campaigns.moves import HandoverMover, Moved
 from dmbot.dm_screen.handover import (
     ACCEPTED,
     DECLINED,
+    MOVE_ENDED_NEW_OWNER,
     MOVE_FAILED,
     MOVE_FAILED_NEW_OWNER,
     MOVED_NEW_OWNER,
@@ -205,6 +206,15 @@ class SiteOffers:
                         MOVE_FAILED_NEW_OWNER.format(campaign=name, reason=moved.reason),
                         allowed_mentions=NO_PINGS,
                     )
+        elif moved.result == "ended" and new is not None and offer.to_user_id:
+            # The owner changed meanwhile, so the former owner has nothing to hear: only the person
+            # who accepted is told, and the offer is over.
+            with contextlib.suppress(discord.HTTPException):
+                member = await _member(new, offer.to_user_id)
+                await member.send(
+                    MOVE_ENDED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                    allowed_mentions=NO_PINGS,
+                )
         elif moved.result == "moved":
             if old is not None and new is not None:
                 with contextlib.suppress(discord.HTTPException):

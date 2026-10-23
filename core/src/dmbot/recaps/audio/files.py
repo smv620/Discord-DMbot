@@ -82,6 +82,22 @@ class AudioFiles:
             shutil.rmtree(side, ignore_errors=True)
             raise
 
+    def catch_up(self, from_guild: int, to_guild: int, campaign_id: str) -> None:
+        """After a move has committed: copy what is newer in the old folder (a file finished
+        after the first copy) or missing from the new one, so removing the old folder loses none."""
+        source = self._campaign(from_guild, campaign_id)
+        target = self._campaign(to_guild, campaign_id)
+        if not source.is_dir():
+            return
+        for path in source.rglob("*"):
+            if not path.is_file():
+                continue
+            there = target / path.relative_to(source)
+            if there.exists() and there.stat().st_mtime >= path.stat().st_mtime:
+                continue
+            there.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, there)
+
     def forget_campaign(self, guild_id: int, campaign_id: str) -> None:
         shutil.rmtree(self._campaign(guild_id, campaign_id), ignore_errors=True)
 

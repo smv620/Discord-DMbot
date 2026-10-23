@@ -12020,15 +12020,15 @@ HANDOVER_MOVE = """
     -- A campaign handed over by email to a person who wants it in another server (#2532, slice C;
     -- docs/PLAN.md, "Hand-over by email", point 7). The website cannot copy a campaign between
     -- servers (it must never read or write another server's tables), so it only records the wish
-    -- here: `move_to_guild_id`. DMbot's bot then moves the campaign like loading a backup into that
-    -- server, and records the copy it made in `moved_campaign_id`, so a retry reuses it and never
-    -- makes a second. While a move is asked for, the offer stays 'open' but cannot be answered,
-    -- taken back or run out. Two new columns on an existing table: no rows change.
+    -- here: `move_to_guild_id`. DMbot's bot then moves the campaign: one update of its row, which
+    -- migration 0215 lets every table follow. (`moved_campaign_id` was for an earlier design that
+    -- copied the campaign; nothing writes it.) While a move is asked for, the offer stays 'open'
+    -- but cannot be answered, taken back or run out. Two new columns on an existing table: no
+    -- rows change.
     ALTER TABLE campaign_handover_offers
         ADD COLUMN move_to_guild_id BIGINT
             CHECK (move_to_guild_id IS NULL OR move_to_guild_id > 0),
-        ADD COLUMN moved_campaign_id TEXT,
-        ADD COLUMN move_claimed_at BIGINT;  -- the bot's lease on a move that is under way
+        ADD COLUMN moved_campaign_id TEXT;
 
     -- Claims the link for this person and asks for the move, in one step (#2532). Same rules as
     -- dmbot_handover_open with a claim, and the target must be one of the session's own servers
@@ -12042,16 +12042,12 @@ HANDOVER_MOVE = """
         changed INTEGER;
     BEGIN
         IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
-           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
-            RETURN false;  -- (the caller connects scoped to the campaign's server, like every door)
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
+            RETURN false;
         END IF;
         IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
             RETURN false;
         END IF;
-        -- Whether DMbot is installed in the target is a fact of the TARGET server, whose rows are
-        -- visible only when scoped to it: so the door looks there for this one read and comes
-        -- straight back. It reads nothing else there.
         PERFORM set_config('dmbot.guild_id', p_target::text, true);
         SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
             INTO ready;
@@ -12070,9 +12066,6 @@ HANDOVER_MOVE = """
               AND c.guild_id = f.guild_id AND c.id = f.campaign_id
               AND c.owner_user_id = f.from_user_id;
         GET DIAGNOSTICS changed = ROW_COUNT;
-        IF changed = 1 THEN  -- wakes the bot, which does the move (a sweep catches a missed one)
-            PERFORM pg_notify('dmbot_handover_move', g::text || ':' || o::text);
-        END IF;
         RETURN changed = 1;
     END
     $fn$;
@@ -12136,6 +12129,64 @@ CAMPAIGN_MOVE_CASCADE = """
             EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', r.tbl, r.conname);
         END LOOP;
     END $$;
+
+    -- The bot's lease on a move that is under way, and the door that asks for a move, made again
+    -- (0214 is the same as it was when it first shipped): it now also checks that the caller is
+    -- scoped to the campaign's server, goes back to that scope when the target has no DMbot,
+    -- and wakes the bot. A new column and a function: no rows change.
+    ALTER TABLE campaign_handover_offers ADD COLUMN move_claimed_at BIGINT;
+    CREATE OR REPLACE FUNCTION dmbot_handover_request_move(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_target BIGINT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ready BOOLEAN;
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;  -- (the caller connects scoped to the campaign's server, like every door)
+        END IF;
+        IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN false;
+        END IF;
+        -- Whether DMbot is installed in the target is a fact of the TARGET server, whose rows are
+        -- visible only when scoped to it: so the door looks there for this one read and comes
+        -- straight back. It reads nothing else there.
+        PERFORM set_config('dmbot.guild_id', p_target::text, true);
+        SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
+            INTO ready;
+        IF NOT ready THEN
+            PERFORM set_config('dmbot.guild_id', g::text, true);  -- back where the caller was
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers f
+            SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80),
+                move_to_guild_id = p_target
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND f.move_to_guild_id IS NULL
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN  -- wakes the bot, which does the move (a sweep catches a missed one)
+            PERFORM pg_notify('dmbot_handover_move', g::text || ':' || o::text);
+        END IF;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
 
     -- The one write that may take a campaign out of the server in scope: the move sets both
     -- settings in its own transaction (campaigns/moves.py), and the policy then lets that one
