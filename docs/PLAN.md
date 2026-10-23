@@ -5110,7 +5110,9 @@ says, and DMs would not pay for a service that claims their campaigns.
   anything else DMbot writes from a session stay with the campaign when a player leaves, and are
   deleted only when the campaign is deleted.
 - **Who may delete a campaign:** the game master whose plan it uses (`owner_user_id`; for a free
-  campaign, the DM who started it). Other game masters manage it but cannot delete it. Built (#1608, PR #1618):
+  campaign, the DM who started it). Other game masters manage it but cannot delete it. *(Supervisor,
+  2026-10-23, #2556:)* a campaign with **no owner yet** may be deleted by any of its game masters, with
+  the same steps, because taking it on first would need a free slot on their plan. Built (#1608, PR #1618):
   ⚙️ Settings → 🗑 Delete this campaign, the plan holder only (checked again under the campaign
   lock), not during a session, one warning and a typed name; its channels go as retention's do.
 - **Severable personal data is deleted on request, best effort:** a person's own lines and what DMbot
