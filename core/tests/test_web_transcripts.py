@@ -319,9 +319,12 @@ class Transcripts(Base):
         self.assertEqual(shown["lines"], body.rstrip("\n").split("\n"))
         joined = "\n".join(shown["lines"])
         self.assertIn("Ka'zeth draws his sword", joined)  # names fixed
-        for hidden in ("DM Sidebar", "is the ferryman hostile", "Probably not", "(typed)",
-                       "did you see the match", "long rest"):  # fmt: skip
+        for hidden in ("DM Sidebar", "is the ferryman hostile", "Probably not",
+                       "did you see the match"):  # fmt: skip
             self.assertNotIn(hidden, joined)
+        # typed game chat is in the cleaned version too, tagged (typed) (#2447)
+        self.assertIn("(typed)", joined)
+        self.assertIn("long rest", joined)
         self.assertIn("skipped", joined)  # the off-topic run is a note with how long it lasted
 
     async def test_it_says_the_names_are_numbered_and_shows_nobodys_discord_id(self) -> None:
@@ -372,7 +375,7 @@ class Transcripts(Base):
     async def test_the_cleaned_numbering_has_no_gap_for_someone_it_hides(self) -> None:
         lines = [
             Line(1, 7, "a", "a"),
-            Line(2, 8, "typed only", "typed only", typed=True),
+            Line(2, 8, "typed only", "typed only", typed=True, topic="off_topic"),
             Line(3, 9, "b", "b"),
         ]
         self.assertEqual(

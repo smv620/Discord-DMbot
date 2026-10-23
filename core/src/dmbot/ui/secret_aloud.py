@@ -12,6 +12,7 @@ question; the next session asks again if a player says it again.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -21,6 +22,8 @@ from dmbot.dm_screen import secret_posts
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
+
+log = logging.getLogger(__name__)
 
 NOT_YOURS = "Only this campaign's DM can answer this. Ask your DM."
 NO_CAMPAIGN = "I can't find this campaign any more, so nothing was changed."
@@ -89,6 +92,26 @@ def opened_text(name: str, entries: int = 1) -> str:
         f"✅ **{name}** is no longer secret. DMbot may now use it in answers to players. "
         "You can make it secret again from the name's card."
     )
+
+
+async def settle(bot: Any, campaign: Any, alias_id: str) -> None:
+    """The DM answered about this name, so the exposure the session recorded for it is settled and
+    the summary will not ask again (#2410). Nothing here changes what the players see."""
+    exposures = getattr(bot, "exposures", None)
+    if exposures is None:
+        return
+    # The session running now, if the answer comes during it (its exposure is recorded at the end)
+    # (Any answer, "keep it secret" too, settles it for the rest of the session on purpose: the DM
+    # was asked and decided, so the summary does not ask again.)
+    table = getattr(bot, "tables", {}).get(campaign.guild_id)
+    session_at: int | None = None
+    if table is not None and table.campaign_id == campaign.id:
+        session_at = table.started_at or None
+    try:
+        await exposures.settle_alias(campaign.guild_id, campaign.id, alias_id, session_at)
+    except Exception as exc:  # bookkeeping must never cost the DM their answer
+        # (the error's text can carry a name, so only its type is logged)
+        log.warning("Couldn't settle a secret exposure: %s", type(exc).__name__)
 
 
 def name_in(interaction: discord.Interaction) -> str:
@@ -168,6 +191,7 @@ class SecretAloudButton(
             await interaction.response.edit_message(
                 content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
+            await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
             secret_posts.answered(interaction, self.campaign_id)  # (#2156)
             return
         memory = bot.memory
@@ -186,6 +210,7 @@ class SecretAloudButton(
         await interaction.response.edit_message(
             content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )
+        await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
         secret_posts.answered(interaction, self.campaign_id)  # (#2156)
 
 

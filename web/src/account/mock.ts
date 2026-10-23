@@ -669,6 +669,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  const lateLooks = new Map<string, number>();
   const settingAnswers = new Map<string, { ref: string; setting: CampaignSettingName; value: string; confirm?: boolean }>();
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
@@ -1031,6 +1032,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (!asked || asked.ref !== ref) throw new ApiError("not-found");
       const base = { setting: asked.setting, value: asked.value, note: "", error: "" };
       if (/\.cs-offline$/.test(ref)) return { ...base, state: "waiting" };
+      // `.cs-late`: the bot answers on the 40th look, long after the page gave up waiting live.
+      if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
+        return { ...base, state: "waiting" };
       if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
       if (/\.cs-failed$/.test(ref)) return { ...base, state: "failed", error: "failed" };
       if (asked.setting === "retention" && asked.value === "30" && asked.confirm !== true)

@@ -19,7 +19,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from dmbot.db import Conn
-from dmbot.memory._changes import BELIEFS, PERSPECTIVES, RELATIONS, Changes, Scope
+from dmbot.memory._changes import (
+    BELIEFS,
+    ENTITIES,
+    PERSPECTIVES,
+    RELATIONS,
+    Changes,
+    Scope,
+)
 from dmbot.memory.models import (
     BELIEF_STATUSES,
     CONFIRMED,
@@ -27,6 +34,7 @@ from dmbot.memory.models import (
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
     KNOWN,
+    MAGICALLY_VERIFIED,
     PARTY,
     REVEALED_FACT,
     SECRET_PLOT,
@@ -45,7 +53,7 @@ def belief_of(row: dict[str, Any]) -> Belief:
     return Belief(
         row["id"], row["perspective_id"], row["relation_id"], float(row["confidence"]),
         row["status"], row["session_at"], tuple(row["evidence_ids"]), int(row["seq"]),
-        row["recorded_at"],
+        row["recorded_at"], bool(row.get("pinned", False)),
     )  # fmt: skip
 
 
@@ -93,8 +101,10 @@ async def _add(
     status: str,
     evidence: Sequence[str] = (),
     session_at: int | None = None,
+    pinned: bool | None = None,
 ) -> dict[str, Any]:
-    """The checked insert behind `believe_in` and `follow`."""
+    """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
+    keeps what the pair's last belief said, so a new belief never silently unpins."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
     if status not in BELIEF_STATUSES:
@@ -121,8 +131,44 @@ async def _add(
             "evidence_ids": list(evidence),
             "seq": seq,
             "recorded_at": w.now,
+            "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
         },
     )
+
+
+async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:
+    """The DM's 📌 on a connection (#2447): The truth believes it at 1.0, held as the DM's word.
+    A new belief row, so the change log has it and Undo takes it back. Only the DM, and only a
+    confirmed connection. Unpinning clears the flag and leaves the belief as it is."""
+    if w.source != DM:
+        raise MemoryRuleError(ONLY_THE_DM)
+    relation = await w.get(RELATIONS, relation_id)
+    if relation is None or relation["status"] != CONFIRMED:
+        raise MemoryRuleError(NOT_THERE)
+    ids = await perspective_ids(w)
+    last = await _newest(w, [relation_id])
+    truth = last.get((relation_id, ids[TRUTH]))
+    held = bool(relation["secret"] or relation["unrevealed"])
+    if truth is None:
+        status, session_at, evidence = (SECRET_PLOT if held else REVEALED_FACT), None, []
+    else:
+        status, session_at, evidence = truth["status"], truth["session_at"], truth["evidence_ids"]
+    if pinned:
+        if truth is not None and bool(truth["pinned"]):
+            return belief_of(truth)  # already pinned: nothing to write
+        if status not in (SECRET_PLOT, REVEALED_FACT, MAGICALLY_VERIFIED):
+            status = SECRET_PLOT if held else REVEALED_FACT  # a doubt or a lie is not 100% truth
+        row = await _add(
+            w, ids[TRUTH], relation_id, KNOWN, status, evidence, session_at, pinned=True
+        )
+    else:
+        if truth is None or not bool(truth["pinned"]):
+            raise MemoryRuleError("That connection isn't pinned.")
+        row = await _add(
+            w, ids[TRUTH], relation_id, float(truth["confidence"]), status, evidence,
+            session_at, pinned=False,
+        )  # fmt: skip
+    return belief_of(row)
 
 
 async def believe_in(
@@ -267,6 +313,7 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
                 row["status"],
                 list(row["evidence_ids"]),
                 row["session_at"],
+                bool(row["pinned"]),
             )
 
         same = mine is not None and shape(mine) == shape(belief)
@@ -276,7 +323,7 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
             continue  # (the flag decides what the players know; see `follow`)
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
-            list(belief["evidence_ids"]), belief["session_at"],
+            list(belief["evidence_ids"]), belief["session_at"], pinned=bool(belief["pinned"]),
         )  # fmt: skip
 
 
@@ -320,4 +367,31 @@ def party_knows(table: str = "memory_relations") -> str:
         " AND pb.confidence >= 1.0 AND pb.seq = (SELECT max(x.seq) FROM memory_beliefs x"
         "  WHERE x.guild_id = pb.guild_id AND x.campaign_id = pb.campaign_id"
         "  AND x.perspective_id = pb.perspective_id AND x.relation_id = pb.relation_id))"
+    )
+
+
+async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
+    """A merged-away character's beliefs become the kept entry's (#2438, #2433). The kept entry
+    gets a perspective if it had none, and every belief of the other entry's moves onto it. History
+    is kept, so a pair both believed has both rows and the newest (highest `seq`) is the one read.
+    The beliefs move through the change log, so Undo puts them back; the emptied perspective stays
+    on the merged-away entry (perspectives are not logged: an Undo never takes one from beliefs
+    resting on it)."""
+    gone_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [gone_id])
+    if not gone_p:
+        return
+    keep_p = await w.select(PERSPECTIVES, " AND entity_id = %s", [keep_id])
+    if keep_p:
+        target = keep_p[0]["id"]
+    else:
+        target = new_id()
+        kept = await w.get(ENTITIES, keep_id)
+        # (the kept entry's own kind: a player's character holds beliefs as one, anything else
+        # as an NPC; the merged one's kind is not copied)
+        kind = "pc" if kept is not None and kept["played_by"] is not None else "npc"
+        await w.insert(
+            PERSPECTIVES, {"id": target, "kind": kind, "entity_id": keep_id, "created_at": w.now}
+        )
+    await w.update_where(
+        BELIEFS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
     )
