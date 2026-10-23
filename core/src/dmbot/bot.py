@@ -161,6 +161,8 @@ from dmbot.dm_screen.npcs_channel import forget_campaign as npcs_forget_campaign
 from dmbot.dm_screen.npcs_channel import prune_locks as npcs_prune_locks
 from dmbot.dm_screen.npcs_channel import sync_campaign as sync_npcs
 from dmbot.dm_screen.pause import PauseButton
+from dmbot.dm_screen.peek_notices import PeekNotices
+from dmbot.dm_screen.peek_notices import notice as peek_notice
 from dmbot.dm_screen.quiet_stop import (
     CANCELLED,
     KeepListeningButton,
@@ -1035,6 +1037,7 @@ class DMBot(commands.AutoShardedBot):
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         # What DMs did on the website's All names page, waiting to be applied (#2294).
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
+        self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
             int, asyncio.Task[None]
@@ -10269,6 +10272,10 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_name_actions()
             except Exception as exc:
                 log.warning("The name actions failed: %s", type(exc).__name__)
+            try:
+                await self.run_peek_notices()
+            except Exception as exc:
+                log.warning("The peek notices failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -10278,6 +10285,8 @@ class DMBot(commands.AutoShardedBot):
                             await self.name_answers.sweep(guild.id)
                         if self.name_actions is not None:
                             await self.name_actions.sweep(guild.id)
+                        if self.peek_notices is not None:
+                            await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
@@ -10312,6 +10321,21 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
+
+    async def run_peek_notices(self) -> None:
+        """Tell the DM, on the DM screen, that a player turned the peek on (#2404): one line for
+        each visit, taken from the website's peek door's rows. Nothing but the person's display
+        name is in it."""
+        store = self.peek_notices
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            for peek in await store.take(guild.id):
+                with log_context(guild_id=guild.id, campaign_id=peek.campaign_id):
+                    campaign = await self.campaigns.get(guild.id, peek.campaign_id)
+                    if campaign is None or not campaign.dm_screen_channel_id:
+                        continue
+                    await self.post(campaign.dm_screen_channel_id, peek_notice(peek.name))
 
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
