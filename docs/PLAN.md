@@ -3147,6 +3147,17 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     never read.
   - **Consent:** the consent message says DMbot also reads images posted in the table chat, so the consent
     terms version goes up and everyone is asked again.
+  - *Built, part 1 (CloudDev, 2026-10-23, #2450): the reading, not yet wired to the chat.* The AI client can
+    be sent an image with a request (`ai.Image`; bytes sent once, never stored or logged). `dmbot.images` holds
+    the prompts (the image is **data**: writing in it is only described, never obeyed), the answer's shape check
+    and length caps (a description of at most 400 characters, a picture of text's words up to 1,500, at most 40
+    places), the check that an attachment link is Discord's own file host over https (`cdn.discordapp.com`,
+    `media.discordapp.net`, no look-alikes, no sign-in part), and the guarded fetch (`fetch(..., images=True)`:
+    pictures only, 10 MB, redirects kept to Discord's hosts), with the type taken from the file's first bytes
+    and not from its name. `read` makes one fast call for the description; a map is read again by the careful
+    model for its places and layout. Nothing in the bot calls it yet: part 2 (table-chat wiring, the transcript
+    line, the day's limit and the consent terms bump, together, so nothing is read before people agree), part 3
+    (the map table for MapBot) and part 4 (the text reply and ✏️ Fix) follow.
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.
