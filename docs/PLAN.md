@@ -4762,7 +4762,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     and server, row-level security, gone with the campaign, left out of backups) and three website doors: send (a DM
     of the campaign; at most 1,000 characters; one waiting at a time, and one the bot never answered is given up after
     ten minutes; at most 15 of the DM's messages on an issue, which belongs to one text of the recap, so a changed text
-    starts afresh),
+    starts afresh), and at most 30 from a campaign's DMs in an hour (`too_soon`; the website refuses a message when PlotBot's switch is off),
     read, and Save / Not that on one of PlotBot's proposals. The website has no AI key, so the message is queued and the
     bot answers on a second row (slice 2), as for the typed notes of #2113. A DM reads only their own talk (a co-DM's is
     not theirs); it is never in a transcript or on a public link and never logged. Routes `POST/GET
