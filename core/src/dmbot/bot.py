@@ -3064,7 +3064,9 @@ class DMBot(commands.AutoShardedBot):
                 suggested, waiting = await self.suggestions.session_counts(gid, session_id)
             except Exception:
                 log.exception("Couldn't count the session's suggested fixes")
-        edited = sum(1 for n in table.fix_notes.notes if n.fix.how == DM_EDIT and not n.undone)
+        edited = sum(
+            1 for n in table.fix_notes.notes if n.fix.how in (DM_EDIT, IMAGE_EDIT) and not n.undone
+        )
         unanswered = sum(
             1
             for why in table.questions.closed_why.values()
@@ -5300,10 +5302,16 @@ class DMBot(commands.AutoShardedBot):
                 message_id,
                 image=True,
             )
-            await self._say_image_text(table, user_id, start_ms + n, channel_id, read)
+            await self._say_image_text(table, user_id, start_ms + n, channel_id, read, message_id)
 
     async def _say_image_text(
-        self, table: Table, user_id: int, started_ms: int, channel_id: int, read: images.Read | None
+        self,
+        table: Table,
+        user_id: int,
+        started_ms: int,
+        channel_id: int,
+        read: images.Read | None,
+        message_id: int = 0,
     ) -> None:
         """A picture of writing: the words DMbot read, said in the chat it was posted in, with
         ✏️ Fix for the poster or a DM (#2450). Only the words of the picture, quoted: never DM
@@ -5315,6 +5323,7 @@ class DMBot(commands.AutoShardedBot):
             or not read.text
             or not channel_id
             or session_id is None
+            or (message_id and message_id in self._deleted_messages)  # the picture is gone
             or not self._still_recorded(table, user_id)
             or not self.consent.has_image_consent(table.guild_id, user_id)
         ):
@@ -7025,7 +7034,13 @@ class DMBot(commands.AutoShardedBot):
             return fix_notes.ONLY_DM, None
         note = table.fix_notes.find(note_id)
         assert note is not None
-        if not self.consent.has_consent(guild_id, note.speaker):
+        # A picture's words need the speaker's yes to pictures, as writing them did.
+        agreed = (
+            self.consent.has_image_consent
+            if note.fix.how == IMAGE_EDIT
+            else self.consent.has_consent
+        )
+        if not agreed(guild_id, note.speaker):
             self._redraw_fix_notes(table)  # their line shouldn't be listed any more
             return fix_notes.STOPPED, None
         undone = table.fix_notes.undo(note_id)  # before any await: undone once
@@ -7047,7 +7062,7 @@ class DMBot(commands.AutoShardedBot):
                 self.lookup.mark_stale(guild_id, table.campaign_id)
             allow = (table.campaign_id, written.batch) if written.batch is not None else None
         self._redraw_fix_notes(table)
-        if not self.consent.has_consent(guild_id, note.speaker):
+        if not agreed(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # their words aren't put back anywhere
         changed = await self._rewrite_line(
             table,
@@ -7056,7 +7071,7 @@ class DMBot(commands.AutoShardedBot):
             table.fix_notes.line_text(note),
             image=note.fix.how == IMAGE_EDIT,
         )
-        if not self.consent.has_consent(guild_id, note.speaker):
+        if not agreed(guild_id, note.speaker):
             return fix_notes.STOPPED, allow  # stopped meanwhile: nothing about their line
         if note.fix.how in (DM_EDIT, IMAGE_EDIT):
             return fix_notes.edit_done_text(line_kept=not changed), None
@@ -7177,9 +7192,10 @@ class DMBot(commands.AutoShardedBot):
         changed (a database error, logged), the channel isn't either, so "That line stays
         as heard" is true everywhere."""
         guild_id, found, edited = table.guild_id, False, False
+        agreed = self.consent.has_image_consent if image else self.consent.has_consent
         # The saved line: hold the save lock, so a batch being saved can't miss this.
         async with table.save_lock:
-            if self.consent.has_consent(guild_id, speaker):
+            if agreed(guild_id, speaker):
                 found = table.unsaved.relabel(speaker, started_ms, text, image=image)
                 session_id = table.transcript_session_id
                 if not found and self.transcripts is not None and session_id is not None:
@@ -7200,7 +7216,7 @@ class DMBot(commands.AutoShardedBot):
             # the chat back into the channel.
             hidden = (speaker, started_ms) in table.hidden
             # (a typed line, a picture's too, is never in the channel)
-            if self.consent.has_consent(guild_id, speaker) and not hidden and not image:
+            if agreed(guild_id, speaker) and not hidden and not image:
                 edit = table.transcript.relabel(speaker, started_ms, text, time.monotonic())
                 if edit is not None:
                     message, content = edit
@@ -7217,7 +7233,7 @@ class DMBot(commands.AutoShardedBot):
                     except Exception:
                         log.exception("Couldn't edit a transcript message with a name change")
         changed = found or edited
-        if changed and not image and self.consent.has_consent(guild_id, speaker):
+        if changed and not image and agreed(guild_id, speaker):
             self._line_changed(table, speaker, started_ms, text)
         return changed
 

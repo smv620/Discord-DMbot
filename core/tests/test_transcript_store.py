@@ -1061,11 +1061,27 @@ class BotTests(DatabaseTest):
         self.assertIn("new mill", next(t for h, t in rows.items() if "mill" in h))
         (note,) = table.fix_notes.shown()  # listed with Undo, as other whole-line fixes
         self.assertEqual(note.fix.written, new)
-        text, allow = await self.bot.undo_fix(GUILD, note.id, DM)
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            text, allow = await self.bot.undo_fix(GUILD, note.id, DM)
         self.assertIn("Undone", text)
         self.assertIsNone(allow)  # no name was learned
         rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
         self.assertIn("old mill", next(t for h, t in rows.items() if "mill" in h))
+
+    async def test_undo_of_a_picture_fix_also_needs_the_posters_yes_to_pictures(self) -> None:
+        table, sid, started = await self.image_setup()
+        self.bot.memory = MagicMock(add_correction=AsyncMock())
+        new = 'a picture: A note. Text written on it: "Meet at the new mill."'
+        with patch.object(self.bot.consent, "has_image_consent", return_value=True):
+            await self.bot.apply_line_fix(
+                GUILD, table.campaign_id or "", sid, PLAYER, started, new, image=True
+            )
+        (note,) = table.fix_notes.shown()
+        with patch.object(self.bot.consent, "has_image_consent", return_value=False):
+            text, _ = await self.bot.undo_fix(GUILD, note.id, DM)
+        self.assertNotIn("Undone", text)  # their yes to pictures is gone: nothing is touched
+        rows = {x.heard: x.text for x in await self.store.lines(GUILD, sid)}
+        self.assertIn("new mill", next(t for h, t in rows.items() if "mill" in h))
 
     async def test_a_picture_fix_needs_the_posters_yes_to_pictures(self) -> None:
         table, sid, started = await self.image_setup()

@@ -48,13 +48,21 @@ UNDO_HERE = "Made a mistake? Press Undo in ✏️ Name fixes to check."
 MODAL_TITLE = "Fix the words in this picture"
 MODAL_LABEL = "What does it say?"
 
+_PLAIN_START = re.compile(r"^(#|-#|-|\*|\+|\d+(?=\.))")
 _TEMPLATE = r"dmbot:imgfix:(?P<session>[0-9a-f]{32}):(?P<user>[0-9]{1,20}):(?P<started>[0-9]{1,16})"
+
+
+def _quoted(line: str) -> str:
+    if not line:
+        return ">"
+    # A leading #, - or "1." would make a heading or a list inside the quote: a backslash stops it.
+    return "> " + _PLAIN_START.sub(lambda m: "\\" + m[1], escape(line))
 
 
 def reply_text(words: str) -> str:
     """The reply: the heading, then the words quoted, one `>` per line, shown exactly as read (no
-    bold, links or pings) and cut to fit one Discord message."""
-    quoted = "\n".join(f"> {escape(line)}" if line else ">" for line in words.split("\n"))
+    bold, links, pings, headings or lists) and cut to fit one Discord message."""
+    quoted = "\n".join(_quoted(line) for line in words.split("\n"))
     return fit_message(f"{HEADING}\n{quoted}", limit=MESSAGE_MAX)
 
 

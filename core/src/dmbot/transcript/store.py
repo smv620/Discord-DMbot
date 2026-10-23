@@ -278,14 +278,21 @@ class TranscriptStore:
         changes; `text` goes back to NULL when it's the same as heard. How many lines
         changed (0: it wasn't saved). `image`: the line is a described picture (#2450), which is
         a typed line, so it is kept apart from the person's speech."""
-        kind = "typed AND image" if image else "NOT typed"
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
+        # (two fixed statements, so no part of a query is ever built from input)
+        if image:
+            query = (
                 "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
-                f" AND sidebar IS NULL AND {kind}",  # (a fixed choice of two, never user input)
-                (text, session_id, user_id, started_ms),
+                " AND sidebar IS NULL AND typed AND image"
             )
+        else:
+            query = (
+                "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL AND NOT typed"
+            )
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(query, (text, session_id, user_id, started_ms))
             return cur.rowcount
 
     async def image_line(

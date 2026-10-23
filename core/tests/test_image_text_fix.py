@@ -61,6 +61,12 @@ class TheReply(unittest.TestCase):
         self.assertNotIn("https://", text)
         self.assertNotIn("**bold**", text)
 
+    def test_a_line_that_starts_like_a_heading_or_list_stays_plain(self) -> None:
+        text = image_fix.reply_text("# Big\n- item\n1. first\nplain")
+        self.assertEqual(
+            text.split("\n")[1:], ["> \\# Big", "> \\- item", "> \\1. first", "> plain"]
+        )
+
     def test_a_long_handout_fits_one_message(self) -> None:
         text = image_fix.reply_text("\n".join(f"line {n} of the handout" for n in range(400)))
         self.assertLessEqual(len(text), MESSAGE_MAX)
