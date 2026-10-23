@@ -31,6 +31,7 @@ Nothing here prints a line of the file; errors name the format or the speakers, 
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -47,6 +48,8 @@ SPEAKER_BASE = 100  # made-up speaker numbers, so none can be mistaken for a rea
 LINE_MS = 1000  # a file with no times: one second a line keeps the order
 # Braced tags in DMbot's download that say what a line is, not who a character is.
 TAGS = frozenset({"narrating", "table_talk", "non-game_content"})
+
+log = logging.getLogger(__name__)
 
 _CLOCK = r"(?:(\d+):)?(\d{1,2}):(\d{2})"
 _DMBOT_HEAD = re.compile(r"^DMbot transcript:")
@@ -200,6 +203,11 @@ def _plain_style(lines: list[str]) -> _Style | None:
     for style in _PLAIN_STYLES:
         split = _plain_split(lines, style)
         if split is not None and sum(1 for found, _ in split[1] if found) * 2 > len(split[1]):
+            # One form per file: once most lines are `[Name]: words`, a wrapped line such as
+            # ` then he said: stop` is a continuation, not a new speaker.
+            bracketed = sum(1 for _, line in split[1] if _BRACKET_COLON.match(line))
+            if len(style) > 1 and bracketed * 2 > len(split[1]):
+                return (_BRACKET_COLON,)
             return style
     return None
 
@@ -241,12 +249,13 @@ def _cues(text: str, kind: str) -> Transcript:
     """WebVTT and SRT: a timing line, then the cue's text, which starts `Name:`."""
     out: list[Utterance] = []
     unnamed: list[int] = []  # cues with no speaker named
+    named = 0  # cues that did
     block: list[str] = []
     start = 0
     count = 0
 
     def close() -> None:
-        nonlocal block
+        nonlocal block, named
         if not block:
             return
         text = " ".join(block)
@@ -262,6 +271,7 @@ def _cues(text: str, kind: str) -> Transcript:
                 spoken = re.sub(r"</?[a-z][^<>]*>", "", words, flags=re.I).strip()
                 if spoken:
                     out.append(Utterance(who.strip(), start, spoken))
+            named += 1
             block = []
             return
         said = _CUE_SPEAKER.match(text)
@@ -269,6 +279,7 @@ def _cues(text: str, kind: str) -> Transcript:
             unnamed.append(count)
             block = []
             return
+        named += 1
         out.append(Utterance(said["who"].strip(), start, said["text"].strip()))
         block = []
 
@@ -296,7 +307,11 @@ def _cues(text: str, kind: str) -> Transcript:
     close()
     if not out and not unnamed:
         raise TranscriptError("the file has no cues in it")
-    if unnamed:
+    if unnamed and named > len(unnamed):
+        # Most cues name who speaks, so a stray `[music]` is a sound note, not a missing speaker.
+        # Counted in the log only (never a word of the file).
+        log.info("Transcript import: %d unnamed cue(s) skipped of %d", len(unnamed), count)
+    elif unnamed:
         raise TranscriptError(f"cue {unnamed[0]} does not say who is speaking", NO_SPEAKER_NAMES)
     return Transcript(kind, tuple(out))
 
