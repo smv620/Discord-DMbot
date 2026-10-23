@@ -1305,6 +1305,7 @@ class StopSavingButton(
                 emoji="🧪",
                 style=discord.ButtonStyle.danger,
                 custom_id=f"dmbot:testvoice:stop:{guild_id}",
+                row=1,  # on its own row, so the menu's own five stay together on the first
             )
         )
         self.guild_id = guild_id
@@ -1460,12 +1461,9 @@ def options_view(
     elif test_voice == "ask" and recording:
         view.add_item(SaveVoiceButton(guild_id))
     if recording:
-        # Off the record for a while (#2466), or back on it if they already are. Not in a test
-        # server's menu (it has no real table and a row holds five buttons: the menu stays at five).
-        if test_voice is None:
-            view.add_item(
-                ResumeButton(guild_id) if paused else OffRecordButton(guild_id, campaign_id)
-            )
+        # Off the record for a while (#2466), or back on it if they already are. In a test server's
+        # menu too: real people are recorded there. The test-voice button has its own row.
+        view.add_item(ResumeButton(guild_id) if paused else OffRecordButton(guild_id, campaign_id))
         view.add_item(StopButton(guild_id, campaign_id or "-"))
     else:
         view.add_item(StartButton(guild_id))
