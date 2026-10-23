@@ -42,7 +42,7 @@ def job(**kw: Any) -> Any:
     base = dict(
         state="ready", status="draft", title="The Silver Lock", game_day=4, session_at=AT,
         summary="《Tense》 Mira drew her blade.", housekeeping=("Mira has 4 HP.",),
-        last_error="", guild_id=GUILD,
+        last_error="", guild_id=GUILD, approved=True,
     )  # fmt: skip
     return SimpleNamespace(**{**base, **kw})
 
@@ -138,6 +138,38 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://site.example.com", said)  # the recap page
         self.assertIn("Leave it as is", said)  # the DM can always answer
         bot.recaps.decide.assert_not_awaited()
+
+    async def test_yes_on_a_draft_that_is_not_approved_approves_it_first(self) -> None:
+        """Posting an unapproved draft counts as approving it (#2122): the same approval door."""
+        button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recaps.approve = AsyncMock(return_value=True)
+        bot.settings.plot_check_on = True
+        bot.recaps.get = AsyncMock(
+            side_effect=[job(approved=False), job(status="posted", approved=True)]
+        )
+        await button.callback(interaction)
+        bot.recaps.approve.assert_awaited_once()
+        kwargs = bot.recaps.approve.await_args.kwargs
+        self.assertEqual((kwargs["post"], kwargs["plot_gate"]), (True, True))
+        bot.recaps.decide.assert_not_awaited()  # it did not post around the approval
+
+    async def test_yes_on_an_unapproved_draft_with_open_points_posts_nothing(self) -> None:
+        button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recaps.approve = AsyncMock(return_value=False)
+        bot.recaps.plot_open = AsyncMock(return_value=True)
+        bot.settings.plot_check_on = True
+        await button.callback(interaction)
+        self.assertIn("PlotBot has points", told(interaction))
+        self.assertIn("https://site.example.com", told(interaction))
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_yes_on_an_already_approved_draft_posts_it_as_before(self) -> None:
+        button, bot, interaction = press("yes", found=job(approved=True))
+        bot.recaps.approve = AsyncMock()
+        await button.callback(interaction)
+        bot.recaps.approve.assert_not_awaited()
+        bot.recaps.decide.assert_awaited_once()
 
     async def test_read_it_attaches_the_narration_to_the_last_message_when_there_is_some(
         self,

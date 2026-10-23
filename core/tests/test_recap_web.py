@@ -64,6 +64,16 @@ def callers(needle: str) -> set[str]:
 
 
 class Base(DatabaseTest):
+    async def speaker_agreed(self) -> None:
+        """The speaker whose lines the recap used has agreed to be recorded: posting an unapproved
+        draft approves it first (#2122), and approving checks that."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (THURSDAY.id, fx.ALICE, NOW, TERMS_VERSION),
+            )
+
     async def asyncSetUp(self) -> None:
         if not SUPERUSER_URL:
             if REQUIRE_DB:
@@ -563,6 +573,7 @@ class TheDmsPage(Base):
         self.assertEqual(await list_recaps(self.web, session), [])
 
     async def test_post_marks_it_for_the_bot_and_only_once(self) -> None:
+        await self.speaker_agreed()
         shown = await decide(self.web, self.session, self.ref, "post")
         self.assertEqual(shown["status"], "posting")
         self.assertFalse(shown["canEdit"] or shown["canPost"])
@@ -574,6 +585,7 @@ class TheDmsPage(Base):
     async def test_the_stored_posting_clock_is_readable_by_the_web_role(self) -> None:
         """#2435: the website's role can read the three columns (#2436 puts them in the answer);
         another DM's campaign is not readable at all."""
+        await self.speaker_agreed()
         await decide(self.web, self.session, self.ref, "post")
 
         async def stored(campaign: str) -> Any:
@@ -683,6 +695,7 @@ class TheRoutes(Base):
         self.assertFalse((await self.mail())["on"])
 
     async def test_list_read_edit_and_decide(self) -> None:
+        await self.speaker_agreed()
         listed = await self.client.get("/me/recaps")
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(len(listed.json()["recaps"]), 1)

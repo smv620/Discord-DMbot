@@ -257,6 +257,34 @@ class Answering(PlotBase):
         ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
         self.assertEqual(ok.status_code, 200, ok.text)
 
+    async def test_posting_an_unapproved_draft_approves_it_through_the_same_door(self) -> None:
+        """Posting counts as approving (Supervisor, 2026-10-23): a version is kept, and PlotBot's
+        open points hold it, on the website's Post as on its Approve."""
+        await self.checked()
+        issue = await self.issue("a1")
+        held = await self.client.post(f"/me/recaps/{self.ref}/post")
+        self.assertEqual((held.status_code, held.json()["error"]), (409, "plot_open"))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.status, job.approved_hash), ("draft", ""))  # nothing posted
+        await self.answer(issue, "leave")
+        ok = await self.client.post(f"/me/recaps/{self.ref}/post")
+        self.assertEqual(ok.status_code, 200, ok.text)
+        job = await self.state(self.one.id)
+        self.assertEqual(job.status, "posting")
+        self.assertTrue(job.approved_hash)  # approved on the way
+        from dmbot.recaps.accepted import AcceptedStore
+
+        [kept] = await AcceptedStore(self.db).versions(THURSDAY.id, self.one.id, 100)
+        self.assertEqual(kept.version, 1)  # and its text kept as the session's summary
+
+    async def test_posting_an_already_approved_draft_is_as_before(self) -> None:
+        await self.checked()
+        ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
+        self.assertEqual(ok.status_code, 200)
+        await self.issue("late")  # found after the approval: the approval stands
+        again = await self.client.post(f"/me/recaps/{self.ref}/post")
+        self.assertEqual(again.status_code, 200, again.text)
+
     async def test_approve_while_the_check_is_still_running_goes_ahead(self) -> None:
         await self.checked(state="running")
         ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})

@@ -114,14 +114,15 @@ class PlotStore:
         calls: int,
     ) -> int:
         """Write the findings and mark the check done, in one step, but only if the recap's text is
-        still the one that was checked (an edit meanwhile makes the answer about old words) and the
-        recap is still a draft (one just approved or posted is not written onto).
-        Returns how many issues were written."""
+        still the one that was checked (an edit meanwhile makes the answer about old words) and it
+        is still an unapproved draft (an approved one is still a 'draft' with the same text, and is
+        not written onto either). Returns how many issues were written."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                f" AND session_at = %s AND status = 'draft' AND {_HASH} = %s",
+                f" AND session_at = %s AND status = 'draft'"
+                f" AND approved_hash <> {_HASH} AND {_HASH} = %s",
                 (guild_id, campaign_id, session_at, digest),
             )
             same = await cur.fetchone() is not None
