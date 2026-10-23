@@ -77,6 +77,7 @@ def message(
         webhook_id=webhook,
         type=kind,
         interaction_metadata=interaction,
+        attachments=[],
         created_at=dt.datetime(2026, 10, 13, 12, 0, tzinfo=dt.UTC),
     )
 
