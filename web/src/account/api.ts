@@ -164,6 +164,9 @@ export interface HandoverServer {
   current: boolean;
   /** False: DMbot has to be added to it first. */
   botIn: boolean;
+  /** Why the campaign can't move to this server: a code (today `shares_rules`), never set on the server
+   * it runs on now. Missing from an API older than #2550. */
+  why?: string | null;
 }
 
 /** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
@@ -178,6 +181,9 @@ export type HandoverLook =
       canAccept: boolean;
       why: null | "try_it" | "no_plan" | "no_slot" | "owner";
       servers: HandoverServer[];
+      /** A plain sentence, safe to show, on why the move this person asked for last time did not happen; the
+       * offer is open again. Only the person who accepted ever gets one. Missing from an API older than #2550. */
+      moveFailed?: string | null;
     };
 
 /** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
@@ -1165,6 +1171,7 @@ export type ApiErrorKind =
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "shares-rules" // the campaign shares a rule set, so it can't move to another server yet (#2550)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1215,7 +1222,9 @@ export interface AccountApi {
   takeBackHandover?(ref: string): Promise<void>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
-  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  /** `{moving: true}` (HTTP 202) when the campaign has to move to another server first: the bot does it within
+   * about a minute (#2550). */
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string } | { moving: true }>;
   handoverDecline?(token: string): Promise<void>;
   /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
   addDiscordUrl?(): string;
@@ -1463,6 +1472,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   owner: "owner-offer",
   bad_server: "bad-server",
   last_account: "last-account",
+  shares_rules: "shares-rules",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1663,8 +1673,10 @@ export function httpApi(
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
     },
     handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
-    handoverAccept: async (token, serverId) =>
-      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverAccept: async (token, serverId) => {
+      const got = (await call("POST", "/me/handover/accept", { token, serverId })) as { status?: string; campaignRef?: string };
+      return got.status === "moving" ? { moving: true as const } : { campaignRef: got.campaignRef ?? "" };
+    },
     handoverDecline: async (token) => {
       await call("POST", "/me/handover/decline", { token });
     },

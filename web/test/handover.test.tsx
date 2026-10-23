@@ -58,13 +58,12 @@ describe("the hand-over accept page", () => {
     expect(calls(api, "handoverLook")).toEqual(["handoverLook:open"]);
   });
 
-  it("accepts onto the picked server, and links to the campaign", async () => {
+  it("accepts on the server it runs on, and links to the campaign", async () => {
     const api = await open("#open");
     await screen.findByText(w.offer("The Silver Hall", "Mira"));
-    fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
     fireEvent.click(screen.getByRole("button", { name: w.accept }));
     expect(await screen.findByText(w.accepted)).toBeTruthy();
-    expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:open:s2"]);
+    expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:open:s1"]);
     expect(screen.getByRole("link", { name: w.openCampaign }).getAttribute("href")).toContain("s1.cmp1");
   });
 
@@ -408,5 +407,80 @@ describe("the owner's side: hand over by email", () => {
     await api.offerHandover!("100.cmp1", "a@example.com");
     await api.takeBackHandover!("100.cmp1");
     expect(seen).toEqual(['POST /me/campaigns/100.cmp1/handover {"email":"a@example.com"}', "DELETE /me/campaigns/100.cmp1/handover "]);
+  });
+});
+
+describe("moving to another server (#2550)", () => {
+  it("greys a server the campaign can't move to, with the page's own words, and the current one still works", async () => {
+    const api = await open("#shares");
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    expect((screen.getByRole("radio", { name: /Sunday Table/ }) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText(w.serverWhy.shares_rules!)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByText(w.accepted)).toBeTruthy();
+    expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:shares:s1"]);
+  });
+
+  it("shows the sentence about a move that did not happen, and the accept button is still there", async () => {
+    await open("#failed");
+    expect(await screen.findByText("A session is running. Try again after it ends.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.accept })).toBeTruthy();
+  });
+
+  it("shows nothing about a failed move when there is none", async () => {
+    await open("#open");
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    expect(screen.queryByText(/Try again after it ends/)).toBeNull();
+  });
+
+  it("says Moving… for another server, then links to the campaign when it appears", async () => {
+    const api = await open("#open");
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByText(w.moving)).toBeTruthy();
+    expect(await screen.findByText(w.accepted, undefined, { timeout: 12_000 })).toBeTruthy();
+    expect(screen.getByRole("link", { name: w.openCampaign }).getAttribute("href")).toContain("s2.cmp9");
+    expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:open:s2"]);
+  }, 20_000);
+
+  it("the real client reads 202 moving and 409 shares_rules", async () => {
+    const moving = httpApi("https://api.example", (async () => new Response(JSON.stringify({ status: "moving" }), { status: 202 })) as typeof fetch);
+    expect(await moving.handoverAccept!("tok", "s2")).toEqual({ moving: true });
+    const shares = httpApi("https://api.example", (async () => new Response(JSON.stringify({ error: "shares_rules" }), { status: 409 })) as typeof fetch);
+    await expect(shares.handoverAccept!("tok", "s2")).rejects.toMatchObject({ kind: "shares-rules" });
+    expect(w.problem["shares-rules"]).toBeTruthy();
+  });
+
+  it("a refusal for sharing a rule set says so, and the link still works for the current server", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    api.handoverAccept = async () => {
+      throw new ApiError("shares-rules");
+    };
+    render(<Handover api={api} hash="#open" />);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
+    fireEvent.click(screen.getByRole("button", { name: w.accept }));
+    expect(await screen.findByText(w.problem["shares-rules"]!)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.accept })).toBeTruthy();
+  });
+
+  it("gives up looking after about three minutes and points to My Account", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    api.handoverAccept = async () => ({ moving: true });
+    render(<Handover api={api} hash="#open" />);
+    await screen.findByText(w.offer("The Silver Hall", "Mira"));
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
+      fireEvent.click(screen.getByRole("button", { name: w.accept }));
+      await vi.advanceTimersByTimeAsync(200_000);
+      expect(screen.getByText(w.movingSlow)).toBeTruthy();
+      expect(screen.getByRole("link", { name: w.myAccount }).getAttribute("href")).toBe("/account");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

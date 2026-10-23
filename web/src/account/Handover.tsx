@@ -51,6 +51,8 @@ type View =
   | { kind: "ended" }
   | { kind: "open"; look: Extract<HandoverLook, { status: "open" }> }
   | { kind: "accepted"; ref: string }
+  // Accepted onto another server: the bot moves the campaign, then it shows up under the person's campaigns.
+  | { kind: "moving"; name: string; before: string[]; slow: boolean }
   | { kind: "declined" };
 
 export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: string }) {
@@ -61,6 +63,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
   const token = useRef<string | null>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
   const inFlight = useRef(false);
+  const polls = useRef(0); // looks made while a campaign moves
   const [tryNo, setTry] = useState(0); // "Try again" after a failed look
 
   useEffect(() => {
@@ -103,6 +106,30 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, tryNo]);
 
+  // While the bot moves the campaign, look every 3 seconds (up to 3 minutes) for it among the person's own.
+  const moving = view.kind === "moving" && !view.slow;
+  const [tickMove, setTickMove] = useState(0);
+  useEffect(() => {
+    if (!moving || view.kind !== "moving") return;
+    const timer = setTimeout(async () => {
+      polls.current += 1;
+      try {
+        const found = ((await api.me())?.campaigns ?? []).find((c) => c.role === "owner" && c.name === view.name && !view.before.includes(c.ref ?? c.id));
+        if (found?.ref) {
+          setView({ kind: "accepted", ref: found.ref });
+          keepFocus(() => headRef.current);
+          return;
+        }
+      } catch {
+        // a dropped look is tried again at the next turn
+      }
+      if (polls.current >= 60) setView({ ...view, slow: true });
+      else setTickMove((n) => n + 1);
+    }, 3000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moving, tickMove]);
+
   if (!HANDOVER_LIVE || !api.handoverLook || !api.handoverAccept || !api.handoverDecline) {
     return <p role="status">{words.notOpen}</p>;
   }
@@ -129,9 +156,16 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
     setBusy("accept");
     setProblem(null);
     try {
+      // The campaigns the person has now, to tell the moved one from them when it appears.
+      const before = ((await api.me())?.campaigns ?? []).map((c) => c.ref ?? c.id);
       const done = await api.handoverAccept!(token.current, server);
       forgetHandoverToken();
-      setView({ kind: "accepted", ref: done.campaignRef });
+      if ("moving" in done) {
+        polls.current = 0;
+        setView({ kind: "moving", name: view.kind === "open" ? view.look.campaign.name : "", before, slow: false });
+      } else {
+        setView({ kind: "accepted", ref: done.campaignRef });
+      }
       keepFocus(() => headRef.current);
     } catch (error) {
       fail(error);
@@ -218,6 +252,22 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
           </p>
         </section>
       );
+    case "moving":
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p role="status">{view.slow ? words.movingSlow : words.moving}</p>
+          {view.slow && (
+            <p>
+              <a class="button" href="/account">
+                {words.myAccount}
+              </a>
+            </p>
+          )}
+        </section>
+      );
     case "declined":
       return (
         <section class="panel stack" aria-labelledby="handover-heading">
@@ -279,11 +329,12 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                         name="handover-server"
                         value={s.id}
                         checked={server === s.id}
-                        disabled={!s.botIn}
+                        disabled={!s.botIn || !!s.why}
                         onChange={() => setServer(s.id)}
                       />{" "}
                       {s.name} {s.current && <span class="muted small">{words.current}</span>}
                       {!s.botIn && <span class="muted small"> {words.needsBot}</span>}
+                      {s.why && <span class="muted small"> {words.serverWhy[s.why] ?? words.cantMoveThere}</span>}
                     </label>
                     {!s.botIn && (
                       <>
@@ -297,6 +348,11 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                 {look.servers.some((s) => !s.botIn) && <p class="muted small">{words.comeBack}</p>}
               </fieldset>
               <p>{words.acceptNote}</p>
+              {look.moveFailed && (
+                <p class="note" role="status">
+                  {look.moveFailed}
+                </p>
+              )}
               {problem && (
                 <p class="note bad" role="alert">
                   {problem}
