@@ -5,6 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import CampaignPageView from "../src/account/CampaignPage";
 import { mockApi } from "../src/account/mock";
 import { campaignPage as w } from "../src/content/campaign-page";
@@ -95,6 +96,54 @@ describe("changing a choice", () => {
   });
 });
 
+describe("a late answer (#2488)", () => {
+  it("keeps looking at a slower pace, shows Saved when the bot answers, and unlocks", async () => {
+    const { section } = await open("100.cmp1.cs-late");
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    for (let i = 0; i < 150; i += 1) await vi.advanceTimersByTimeAsync(250); // past the live wait
+    expect(within(section).getByText(w.offline)).toBeTruthy();
+    expect((within(group(section, "level")).getByRole("button", { name: "🔔 Normal" }) as HTMLButtonElement).disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000); // the slow looks
+    expect(within(section).queryByText(w.offline)).toBeNull();
+    expect(within(section).getAllByText(w.saved).length).toBeGreaterThan(0);
+    const quiet = within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }) as HTMLButtonElement;
+    expect(quiet.getAttribute("aria-pressed")).toBe("true");
+    expect(quiet.disabled).toBe(false);
+  });
+
+  it("says the choice timed out when an hour passes with no answer", async () => {
+    const { section } = await open("100.cmp1.cs-offline");
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
+    expect(within(section).getByText(w.timedOut)).toBeTruthy();
+  });
+});
+
+describe("when the site's own server cannot be reached while waiting (#2488)", () => {
+  it("still says it is slow, then that DMbot isn't answering, instead of Saving… for an hour", async () => {
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => {
+      throw new ApiError("network");
+    };
+    render(
+      <div class="account">
+        <CampaignPageView api={api} path="/account/campaigns/100.cmp1" />
+      </div>,
+    );
+    const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    fireEvent.click(within(group(section, "level")).getByRole("button", { name: "🔇 Quiet" }));
+    for (let i = 0; i < 50; i += 1) await vi.advanceTimersByTimeAsync(250);
+    expect(within(section).getByText(`${w.saving} ${w.slow}`)).toBeTruthy();
+    for (let i = 0; i < 100; i += 1) await vi.advanceTimersByTimeAsync(250);
+    expect(within(section).getByText(w.offline)).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(61 * 60 * 1000);
+    expect(within(section).getByText(w.timedOut)).toBeTruthy();
+  });
+});
+
 describe("what the bot says back", () => {
   it("shows the bot's note once, without Discord's marks, and a plain Saved when it has none", async () => {
     const { section } = await open("100.cmp1");
@@ -123,6 +172,13 @@ describe("what the bot says back", () => {
 });
 
 describe("who sees what", () => {
+  it("shows a co-DM whether the campaign is paused, but not the steps to pause it", async () => {
+    const { section } = await open("100.cmp1.cp-co");
+    expect(within(section).getByText(w.pausedNo)).toBeTruthy();
+    expect(within(section).getByText(w.settingsLabels.pause)).toBeTruthy();
+    expect(within(section).queryByText(w.doThisInDiscord(w.paths.pause))).toBeNull();
+  });
+
   it("shows a player no Settings at all", async () => {
     render(<CampaignPageView api={mockApi("table")} path="/account/campaigns/100.cmp1.cp-player" />);
     await screen.findByRole("heading", { level: 2, name: w.groups.story });

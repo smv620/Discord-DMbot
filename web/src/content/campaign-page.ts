@@ -133,7 +133,7 @@ export const campaignPage = {
   } as Record<string, [string, string][]>,
   saving: "Saving…",
   slow: "This is taking longer than usual. Keep this page open.",
-  offline: "DMbot isn't answering. Your choice waits up to an hour. Reload this page later to check.",
+  offline: "DMbot isn't answering. It will make this change when it's back, if that is within an hour. Keep this page open, or reload it later to check.",
   saved: "Saved.",
   timedOut: "DMbot didn't answer in time. Check the choice above, then try again.",
   refused: "DMbot didn't change this:",
