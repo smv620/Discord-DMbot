@@ -3183,6 +3183,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # An NPC's page and a person's own private notes on it, for any member of the server (#2265).
     ("dmbot_web_npc_page", "dmbot_web_npc_page(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_peek", "dmbot_web_peek(BIGINT, TEXT, TEXT)"),
+    ("dmbot_recap_held_names", "dmbot_recap_held_names(BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_npc_note_put", "dmbot_web_npc_note_put(BIGINT, TEXT, TEXT, TEXT)"),
     ("dmbot_web_npc_notes_mine", "dmbot_web_npc_notes_mine(BIGINT, TEXT)"),
     ("dmbot_web_npc_notes_delete", "dmbot_web_npc_notes_delete(BIGINT, TEXT)"),
@@ -10181,6 +10182,103 @@ WEB_LINK_ACTIONS = r"""
     REVOKE ALL ON FUNCTION dmbot_web_name_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
 """
 
+# Merging several names at once (#2426, migration 0183). Three things:
+# 1. the website's All names queue takes `merge-many`: the kept name is the row's entry and `text`
+#    holds the other names' ids, space apart (at most 50 of 32 letters), so the column is wider for
+#    that one action only;
+# 2. the DM's "Not the same" for two names, remembered so the look-alike finder never offers the
+#    pair again (the DM's alone; never in backups, recall, transcripts or any player view);
+# 3. the All names list says how many times each name was heard (`mentions`), so the page can put
+#    the most used first under "Keep which name?".
+_NAME_ACTION_DOOR = WEB_LINK_ACTIONS[
+    WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(") : (
+        WEB_LINK_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_read")
+    )
+]
+_MANY = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"
+_WITH_MANY = (
+    "('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',"
+    " 'remove',\n         'link-add', 'link-words', 'link-secret', 'link-remove')"
+)
+assert "'merge', 'remove',\n                'link-add'" in _NAME_ACTION_DOOR
+MERGE_MANY = (
+    r"""
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        """
+    + _WITH_MANY
+    + r""");
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check
+        CHECK (char_length(text) <= CASE WHEN action = 'merge-many' THEN 1700 ELSE 100 END);
+    """
+    + _NAME_ACTION_DOOR.replace(
+        "'merge', 'remove',\n                'link-add'",
+        "'merge', 'merge-many', 'remove',\n                'link-add'",
+    )
+    .replace(
+        "char_length(clean) > 100",
+        # (in brackets: plpgsql would take the CASE's THEN for the end of the IF's test)
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+    )
+    .replace(
+        "           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)",
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~ " + _MANY + "))\n"
+        "           OR (act IN ('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL)",
+        1,
+    )
+    .replace(
+        "        PERFORM pg_advisory_xact_lock(",
+        """        IF act = 'merge-many' AND (
+               ent = ANY (string_to_array(clean, ' '))
+               OR (SELECT count(DISTINCT x) FROM unnest(string_to_array(clean, ' ')) x)
+                  <> cardinality(string_to_array(clean, ' '))
+               OR (SELECT count(*) FROM memory_entities t
+                   WHERE t.guild_id = g AND t.campaign_id = c
+                     AND t.id = ANY (string_to_array(clean, ' '))
+                     AND t.status = 'confirmed' AND t.type <> 'person')
+                  <> cardinality(string_to_array(clean, ' '))) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(""",
+        1,
+    )
+    + f"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+
+    -- Two names the DM said are not the same: `a_id` sorts before `b_id`, so a pair is one row.
+    -- Gone with either name (and its campaign); isolated per server; not in backups.
+    CREATE TABLE name_not_same (
+        {_memory_scope()}
+        a_id        TEXT NOT NULL,
+        b_id        TEXT NOT NULL,
+        decided_by  BIGINT NOT NULL CHECK (decided_by > 0),
+        created_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, a_id, b_id),
+        CHECK (a_id < b_id),
+        {_entity_link("a_id")},
+        {_entity_link("b_id")}
+    );
+    CREATE INDEX name_not_same_b ON name_not_same (guild_id, campaign_id, b_id);
+    """
+    + _isolate("name_not_same")
+)
+_MENTIONS_OF = """'hidden', p.hidden,
+                    'mentions', (SELECT count(*) FROM memory_mentions m
+                                 WHERE m.guild_id = g AND m.campaign_id = c
+                                   AND m.entity_id = p.id),"""
+assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
+ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
+
+
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
     -- session when the start-up fill-in found them. The website's transcripts show these instead
@@ -10697,6 +10795,93 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
+# A connection the DM's story holds back from the players until it is said at the table (#2404):
+# a backstory connection starts unrevealed. The column has a default and is added, not updated,
+# so every existing connection reads as revealed and no row-level security needs opening. The
+# party's belief in it (`beliefs.follow`) stays the one thing the players' readers look at; this
+# flag only decides whether `follow` gives the party that belief. The graph door also says, for
+# the full view, which names and connections the players have not been shown yet.
+UNREVEALED_CONNECTIONS = """
+    ALTER TABLE memory_relations ADD COLUMN unrevealed BOOLEAN NOT NULL DEFAULT false;
+    """ + (
+    _door.replace(
+        "'id', e.id, 'name', e.name,\n",
+        "'id', e.id, 'name', e.name,\n"
+        "                    'revealed', NOT (e.hidden_from_players OR e.audience_limited),\n",
+        1,
+    ).replace(
+        "'detail', r.detail, 'secret', r.secret, 'at', r.created_at)",
+        "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,\n"
+        "                    'revealed', " + _PARTY_KNOWS_R + ")",
+        1,
+    )
+)
+assert UNREVEALED_CONNECTIONS.count("'revealed', NOT (e.hidden") == 1
+assert UNREVEALED_CONNECTIONS.count("'revealed', EXISTS") == 1
+
+# The website's recap check agrees with the bot's (#2404, Supervisor 2026-10-22): a name the players
+# haven't been shown yet counts as secret for a recap unless the table said it in that session. The
+# check's own door (`dmbot_recap_check_names`) keeps listing such names as secret; this new door,
+# for a DM of the campaign, says which of them there are and hands back only the session's table
+# lines that could contain one (a loose prefilter; the API reads them exactly, as the bot does).
+# Used for this one text and never returned. A new function: no row changes.
+RECAP_HELD_NAMES = r"""
+    CREATE FUNCTION dmbot_recap_held_names(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        held JSONB;
+        hard JSONB;
+        said JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        -- names of entries the players haven't been shown (not a clue, not a person), and the
+        -- texts that stay secret whatever was said (a secret spelling, a clue's names)
+        held := COALESCE((
+            SELECT jsonb_agg(DISTINCT a.text)
+            FROM memory_aliases a JOIN memory_entities e
+              ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND e.hidden_from_players
+              AND NOT e.audience_limited AND NOT a.secret AND a.status = 'confirmed'
+              AND e.status = 'confirmed' AND e.type NOT IN ('person', 'clue')), '[]'::jsonb);
+        hard := COALESCE((
+            SELECT jsonb_agg(DISTINCT a.text)
+            FROM memory_aliases a JOIN memory_entities e
+              ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id
+            WHERE a.guild_id = g AND a.campaign_id = c AND (a.secret OR e.audience_limited)),
+            '[]'::jsonb);
+        said := COALESCE((
+            SELECT jsonb_agg(l.heard || ' ' || COALESCE(l.text, ''))
+            FROM (SELECT l2.heard, l2.text FROM transcript_lines l2
+                  JOIN transcript_sessions s ON s.id = l2.session_id AND s.guild_id = l2.guild_id
+                  WHERE s.guild_id = g AND s.campaign_id = c AND s.started_at = at_
+                    AND l2.sidebar IS NULL
+                    AND EXISTS (
+                        SELECT 1 FROM jsonb_array_elements_text(held) h(t)
+                        WHERE position(
+                                regexp_replace(lower(h.t), '[''’ʼ`-]', '', 'g') IN
+                                regexp_replace(lower(l2.heard || ' ' || COALESCE(l2.text, '')),
+                                               '[''’ʼ`-]', '', 'g')) > 0)
+                  ORDER BY l2.started_ms, l2.id LIMIT 2000) l), '[]'::jsonb);
+        RETURN jsonb_build_object('held', held, 'hard', hard, 'said', said);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_held_names(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+"""
+
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -10978,9 +11163,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0179_beliefs", BELIEFS),  # perspectives, beliefs and the backfill (#2409)
     ("0180_shared_recap_session", SHARED_RECAP_SESSION),  # a shared recap's session (#2418)
     ("0181_campaign_card", CAMPAIGN_CARD),  # a campaign's name for its page (#2416)
+    ("0183_merge_many", MERGE_MANY + ALL_NAMES_MENTIONS),  # merge several names (#2426)
     ("0184_recap_posting_clock", RECAP_POSTING_CLOCK),  # the posting clock (#2435)
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
+    ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
+    ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
 )
 
@@ -11055,6 +11243,7 @@ ISOLATED_TABLES = (
     "recap_style_notes",
     "recap_requests",
     "recap_name_checks",
+    "name_not_same",
     "name_answers",
     "name_actions",
     "web_peeks",

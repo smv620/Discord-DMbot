@@ -156,11 +156,17 @@ class Hidden(ConfirmedMemoryTest):
         await self.memory.merge(GUILD_A, self.c, pc, self.shadow, source="dm", dm_said_same=True)
         await self.becomes_a_player_character_and_is_shown(pc)
 
-    async def test_a_hidden_entrys_names_are_all_secret_in_a_lookup(self) -> None:
+    async def test_a_hidden_entrys_names_are_marked_but_not_secret_for_the_listeners(self) -> None:
         lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
         mine = [n for n in lookup.names if n.entity_id == self.shadow]
         self.assertTrue(mine)
-        self.assertTrue(all(n.secret for n in mine))
+        # not secret (#2404): the cleaner and the sidebar use them; the players' lists leave them
+        # out through `for_viewer`, and the recap through `entry_hidden`
+        self.assertTrue(all(n.entry_hidden and not n.secret for n in mine))
+        self.assertEqual(
+            {n.entity_id for n in lookup.for_viewer(False).names if n.entity_id == self.shadow},
+            set(),
+        )
         self.assertFalse(any(n.secret for n in lookup.names if n.entity_id == self.jack))
 
     async def test_a_card_for_someone_who_may_not_see_secrets_is_nothing(self) -> None:
@@ -198,7 +204,8 @@ class Doors(unittest.TestCase):
     def test_only_a_dm_gets_the_switch_on_the_kind_step(self) -> None:
         self.assertFalse(hasattr(names.KindPicker("c" * 32, "Kesh", [], []), "hide"))
         view = names.KindPicker("c" * 32, "Kesh", [], [], can_hide=True)
-        self.assertEqual(view.hide.label, names.PLAYERS_KNOW)
+        self.assertTrue(view.hidden)  # a name the DM adds starts unrevealed (#2404)
+        self.assertEqual(view.hide.label, names.PLAYERS_DONT_KNOW)
         self.assertIsInstance(view.hide, discord.ui.Button)
 
 

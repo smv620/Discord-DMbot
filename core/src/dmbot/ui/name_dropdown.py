@@ -153,7 +153,22 @@ class NameDropdown(_Menu):
         if shown:  # nothing to order or type for when there are no other names
             self.add_item(_Button(self._switch, label=SORT_LABELS[mode], row=2))
             self.add_item(_Button(self._type, label=TYPE_LABEL, row=2))
+        if how == SAME:  # under 🔗 Same as…, because the card's own rows are full (#2426)
+            self.add_item(
+                _Button(
+                    self._several,
+                    label="🔗 Merge several…",
+                    style=discord.ButtonStyle.secondary,
+                    row=2,
+                )
+            )
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=2))
+
+    async def _several(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.look_alikes import show_merge_several
+
+        self.stop()
+        await show_merge_several(interaction, self.campaign_id, self.entity_id)
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         await choose_other(
