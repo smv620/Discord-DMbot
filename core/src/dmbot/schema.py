@@ -11597,6 +11597,16 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+IMAGE_LINES = """
+    -- A transcript line that describes an image posted in the table chat (#2450, docs/PLAN.md,
+    -- "Images posted there"): stored as a typed line (everything that treats typed lines apart
+    -- keeps doing so) and tagged "(image)" in the downloads. The image itself is never stored,
+    -- only the words. Defaulted: no row changes.
+    ALTER TABLE transcript_lines ADD COLUMN image BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_image_is_typed
+        CHECK (NOT image OR typed);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11821,6 +11831,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
+    ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

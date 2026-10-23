@@ -45,6 +45,7 @@ from dmbot import (
     features,
     fightbot,
     hours,
+    images,
     install,
     mail,
     owner_presence,
@@ -244,6 +245,7 @@ from dmbot.ears.server import EarsServer
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.fightbot import FightState
 from dmbot.idle_stop import IdleWatch
+from dmbot.image_desk import ImageDesk
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -506,6 +508,7 @@ PRONOUNCED_MAX = 40  # (name, sound, person) counts kept in one session (#2171)
 SOUND_CLOSE = 0.6
 # ... and at most this many letters longer or shorter ("Fin" and "Final" are two apart).
 SOUND_LENGTH_GAP = 1
+DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
 HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
 SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
@@ -1390,6 +1393,19 @@ class DMBot(commands.AutoShardedBot):
         self.time_ai = (  # a time jump suggested from vague narration (#1758)
             self.ai_client.tier(FEATURE_TIERS[Feature.TIME_SUGGEST], Feature.TIME_SUGGEST)
             if self.ai_client
+            else None
+        )
+        # Pictures posted in the table chat (#2450): off unless the backend switch is on.
+        # Messages deleted lately, so a picture still being described when its poster deletes it
+        # is not written down afterwards (#2450); id → when.
+        self._deleted_messages: dict[int, float] = {}
+        self.image_desk: ImageDesk | None = (
+            ImageDesk(
+                self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
+                self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE_MAP], Feature.IMAGE_MAP),
+                per_day=settings.table_images_per_day,
+            )
+            if self.ai_client and settings.table_images_on
             else None
         )
         self.audio_ai = (
@@ -5097,45 +5113,101 @@ class DMBot(commands.AutoShardedBot):
             or getattr(message, "interaction_metadata", None) is not None
         ):
             return
+        if not self.consent.has_consent(table.guild_id, author.id):
+            return  # nothing of a message, picture or words, is read for someone who didn't agree
+        start_ms = int(message.created_at.timestamp() * 1000)
+        links = self._image_links(message) if self.image_desk is not None else []
+        if links:
+            self._track(
+                self._hear_images(table, author.id, start_ms, message.id, links), "table-images"
+            )
         text = table_chat.clean(message.clean_content)  # names, not <@123> markup
-        if text is None or not self.consent.has_consent(table.guild_id, author.id):
+        if text is None:
             return
-        self._deliver_typed(
-            table, author.id, text, int(message.created_at.timestamp() * 1000), message.id
-        )
+        self._deliver_typed(table, author.id, text, start_ms, message.id)
+
+    @staticmethod
+    def _image_links(message: discord.Message) -> list[str]:
+        """The links of the pictures on a message: by what Discord says the file is, within the
+        size DMbot reads. Only links; the pictures are fetched later, after the plan check."""
+        return [
+            a.url
+            for a in message.attachments
+            if (a.content_type or "").startswith("image/") and a.size <= images.MAX_BYTES
+        ][: images.MAX_PER_MESSAGE]
+
+    async def _hear_images(
+        self, table: Table, user_id: int, start_ms: int, message_id: int, links: list[str]
+    ) -> None:
+        """A picture in the table chat becomes an (image) line (#2450). Nothing is fetched or sent
+        to the AI unless the poster agreed, the campaign's plan has AI and the day's limit is not
+        used; consent is checked again after the slow steps, so someone who stopped meanwhile
+        gets no line. The picture is read once and kept nowhere."""
+        desk, gid, cid = self.image_desk, table.guild_id, table.campaign_id
+        if desk is None or cid is None or not self._still_recorded(table, user_id):
+            return
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
+        if not self._still_recorded(table, user_id):
+            return
+        reads = await desk.describe(gid, cid, links)
+        if not self._still_recorded(table, user_id) or message_id in self._deleted_messages:
+            return
+        for n, read in enumerate(reads):
+            self._deliver_typed(
+                table,
+                user_id,
+                images.line_text(read),
+                start_ms + n,
+                message_id,
+                image=True,
+            )
 
     def _deliver_typed(
-        self, table: Table, user_id: int, text: str, start_ms: int, message_id: int = 0
+        self,
+        table: Table,
+        user_id: int,
+        text: str,
+        start_ms: int,
+        message_id: int = 0,
+        *,
+        image: bool = False,
     ) -> None:
         """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
         audio check. In the transcript it is tagged (typed), in both versions; typing clearly not
         about the game goes through the same off-topic filter as talk and is left out of the
-        cleaned version (#2447, item 6)."""
+        cleaned version (#2447, item 6). A described picture (`image`) is only ever a record: its
+        words are data from the AI about a stranger's file, so they reach the names scan and the
+        transcript but never run a clock phrase, a house rule, the sidebar or the topic filter."""
         now = time.monotonic()
         table.idle.activity(now)  # typed chat at the table is not silence (#2034)
-        listeners = table.typed_rate.allow(user_id, now)
+        listeners = True if image else table.typed_rate.allow(user_id, now)  # (the day limits it)
         if not listeners and table.typed_rate.should_log(now):
             # No text, no names: only that it happened (#1154).
             log.info("Typed chat: a flood of lines; extra lines skip the listeners")
         names_said = 0
         if listeners:
-            table.vocabulary.note(user_id, text)
+            if not image:  # a description's words are not the poster's own talk
+                table.vocabulary.note(user_id, text)
             if table.name_lookup is not None:
                 named = mentions(table.name_lookup, text)
                 names_said = len(named)
-                table.scene.note(named, user_id, now)
+                if not image:
+                    table.scene.note(named, user_id, now)
                 table.heard_counts.update((entity_id, user_id) for entity_id in named)
-            self._act_on_line(table, user_id, text, typed=True)
+            if not image:
+                self._act_on_line(table, user_id, text, typed=True)
         if self.transcripts is not None:
             table.unsaved.add(
-                Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
+                Line(start_ms, user_id, text, text, typed=True, image=image, message_id=message_id)
             )
-            if listeners and self._topic_holds(table, text, names_said):
+            if listeners and not image and self._topic_holds(table, text, names_said):
                 # Its words already reached the names scan above; the label only decides whether
                 # the cleaned transcript shows the line (no `held` entry: nothing to put back).
                 self._topic_wait(table, user_id, start_ms, text, 0.0, typed=True)
-        if not listeners:
+        if not listeners or image:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
         if self.tables.get(table.guild_id) is table:
@@ -5167,6 +5239,7 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
             for message_id in payload.message_ids:
+                self._note_deleted(message_id)
                 table.unsaved.drop_message(message_id)
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
@@ -5174,7 +5247,16 @@ class DMBot(commands.AutoShardedBot):
         already saved stays in the raw transcript, as PLAN says."""
         table = self.tables.get(payload.guild_id) if payload.guild_id is not None else None
         if table is not None:
+            self._note_deleted(payload.message_id)
             table.unsaved.drop_message(payload.message_id)
+
+    def _note_deleted(self, message_id: int) -> None:
+        """Remember a deleted message for a few minutes (a picture takes seconds to describe)."""
+        now = time.monotonic()
+        self._deleted_messages = {
+            m: t for m, t in self._deleted_messages.items() if now - t < DELETED_KEPT_S
+        }
+        self._deleted_messages[message_id] = now
 
     def after_chat_change(self, campaign: Campaign) -> None:
         """A running session reads typed chat from now on as the DM just set it (#1118)."""

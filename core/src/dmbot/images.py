@@ -324,3 +324,19 @@ async def read(image: Image, fast: Vision, careful: Vision) -> Read | None:
         return described
     places, layout = parsed
     return Read(MAP, described.alt, "", places, layout)
+
+
+NOT_DESCRIBED = "a picture was posted (not described)"
+
+
+def line_text(read: Read | None) -> str:
+    """The transcript words for one image: the AI's description, not the poster's own words.
+    What it shows, and for a picture of text the words in it. A map says it is a map (its places
+    are for the map notes, not the transcript). None: a plain note that one was posted, so the
+    record is not missing a moment."""
+    if read is None:
+        return NOT_DESCRIBED
+    head = f"{'a map' if read.kind == MAP else 'a picture'}: {read.alt}"
+    if read.kind == TEXT and read.text:
+        return f'{head.rstrip(".")}. Text written on it: "{read.text}"'
+    return head

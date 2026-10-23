@@ -82,6 +82,23 @@ class StoreTests(DatabaseTest):
             (flags["said"], flags["t"], flags["we take a long rest"]), (False, True, True)
         )
 
+    async def test_an_image_line_is_saved_and_read_back_as_an_image(self) -> None:
+        # A described picture (#2450): the flag survives the database, beside typed ones.
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        picture = Line(
+            START * 1000 + 1000, DM, "a picture: a map", "an image: a map", typed=True, image=True
+        )
+        typed = Line(START * 1000 + 2000, DM, "hello", "hello", typed=True)
+        await self.store.add_lines(GUILD, sid, [picture, typed, line(9, PLAYER, "said")])
+        got = {x.heard: (x.typed, x.image) for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(got["a picture: a map"], (True, True))
+        self.assertEqual(got["hello"], (True, False))
+        self.assertEqual(got["said"], (False, False))
+
+    def test_an_image_line_must_be_a_typed_line(self) -> None:
+        with self.assertRaises(ValueError):
+            Line(1, DM, "a", "a", image=True)
+
     async def test_table_chat_defaults_on_and_is_kept_per_campaign(self) -> None:
         self.assertEqual(
             (self.campaign.table_chat, self.campaign.table_chat_channel_id), (True, None)

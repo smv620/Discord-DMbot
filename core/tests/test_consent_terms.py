@@ -15,8 +15,8 @@ from dmbot.ui.logic import HELP_TEXT
 # may a change to a version nobody can have agreed to yet (not deployed).
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = 6  # #1187: also what is typed in DMbot's chat channel (anyone may ask there)
-PINNED_FINGERPRINT = "bb9348784488dec231ca4b64a2eb984c7991f216d1c0a1aace3d161ceaab1aa1"
+PINNED_VERSION = 7  # #2450: also pictures posted in the table chat, described by the AI
+PINNED_FINGERPRINT = "5aa17c768078c1a5a234890b3a11300fc1ac3c9218586723582b2648bd0747ca"
 
 
 def fingerprint() -> str:

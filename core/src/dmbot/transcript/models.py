@@ -98,11 +98,16 @@ class Line:
     # Typed in the table's chat rather than said (#1118): tagged "(typed)", in both versions; the
     # cleaned one leaves out typing the off-topic filter labelled off_topic (#2447).
     typed: bool = False
+    # A line that describes an image someone posted in the table chat (#2450): a typed line (so it
+    # is kept apart from speech the same way) tagged "(image)" instead. Only ever with `typed`.
+    image: bool = False
     # The Discord message a typed line came from, so deleting it takes the line back while it
     # is still unsaved (#1118). 0 for speech. Never stored.
     message_id: int = 0
 
     def __post_init__(self) -> None:
+        if self.image and not self.typed:
+            raise ValueError("an image line is a typed line")
         if self.sidebar not in ("", SIDEBAR_ANSWER, *QUESTION_KINDS):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
         tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()

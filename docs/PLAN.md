@@ -3159,6 +3159,18 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     model for its places and layout. Nothing in the bot calls it yet: part 2 (table-chat wiring, the transcript
     line, the day's limit and the consent terms bump, together, so nothing is read before people agree), part 3
     (the map table for MapBot) and part 4 (the text reply and ✏️ Fix) follow.
+  - *Built, part 2 (CloudDev, 2026-10-23, #2450): the table chat reads pictures.* Off unless the backend switch
+    `DMBOT_TABLE_IMAGES` is on, 40 pictures per campaign per day (`DMBOT_TABLE_IMAGES_PER_DAY`). Only a message from
+    someone who agreed, in the table's chat while listening, never a bot or webhook, has its attachments (up to 4,
+    each up to 3.75 MB (what encodes to the AI service's 5 MB), by what Discord says the file is) looked at; the poster's consent is checked before anything
+    is fetched and again after each slow step, and the campaign's plan must have AI. Each becomes a line tagged
+    `(image)` in the raw and cleaned transcripts (a map says "a map"; a picture of text carries its words), or
+    "an image was posted (not described)" past the day's limit or when the picture could not be read. A described
+    picture is a **record only**: its names count as said, but it never runs a clock phrase, a house rule, the
+    sidebar or the off-topic filter. The count is in memory per server and campaign (a restart can only let a few
+    more through) and the log holds counts only. The consent terms version goes to 7 and the request and the
+    "asked again" note say pictures are sent to the AI to be described in words. The website's transcript view
+    still tags these lines "(typed)" until its database functions learn the flag (follow-up).
 - **Consent:** the consent message says DMbot also reads the table's typed chat while it listens.
   That changes what people agree to, so the consent terms version goes up and everyone is asked
   again.

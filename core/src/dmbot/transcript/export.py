@@ -53,6 +53,11 @@ TYPED_NOTE = (
     "(typed) lines were typed in the table's chat, not said. In the Cleaned version, DMbot leaves "
     "out chat that is clearly not about the game."
 )
+IMAGE_TAG = "(image)"
+IMAGE_NOTE = (
+    "(image) lines describe a picture someone posted in the table's chat. An AI looked at it once "
+    "and wrote what it showed. The picture itself is not kept, only these words."
+)
 HOW_TO_READ = (
     "Each line: [time since start] (person) {their character}: what they said. A person marked "
     "DM is the Dungeon Master. {narrating} means the DM is describing the scene; an NPC's name "
@@ -355,7 +360,8 @@ def render(
             clean_name(playing[line.user_id]) if line.user_id in playing else None,
             safe=True,
         )
-        timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))
+        tag = IMAGE_TAG if line.image else TYPED_TAG
+        timed.append((line.started_ms, f"{who} {tag}: {said}"))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
     body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))
@@ -371,7 +377,9 @@ def render(
         CLEANED_NOTE if version == CLEANED else AS_HEARD_NOTE,
         HOW_TO_READ,
         *([SIDEBAR_NOTE] if shown_sidebar else []),
-        *([TYPED_NOTE] if typed_lines else []),  # (also when the Cleaned one hides them all)
+        *([TYPED_NOTE] if any(not x.image for x in typed_lines) else []),
+        *([IMAGE_NOTE] if any(x.image for x in typed_lines) else []),
+        # (the notes show also when the Cleaned version hides every such line)
     ]
     if running:
         header.append(
