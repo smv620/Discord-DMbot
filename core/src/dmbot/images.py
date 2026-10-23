@@ -26,6 +26,7 @@ import yarl
 
 from dmbot import fetch as fetching
 from dmbot.ai import AIError, AIOutOfFunds, Image
+from dmbot.discord_limits import MESSAGE_MAX
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ KINDS = (PICTURE, MAP, TEXT)
 
 # Length caps on what the AI says, so a runaway answer can't flood the transcript or a message.
 ALT_MAX = 400  # a sentence or two
-TEXT_MAX = 1500  # the words of a handout, within one Discord message with its heading
+TEXT_MAX = MESSAGE_MAX - 500  # a handout's words, within one Discord message with its heading
 PLACES_MAX = 40
 PLACE_NAME_MAX = 80
 PLACE_WHERE_MAX = 240
