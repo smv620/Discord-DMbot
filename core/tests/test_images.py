@@ -242,10 +242,6 @@ class Reading(unittest.IsolatedAsyncioTestCase):
             await images.read(self.image, Fake(AIError("busy")), Fake())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Fetching(unittest.IsolatedAsyncioTestCase):
     """`fetch_image` with the guarded fetch replaced: what it asks for and what it refuses."""
 
@@ -307,3 +303,7 @@ class TheSizeLimit(unittest.TestCase):
         self.assertEqual(len(encoded), 5_242_880)
         over = base64.standard_b64encode(b"\0" * (images.MAX_BYTES + 3))
         self.assertGreater(len(over), 5 * 1024 * 1024)  # one step more would not fit
+
+
+if __name__ == "__main__":
+    unittest.main()
