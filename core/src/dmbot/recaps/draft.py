@@ -1030,6 +1030,9 @@ PRESENCE_MARGIN = 1  # ... and the best beat must beat the next one by this many
 MAX_PRESENCE_PROBLEMS = 2  # a retry message names a couple, not every sentence
 
 
+_GROUP = re.compile(r"\b(party|everyone|together|all of them|the group)\b", re.IGNORECASE)
+
+
 def _norm(name: str) -> str:
     return " ".join(words(name))
 
@@ -1048,8 +1051,9 @@ def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str
     """Who was there, held to the beats' `present` lists (#2573). A sentence is matched to the
     beat it clearly shares the most words with (`PRESENCE_MIN_SHARED`, and ahead of the next beat
     by `PRESENCE_MARGIN`: an unclear match is not judged), and then:
-    - a sentence that names every character present but one, and does not say "the party", is
-      refused: it names almost everyone as the ones who were there and leaves one out;
+    - when the beat says the group acted together ("the party", "together"), a sentence that names
+      every character present but one, and does not say "the party", is refused: it names almost
+      everyone as the ones who were there and leaves one out;
     - a character named in a scene they were not present for (not in the beat's `present` nor in
       its names) is refused.
     A beat with no `present` list (a recap made before this, or nobody spoke) is not checked. The
@@ -1081,7 +1085,12 @@ def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str
                 f"{absent[0]} was not there in one of the scenes: leave {absent[0]} out of the "
                 "sentence that tells it"
             )
-        elif len(named) >= 2 and len(left) == 1 and "the party" not in sentence.lower():
+        elif (
+            len(named) >= 2
+            and len(left) == 1
+            and _GROUP.search(best.what)  # the beat says the group acted together
+            and "the party" not in sentence.lower()
+        ):
             problems.append(
                 f"a sentence names {', '.join(named)} as the ones who were there, but "
                 f'{left[0]} was there too: name {left[0]} as well, or say "the party"'

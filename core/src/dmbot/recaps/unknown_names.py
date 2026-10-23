@@ -110,6 +110,7 @@ def respell(
 
 MIN_ALIAS_LETTERS = 4  # a confirmed other spelling may be shorter than a guessed name
 MAX_SOUND_DISTANCE = 3  # letters apart, besides sounding alike, for a name not on any list
+MAX_START_DISTANCE = 2  # letters apart when only the first sound is the same
 
 
 def canonical(
@@ -128,9 +129,10 @@ def canonical(
     "Sarek" through, so the draft's name check knew it and the recap named a main character by a
     stranger's name. In a run of capitalised words:
     1. a stretch spelt exactly like an alias is the name it stands for;
-    2. a single word that sounds like exactly one known name or alias (the same sound codes and
-       first letter, a few letters apart) is that name, unless it is an ordinary word or sounds
-       like (or is spelt near) a secret name, which is left alone and never printed.
+    2. a single word that sounds like exactly one known name or alias (the same sound code a few
+       letters apart, or the same first sound two letters apart; the spelling's first letter is
+       not compared, so a soft C and an S meet) is that name, unless it is an ordinary word or
+       sounds like (or is spelt near) a secret name, which is left alone and never printed.
     Only names of the recap's own list (`names`) are put in, never a secret one. `sound_names`
     narrows the names rule 2 may turn a word into (the player characters and the alias targets, so
     a new NPC is never turned into one); a token that is part of a longer known name ("Sarek
@@ -146,6 +148,7 @@ def canonical(
         if len(_letters(a)) >= MIN_ALIAS_LETTERS and c in real
     }
     sounds: dict[str, set[tuple[str, str]]] = {}
+    starts: dict[str, set[tuple[str, str]]] = {}  # by the first sound, for a close spelling
     sound_real = real if sound_names is None else real & set(sound_names)
     for spelled, name in [
         *((a, c) for a, c in aliases.items() if c in sound_real),
@@ -155,6 +158,7 @@ def canonical(
         if len(words(spelled)) == 1 and len(letters) >= MIN_LETTERS:
             for code in sound_codes(spelled):
                 sounds.setdefault(code, set()).add((letters, name))
+                starts.setdefault(code[0], set()).add((letters, name))
     secrets = [_letters(n) for n in secret_names if _letters(n)]
     secret_codes = {c for n in secret_names if len(words(n)) == 1 for c in sound_codes(n)}
     ordinary = set(ordinary_words)
@@ -190,8 +194,12 @@ def canonical(
                         name
                         for c in codes
                         for letters, name in sounds.get(c, ())
-                        if letters[0] == joined[0]
-                        and _distance(joined, letters) <= MAX_SOUND_DISTANCE
+                        if _distance(joined, letters) <= MAX_SOUND_DISTANCE
+                    } | {
+                        name  # the same first sound and two letters apart: Selwin for Celwyn
+                        for c in codes
+                        for letters, name in starts.get(c[0], ())
+                        if _distance(joined, letters) <= MAX_START_DISTANCE
                     }
                     spelled = next(iter(hits)) if len(hits) == 1 else None
                 if spelled is not None:

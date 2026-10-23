@@ -40,7 +40,6 @@ def room(attempt: int) -> int:
 
 
 BEAT_MAX = 240  # characters of one beat
-PRESENT_PAD = 5  # lines on each side of a beat in which a speaking player counts as there
 MIN_LINES_FOR_A_PLAYER = 8  # a player with this many lines must appear in some beat
 KINDS = ("event", "moment", "state")
 
@@ -84,8 +83,8 @@ class Beat:
     # "keep this, do not explain it" (the meaning is not known to the players).
     note: str = ""
     keep: bool = False
-    # The player characters there (#2573): those whose players spoke in the stretch of lines the
-    # beat rests on, and any the beat names. Worked out in code from the table's own lines; the
+    # The player characters there (#2573): those whose players spoke anywhere in the session, and
+    # any the beat names. Worked out in code from the table's own lines; the
     # writer is shown it and a group scene must name all of them or say "the party".
     present: tuple[str, ...] = ()
 
@@ -345,19 +344,16 @@ def present_in(
     who: Sequence[str],
     pcs: Sequence[str],
 ) -> tuple[str, ...]:
-    """The player characters present in a beat (#2573): those whose players spoke anywhere between
-    its first and last cited line, a few lines either side included (the stretch, not only the
-    lines it cites: a DM narrating a scene is cited at one line, but the players answering
-    around it were at the table), and any the beat itself names. In the order of `pcs`. A player
-    who spoke is taken as there unless the DM's lines say otherwise; the recap page lets the DM
-    fix a scene."""
+    """The player characters present in a beat (#2573): every one whose player spoke anywhere in
+    the session, and any the beat itself names. In the order of `pcs`. A quiet player who spoke
+    only a little is still at the table, so a character is never refused as "not there" for being
+    outside a beat's few lines; narrowing a scene to who was in it is the DM's to do on the recap
+    page (#2577). `numbers` (the beat's lines) is kept so that can narrow it later."""
     if not numbers:
         return ()
-    low, high = min(numbers) - PRESENT_PAD, max(numbers) + PRESENT_PAD
     here: set[str] = set()
-    for line, user in speakers.items():
-        if low <= line <= high:
-            here.update(party.get(user, ()))
+    for user in set(speakers.values()):
+        here.update(party.get(user, ()))
     named = {" ".join(words(w)) for w in who}
     here.update(pc for pc in pcs if " ".join(words(pc)) in named)
     return tuple(pc for pc in pcs if pc in here)

@@ -34,6 +34,16 @@ class TheirNames(unittest.TestCase):
     def test_a_name_that_sounds_like_exactly_one_known_name_is_that_name(self) -> None:
         self.assertEqual(put("Sarec drew his sword."), "Tavin drew his sword.")
 
+    def test_a_soft_c_and_an_s_meet_so_selwin_is_celwyn(self) -> None:
+        got = canonical(
+            "Selwin drew his sword.",
+            {},
+            names=["Celwyn", "Tavin"],
+            secret_names=[],
+            sound_names=["Celwyn", "Tavin"],
+        )
+        self.assertEqual(got, "Celwyn drew his sword.")
+
     def test_a_name_that_matches_nothing_is_left_alone(self) -> None:
         self.assertEqual(put("Morwick drew his sword."), "Morwick drew his sword.")
 
@@ -103,11 +113,18 @@ PARTY = {1: ("Belleros",), 2: ("Greyfen",), 3: ("Tavin",), 4: ("Ysolde",)}
 
 
 class ThePresence(unittest.TestCase):
-    def test_present_is_who_spoke_in_the_stretch_and_who_the_beat_names(self) -> None:
-        got = bt.present_in((2, 5), SPEAKERS, PARTY, ("Ysolde",), PCS)
-        self.assertEqual(got, ("Belleros", "Greyfen", "Tavin", "Ysolde"))
-        far = {1: 1, 40: 2}  # a player who spoke far from the beat was not in its scene
-        self.assertEqual(bt.present_in((1, 1), far, PARTY, (), PCS), ("Belleros",))
+    def test_present_is_every_pc_whose_player_spoke_in_the_session_and_who_the_beat_names(
+        self,
+    ) -> None:
+        far = {1: 1, 400: 2}  # the second player spoke far from the beat: still at the table
+        self.assertEqual(bt.present_in((1, 1), far, PARTY, (), PCS), ("Belleros", "Greyfen"))
+        self.assertEqual(
+            bt.present_in((1, 1), far, PARTY, ("Ysolde",), PCS), ("Belleros", "Greyfen", "Ysolde")
+        )
+
+    def test_a_pc_whose_player_never_spoke_is_not_present_unless_named(self) -> None:
+        quiet = {1: 1, 2: 2}
+        self.assertEqual(bt.present_in((1, 2), quiet, PARTY, (), PCS), ("Belleros", "Greyfen"))
 
     def test_a_beat_keeps_its_present_list_in_storage_and_the_writer_sees_it(self) -> None:
         beat = bt.Beat(1, "The party camps.", (), (1, 8), "event", present=("Belleros", "Tavin"))
@@ -235,8 +252,8 @@ class TheDoubts(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertNotIn("Vaelor", got[0])
 
-    def test_a_dm_narrated_scene_cited_at_one_line_counts_the_players_around_it(self) -> None:
-        speakers = {10: 0, 11: 1, 12: 2, 13: 3}  # the DM (0) narrates; three players answer
+    def test_a_dm_narrated_scene_counts_every_player_who_spoke_in_the_session(self) -> None:
+        speakers = {10: 0, 500: 1, 900: 2, 901: 3}  # the DM (0) narrates; players speak elsewhere
         party = {1: ("Belleros",), 2: ("Greyfen",), 3: ("Tavin",)}
         got = bt.present_in((10,), speakers, party, (), PCS)
         self.assertEqual(got, ("Belleros", "Greyfen", "Tavin"))
