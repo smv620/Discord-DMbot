@@ -512,10 +512,28 @@ async def edit_recap(
     return _view(row)
 
 
-async def decide(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
+async def decide(
+    db: Database,
+    session: Session,
+    ref: str,
+    action: str,
+    *,
+    plot_gate: bool = False,
+    outside_engine: str | None = None,
+) -> dict[str, Any]:
     """`post` (the bot sends it), `drop` or `again` (Try again, at most twice). The page no longer
     offers `drop` (#2419: a recap the DM does not approve simply stays a draft); the route stays
-    so an older open page still works."""
+    so an older open page still works. **Posting a draft that is not approved counts as approving
+    it** (Supervisor, 2026-10-23, #2122): it goes through the approval door (text only, posted in
+    the same statement), so the version is kept and PlotBot's open points hold it (`plot_open`),
+    as for the Approve button. `plot_gate`, `outside_engine`: as for `approve_recap`."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, current = await _one(conn, ref, session, marks=False)
+    if action == "post" and not _approved(current):
+        return await approve_recap(
+            db, session, ref, TEXT, audio_in_plan=False, post=True,
+            outside_engine=outside_engine, plot_gate=plot_gate,
+        )  # fmt: skip
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         where = " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
