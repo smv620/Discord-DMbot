@@ -61,7 +61,7 @@ describe("reading the web", () => {
     const button = screen.getAllByRole("button", { name: /^Put .* in the middle$/ })[0] as HTMLElement;
     fireEvent.click(button);
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("webGraph")).length).toBeGreaterThan(1));
-    expect(api.calls.at(-1)).toMatch(/center=\S+:hops=2/);
+    expect(api.calls.filter((c) => c.startsWith("webGraph")).at(-1)).toMatch(/center=\S+:hops=2/);
   });
 
   it("asks for more steps out", async () => {
@@ -197,6 +197,8 @@ describe("the steps box", () => {
     const api = await open();
     const box = screen.getByLabelText("Steps out from the middle") as HTMLInputElement;
     expect(box.type).toBe("number");
+    // The campaign's nav reads the campaign too (#2461); let that settle so it is not counted below.
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("campaignPage"))).toBe(true));
     const before = api.calls.length;
     fireEvent.input(box, { target: { value: "99" } });
     fireEvent.input(box, { target: { value: "" } });

@@ -28,6 +28,7 @@ import {
 } from "./api";
 import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
+import CampaignFacts from "./CampaignFacts";
 import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
 import { MyQuestions } from "./MyQuestions";
@@ -1057,18 +1058,6 @@ function CampaignsSection({ me }: { me: Me }) {
   );
 }
 
-/** The facts on a campaign's card (#2460), each left out when there is none. */
-function facts(c: Campaign): string[] {
-  return [
-    c.sessions ? text.sessionsFact(c.sessions) : null,
-    c.hoursPlayed ? text.hoursFact(c.hoursPlayed) : null,
-    c.players ? text.playersFact(c.players) : null,
-    c.npcs ? text.npcsFact(c.npcs) : null,
-    c.startedAt ? text.startedFact(c.startedAt) : null,
-    c.lastPlayedAt ? text.lastPlayed(c.lastPlayedAt) : text.notPlayed,
-  ].filter((f): f is string => f !== null);
-}
-
 function CampaignRow({
   campaign,
   offer,
@@ -1095,33 +1084,7 @@ function CampaignRow({
         {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
       </p>
       <p class="muted small">{campaign.serverName}</p>
-      <ul class="facts small muted" aria-label={text.factsLabel(campaign.name)}>
-        {facts(campaign).map((f) => (
-          <li key={f}>{f}</li>
-        ))}
-      </ul>
-      <p class="tags">
-        {campaign.live && (
-          <span class="tag active">
-            <span aria-hidden="true">🟢</span> {text.listeningNow}
-          </span>
-        )}
-        {campaign.status === "paused" && (
-          <span class="tag paused">
-            <span aria-hidden="true">⏸️</span> {text.paused}
-          </span>
-        )}
-        <span class="tag">
-          <span aria-hidden="true">
-            {campaign.role === "owner" ? "👑" : campaign.role === "player" ? "🎲" : "🤝"}
-          </span>{" "}
-          {campaign.role === "owner"
-            ? text.youRunIt
-            : campaign.role === "player"
-              ? text.youPlay
-              : text.youHelp}
-        </span>
-      </p>
+      <CampaignFacts campaign={campaign} />
       <Notice message={notice} />
       {offer && (
         <>
