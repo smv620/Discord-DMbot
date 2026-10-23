@@ -26,6 +26,11 @@ log = logging.getLogger(__name__)
 KEPT_PER_CAMPAIGN = 20
 HIDDEN = "This question was about a secret name. Answer it from the name's card."
 HIDDEN_ANSWERED = "This was about a secret name. See the name's card."
+# The after-session summary of secrets said at the table (#2410) has its own words.
+SUMMARY_HIDDEN = (
+    "This was DMbot's summary of secrets said at the table. Your players can look at this screen "
+    "now, so it was taken off. See the names' cards."
+)
 
 _posts: dict[tuple[int, str], list[Any]] = defaultdict(list)
 
@@ -65,7 +70,8 @@ def pending(guild_id: int, campaign_id: str) -> int:
 async def hide_one(message: Any) -> bool:
     """Edit one question straight away (it was posted just as the screen opened up)."""
     try:
-        await message.edit(content=HIDDEN, view=None, allowed_mentions=NO_PINGS)
+        words = SUMMARY_HIDDEN if _is_summary(message) else HIDDEN
+        await message.edit(content=words, view=None, allowed_mentions=NO_PINGS)
     except Exception:
         log.warning("A secret question could not be pulled back")
         return False
@@ -80,7 +86,20 @@ def is_exposed(visibility: str, in_server_channel: bool) -> bool:
 
 # What a question's buttons start with: the keep-it-secret question and the reveal question.
 # "dmbot:sa:" is the secret question's newer id (the server on it); the old one still parses.
-BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:")
+# "dmbot:xr:" is the after-session summary's ↩️ Recant button (#2410).
+# "dmbot:xs:" is the mark every variant of that summary carries, also one with no Recant on it.
+SUMMARY_PREFIXES = ("dmbot:xr:", "dmbot:xs:")
+BUTTON_PREFIXES = ("dmbot:secret:", "dmbot:sa:", "dmbot:rv:", *SUMMARY_PREFIXES)
+
+
+def _is_summary(message: Any) -> bool:
+    """Whether a message is the after-session summary (its buttons say so)."""
+    return any(
+        str(getattr(child, "custom_id", "") or "").startswith(SUMMARY_PREFIXES)
+        for row in getattr(message, "components", ())
+        for child in getattr(row, "children", ())
+    )
+
 
 # Campaigns whose screen history was searched in this process. Questions posted after that are
 # remembered in `_posts`, so only what a restart forgot needs the search, and it needs it once;
@@ -144,9 +163,10 @@ async def hide(
     failed: list[Any] = []
     for message in messages:
         answered = not getattr(message, "components", None)  # no buttons left: already answered
+        summary = _is_summary(message)
         try:
             await message.edit(
-                content=HIDDEN_ANSWERED if answered else HIDDEN,
+                content=SUMMARY_HIDDEN if summary else HIDDEN_ANSWERED if answered else HIDDEN,
                 view=None,
                 allowed_mentions=NO_PINGS,
             )

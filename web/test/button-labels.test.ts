@@ -22,7 +22,7 @@ function contentText(file: string): string {
   return [own, ...readdirSync(folder).map((f) => readFileSync(join(folder, f), "utf8"))].join("\n");
 }
 
-const botFacing = ["help.ts", "whats-new.ts", "players.ts", "features.ts", "before-you-start.ts"];
+const botFacing = ["help.ts", "help-features.ts", "whats-new.ts", "players.ts", "features.ts", "before-you-start.ts"];
 
 const pythonFiles = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) =>

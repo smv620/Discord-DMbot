@@ -118,6 +118,35 @@ class StoreTests(DatabaseTest):
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD), frozenset({11, 12, 13}))
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD + 9), frozenset())
 
+    async def test_an_off_the_record_marker_is_kept_but_is_not_speech(self) -> None:
+        """#2466: a gap's marker is a line of its own kind; it is not counted as speech and not
+        a speaker."""
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        marker = Line(
+            START * 1000 + 60_000, 5, "off the record", "off the record", 300_000,
+            sidebar="off_record",
+        )  # fmt: skip
+        await self.store.add_lines(GUILD, sid, [marker, line(5, DM, "table speech")])
+        (counted,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual((counted.lines, counted.speakers), (1, (DM,)))
+        lines = await self.store.lines(GUILD, sid)
+        kept = next(x for x in lines if x.sidebar)
+        self.assertEqual((kept.sidebar, kept.user_id, kept.duration_ms), ("off_record", 5, 300_000))
+
+    async def test_a_topic_is_set_on_the_typed_line_or_the_spoken_one_never_both(self) -> None:
+        """#2447: typed chat and speech of one person can share a millisecond."""
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        ms = START * 1000 + 5000
+        spoken = Line(ms, DM, "hello there", "hello there", 1000)
+        typed = Line(ms, DM, "my cat", "my cat", typed=True)
+        await self.store.add_lines(GUILD, sid, [spoken, typed])
+        self.assertEqual(await self.store.set_topic(GUILD, sid, DM, ms, "off_topic", typed=True), 1)
+        by = {x.typed: x.topic for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(by, {False: "game", True: "off_topic"})
+        self.assertEqual(await self.store.set_topics(GUILD, sid, DM, [ms], "game", typed=True), 1)
+        by = {x.typed: x.topic for x in await self.store.lines(GUILD, sid)}
+        self.assertEqual(by, {False: "game", True: "game"})
+
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")
@@ -809,7 +838,7 @@ class BotTests(DatabaseTest):
 
         sid = await self.finished_session()
         # Two people called Sam; the player (Mia's line is already there) only typed first
-        typed = Line(START * 1000 + 1000, STRANGER, "brb", "brb", 0, "game", typed=True)
+        typed = Line(START * 1000 + 1000, STRANGER, "brb", "brb", 0, "off_topic", typed=True)
         said = Line(START * 1000 + 60_000, DM, "Roll for it.", "Roll for it.")
         await self.store.add_lines(GUILD, sid, [typed, said])
         self.guild.get_member = lambda uid: SimpleNamespace(display_name="Sam")

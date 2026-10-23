@@ -11145,6 +11145,18 @@ SESSION_PAUSES = """
     ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
 """
 
+OFF_RECORD_LINES = """
+    -- A stretch where a person was off the record (#2466) is one marker line in the transcript,
+    -- in both versions: "(Mia was off the record, nothing recorded, 20:14-20:19 UTC)". It is
+    -- stored as a line of its
+    -- own kind under that person (so a consent stop or "Delete my past transcripts" takes it
+    -- with their other lines) and holds no speech: when it began, how long it lasted, and the
+    -- words "off the record". The one change is the list of kinds the column accepts.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question', 'off_record'));
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -11168,6 +11180,29 @@ UNREVEALED_CONNECTIONS = """
 )
 assert UNREVEALED_CONNECTIONS.count("'revealed', NOT (e.hidden") == 1
 assert UNREVEALED_CONNECTIONS.count("'revealed', EXISTS") == 1
+
+MERGE_RESTORES = f"""
+    -- Where a merge moved a name's private notes and D&D Beyond sheet (#2438). Both live outside
+    -- the change log (a note is its writer's own, a sheet is refreshed by its player), so Undo had
+    -- no way to hand them back to the name they came from. One row per merged-away name per
+    -- batch: lengths and times of the notes and the sheet row as they were before the merge, never
+    -- a note's words (a person who deletes their notes leaves no copy). Undo reads it,
+    -- puts back only what is still as the merge left it, and never refuses because of it. Kept
+    -- as long as the batch is (pruned with it), deleted with the campaign.
+    CREATE TABLE merge_restores (
+        {_memory_scope()}
+        id       BIGSERIAL,
+        batch    BIGINT NOT NULL,
+        -- 'undo': what an Undo of the batch puts back; 'redo': the batch is an Undo, and undoing
+        -- it merges these two again (the notes and sheet follow).
+        kind     TEXT NOT NULL CHECK (kind IN ('undo', 'redo')),
+        gone_id  TEXT NOT NULL,
+        keep_id  TEXT NOT NULL,
+        before   JSONB NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id)
+    );
+    CREATE INDEX merge_restores_by_batch ON merge_restores (guild_id, campaign_id, batch);
+    """ + _isolate("merge_restores")
 
 # The website's recap check agrees with the bot's (#2404, Supervisor 2026-10-22): a name the players
 # haven't been shown yet counts as secret for a recap unless the table said it in that session. The
@@ -11238,6 +11273,87 @@ BACKSTORY_LINK_WORDS = """
     ALTER TABLE backstory_links ADD COLUMN detail TEXT NOT NULL DEFAULT '';
 """
 
+# The DM's 📌 100% truth (#2447): a flag on The truth's belief in a connection (a new belief row
+# each time it is set or cleared, so the change log and Undo work as for any belief), and the flag
+# a connection waiting from a campaign-lore upload carries until the DM keeps it. Both columns have
+# defaults, so no row changes. The relationship web's door tells a DM, and only a DM seeing
+# everything, which connections are pinned.
+_PINNED_LINK = (
+    "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,\n"
+    "                    'revealed', " + _PARTY_KNOWS_R + ")"
+)
+_door_pinned = UNREVEALED_CONNECTIONS[
+    UNREVEALED_CONNECTIONS.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships") :
+]
+assert _door_pinned.count(_PINNED_LINK) == 1
+PINNED_TRUTH = """
+    ALTER TABLE memory_beliefs ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE backstory_links ADD COLUMN truth BOOLEAN NOT NULL DEFAULT false;
+    """ + _door_pinned.replace(
+    _PINNED_LINK,
+    _PINNED_LINK[:-1] + ",\n                    'pinned', (is_dm AND sees_all) AND EXISTS"
+    " (SELECT 1 FROM memory_beliefs tb"
+    " JOIN memory_perspectives tp ON tp.guild_id = tb.guild_id"
+    " AND tp.campaign_id = tb.campaign_id AND tp.id = tb.perspective_id"
+    " WHERE tp.kind = 'truth' AND tb.guild_id = r.guild_id AND tb.campaign_id = r.campaign_id"
+    " AND tb.relation_id = r.id AND tb.pinned AND tb.seq = (SELECT max(x.seq)"
+    " FROM memory_beliefs x WHERE x.guild_id = tb.guild_id AND x.campaign_id = tb.campaign_id"
+    " AND x.perspective_id = tb.perspective_id AND x.relation_id = tb.relation_id)))",
+    1,
+)
+
+LINK_PIN_ACTION = """
+    -- The website's 📌 pin (#2447): a DM pins a connection as 100% truth, or takes it back, through
+    -- the same queue as the other connection edits ('link-pin': `target_id` the connection, `flag`
+    -- pinned or not). The bot applies it with the call the name card uses, so the change log and
+    -- Undo agree. No row changes: a wider list of actions and the door that checks it.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin'));
+"""
+# Built from the door as it stands now, with `merge-many` (0183), not from the older text: a door
+# built from before that would drop it (found in the review of #2456).
+_door_start = MERGE_MANY.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(")
+_door_end = MERGE_MANY.index("    DO $do$", _door_start)
+_pin_door = MERGE_MANY[_door_start:_door_end]
+for _old, _new, _times in (
+    (
+        "'link-add', 'link-words', 'link-secret', 'link-remove')",
+        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        3,
+    ),
+    (
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove')",
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin')",
+        1,
+    ),
+):
+    assert _pin_door.count(_old) == _times, (_old, _pin_door.count(_old))
+    _pin_door = _pin_door.replace(_old, _new)
+assert _pin_door.count("('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL") == 1
+_pin_door = _pin_door.replace(
+    "('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL",
+    "('secret', 'hide', 'link-add', 'link-secret', 'link-pin') AND fl IS NULL",
+)
+LINK_PIN_ACTION = (
+    LINK_PIN_ACTION
+    + _pin_door
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+)
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -11496,6 +11612,51 @@ ALL_NAMES_SAID = """
     REVOKE ALL ON FUNCTION dmbot_web_all_names_said(BIGINT, TEXT, TEXT[]) FROM PUBLIC;
 """
 
+SECRET_EXPOSURES = f"""
+    -- Secrets said or typed at the table, waiting for the DM to be told (#2410, docs/PLAN.md,
+    -- "Secrets said out loud are revealed too, and the DM can recant"). One row for each secret
+    -- name or secret connection found in a session's recorded table talk. Recorded and not
+    -- applied: nothing becomes known to the players here, and the summary that tells the DM
+    -- applies it later. Holds which secret and how often, never a line or who said it. A name is
+    -- kept as its spelling key, a connection as the connection's id. 'settled' once the DM
+    -- answered it another way. Transient state, so it is left out of backups.
+    CREATE TABLE secret_exposures (
+        {_memory_scope()}
+        id                 BIGSERIAL,
+        session_started_at BIGINT NOT NULL,
+        kind               TEXT NOT NULL CHECK (kind IN ('name', 'connection')),
+        spelling           TEXT CHECK (spelling IS NULL OR char_length(spelling) BETWEEN 1 AND 400),
+        relation_id        TEXT,
+        times              INTEGER NOT NULL CHECK (times > 0),
+        status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'settled')),
+        created_at         BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        CHECK ((kind = 'name' AND spelling IS NOT NULL AND relation_id IS NULL)
+            OR (kind = 'connection' AND relation_id IS NOT NULL AND spelling IS NULL)),
+        FOREIGN KEY (guild_id, campaign_id, relation_id)
+            REFERENCES memory_relations (guild_id, campaign_id, id) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX secret_exposures_name
+        ON secret_exposures (guild_id, campaign_id, session_started_at, spelling)
+        WHERE kind = 'name';
+    CREATE UNIQUE INDEX secret_exposures_connection
+        ON secret_exposures (guild_id, campaign_id, session_started_at, relation_id)
+        WHERE kind = 'connection';
+    """ + _isolate("secret_exposures")
+
+EXPOSURE_SUMMARY = """
+    -- The after-session summary applies what a session gave away (#2410, slice 2): an exposure
+    -- becomes 'applied' (the secret was shown to the players, in the change-log batch kept here so
+    -- Recant can undo exactly that) or 'recanted' (the DM took it back). New states and a column
+    -- with no default needed: no row changes. 'applying' is a row claimed while its secret is being
+    -- shown, so a Recant pressed meanwhile cannot slip between the claim and the showing.
+    ALTER TABLE secret_exposures ADD COLUMN batch BIGINT;
+    ALTER TABLE secret_exposures ADD COLUMN claimed_at BIGINT;
+    ALTER TABLE secret_exposures DROP CONSTRAINT secret_exposures_status_check;
+    ALTER TABLE secret_exposures ADD CONSTRAINT secret_exposures_status_check
+        CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11710,17 +11871,25 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0188_all_names_said", ALL_NAMES_SAID),  # how to say a name, for the Names page (#2317)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0190_pinned_truth", PINNED_TRUTH),  # the DM's 📌 100% truth (#2447)
     ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
+    ("0193_link_pin_action", LINK_PIN_ACTION),  # the website pins a connection (#2447)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
     ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
+    ("0198_off_record_lines", OFF_RECORD_LINES),  # the "off the record" marker line (#2466)
+    ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
+    ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
+    ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "secret_exposures",
+    "merge_restores",
     "transcript_respells",
     "test_voice_consent",
     "campaigns",

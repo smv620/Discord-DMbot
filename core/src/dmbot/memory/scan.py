@@ -214,6 +214,8 @@ def _alike(a: str, b: str, need: float = 0.0) -> float:
     return matcher.ratio()
 
 
+alike = _alike  # (public: how alike two spellings are, 0 to 1)
+
 Candidate = tuple[str, str, str]  # (entity ID, a name of it as written, its own name)
 
 

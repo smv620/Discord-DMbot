@@ -19,7 +19,15 @@ import shutil
 import signal
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable, Collection, Coroutine, Hashable, Sequence
+from collections.abc import (
+    Awaitable,
+    Callable,
+    Collection,
+    Coroutine,
+    Hashable,
+    Iterable,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import partial
@@ -75,6 +83,7 @@ from dmbot.consent_dm import (
     renewed_text,
     request_text,
     request_view,
+    resume_view,
     send_prompt,
     unreachable_text,
     warning_text,
@@ -248,6 +257,13 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.exposures import (
+    ExposureStore,
+    dedupe,
+    describe,
+    find_exposures,
+    secret_connections,
+)
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
@@ -270,7 +286,7 @@ from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
-from dmbot.memory.secret_aloud import MAX_ASKED, players_lines, secret_names, spoken
+from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
 from dmbot.memory.secret_reveal import RevealSession, revealed_in
 from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
@@ -283,7 +299,7 @@ from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.mentions import NO_PINGS
-from dmbot.off_the_record import OffTheRecord, Paused
+from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import critics, cues, name_answers, short, voice
 from dmbot.recaps import feedback as recap_feedback
@@ -325,7 +341,7 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import AskLimiter, request_in
+from dmbot.sidebar.ask import AskLimiter, asks_off_record, request_in
 from dmbot.sidebar.people import lines as people_lines
 from dmbot.sidebar.service import Recent, SidebarService
 from dmbot.test_recording import files as test_files
@@ -362,7 +378,15 @@ from dmbot.transcript.import_job import STALE_SCAN_S, ImportJob, ImportStore, Re
 from dmbot.transcript.import_map import ImportSpeakersSection
 from dmbot.transcript.improvement import OptOutStore
 from dmbot.transcript.keep import KeepJob
-from dmbot.transcript.models import NARRATING, Line, TranscriptBuffer, TranscriptSession, line_ref
+from dmbot.transcript.models import (
+    NARRATING,
+    OFF_RECORD,
+    OFF_RECORD_WORDS,
+    Line,
+    TranscriptBuffer,
+    TranscriptSession,
+    line_ref,
+)
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -396,11 +420,19 @@ from dmbot.ui import logic as ui_logic
 from dmbot.ui import looked_at, rule_card
 from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
+from dmbot.ui.claims_review import question_text as claims_question
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
 from dmbot.ui.continuity import ContinuityButton, continuity_view
 from dmbot.ui.continuity import waiting_text as continuity_waiting_text
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.dmbot_commands import _failed, dmbot_group
+from dmbot.ui.exposure_summary import (
+    MAX_LISTED,
+    RecantButton,
+    SeenButton,
+    summary_text,
+    summary_view,
+)
 from dmbot.ui.guide import GuideButton
 from dmbot.ui.heard_review import HeardReviewButton, heard_review_view
 from dmbot.ui.heard_review import waiting_text as heard_waiting_text
@@ -542,6 +574,16 @@ CLIP_SWEEP_EVERY = (
 SECRET_QUESTION_WAITING = (
     "🤫 DMbot couldn't send you a question about a secret name. Turn on Direct Messages in this "
     "server's Privacy Settings (tap the server name) and it will ask next session."
+)
+CLAIMS_PREVIEW = 5  # things to check the DM-only summary spells out; the rest are in the check
+SUMMARY_WAITING = (
+    "🤫 DMbot couldn't send you the after-session summary of secrets said at the table, so nothing "
+    "was shown to your players. Turn on Direct Messages in this server's Privacy Settings (tap the "
+    "server name) and it will send it after the next session."
+)
+SUMMARY_PARTIAL = (
+    "🤫 Some of the secrets in your after-session summary could not be shown to your players "
+    "yet, so they are still secret. DMbot will try again after the next session."
 )
 RECAP_ROUND_S = 60
 IMPORT_ROUND_S = 30
@@ -797,6 +839,15 @@ class Table:
     # What was heard this session (speaker, text as heard), for the after-session scan
     # that suggests new names to the DM (#126). Kept in memory only, capped.
     heard: list[tuple[int, str]] = field(default_factory=list)
+    # The new names the after-session scan found (#2410): they ride in the secrets summary when
+    # there is one, and are posted on their own by the "new names" step when nothing carried them.
+    new_names: list[str] = field(default_factory=list)
+    # How many things said at the table wait for the DM's check (#2410): counted by the "what was
+    # said" step, told by the summary when it goes to the DM screen, else posted on its own.
+    claims_waiting: int = 0
+    # The first few of them in words ("**Bram** carries **Heartseeker**? (a player said)"), for the
+    # DM-only summary. Never posted where a player can read: the screen post says the count only.
+    claim_preview: list[str] = field(default_factory=list)
     # Who answered to which name this session ("a name, then an answer", #1188); in memory
     # only, and nothing a speaker said stays once they stop being recorded.
     name_answers: NameThenAnswer = field(default_factory=NameThenAnswer)
@@ -1026,12 +1077,15 @@ class DMBot(commands.AutoShardedBot):
             listening=lambda guild_id: guild_id in self.tables,
             drop=self._drop_in_flight,
             save=self._save_pauses,
+            gap=self._off_record_gap,
         )
         self.campaigns = campaigns
         self.sessions = sessions
         # Campaign memory (#126): names the DM gives, suggestions after each session, and
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
+        # Secrets said at the table, recorded for the DM's summary; nothing applies them yet (#2410)
+        self.exposures = ExposureStore(memory._db) if memory is not None else None
         self.lookup = (
             LookupCache(memory, in_use=self._campaign_has_a_table) if memory is not None else None
         )
@@ -1425,6 +1479,7 @@ class DMBot(commands.AutoShardedBot):
         self._follow_ups: dict[int, asyncio.Task[None]] = {}
         # Stopped sessions still writing down their last words, by server.
         self._ending: dict[int, list[Table]] = {}
+        self._starting: dict[int, Table] = {}  # sessions being resumed after a restart (#2466)
         self._session_locks: dict[int, asyncio.Lock] = {}
         self._resume_started = False
         self._closing = False
@@ -1515,6 +1570,8 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
+        self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
+        self.add_dynamic_items(SeenButton)  # 👍 Got it: the mark of every summary variant
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
         self.add_dynamic_items(
@@ -1875,6 +1932,67 @@ class DMBot(commands.AutoShardedBot):
         for person in people:
             table.segmenter.drop(person)
             table.transcript.drop_speaker(person)
+
+    def _off_record_gap(self, guild_id: int, user_id: int, began: float, ended: float) -> None:
+        """A stretch off the record is over: its marker goes in the session's transcript."""
+        # (a session being resumed after a restart is not in `tables` yet: `_starting` has it)
+        table = self.tables.get(guild_id) or self._starting.get(guild_id)
+        if table is not None:
+            self._add_gaps(table, [(user_id, began, ended)])
+
+    def _add_gaps(self, table: Table, gaps: Sequence[tuple[int, float, float]]) -> None:
+        """One marker line for each person for each stretch (0: the table's pause, for everyone
+        who agreed). Under a second is not worth a line. There is no speech in it: nothing was
+        captured."""
+        if self.transcripts is None:
+            return
+        for who, began, ended in gaps:
+            length = int((ended - began) * 1000)
+            if length < 1000:
+                continue
+            people = self._at_the_table(table) if who == 0 else [who]
+            for person in people:
+                table.unsaved.add(
+                    Line(
+                        int(began * 1000),
+                        person,
+                        OFF_RECORD_WORDS,
+                        OFF_RECORD_WORDS,
+                        length,
+                        sidebar=OFF_RECORD,
+                    )
+                )
+
+    def _at_the_table(self, table: Table) -> list[int]:
+        """Who was in the voice channel and agreed, for the marker of the table's break: not
+        everyone in the server who ever agreed (the transcript is open to the whole server)."""
+        channel = self.get_channel(table.voice_channel_id)
+        here = {m.id for m in getattr(channel, "members", ())}
+        return sorted(here & self.consent.agreed_set(table.guild_id))
+
+    def _wake_off_the_record(self, guild_id: int, user_id: int) -> None:
+        """ "Hey DMbot, off the record", said or typed: this person only, for five minutes. The
+        line itself is kept out of every transcript by the caller. They are off the record in core
+        at once, with no await, so a line that arrives a moment later is already dropped; the
+        rest (saving, ears, the table's line, their private note) follows."""
+        refused = self.off_the_record.start_pause(
+            guild_id, user_id, WAKE_MINUTES, never_shorten=True
+        )
+        if refused is not None:
+            return  # not recorded, not listening, or already off the record for longer
+        self._track(self._pause_by_phrase(guild_id, user_id), "off-the-record")
+
+    async def _pause_by_phrase(self, guild_id: int, user_id: int) -> None:
+        with log_context(guild_id=guild_id):
+            done = await self.off_the_record.announce_pause(
+                guild_id, user_id, WAKE_MINUTES, said_it=True
+            )
+            text = (
+                paused_text(done.until)
+                + " What you said just now was not saved."
+                + ("" if done.told else NOT_TOLD)
+            )
+            await self._dm_message(user_id, text, resume_view(guild_id))
 
     async def pause_recording(self, guild_id: int, user_id: int, minutes: int | None) -> Paused:
         return await self.off_the_record.pause(guild_id, user_id, minutes)
@@ -2707,7 +2825,9 @@ class DMBot(commands.AutoShardedBot):
         table = self.tables.pop(guild_id, None)
         if table is None:
             return None
-        self.off_the_record.end_session(guild_id)  # every pause ends with the session (#2466)
+        # Every pause ends with the session (#2466); the stretches still on are marked in its
+        # transcript, which is saved after this.
+        self._add_gaps(table, self.off_the_record.end_session(guild_id))
         with log_context(guild_id=guild_id, campaign_id=table.campaign_id):
             log.info("Session ended: %s", reason)
         if table.campaign_id:  # the moment to put the NPC list in order again (#1761)
@@ -2866,9 +2986,13 @@ class DMBot(commands.AutoShardedBot):
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
-            ("what was said", lambda: self.ask_about_claims(table)),
+            ("what was said", lambda: self.note_claims(table)),
             ("names said at the table", lambda: self.reveal_names_said(table)),
-            ("secrets said aloud", lambda: self.ask_about_secrets(table)),
+            # (replaces the secret-name question: the summary says what was shown, with Recant)
+            ("secret exposures", lambda: self.record_exposures(table)),
+            ("secret summary", lambda: self.send_exposure_summary(table)),
+            ("new names", lambda: self.post_new_names(table)),
+            ("new connections", lambda: self.post_claims(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             (
@@ -4135,10 +4259,14 @@ class DMBot(commands.AutoShardedBot):
         # Off the record (#2466): a pause survives a restart. It is put back before the allowlist
         # goes to ears, so nobody who asked not to be recorded is let in.
         await self.consent.agreed(guild.id)  # (loaded: a pause is only for someone who agreed)
-        await self.off_the_record.restore(guild.id, saved.paused)
-        # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
-        # when it connects (_on_ears_link_change).
-        await self.start_table(table)
+        self._starting[guild.id] = table  # so a pause that ended while down can mark the transcript
+        try:
+            await self.off_the_record.restore(guild.id, saved.paused)
+            # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
+            # when it connects (_on_ears_link_change).
+            await self.start_table(table)
+        finally:
+            self._starting.pop(guild.id, None)
         await self.off_the_record.say_expired(guild.id, saved.paused)
         log.info("Resuming session (restart %d in a row)", streak)
         return True
@@ -4447,7 +4575,15 @@ class DMBot(commands.AutoShardedBot):
         ):
             return True
         text = table_chat.clean(message.clean_content)  # names, not <@123> markup
-        if text is not None:
+        if (
+            text is not None
+            and asks_off_record(text)
+            and self.consent.agreed_now(
+                table.guild_id, author.id
+            )  # paused or not: it only asks for a pause
+        ):
+            self._wake_off_the_record(table.guild_id, author.id)  # not a question (#2466)
+        elif text is not None:
             self.sidebar.ask_in_chat(table, author.id, text)
         return True
 
@@ -4713,6 +4849,16 @@ class DMBot(commands.AutoShardedBot):
             return
         table.capture_log.add_utterance(utterance)
         table.totals.add_utterance(utterance)
+        if text and asks_off_record(text):
+            # "Hey DMbot, off the record" (#2466): this person goes off the record and the line
+            # that said so is in neither transcript, nor anything fed from it. Not waited on a
+            # speaker label: a wrongly paused person only presses Resume, while waiting keeps
+            # them recorded.
+            if self.tables.get(table.guild_id) is table:  # (a session that is ending pauses no one)
+                self._wake_off_the_record(table.guild_id, utterance.user_id)
+                # Words of theirs that were written down before this line arrived are not kept.
+                table.unsaved.drop_since(utterance.user_id, utterance.start_ms)
+            return
         cleaned = text
         if text and table.name_lookup is not None:
             # Fixes DMbot isn't sure of are never silent: made only when the DM screen
@@ -5066,18 +5212,24 @@ class DMBot(commands.AutoShardedBot):
     ) -> None:
         """A typed line goes where a spoken one goes (clock phrases, house rules, names heard,
         the "Hey DMbot" sidebar, the transcript), minus what only audio has: no cleaning, no
-        off-topic filter, no audio check. In the transcript it is tagged (typed) and only in
-        the as-heard version, never the cleaned one."""
+        audio check. In the transcript it is tagged (typed), in both versions; typing clearly not
+        about the game goes through the same off-topic filter as talk and is left out of the
+        cleaned version (#2447, item 6)."""
+        if asks_off_record(text):  # the line is not kept; they are off the record (#2466)
+            self._wake_off_the_record(table.guild_id, user_id)
+            return
         now = time.monotonic()
         table.idle.activity(now)  # typed chat at the table is not silence (#2034)
         listeners = table.typed_rate.allow(user_id, now)
         if not listeners and table.typed_rate.should_log(now):
             # No text, no names: only that it happened (#1154).
             log.info("Typed chat: a flood of lines; extra lines skip the listeners")
+        names_said = 0
         if listeners:
             table.vocabulary.note(user_id, text)
             if table.name_lookup is not None:
                 named = mentions(table.name_lookup, text)
+                names_said = len(named)
                 table.scene.note(named, user_id, now)
                 table.heard_counts.update((entity_id, user_id) for entity_id in named)
             self._act_on_line(table, user_id, text, typed=True)
@@ -5085,6 +5237,10 @@ class DMBot(commands.AutoShardedBot):
             table.unsaved.add(
                 Line(start_ms, user_id, text, text, typed=True, message_id=message_id)
             )
+            if listeners and self._topic_holds(table, text, names_said):
+                # Its words already reached the names scan above; the label only decides whether
+                # the cleaned transcript shows the line (no `held` entry: nothing to put back).
+                self._topic_wait(table, user_id, start_ms, text, 0.0, typed=True)
         if not listeners:
             return  # raw transcript only: no recent lines, sidebar or name scan (#1154)
         table.recent.add(user_id, text, time.monotonic(), typed=True)
@@ -5832,10 +5988,33 @@ class DMBot(commands.AutoShardedBot):
         (when unsure, keep). The cost of holding the words with the line: a held line's words
         reach the word list when its window is labelled, up to a window later. And it is the
         cleaned line's words (a name fix included) that count, as for the names scan. The
-        two callers run in one synchronous stretch (no await between), so they agree."""
+        callers run in one synchronous stretch (no await between), so they agree. A typed line
+        (#2447) is judged by the same rule but holds no words: its words reach the names scan and
+        the word list when it is typed, and the label only decides whether the cleaned transcript
+        shows it. Typing over the rate limit skips the filter, so it always shows."""
         if self.topic_ai is None or self.tables.get(table.guild_id) is not table:
             return False
         return not (time.monotonic() < table.topic_paused_until or obviously_game(text, named))
+
+    def _topic_wait(
+        self,
+        table: Table,
+        user_id: int,
+        started_ms: int,
+        text: str,
+        seconds: float,
+        *,
+        typed: bool = False,
+    ) -> None:
+        """Put a line in the off-topic filter's window (#52); the window is asked about when it
+        fills or has waited long enough."""
+        first = not table.topics.lines
+        waiting = Waiting(user_id, started_ms, text, seconds, typed)
+        if table.topics.add(waiting, time.monotonic()):
+            self._topic_task(table, self._label_topics(table, table.topics.take()))
+        elif first:
+            later = self._label_topics_later(table, table.topics.opened_at)
+            self._topic_task(table, later, timer=True)
 
     def _topic_pending(self, table: Table, utterance: Utterance, text: str, holds: bool) -> bool:
         """The off-topic filter (#52): a line not plainly about the game waits for the
@@ -5846,13 +6025,7 @@ class DMBot(commands.AutoShardedBot):
             return False
         key = (utterance.user_id, utterance.start_ms)
         table.held[key] = text
-        first = not table.topics.lines
-        waiting = Waiting(utterance.user_id, utterance.start_ms, text, utterance.duration_s)
-        if table.topics.add(waiting, time.monotonic()):
-            self._topic_task(table, self._label_topics(table, table.topics.take()))
-        elif first:
-            later = self._label_topics_later(table, table.topics.opened_at)
-            self._topic_task(table, later, timer=True)
+        self._topic_wait(table, utterance.user_id, utterance.start_ms, text, utterance.duration_s)
         return True
 
     def _topic_task(self, table: Table, work: Awaitable[None], *, timer: bool = False) -> None:
@@ -5928,9 +6101,11 @@ class DMBot(commands.AutoShardedBot):
             topics = [GAME] * len(lines)
         hide: list[Waiting] = []
         for waiting, topic in zip(lines, topics, strict=True):
-            said = table.held.pop((waiting.speaker, waiting.started_ms), None)
-            spelling = table.held_spelled.pop((waiting.speaker, waiting.started_ms), None)
-            sounds = table.held_pronounced.pop((waiting.speaker, waiting.started_ms), None)
+            # (a typed line holds no words: a spoken line may share its key)
+            key = None if waiting.typed else (waiting.speaker, waiting.started_ms)
+            said = table.held.pop(key, None) if key else None
+            spelling = table.held_spelled.pop(key, None) if key else None
+            sounds = table.held_pronounced.pop(key, None) if key else None
             if not self.consent.has_consent(table.guild_id, waiting.speaker):
                 continue  # stopped meanwhile: nothing about their words
             if topic != OFF_TOPIC and spelling:
@@ -6371,12 +6546,12 @@ class DMBot(commands.AutoShardedBot):
         guild_id, speaker, started = table.guild_id, waiting.speaker, waiting.started_ms
         async with table.save_lock:
             if self.consent.has_consent(guild_id, speaker):
-                found = table.unsaved.set_topic(speaker, started, topic)
+                found = table.unsaved.set_topic(speaker, started, topic, typed=waiting.typed)
                 session_id = table.transcript_session_id
                 if not found and self.transcripts is not None and session_id is not None:
                     try:
                         await self.transcripts.set_topic(
-                            guild_id, session_id, speaker, started, topic
+                            guild_id, session_id, speaker, started, topic, typed=waiting.typed
                         )
                     except Exception:
                         log.exception("Couldn't save a line's topic")
@@ -6396,6 +6571,8 @@ class DMBot(commands.AutoShardedBot):
                 if not self.consent.has_consent(table.guild_id, waiting.speaker):
                     continue
                 hidden.append(waiting)
+                if waiting.typed:  # typed chat is never in the live channel (a spoken line may
+                    continue  # share its key): only the saved transcript hides it
                 key = (waiting.speaker, waiting.started_ms)
                 if table.transcript.can_change(*key, time.monotonic()):
                     table.hidden.add(key)  # a marker in the channel (too late: its words)
@@ -7014,6 +7191,8 @@ class DMBot(commands.AutoShardedBot):
         # What the names scan would have had (#52), now: before the channel's awaits, so
         # a /dmbot stop meanwhile still scans them (it reads these at the end).
         for line in run.lines:
+            if line.typed:  # its words reached the scan and the word list when it was typed
+                continue
             now_said = self._words_now(table, line)
             if len(table.heard) < HEARD_MAX:
                 table.heard.append((line.speaker, now_said))
@@ -7038,9 +7217,9 @@ class DMBot(commands.AutoShardedBot):
             if not self.consent.has_consent(guild_id, speaker):
                 return True
             saved = [
-                line.started_ms
+                line
                 for line in lines
-                if not table.unsaved.set_topic(speaker, line.started_ms, GAME)
+                if not table.unsaved.set_topic(speaker, line.started_ms, GAME, typed=line.typed)
             ]
             session_id = table.transcript_session_id  # under the lock: a save may set it
             if not saved:
@@ -7051,10 +7230,16 @@ class DMBot(commands.AutoShardedBot):
                 log.warning("Put it back found no stored transcript for %d lines", len(saved))
                 return False
             try:
-                changed = await asyncio.wait_for(
-                    self.transcripts.set_topics(guild_id, session_id, speaker, saved, GAME),
-                    PUT_BACK_TIMEOUT_S,
-                )
+                changed = 0
+                for typed in (False, True):  # (typed chat and speech can share a millisecond)
+                    started = [line.started_ms for line in saved if line.typed == typed]
+                    if started:
+                        changed += await asyncio.wait_for(
+                            self.transcripts.set_topics(
+                                guild_id, session_id, speaker, started, GAME, typed=typed
+                            ),
+                            PUT_BACK_TIMEOUT_S,
+                        )
             except Exception:
                 log.exception("Couldn't put lines left out as off-topic back")
                 return False
@@ -7069,7 +7254,8 @@ class DMBot(commands.AutoShardedBot):
         late when hidden, or no channel). Consent is checked before every edit: a Stop
         meanwhile leaves the rest as markers."""
         speaker = lines[0].speaker
-        markers = [x for x in lines if (x.speaker, x.started_ms) in table.hidden]
+        # typed lines never had a marker in the live channel and can share a spoken line's key
+        markers = [x for x in lines if not x.typed and (x.speaker, x.started_ms) in table.hidden]
         if not markers:
             return None
         changed = True
@@ -9416,6 +9602,180 @@ class DMBot(commands.AutoShardedBot):
             # The names are shown and the DM could not be told: say so in the log (a count only)
             log.warning("Names shown at the table, but the DM screen could not say so")
 
+    async def record_exposures(self, table: Table) -> None:
+        """After a session: remember the secret names and secret connections said or typed at the
+        table (#2410), the DM's own words included. Nothing is applied and nobody is told here:
+        the players see no change until the summary goes out. Only the words of people recorded
+        now count, never the DM sidebar. The log gets a count, never a name."""
+        if (
+            self.memory is None
+            or self.exposures is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        if not table.started_at:  # the session's key: without it a re-run would double the rows
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            names = await secret_names(self.memory, gid, cid)
+            connections = await secret_connections(self.memory, gid, cid)
+            if not names and not connections:
+                return
+            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            agreed = await self.consent.consenting(gid)  # asked after the lines were read
+            # The DM's own table words count (a slip of the DM's tongue is the first case); the
+            # sidebar is left out by said_lines, and so is anyone not recorded now
+            players = {line.user_id for line in lines} & set(agreed)
+            found = find_exposures(names, connections, said_lines(lines, people=players))
+            if not found:
+                return
+            waiting = await self.exposures.record(gid, cid, table.started_at, found)
+            log.info("Secrets said at the table: %d found, %d waiting", len(found), waiting)
+
+    async def send_exposure_summary(self, table: Table) -> None:
+        """After a session (#2410, slice 2): tell the DMs what the table said that was secret, then
+        show it to the players. One private message (the DM screen while it is private, a private
+        message to each DM when players may look at it), each item with a ↩️ Recant button.
+        Nothing is shown to the players unless the message went out, and each item is shown in a
+        change of its own, so Recant undoes exactly that one. At most `MAX_LISTED` items; the rest
+        wait for the next summary and are not shown until then. The log has counts, no names."""
+        if (
+            self.memory is None
+            or self.exposures is None
+            or table.campaign_id is None
+            or table.screen_channel_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            rows, stands_for = dedupe(await self.exposures.waiting(gid, cid))
+            described = await describe(self.memory, gid, cid, rows) if rows else []
+            kept = {row.id for row, _ in described}
+            gone = [row.id for row in rows if row.id not in kept]
+            if gone:  # no longer secret (the DM changed it meanwhile): nothing to tell
+                await self.exposures.mark(
+                    gid, cid, [*gone, *(i for g in gone for i in stands_for[g])], "settled"
+                )
+            # With no secret to tell, the message still goes when there are new names or things to
+            # check (#2410): one message after a session, and the Recant part is simply absent.
+            if not described and not (table.new_names or table.claims_waiting):
+                return
+            listed = described[:MAX_LISTED]
+            ids = [row.id for row, _ in listed]
+
+            def message(private: bool) -> str:
+                return summary_text(
+                    [words for _, words in listed],
+                    len(described) - len(listed),
+                    campaign_name=campaign.name,
+                    private=private,
+                    new_names=table.new_names,
+                    claims_waiting=table.claims_waiting,
+                    claim_lines=table.claim_preview,  # (every copy of this message is DM-only)
+                    can_check=not private,
+                )
+
+            async def by_private_message(dm_ids: Iterable[int]) -> tuple[int, int]:
+                reached = closed = 0
+                for dm_id in sorted(dm_ids):
+                    sent = await self.sidebar_send_dm(
+                        dm_id,
+                        message(True),
+                        summary_view(ids, cid, gid, new_names=bool(table.new_names), private=True),
+                    )
+                    reached += sent == "sent"
+                    closed += sent == "forbidden"
+                return reached, closed
+
+            reached = closed = 0
+            on_screen = 0  # the message stayed on the DM screen (the count of checks is in it)
+            if campaign.dm_screen_visibility != "private":  # players may look at the screen
+                reached, closed = await by_private_message(campaign.dm_user_ids)
+            else:
+                sent = await self.post_message(
+                    table.screen_channel_id,
+                    message(False),
+                    summary_view(
+                        ids,
+                        cid,
+                        gid,
+                        new_names=bool(table.new_names),
+                        claims=bool(table.claims_waiting),
+                    ),
+                )
+                if sent is not None:
+                    # Asked again after the send: if the screen opened up meanwhile the message is
+                    # pulled back, so it does not count as told; it goes privately instead.
+                    now = await self.campaigns.get(gid, cid)
+                    if now is None or now.dm_screen_visibility != "private":
+                        await secret_posts.hide_one(sent)
+                        reached, closed = await by_private_message((now or campaign).dm_user_ids)
+                    else:
+                        secret_posts.remember(gid, cid, sent)
+                        reached = on_screen = 1
+            if not reached:
+                log.warning("The secrets summary could not be sent: %d waiting", len(described))
+                if closed and described:  # nobody could be told: their private messages are closed
+                    await self.post(table.screen_channel_id, SUMMARY_WAITING)
+                return  # nothing is shown to the players
+            if on_screen or reached >= len(campaign.dm_user_ids):
+                # Told: the screen has it, or every DM got it. A co-DM whose private messages are
+                # closed has not heard, so then the "new names" step still posts them.
+                table.new_names = []
+            if on_screen:
+                table.claims_waiting = 0  # the screen message carried the count
+                table.claim_preview = []
+            shown = failed = 0
+            for row, _ in listed:  # told: now show them, one change each
+                # Claimed first: a Recant pressed since the message went out has already taken the
+                # row (the claim then matches nothing and it stays secret), and one pressed now
+                # is told to wait, so it can never fall between the showing and the record of it.
+                if not await self.exposures.mark(gid, cid, [row.id], "applying"):
+                    # taken back (or settled) already: the same secret said in earlier sessions
+                    # must not come back in the next summary
+                    await self.exposures.mark(gid, cid, stands_for[row.id], "settled")
+                    continue
+                spelling = [row.spelling] if row.kind == "name" and row.spelling else []
+                relation = [row.relation_id] if row.kind == "connection" and row.relation_id else []
+                written = None
+                for _try in range(2):  # once more if it fails
+                    try:
+                        written = await self.memory.reveal_exposed(
+                            gid, cid, spellings=spelling, relation_ids=relation
+                        )
+                        break
+                    except Exception as exc:  # (the text can carry a name: only the type is logged)
+                        log.warning(
+                            "Couldn't show a secret said at the table: %s", type(exc).__name__
+                        )
+                if written is None:
+                    await self.exposures.mark(gid, cid, [row.id], "pending")  # the next summary
+                    failed += 1
+                    continue
+                if written.batch is None:
+                    await self.exposures.mark(gid, cid, [row.id], "settled")
+                else:
+                    await self.exposures.mark(gid, cid, [row.id], "applied", written.batch)
+                    shown += 1
+                if stands_for[row.id]:  # the same secret said in earlier sessions: handled with it
+                    await self.exposures.mark(gid, cid, stands_for[row.id], "settled")
+            if shown and self.lookup is not None:
+                self.lookup.drop([cid])
+            if failed:  # the message said "now shown" for these: say it was not, with no name
+                for dm_id in sorted(campaign.dm_user_ids):
+                    await self.sidebar_send_dm(dm_id, SUMMARY_PARTIAL)
+            log.info(
+                "Secrets said at the table: %d told, %d shown, %d not", len(listed), shown, failed
+            )
+
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
         transcript everyone may read (#1407). The DM screen asks, privately, once for each such
@@ -9440,7 +9800,7 @@ class DMBot(commands.AutoShardedBot):
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
             agreed = await self.consent.consenting(gid)  # asked after the lines were read
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            every = spoken(secrets, players_lines(lines, players=players))
+            every = spoken(secrets, said_lines(lines, people=players))
             found = every[:MAX_ASKED]
             alone = campaign.dm_screen_visibility != "private"
             reached = 0  # DMs who got the question privately
@@ -9478,30 +9838,46 @@ class DMBot(commands.AutoShardedBot):
             if found:
                 log.info("Secret name(s) said by players: %d asked", len(found))  # a count only
 
-    async def ask_about_claims(self, table: Table) -> None:
-        """After a session: if the story extractor left proposals waiting (#1297), the DM
-        screen says how many, never what, with a button only the DM can use. With the
-        extractor off (the default) nothing is ever waiting and nothing is posted; this step
-        itself makes no AI call."""
+    async def note_claims(self, table: Table) -> None:
+        """After a session (#1297): count the proposals the story extractor left waiting. With the
+        extractor off (the default) nothing is ever waiting; this step makes no AI call. The
+        summary tells the DM when it goes to the DM screen (#2410); `post_claims` otherwise."""
         if self.memory is None or table.campaign_id is None:
             return
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             agreed = await self.consent.consenting(gid)
             counts = await ClaimStore(self.memory).counts(gid, cid, opted_in=agreed)
-            waiting = counts.get("proposed", 0)
-            if waiting:
-                await self.post(
-                    table.screen_channel_id,
-                    claims_waiting_text(waiting),
-                    view=claims_review_view(cid),
+            table.claims_waiting = counts.get("proposed", 0)
+            if table.claims_waiting:
+                waiting = await ClaimStore(self.memory).waiting(
+                    gid, cid, opted_in=agreed, limit=CLAIMS_PREVIEW
                 )
+                table.claim_preview = [claims_question(claim) for claim in waiting[:CLAIMS_PREVIEW]]
+
+    async def post_claims(self, table: Table) -> None:
+        """The DM screen says how many things wait for the check, never what, with a button only
+        the DM can use, when the summary has not already said so."""
+        waiting, table.claims_waiting = table.claims_waiting, 0
+        table.claim_preview = []
+        if waiting and table.campaign_id is not None:
+            await self.post(
+                table.screen_channel_id,
+                claims_waiting_text(waiting),
+                view=claims_review_view(table.campaign_id),
+            )
+
+    async def ask_about_claims(self, table: Table) -> None:
+        """Count and tell in one go: the two steps above, for a caller that wants both."""
+        await self.note_claims(table)
+        await self.post_claims(table)
 
     async def warn_about_continuity(self, table: Table) -> None:
         """After a session: if what was said clashes with the story the DM already confirmed
         (#1320), the DM screen says how many, never what, with a button only the DM can use.
-        Nothing is posted below the critical mass or with nothing waiting (which is always the
-        case while the extractor is off); this step makes no AI call."""
+        Nothing is posted below the critical mass (except a clash with a connection the DM pinned
+        as 100% truth, #2447) or with nothing waiting (always the case while the extractor
+        is off); this step makes no AI call."""
         if self.memory is None or table.campaign_id is None:
             return
         gid, cid = table.guild_id, table.campaign_id
@@ -9519,7 +9895,9 @@ class DMBot(commands.AutoShardedBot):
             if report.conflicts:
                 await self.post(
                     table.screen_channel_id,
-                    continuity_waiting_text(len(report.conflicts)),
+                    continuity_waiting_text(
+                        len(report.conflicts), sum(1 for c in report.conflicts if c.pinned)
+                    ),
                     view=continuity_view(cid),
                 )
 
@@ -10038,12 +10416,18 @@ class DMBot(commands.AutoShardedBot):
                 t.campaign_id == cid for t in self.tables.values()
             ):
                 self.lookup.drop([cid])  # the session's copy isn't needed any more
-            if added:
-                await self.post(
-                    table.screen_channel_id,
-                    after_session_text(added),
-                    view=review_view(cid),
-                )
+            table.new_names = list(added)  # told by the summary, or by the "new names" step
+
+    async def post_new_names(self, table: Table) -> None:
+        """After a session (#2410): the new names nobody has been told about yet (the secrets
+        summary tells them when it is sent, and then empties the list)."""
+        names, table.new_names = table.new_names, []
+        if names and table.campaign_id is not None:
+            await self.post(
+                table.screen_channel_id,
+                after_session_text(names),
+                view=review_view(table.campaign_id),
+            )
 
     async def _dm_trial_user(self, user_id: int, text: str) -> trial_jobs.DmResult:
         """A private message to a person who is not at a table now. "closed" when Discord

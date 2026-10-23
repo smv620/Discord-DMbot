@@ -328,6 +328,10 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
     try:
         if a.action == "link-secret":
             await link_edits.set_secret(memory, guild_id, cid, link, a.flag)
+        elif a.action == "link-pin":
+            # 📌 100% truth (#2447): the card's own call. A retried job finds it already so.
+            if (link.id in await memory.pinned_connections(guild_id, cid)) != a.flag:
+                await memory.pin(guild_id, cid, link.id, a.flag, source=DM)
         elif a.action == "link-remove":
             if not a.flag:
                 return _failed(BAD_TARGET)

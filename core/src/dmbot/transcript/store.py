@@ -279,16 +279,24 @@ class TranscriptStore:
             return cur.rowcount
 
     async def set_topic(
-        self, guild_id: int, session_id: str, user_id: int, started_ms: int, topic: str
+        self,
+        guild_id: int,
+        session_id: str,
+        user_id: int,
+        started_ms: int,
+        topic: str,
+        *,
+        typed: bool = False,
     ) -> int:
         """A saved line's topic, from the off-topic filter (#52). What was heard never
-        changes. How many lines changed (0: it wasn't saved)."""
+        changes. How many lines changed (0: it wasn't saved). `typed`: typed chat and speech
+        of one person can share a millisecond, so the kind is part of the match (#2447)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
-                " AND sidebar IS NULL",
-                (topic, session_id, user_id, started_ms),
+                " AND sidebar IS NULL AND typed = %s",
+                (topic, session_id, user_id, started_ms, typed),
             )
             return cur.rowcount
 
@@ -313,6 +321,8 @@ class TranscriptStore:
         user_id: int,
         started: Collection[int],
         topic: str,
+        *,
+        typed: bool = False,
     ) -> int:
         """Several of one person's saved lines get a topic, in one statement (#677: Put
         it back). What was heard never changes. How many lines changed."""
@@ -320,8 +330,8 @@ class TranscriptStore:
             cur = await conn.execute(
                 "UPDATE transcript_lines SET topic = %s"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)"
-                " AND sidebar IS NULL",
-                (topic, session_id, user_id, sorted(started)),
+                " AND sidebar IS NULL AND typed = %s",
+                (topic, session_id, user_id, sorted(started), typed),
             )
             return cur.rowcount
 

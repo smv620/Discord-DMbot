@@ -9,6 +9,8 @@ from dmbot.transcript import export
 from dmbot.transcript.models import (
     MAX_UNSAVED,
     NO_LINEAGE,
+    OFF_RECORD,
+    OFF_RECORD_WORDS,
     SIDEBAR_ANSWER,
     SIDEBAR_QUESTION,
     SIDEBAR_TABLE_QUESTION,
@@ -30,6 +32,46 @@ def session(ended: int | None = START + 2 * 3600 + 14 * 60) -> TranscriptSession
 
 def line(seconds: float, user: int, text: str) -> Line:
     return Line(int(START * 1000 + seconds * 1000), user, text, text)
+
+
+def gap(start: float, minutes: float, user: int) -> Line:
+    """The marker line the bot adds when a pause ends (#2466)."""
+    return Line(
+        int(START * 1000 + start * 1000),
+        user,
+        OFF_RECORD_WORDS,
+        OFF_RECORD_WORDS,
+        int(minutes * 60_000),
+        sidebar=OFF_RECORD,
+    )
+
+
+class OffTheRecordMarkers(unittest.TestCase):
+    def render(self, version: str) -> list[str]:
+        lines = [line(5, MIA, "I cast Shield."), gap(300, 5, MIA), line(900, DEE, "Run!")]
+        text = export.render("X", session(), lines, {MIA: "Mia", DEE: "Dee"}, version=version)
+        return text.split("\n\n", 1)[1].splitlines()
+
+    def test_both_versions_show_the_gap_on_purpose_and_when(self) -> None:
+        # 22:13:20 + 5 min = 22:18, to 22:23
+        want = [
+            "[0:00:05] (Mia): I cast Shield.",
+            "[0:05:00] (Mia was off the record, nothing recorded, 22:18\u201322:23 UTC)",
+            "[0:15:00] (Dee): Run!",
+        ]
+        self.assertEqual(self.render(export.AS_HEARD), want)
+        self.assertEqual(self.render(export.CLEANED), want)
+
+    def test_a_marker_is_no_speaker_and_no_sidebar_line(self) -> None:
+        only = [gap(10, 1, MIA), line(20, DEE, "hi")]
+        self.assertEqual(export.speaker_order(only), [DEE])
+        head = export.render("X", session(), only, {MIA: "Mia", DEE: "Dee"}).split("\n\n")[0]
+        self.assertNotIn("DM Sidebar", head)
+        self.assertNotIn("(typed)", head)
+
+    def test_a_dm_marker_carries_the_dm_label_like_other_lines(self) -> None:
+        text = export.render("X", session(), [gap(10, 1, MIA)], {MIA: "Mia"}, dms={MIA})
+        self.assertIn("(Mia, DM, was off the record, nothing recorded,", text)
 
 
 class Render(unittest.TestCase):
@@ -125,8 +167,10 @@ class Render(unittest.TestCase):
         ]
         self.assertEqual(export.speaker_order(lines, export.AS_HEARD), [MIA, DEE, 3])
         self.assertEqual(
-            export.speaker_order(lines, export.CLEANED), [DEE, MIA]
-        )  # typed or asked: not listed
+            export.speaker_order(lines, export.CLEANED), [MIA, DEE]
+        )  # typed chat is in the cleaned version now (#2447); asking DMbot is not
+        hidden = [dataclasses.replace(lines[0], topic="off_topic"), *lines[1:]]
+        self.assertEqual(export.speaker_order(hidden, export.CLEANED), [DEE, MIA])
 
     def test_two_people_with_one_name_tell_apart_and_keep_the_mark(self) -> None:
         names = export.distinct_names({MIA: "Sam", DEE: "sam", 3: "Sam", 4: "Ann"})
@@ -353,6 +397,40 @@ REPLIED = Lineage(
     prompt="sidebar-1",
     sources=("SRD 5.2.1 p. 241", "house rule 3"),
 )
+
+
+class TypedInTheCleanedVersion(unittest.TestCase):
+    """#2447, item 6: typed chat is in both versions, tagged (typed); typing clearly not about the
+    game is left out of the cleaned one, as talk like it is."""
+
+    def render(self, version: str, lines: list[Line]) -> list[str]:
+        text = export.render("X", session(), lines, {MIA: "Mia", DEE: "Dee"}, version=version)
+        return text.split("\n\n", 1)[1].splitlines()
+
+    def test_typed_game_chat_is_in_both_versions_under_the_writers_name(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "we take a long rest"), typed=True),
+            line(9, DEE, "Run!"),
+        ]
+        want = ["[0:00:05] (Mia) (typed): we take a long rest", "[0:00:09] (Dee): Run!"]
+        self.assertEqual(self.render(export.AS_HEARD, lines), want)
+        self.assertEqual(self.render(export.CLEANED, lines), want)
+
+    def test_off_topic_typing_is_hidden_from_the_cleaned_version_only(self) -> None:
+        lines = [
+            dataclasses.replace(line(5, MIA, "my cat"), typed=True, topic="off_topic"),
+            line(9, DEE, "Run!"),
+        ]
+        self.assertIn("(typed): my cat", "\n".join(self.render(export.AS_HEARD, lines)))
+        cleaned = "\n".join(self.render(export.CLEANED, lines))
+        self.assertNotIn("my cat", cleaned)
+        self.assertIn("Run!", cleaned)
+
+    def test_the_note_is_there_even_when_every_typed_line_is_hidden(self) -> None:
+        lines = [dataclasses.replace(line(5, MIA, "my cat"), typed=True, topic="off_topic")]
+        head = export.render("X", session(), lines, {MIA: "Mia"}, version=export.CLEANED)
+        self.assertIn("(typed) lines were typed", head.split("\n\n", 1)[0])
+        self.assertNotIn("my cat", head.split("\n\n", 1)[1])
 
 
 class DmSidebarLines(unittest.TestCase):

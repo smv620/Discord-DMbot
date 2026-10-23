@@ -234,6 +234,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
                          None, None, None, None, False, 0)  # fmt: skip
         memory.relations = AsyncMock(return_value=[knows])
+        memory.pinned_connections = AsyncMock(return_value=set())
         player = MagicMock(spec=discord.Member, bot=False, id=5)
 
         def picked(view: Any, select: Any, value: str) -> Any:
