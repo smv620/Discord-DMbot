@@ -32,6 +32,7 @@ class NewLink:
     object_id: str
     quote: str
     secret: bool = False
+    detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # the DM said this upload is 100% truth (#2447): pinned when kept
 
 
@@ -45,6 +46,7 @@ class Waiting:
     subject: str  # the names as they are now
     object: str
     ready: bool  # both are confirmed names: the DM may keep it now
+    detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # pin it as 100% truth when kept (#2447)
 
 
@@ -77,10 +79,10 @@ class BackstoryLinks:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
-                    " object_id, quote, secret, truth, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " object_id, quote, secret, detail, truth, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
-                     link.quote[:QUOTE_MAX], link.secret, link.truth, now),
+                     link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
@@ -113,7 +115,7 @@ class BackstoryLinks:
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
-                "SELECT subject_id, predicate, object_id, quote, secret, truth, created_at"
+                "SELECT subject_id, predicate, object_id, quote, secret, detail, truth, created_at"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -165,7 +167,7 @@ class BackstoryLinks:
                     Waiting(
                         a, predicate, b, str(r["quote"]), bool(r["secret"]) or hidden,
                         str(entities[a]["name"]), str(entities[b]["name"]),
-                        ready, bool(r["truth"]),
+                        ready, str(r["detail"]), bool(r["truth"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -174,10 +176,10 @@ class BackstoryLinks:
             for a, predicate, b, r in move:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
-                    " predicate, object_id, quote, secret, truth, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " predicate, object_id, quote, secret, detail, truth, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
-                     r["truth"], r["created_at"]),
+                     r["detail"], r["truth"], r["created_at"]),
                 )  # fmt: skip
         return out
 

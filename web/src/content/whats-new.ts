@@ -244,8 +244,8 @@ export const held: Held[] = [
   {
     date: "2026-10-22",
     title: "New names wait until they are said",
-    what: "A name you add by hand, add from a list or read from your backstory, and a connection from your backstory, stays hidden from your players until you press 👁️ Show to players. On the website, your full view shows them dimmed.",
-    reason: "In review (slice 2 of #2404); held until dev1 deploys it. Saying a name at the table will show it automatically in the next step.",
+    what: "A name you add by hand, add from a list or read from your backstory, and a connection from your backstory, stays hidden from your players until your table says it or you press 👁️ Show to players. After a session DMbot tells you which names were shown, with an Undo. On the website, your full view shows them dimmed.",
+    reason: "In review (#2404 slices 2a and 2b); held until dev1 deploys it.",
   },
   {
     date: "2026-10-22",
@@ -431,7 +431,7 @@ export const held: Held[] = [
   {
     date: "2026-10-20",
     title: "Names from your own story",
-    what: "In ⚙️ Settings, Names, then Add many, press 📜 From my story. Paste your campaign background, upload it, or send a link, and DMbot suggests the names in it, each with the line it came from. You say yes or no to each one, or yes to a whole group, such as every place, in one press. DMbot does not keep your text, only a short line beside each name until you answer it. This is for your own writing, not a published book.",
+    what: "In ⚙️ Settings, Names, then Add many, press 📜 Upload campaign lore. Paste your campaign background, upload it, or send a link, and DMbot suggests the names in it, each with the line it came from. You say yes or no to each one, or yes to a whole group, such as every place, in one press. DMbot does not keep your text, only a short line beside each name until you answer it. This is for your own writing, not a published book.",
     reason: "In review (#2167); held until dev1 deploys it.",
   },
   {

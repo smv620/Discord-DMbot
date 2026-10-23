@@ -1146,6 +1146,21 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   the campaign. Stopping takes three taps (Menu, Stop, Yes) where saying yes takes one;
   the owner's legal review found that acceptable (2026-10-08). The warning still stays
   short and one-time, and the menu button is on every reminder.
+- **Off the record** (owner question, decided by Supervisor 2026-10-23, #2466): a person can step off
+  the record for a while without stopping. **A button is the main way.** **⏸️ Pause recording me** in the
+  🗂️ Menu (and on the per-session reminder) takes 5 minutes, 15 minutes, or until ▶️ Resume. It needs no
+  warning because it ends by itself, and it always ends with the listening session. A paused person is
+  off ears' allowlist, exactly like someone who never agreed: nothing of theirs is captured, decoded,
+  transcribed or stored, and core re-checks the pause after every async step as it does consent. The
+  DM also has **⏸️ Pause the table** for breaks. The table chat says "⏸️ <name> is off the record for 5
+  minutes." and "▶️ <name> is back on the record.", and both transcripts get one marker line, "(<name>
+  was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
+  this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
+  DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
+  is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
+  (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
+  they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
+  the pause stays on the record.
 - **No thanks** is not remembered: that person is asked again next session, and the
   message says so. Pressing **No thanks** on an old message also removes any consent
   given since, so an old message can never leave someone recorded after saying no.
@@ -1821,11 +1836,16 @@ names panel nor the speech-to-text hints can be a fixed list.
       other; only a 🤫 spelling or a clue only some know keeps the secret treatment. The recap may use an
       unrevealed name only when the table said it in that session's lines (the recap writes what the party
       knows); otherwise it counts as a name not for players. Full View marks `revealed` on each
-      node and connection. Matching what is said at the table, and the after-session "Revealed at the
-      table" line, are the next slice.
+      node and connection. **After each session** (and each imported session) a held-back name that a
+      recorded person said or typed at the table, by its name or another of its names as whole words, is shown
+      to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
+      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). The DM
+      screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
+      step: until the knowledge map review (#2410), the after-session report points to the held-back
+      connections whose names are both revealed now.
     - **📌 100% truth** (CloudDev, 2026-10-22, #2447, migration 0190): the DM's own word that a connection is
       true in the story; nothing else is 100%. A DM presses 📌 Pin as 100% truth on a connection's card
-      (Unpin takes it back), or answers once per lore upload, "Asserted" (default) or "📌 100% truth", and
+      (Unpin takes it back), or answers once per lore upload, "may change in play" (default) or "📌 100% truth", and
       the connections kept from that upload are pinned. It is a `pinned` flag on the truth belief
       (`memory_beliefs.pinned`), so Undo, backups and isolation work as for any belief; the web graph
       shows it to a DM in Full View only. After a session, a claim that clashes with a pinned connection
@@ -1877,6 +1897,36 @@ names panel nor the speech-to-text hints can be a fixed list.
   it when it ends (posted, put back as a draft, dropped), so every writer of the status is covered; the bot
   moves it to `post` once its checks pass; the audio worker runs the `audio` step only when no post is under
   way. The web API's recap answer carries `postingSince`, `postingStep`, `postedUrl` and `serverNow`.
+- **Where everything is on the website** (owner, 2026-10-22, the account and campaign pages reorganised; it
+  builds on "A page for each campaign" below). One rule: **everything about one campaign lives on that
+  campaign's page; everything about you, or shared across campaigns, lives on My Account.** Every page shows
+  where it is (a breadcrumb: My Account › <Campaign> › Story graph) and the same campaign tabs, so nobody is
+  lost.
+  - **My Account** (`/account`), top to bottom:
+    1. **My campaigns:** one card per campaign. The **campaign's name is the link** to its page, and the card
+       shows its facts at a glance: 🟢 when DMbot is listening there right now; your part (You run it, You help
+       run it, You play in it); sessions; hours played; players; NPCs; started; last played. The DM tools are
+       not on the card; they are on the campaign's page.
+    2. **My characters.**
+    3. **Shared rules:** the one place for house-rules sets and homebrew packs you publish or follow, at
+       `/account/sharing`.
+    4. **My plan and billing.**
+    5. **My account:** email, DMbot ID, servers, sign-in.
+
+    The account-wide House rules, Homebrew and Transcripts cards go: each lives on its campaign's page.
+  - **The campaign's page** (`/account/campaigns/<server>.<campaign>`), the campaign's home. The heading has
+    the name, 🟢, your part and the facts. Below it are four groups, in this order, and the same four are the
+    tabs on every page of the campaign:
+    1. **Story:** Recaps · Story timeline · Story graph · Names and NPCs.
+    2. **At the table:** Transcripts · Import a past session.
+    3. **Rules:** House rules · Homebrew. Each of those pages links to **Shared rules** for sharing them.
+    4. **Settings** (the campaign's DMs only): who can see the DM screen (peek) · how much DMbot says ·
+       transcript retention · game masters · hand over · pause · delete. These are the same choices as
+       ⚙️ Settings in Discord, with the same words. Players see the groups they may use.
+  - **Story timeline:** the campaign's sessions in order, each with its number, date and length, its recap
+    (linked) and what was revealed at the table that session. It's built after the other pages.
+  - **Words:** a page is called by the same name everywhere: in Discord, on the tabs, in the breadcrumb, and on
+    the account page.
 - **A page for each campaign** (owner, 2026-10-22). On the account page, each campaign in **My Campaigns**
   is a link to `/account/campaigns/<server>.<campaign>`. That page brings together everything that belongs
   to that one campaign:
@@ -1988,6 +2038,14 @@ names panel nor the speech-to-text hints can be a fixed list.
     text and continued if needed. **Pass 2** (the fast model) only reshapes that list into the ingestion
     format, never adding. Code then checks every quote against the original text. DMbot never says "no names
     found" when an answer was cut short.
+    *Built (#2454, migration 0191, `memory/lore_read.py`):* pass 1's room is about an eighth as many tokens as the
+    text has characters (at least 3,000, at most 16,000 and never above the model's own output limit in
+    `ai.MAX_OUTPUT_TOKENS`); a cut answer is asked for again with twice the room, and one still cut is continued
+    from the list so far (up to 3 follow-ups). Pass 2 shapes the list 50 lines at a time and halves a slice whose
+    answer is cut. Pass 1's prompt carries two worked examples (a constant, `EXAMPLES`, pinned by a test); a rumour
+    goes under NOT INCLUDED and is never a relationship. Pass 2 maps each relationship onto the fixed kinds or the
+    campaign's own, or `other` with its words: the catch-all `associated_with`, labelled with those words
+    (`backstory_links.detail`). When nothing could be read before the cut, the DM is told so, never "no names".
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.

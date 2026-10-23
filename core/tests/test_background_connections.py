@@ -7,18 +7,19 @@ from __future__ import annotations
 
 import json
 import unittest
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from dmbot.ai import Reply
 from dmbot.memory import background as bg
+from dmbot.memory import lore_read
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName
 from dmbot.memory.ontology import PredicateTerm
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui import names as names_ui
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
+from tests import lore_fake
 from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
 
 
@@ -155,7 +156,10 @@ class TheChecks(unittest.TestCase):
 
     def test_the_schema_and_instructions_ask_for_connections(self) -> None:
         self.assertEqual(bg.SCHEMA["required"], ["names", "connections"])  # names come first
-        self.assertIn("Only connections the text states", bg.instructions())
+        self.assertIn("Only what the text states", lore_read.read_instructions())
+        self.assertIn(
+            "other", bg.SCHEMA["properties"]["connections"]["items"]["properties"]["how"]["enum"]
+        )
 
     def test_knows_and_the_campaigns_own_kinds_are_read(self) -> None:
         text = "Mirelle knows Brannoch. Mirelle teaches Oakmere."
@@ -174,8 +178,8 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(sorted(c.how for c in got), ["knows", "mentor_of", "mentor_of"])
         self.assertIn("mentor_of", json.dumps(bg.schema({"mentor_of": "is a mentor of"})))
         self.assertNotIn("mentor_of", json.dumps(bg.SCHEMA))
-        self.assertIn('"mentor_of"', bg.instructions({"mentor_of": "is a mentor of"}))
-        self.assertIn("knows", bg.instructions())
+        self.assertIn("mentor_of", lore_read.shape_instructions({"mentor_of": "is a mentor of"}))
+        self.assertIn("knows", lore_read.shape_instructions())
 
     def test_a_pair_the_campaign_has_is_left_out_before_the_cap(self) -> None:
         found = bg.read_answer(reply(), TEXT)
@@ -192,19 +196,15 @@ class TheChecks(unittest.TestCase):
         links = [bg.Connection("She", "knows", "Mirelle", "She knows Mirelle")]
         self.assertEqual(bg.keep_connections([links], found, {}), [])
 
-    def test_the_room_follows_the_piece(self) -> None:
-        self.assertEqual(bg.room_for("x" * 10), bg.ROOM_MIN)
-        self.assertGreater(bg.room_for("x" * 30_000), bg.room_for("x" * 14_000))
-        self.assertEqual(bg.room_for("x" * 100_000), bg.ROOM_MAX)
-
 
 class ThePath(NamesTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         _ai_busy.clear()
         _ai_reads.clear()
-        self.ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply(), False)))
+        self.ai = lore_fake.lore_ai(reply())
         self.bot.background_ai = self.ai  # type: ignore[assignment]
+        self.bot.background_read_ai = self.ai  # type: ignore[attr-defined]
         self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
         self.bot.campaigns.record_confirmation = AsyncMock()  # type: ignore[method-assign]
         self.store = BackstoryLinks(self.db)
@@ -340,7 +340,7 @@ class ThePath(NamesTest):
         await self.read()
         waiting = await self.waiting()
         first = waiting[0]
-        again = NewLink(first.subject_id, first.predicate, first.object_id, "q", False, True)
+        again = NewLink(first.subject_id, first.predicate, first.object_id, "q", truth=True)
         self.assertEqual(await self.store.add(GUILD, self.campaign.id, [again]), 0)
         (same,) = [
             w
@@ -523,9 +523,7 @@ class ThePath(NamesTest):
         one = [
             link("the hooded stranger", "in", "Vale Keep", "The hooded stranger lives in Vale Keep")
         ]
-        self.ai.complete.return_value = Reply(
-            json.dumps({"names": names, "connections": one}), False
-        )
+        lore_fake.set_answer(self.ai, {"names": names, "connections": one})
         it = self.it()
         await ui_bg.offer(it, self.campaign.id, Upload(text, "your background"))
         await it.response.sent[0][1]["view"]._read(self.it())
@@ -690,24 +688,46 @@ class ThePath(NamesTest):
 
     # ---- the reading --------------------------------------------------------------------------
 
-    async def test_a_cut_answer_is_asked_again_with_twice_the_room(self) -> None:
-        self.ai.complete.side_effect = [Reply(reply(), True), Reply(reply(), False)]
+    async def test_a_cut_off_reading_never_says_no_names(self) -> None:
+        """#2454: every pass-1 answer stopped at the room's end and gave nothing to read."""
+        self.ai.reads = [Reply("NAMES\n- Mire", True)] * 8
         press = await self.read()
-        first, second = (c.kwargs["max_tokens"] for c in self.ai.complete.await_args_list)
-        self.assertEqual(second, 2 * first)
-        self.assertNotIn("missed some names", shown(press))
+        text = shown(press)
+        self.assertNotIn("found no new names", text)
+        self.assertIn("stopped reading", text)
+        self.assertEqual(await self.waiting(), [])
 
-    async def test_an_answer_cut_twice_tells_the_dm_it_may_be_missing_some(self) -> None:
-        self.ai.complete.side_effect = [Reply(reply(), True), Reply(reply(), True)]
+    async def test_a_cut_off_reading_gives_the_names_it_got_and_says_it_may_be_missing_some(
+        self,
+    ) -> None:
+        self.ai.reads = [Reply(lore_fake.plain_list(json.loads(reply())) + "\n- Zed", True)] * 8
         press = await self.read()
-        self.assertIn("missed some names", shown(press))
+        text = shown(press)
+        self.assertIn("names to check", text)
+        self.assertIn("stopped before the end", text)
 
-    async def test_the_retry_budget_stops_more_than_four_retries_in_one_reading(self) -> None:
-        spent = [ui_bg.RETRIES_PER_READING]
-        ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply(), True)))
-        done = await ui_bg.read_piece(ai, TEXT, {}, spent)
-        self.assertEqual(ai.complete.await_count, 1)  # no budget: not asked again
-        self.assertTrue(done.cut)
+    async def test_a_stated_relationship_with_no_fixed_kind_is_kept_on_the_catch_all(self) -> None:
+        text = "Brother Aldric secretly pays the Ashen Hand."
+        names = [
+            name("Brother Aldric", "person", "Brother Aldric secretly pays"),
+            name("Ashen Hand", "group", "pays the Ashen Hand"),
+        ]
+        pays = {
+            "a": "Brother Aldric", "how": "other", "words": "pays", "b": "Ashen Hand",
+            "quote": "Brother Aldric secretly pays the Ashen Hand",
+        }  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": [pays]})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your background"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        await self.confirm_all()
+        (queued,) = await self.waiting()
+        self.assertEqual((queued.predicate, queued.detail), ("associated_with", "pays"))
+        _, view = await self.offer()
+        self.assertIn("pays", view.text())
+        await self.button(view, "✅ Keep").callback(self.it())
+        (rel,) = await self.relations()
+        self.assertEqual((rel.predicate, rel.detail), ("associated_with", "pays"))
 
     async def test_the_campaigns_own_kind_is_offered_to_the_ai_and_kept(self) -> None:
         term = PredicateTerm(
@@ -719,9 +739,11 @@ class ThePath(NamesTest):
             reason="the table uses it", source="dm",
         )  # fmt: skip
         await self.read()
-        sent = self.ai.complete.await_args
-        self.assertIn("mentor_of", sent.args[0])
-        self.assertIn("mentor_of", json.dumps(sent.kwargs["schema"]))
+        shaping = next(c for c in self.ai.complete.await_args_list if c.kwargs.get("schema"))
+        self.assertIn("mentor_of", shaping.args[0])
+        self.assertIn("mentor_of", json.dumps(shaping.kwargs["schema"]))
+        reading = next(c for c in self.ai.complete.await_args_list if not c.kwargs.get("schema"))
+        self.assertIn("mentor_of", reading.args[0])
 
     async def test_the_log_has_counts_only(self) -> None:
         with self.assertLogs("dmbot.ui.name_background", "INFO") as logs:
@@ -732,7 +754,7 @@ class ThePath(NamesTest):
         self.assertNotIn("From your text", joined)
 
     async def test_nothing_is_queued_without_the_store_or_without_connections(self) -> None:
-        self.ai.complete.return_value = Reply(reply([]), False)
+        lore_fake.set_answer(self.ai, reply([]))
         await self.read()
         self.assertEqual(await self.waiting(), [])
 
