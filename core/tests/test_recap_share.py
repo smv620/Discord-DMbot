@@ -236,6 +236,20 @@ class TheStoreSide(Base):
             await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
         )
 
+    async def test_an_approval_for_audio_is_not_posted_by_a_text_only_press(self) -> None:
+        # (#2420) audio is made and reviewed before anything is posted: a stale "post text only"
+        # press after the choice became audio posts nothing.
+        from dmbot.recaps.approval import text_hash
+
+        await self.finished(100)
+        ok = await self.store.approve(
+            1, self.one.id, 100, fx.DM, "both", expected=text_hash("T", "s")
+        )
+        self.assertTrue(ok)
+        self.assertFalse(
+            await self.store.decide(1, self.one.id, 100, "post", require_approved=True)
+        )
+
     async def test_a_token_is_made_only_for_a_posted_recap_and_new_replaces_it(self) -> None:
         await self.finished(100)
         self.assertIsNone(await self.store.share_token(1, self.one.id, 100))  # a draft has none

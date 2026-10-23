@@ -854,6 +854,9 @@ class RecapStore:
                 sql += (
                     " AND approved_hash = encode(sha256(convert_to("
                     "title || E'\\n' || summary, 'UTF8')), 'hex')"
+                    # Only a text-only approval is posted at once; audio is made and reviewed first,
+                    # so a stale press after the choice became audio must post nothing.
+                    " AND audio_choice = 'text'"
                 )
         elif action == "drop":
             sql = "status = 'dropped' WHERE status = 'draft'"

@@ -9001,6 +9001,17 @@ class DMBot(commands.AutoShardedBot):
     async def _recap_allowance(self, gid: int, cid: str, *, audio: bool) -> str | None:
         """The month's count against the allowance. Free access and grants are not limited. On
         refusal the DM screen says so, with the day the next one is."""
+        message = await self._recap_refusal(gid, cid, audio=audio)
+        if message is None:
+            return None
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is not None and campaign.dm_screen_channel_id is not None:
+            await self.post(campaign.dm_screen_channel_id, f"📜 Recap: {message}")
+        return message
+
+    async def _recap_refusal(self, gid: int, cid: str, *, audio: bool) -> str | None:
+        """The same check with no side effects: the refusal's words, or None when one more is
+        allowed. The greyed audio button asks this, so asking never posts to the DM screen."""
         if self.recaps is None:
             raise RuntimeError("no recap store")
         campaign = await self.campaigns.get(gid, cid)
@@ -9020,10 +9031,7 @@ class DMBot(commands.AutoShardedBot):
         )
         if count < limit:
             return None
-        message = recap_allowance.audio_refusal(now) if audio else recap_allowance.text_refusal(now)
-        if campaign.dm_screen_channel_id is not None:
-            await self.post(campaign.dm_screen_channel_id, f"📜 Recap: {message}")
-        return message
+        return recap_allowance.audio_refusal(now) if audio else recap_allowance.text_refusal(now)
 
     async def recap_audio_switched(self, gid: int, cid: str, job: Job) -> bool:
         """The DM's own choice to have the narration and music (#1421); it can only turn the
@@ -9065,7 +9073,7 @@ class DMBot(commands.AutoShardedBot):
         if not await self.plan_allows("recap_audio", gid, campaign, fail_open=False):
             return "unavailable"
         try:
-            if await self._recap_allowance(gid, cid, audio=True) is not None:
+            if await self._recap_refusal(gid, cid, audio=True) is not None:
                 return "unavailable"
         except Exception:  # not told: the button stays off rather than promise what may not come
             log.exception("Recap: couldn't read the audio allowance")
@@ -9126,9 +9134,11 @@ class DMBot(commands.AutoShardedBot):
         )
         if campaign is not None and campaign.dm_screen_channel_id is not None:
             if job.state == "ready":
-                why = await self.recap_audio_why(
-                    gid, cid
-                )  # the audio button, greyed with its reason
+                try:
+                    why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
+                except Exception:  # the recap still goes up, with the button off
+                    log.exception("Recap: couldn't tell why audio is off")
+                    why = "unavailable"
                 await self.post(
                     campaign.dm_screen_channel_id,
                     ready_text(job.title, link, AUDIO_WHY[why] if why else ""),

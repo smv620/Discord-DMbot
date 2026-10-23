@@ -134,7 +134,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
     for name in (
         "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
         "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
-        "recap_plan_facts", "recap_audio_why", "_recap_allowance",
+        "recap_plan_facts", "recap_audio_why", "_recap_allowance", "_recap_refusal",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -252,6 +252,18 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(children[0].item.disabled)
             self.assertFalse(children[2].item.disabled)
             self.assertIn(AUDIO_WHY[why], line)
+            # asking why must not post the used-up refusal on top of the recap line (#2504)
+            self.assertEqual(bot.post.await_count, 1, why)
+
+    async def test_a_failure_in_telling_why_audio_is_off_still_posts_the_recap(self) -> None:
+        bot = fake_bot(campaign())
+        bot.recap_audio_why = AsyncMock(side_effect=OSError("down"))
+        ready = SimpleNamespace(
+            state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+        )
+        with patch("dmbot.bot.tell_the_dm", AsyncMock()), self.assertLogs("dmbot.bot", "ERROR"):
+            await bot.recap_told(GUILD, "c" * 32, ready)
+        self.assertTrue(bot.post.await_args.kwargs["view"].children[1].item.disabled)
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
         failed = SimpleNamespace(state="failed", session_at=100, title="")
