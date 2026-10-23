@@ -990,12 +990,19 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
       const mine = campaigns.find((c) => c.ref === ref);
+      const role = /\.cp-player$/.test(ref) ? "player" : /\.cp-co$/.test(ref) ? "co-dm" : "owner";
       return {
         ref,
         name: mine?.name ?? "The Brynwater Crossing",
         serverName: mine?.serverName ?? "Thursday Table",
-        role: /\.cp-player$/.test(ref) ? "player" : /\.cp-co$/.test(ref) ? "co-dm" : "owner",
+        role,
         importsOn: mine?.importsOn ?? false,
+        // Only a DM gets the campaign's current choices (#2461), as the real API does.
+        ...(role === "player"
+          ? {}
+          : {
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, gameMasters: 2 } as const,
+            }),
       };
     },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
