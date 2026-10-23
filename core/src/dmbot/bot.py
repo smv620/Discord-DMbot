@@ -1691,6 +1691,11 @@ class DMBot(commands.AutoShardedBot):
                 else []
             ),
             *(
+                [self._watched(self._plot_loop(), "plot-checks")]
+                if self.plot_runner is not None
+                else []
+            ),
+            *(
                 [self._watched(self._import_loop(), "session-imports")]
                 if self.import_job is not None
                 else []
@@ -10991,6 +10996,14 @@ class DMBot(commands.AutoShardedBot):
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Plot checks failed for a server: %s", type(exc).__name__)
 
+    async def _plot_loop(self) -> None:
+        """Every minute: PlotBot's checks of ready recaps (#2122). Its own task, because a check
+        waits on the AI for up to two minutes and must never hold up a recap job or a DM's Post."""
+        await asyncio.sleep(120)
+        while True:
+            await self.run_plot_checks()
+            await asyncio.sleep(RECAP_ROUND_S)
+
     async def _recap_loop(self) -> None:
         """Every minute: the recap jobs that are due and the recaps the DM has pressed Post on
         (#1382). A job resumes where it stopped, so a restart loses nothing."""
@@ -11001,7 +11014,6 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_recaps()
             except Exception:
                 log.exception("The recap jobs failed")
-            await self.run_plot_checks()
             rounds += 1
             if rounds % 60 == 0:  # about hourly: audio older than 180 days goes
                 try:

@@ -4747,7 +4747,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
     (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
     checked and a restored campaign is checked afresh.
-  - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot's recap loop runs `PlotRunner` (when
+  - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot runs `PlotRunner` in its own loop (never inside the recap loop, so a slow AI call cannot delay a recap job) (when
     `DMBOT_PLOT_CHECK` is on): for each ready draft whose text has no check it starts one (at most 6 a campaign an
     hour, a check that never finished is tried 3 times) and makes one careful-tier call (`Feature.PLOT_CHECK`) with the
     recap's numbered sentences and the earlier accepted recaps (`memory/plot_check.py`). The call only advises:

@@ -37,7 +37,9 @@ KINDS = (
 LEVELS = ("possible", "probable", "likely")
 MAX_SENTENCES = 120  # asked about in one call; a longer recap is checked in its first part
 MAX_EARLIER = 40  # earlier recaps shown, the newest first
-EARLIER_CHARS = 1800  # of each earlier recap
+EARLIER_TEXT_BUDGET = (
+    1800  # characters of each earlier recap in the prompt (a size, not a limit on Discord messages)
+)
 MAX_ISSUES = 12  # kept from one check: a DM will not answer more
 REASON_MAX = 300
 QUOTE_MIN = 12  # characters: a shorter quote proves nothing
@@ -92,7 +94,7 @@ def message(sentences: Sequence[str], earlier: Sequence[Earlier]) -> str:
     """The call's text: the recap's sentences and the earlier recaps, each as quoted data."""
     new = "\n".join(f"[{n}] {quoted(s)}" for n, s in enumerate(sentences[:MAX_SENTENCES], 1))
     old = "\n".join(
-        f"[{n}] {quoted(e.title)}: {quoted(e.text)[:EARLIER_CHARS]}"
+        f"[{n}] {quoted(e.title)}: {quoted(e.text)[:EARLIER_TEXT_BUDGET]}"
         for n, e in enumerate(earlier[:MAX_EARLIER], 1)
     )
     return f"<new_recap>\n{new}\n</new_recap>\n<earlier_recaps>\n{old}\n</earlier_recaps>"
@@ -148,7 +150,7 @@ def _finding(item: object, sentences: Sequence[str], shown: Sequence[Earlier]) -
     # was never written cannot reach the DM; it is stored with its spacing tidied.
     if not QUOTE_MIN <= len(quote) <= QUOTE_MAX:
         return None
-    if _squash(quoted(source.text)[:EARLIER_CHARS]).find(_squash(quote)) < 0:
+    if _squash(quoted(source.text)[:EARLIER_TEXT_BUDGET]).find(_squash(quote)) < 0:
         return None  # (only the part of the earlier recap the call was shown counts)
     reason = " ".join(reason.split())[:REASON_MAX]
     if not reason:
