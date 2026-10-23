@@ -93,3 +93,76 @@ async def answer_issue(
     if found is None:
         raise RecapError("not_found")
     return dict(found)
+
+
+CHAT_MAX = 1000  # the form limit the Discord path uses too
+PROPOSAL_ACTIONS = ("save", "decline")
+
+
+async def send_chat(db: Any, session: Session, ref: str, issue: str, text: str) -> dict[str, Any]:
+    """The DM's message about one issue (#2123): queued for the bot, which answers on a second
+    row; the page polls `read_chat`. The words are never logged. Refusals: `bad_text` (empty or
+    over the limit), `not_found` (not a DM, or no such issue), `stale` (the recap changed since the
+    check), `busy` (an answer is on its way) and `too_soon` (the talk on this issue is long
+    enough: answer it, or leave it as it is)."""
+    if not isinstance(text, str) or not text.strip() or len(text) > CHAT_MAX:
+        raise RecapError("bad_text")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_plot_chat_send(%s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, issue[:64], text),
+        )
+        raw = (await cur.fetchone() or {}).get("r")
+    if raw is None:
+        raise RecapError("not_found")
+    status = raw["status"]
+    if status != "ok":
+        raise RecapError({"too_many": "too_soon", "busy": "busy"}.get(status, status))
+    return {"id": raw["id"]}
+
+
+async def read_chat(db: Any, session: Session, ref: str, issue: str) -> dict[str, Any]:
+    """The DM's own talk about one issue, oldest first, with PlotBot's proposals and where each
+    stands (open, saving, saved, declined, failed). Someone else's talk is never returned."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_plot_chat_read(%s, %s, %s, %s) AS r", (gid, cid, at, issue[:64])
+        )
+        raw = (await cur.fetchone() or {}).get("r")
+    if raw is None:
+        raise RecapError("not_found")
+    return dict(raw)
+
+
+async def answer_proposal(
+    db: Any, session: Session, ref: str, issue: str, proposal: str, action: str
+) -> dict[str, Any]:
+    """Save or Not that, on one proposal. Not that closes it and writes nothing. Save only
+    queues it: the bot makes the change as the DM's own fact, so the proposal reads `saving` until
+    it is `saved`. The updated proposal. One no longer open is refused (`not_allowed`)."""
+    if action not in PROPOSAL_ACTIONS:
+        raise RecapError("bad_answer")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_plot_proposal(%s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, issue[:64], proposal[:64], action),
+        )
+        outcome = (await cur.fetchone() or {}).get("r")
+        if outcome == "bad":
+            raise RecapError("bad_answer")
+        if outcome == "done_already":
+            raise RecapError("not_allowed")
+        if outcome != "ok":
+            raise RecapError("not_found")
+        cur = await conn.execute(
+            "SELECT dmbot_plot_chat_read(%s, %s, %s, %s) AS r", (gid, cid, at, issue[:64])
+        )
+        raw = (await cur.fetchone() or {}).get("r")
+    for m in (raw or {}).get("messages", []):
+        for p in m["proposals"]:
+            if p["id"] == proposal:
+                return {"messageId": m["id"], **p}
+    raise RecapError("not_found")

@@ -89,7 +89,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
-from dmbot.web.plot import answer_issue, read_plot
+from dmbot.web.plot import answer_issue, answer_proposal, read_chat, read_plot, send_chat
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -704,6 +704,7 @@ def create_app(
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
         "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        "busy": (409, "busy"),  # PlotBot is still answering the last message (#2123)
         "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "bad_choice": (422, "bad_choice"),
         "too_big": (413, "too_big"),
@@ -962,6 +963,55 @@ def create_app(
             raise HTTPException(status_code=422, detail="bad_answer")
         try:
             return await answer_issue(db, session, ref, issue, kind, note)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/chat")
+    async def me_recap_plot_chat_send(
+        ref: str, issue: str, signed: Signed, request: Request
+    ) -> Any:
+        """The DM's message about one issue: `{"text"}`. Queued for PlotBot; poll the GET below.
+        The words are the DM's own: never logged, never in a transcript or on a public link."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            return await send_chat(db, session, ref, issue, text)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/plot/{issue}/chat")
+    async def me_recap_plot_chat_read(ref: str, issue: str, signed: Signed) -> Any:
+        """The DM's own talk about one issue, with PlotBot's proposals and where each stands."""
+        session, _token = signed
+        try:
+            return await read_chat(db, session, ref, issue)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/proposals/{proposal}")
+    async def me_recap_plot_proposal(
+        ref: str, issue: str, proposal: str, signed: Signed, request: Request
+    ) -> Any:
+        """Save or Not that: `{"action": "save" | "decline"}`. Nothing is saved without Save."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, str):
+            raise HTTPException(status_code=422, detail="bad_answer")
+        try:
+            return await answer_proposal(db, session, ref, issue, proposal, action)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
