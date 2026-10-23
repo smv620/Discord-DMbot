@@ -135,6 +135,8 @@ class Offering(DatabaseTest):
         self.assertNotEqual(first["token_hash"], second["token_hash"])
 
     async def test_five_offers_a_day_per_owner(self) -> None:
+        async with self.db.unscoped() as conn:  # (the day's count is the mail log's: start clean)
+            await conn.execute("DELETE FROM sent_emails")
         other = await CampaignStore(self.db, clock=lambda: self.now).create(
             THURSDAY.id, "Second", ALICE.id
         )
@@ -146,7 +148,7 @@ class Offering(DatabaseTest):
         )  # (a different campaign: the day's count is the owner's)
         self.assertEqual((sixth.status_code, sixth.json()["error"]), (429, "too_soon"))
         self.assertEqual(len(self.transport.sent), handover_email.OFFERS_PER_DAY)
-        self.now += handover_email.DAY_S + 1  # the next day
+        self.now += handover_email.DAY_S + 3600  # the next day (the log stamps with real time)
         self.assertEqual((await self.offer("late@example.org")).status_code, 200)
 
     async def test_a_bad_address_is_refused_and_nothing_is_offered(self) -> None:
@@ -191,8 +193,9 @@ class Offering(DatabaseTest):
             server="Thursday Table",
             link=f"{SITE}/handover#x",
         )
-        for step in ("Sign in", "paid DMbot plan", "Try It", "Accept", "/dmbot start", "7 days"):
+        for step in ("Sign in", "paid plan", "Try It", "Accept", "/dmbot start", "7 days"):
             self.assertIn(step, body)
-        self.assertIn("simply becomes its DM there", body)
+        self.assertIn("plan's hours", body)  # what it costs the new owner
+        self.assertTrue(body.startswith("The person named"))  # a chosen name is never first
         self.assertNotIn("account already", body.lower())
         self.assertIn("Belleros", subject)

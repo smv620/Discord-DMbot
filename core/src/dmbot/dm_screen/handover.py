@@ -4,7 +4,7 @@ message. Ownership moves only when they accept, within 7 days, and only if their
 has room for it then. The rules are all in `CampaignStore`; this is the Discord side.
 
 - ⚙️ Settings → 🗂️ Campaign management shows who owns the campaign and, for the owner,
-  **🤝 Hand over** (pick a member of the server), or **Take back offer** while one waits for
+  **🤝 Hand over** (type the new owner's email), or **Take back offer** while one waits for
   an answer.
 - The person offered gets a private message with **Accept** / **No thanks**. If DMbot
   can't reach them (they left the server, or their messages are closed), the offer is
@@ -41,6 +41,7 @@ from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER
 from dmbot.dm_screen.messages import DM_CAMPAIGN_GONE, LOAD_FAILED
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
+from dmbot.web.email_signin import clean_email
 
 log = logging.getLogger(__name__)
 
@@ -56,10 +57,9 @@ TAKE_ON_LABEL = "Take it on"
 NOT_NOW_LABEL = "Not now"
 
 OFFER_EMAILED = (
-    "📧 We've emailed the offer. The person who opens its link on the DMbot website, signs in "
-    "and accepts takes the campaign over (the link works for {days} days). Nothing changes "
-    "until then. DMbot will tell you privately when they accept, say no thanks, or the days "
-    "run out. To take it back: ⚙️ Settings → 🗂️ Campaign management → **Take back offer**."
+    "📧 Offer emailed to **{email}**. They have {days} days to open the link and accept. "
+    "Nothing changes until then. Typed it wrong? ⚙️ Settings → 🗂️ Campaign management → "
+    "**Take back offer**."
 )
 # Keep in step with site_offers.NOT_SENT (the same, for an offer made on the website).
 UNREACHABLE = (
@@ -243,7 +243,7 @@ class HandoverButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:handover:{_CAMPAIGN}",
 ):
-    """🤝 Hand over, on ⚙️ Settings: the owner picks who takes the campaign over."""
+    """🤝 Hand over, on ⚙️ Settings: the owner types the email of who takes the campaign over."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -293,7 +293,7 @@ class HandoverEmailForm(discord.ui.Modal, title="Hand over by email"):
     whether the address has a DMbot account or a plan."""
 
     email: discord.ui.TextInput[HandoverEmailForm] = discord.ui.TextInput(
-        label="Their email address", placeholder="name@example.com", max_length=254, required=True
+        label="New owner's email", placeholder="name@example.com", max_length=254, required=True
     )
 
     def __init__(self, campaign_id: str) -> None:
@@ -340,7 +340,9 @@ class HandoverEmailForm(discord.ui.Modal, title="Hand over by email"):
             now=_now(),
         )
         text = {
-            "emailed": OFFER_EMAILED.format(days=HANDOVER_DAYS),
+            "emailed": OFFER_EMAILED.format(
+                email=clean_email(self.email.value) or "", days=HANDOVER_DAYS
+            ),
             "bad_email": handover_email.BAD_EMAIL,
             "too_soon": handover_email.TOO_SOON,
             "not_allowed": handover_email.NOT_ALLOWED,

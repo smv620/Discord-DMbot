@@ -33,10 +33,18 @@ LINK_DAYS = 7
 Outcome = Literal["emailed", "bad_email", "too_soon", "not_allowed", "email_failed"]
 
 SENT = "We've emailed the offer."
-BAD_EMAIL = "That doesn't look like an email address. Check it and try again."
-TOO_SOON = f"You can offer a campaign by email {OFFERS_PER_DAY} times a day. Try again tomorrow."
-NOT_ALLOWED = "Only the campaign's owner can hand it over."
-FAILED = "DMbot couldn't send that email just now. Nothing was offered. Please try again."
+BAD_EMAIL = (
+    "That doesn't look like an email address (like name@example.com). Check it and press "
+    "🤝 Hand over again."
+)
+TOO_SOON = (
+    f"You've already sent {OFFERS_PER_DAY} offers in the last 24 hours. Please try again later."
+)
+NOT_ALLOWED = (
+    "DMbot can't hand this campaign over right now. Only its owner can; check "
+    "⚙️ Settings → 🗂️ Campaign management."
+)
+FAILED = "DMbot couldn't send that email, so nothing was offered. Try again in a minute."
 
 
 def hash_token(token: str) -> str:
@@ -45,26 +53,23 @@ def hash_token(token: str) -> str:
 
 def email_text(*, owner: str, campaign: str, server: str, link: str) -> tuple[str, str]:
     """(subject, body) of the offer. Plain steps, in the order PLAN lists them. Nothing in it says
-    whether the address already has a DMbot account."""
-    subject = f"{owner} wants to hand you a D&D campaign on DMbot"
+    whether the address already has a DMbot account. The owner's name is a display name anyone can
+    choose, so it is quoted and never the first words of the message."""
+    subject = f'{owner} offers you the DMbot campaign "{campaign}"'
     body = (
-        f'{owner} wants to hand over the campaign "{campaign}" (it runs on the Discord server '
-        f'"{server}") to you on DMbot, a helper that listens to a D&D table and privately '
-        "advises the Dungeon Master.\n\n"
+        f'The person named "{owner}" (on the Discord server "{server}") typed your email address '
+        f'to offer you the D&D campaign "{campaign}" on DMbot. DMbot listens to a D&D table and '
+        "privately helps the Dungeon Master.\n\n"
         f"To take it over, open this link within {LINK_DAYS} days:\n\n{link}\n\n"
-        "What to do:\n"
-        "1. Sign in to the DMbot website, with Discord or with your email address.\n"
-        "2. You need a paid DMbot plan with a free campaign slot. The free Try It plan can't "
-        "receive a campaign. If you don't have a plan yet, choose one first; the link keeps "
-        f"working for {LINK_DAYS} days.\n"
-        "3. Press Accept, and choose where the campaign runs: the Discord server it runs on now, "
-        "or another server of yours (the page can add DMbot to a server that doesn't have it "
-        "yet).\n"
-        "4. If you play on a server where DMbot already runs this campaign, your Discord account "
-        "simply becomes its DM there. Nothing needs installing.\n"
-        "5. Then start a session as usual with /dmbot start.\n\n"
-        "The link works once. If you weren't expecting this, ignore this email and nothing "
-        "changes: the campaign stays with its owner."
+        "What happens:\n"
+        "1. Sign in to the DMbot website (with Discord or your email).\n"
+        "2. Press Accept, and choose where the campaign runs. The campaign uses your DMbot "
+        "plan's hours, and you become one of its Dungeon Masters. You need a paid plan with room "
+        "for one more campaign; the free Try It plan can't take one. If you need a plan, pick "
+        f"one first: the link keeps working for {LINK_DAYS} days.\n"
+        "3. Start a session as usual with /dmbot start.\n\n"
+        "The link works once. Not expecting this? Ignore this email and nothing changes: the "
+        "campaign stays with its owner."
     )
     return subject, body
 

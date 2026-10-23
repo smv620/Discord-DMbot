@@ -1364,7 +1364,17 @@ WEB_ROLE_OFFER_POLICY = """
         WITH CHECK ((delivered_at IS NULL OR (via_email AND delivered_at = created_at))
                     AND claimed_at IS NULL AND message_id IS NULL
                     AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
-                    AND from_user_id = dmbot_current_user());
+                    AND from_user_id = dmbot_current_user()
+                    -- only the campaign's own owner can offer it (#2532): without this, anyone
+                    -- in the server could write themselves an offer and then accept it
+                    AND EXISTS (SELECT 1 FROM campaigns c
+                                WHERE c.guild_id = campaign_handover_offers.guild_id
+                                  AND c.id = campaign_handover_offers.campaign_id
+                                  AND c.owner_user_id = campaign_handover_offers.from_user_id)
+                    -- an email offer belongs to nobody until its link is claimed, and carries
+                    -- its link's hash; a Discord offer has neither
+                    AND (NOT via_email OR to_user_id = 0)
+                    AND ((token_hash IS NOT NULL) = via_email));
 """
 
 ACCESS_GRANTS = (

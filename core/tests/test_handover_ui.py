@@ -225,7 +225,7 @@ class Offering(unittest.IsolatedAsyncioTestCase):
             (OWNER, GUILD, "new.owner@example.com"),
         )
         text = said(it)
-        self.assertIn("We've emailed the offer", text)
+        self.assertIn("Offer emailed to **new.owner@example.com**", text)
         for leak in ("account", "plan has", "Try It", "does not have"):
             self.assertNotIn(leak, text)  # nothing about the address having an account or a plan
 

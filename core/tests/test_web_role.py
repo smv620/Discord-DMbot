@@ -304,6 +304,35 @@ class WebRole(DatabaseTest):
             async with self.web.user(ALICE.id, session=session.id_hash) as conn:
                 await self._offer_insert(conn, OTHER_USER)
 
+    async def test_an_offer_can_only_be_made_on_a_campaign_the_sender_owns(self) -> None:
+        # #2532: anyone in the server could otherwise write themselves an offer and accept it.
+        columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
+        await self._grant(f"INSERT ({columns})")
+        bobs = await CampaignStore(self.db, clock=lambda: self.now).create(
+            THURSDAY.id, "Not hers", OTHER_USER
+        )
+        session = await self.alice()
+        with self.assertRaises(errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                await self._offer_insert(conn, ALICE.id, campaign_id=bobs.id, to_user_id=ALICE.id)
+
+    async def test_an_email_offer_holds_no_one_and_carries_a_link_hash(self) -> None:
+        columns = ", ".join(schema.OFFER_INSERT_COLUMNS)
+        await self._grant(f"INSERT ({columns})")
+        session = await self.alice()
+        good = {"via_email": True, "token_hash": "a" * 64, "to_user_id": 0}
+        async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+            await self._offer_insert(conn, ALICE.id, delivered_at=self.now, **good)
+        for bad in (
+            {**good, "to_user_id": ALICE.id},  # already addressed to someone
+            {**good, "token_hash": None},  # no link
+            {"via_email": False, "token_hash": "b" * 64},  # a Discord offer with a link
+            {**good, "delivered_at": self.now + 1},  # "delivered" at some other time
+        ):
+            with self.assertRaises(errors.InsufficientPrivilege, msg=str(bad)):
+                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                    await self._offer_insert(conn, ALICE.id, **{"delivered_at": self.now, **bad})
+
     async def test_a_wider_grant_is_still_held_by_the_rule(self) -> None:
         # If someone granted INSERT on the whole table by mistake, marking an offer sent is
         # still refused by the restrictive rule (#728).
