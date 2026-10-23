@@ -15,7 +15,7 @@ export const plotWords = {
   gaveUp: "The check is taking too long, so Approve is open. You can approve now, or open this page again in a minute to see its questions.",
   none: "Nothing to ask. DMbot found no mismatch.",
   loadFailed: "We couldn't load the plot check. Nothing was changed. Open this page again in a minute.",
-  level: { high: "Worth a look", medium: "Maybe", low: "Small" } as Record<string, string>,
+  level: { likely: "Worth a look", probable: "Maybe", possible: "Small" } as Record<string, string>,
   kind: {
     contradiction: "Doesn't match earlier",
     dead_acts: "Someone who had left or died",
@@ -27,7 +27,7 @@ export const plotWords = {
     secret: "A secret told early",
   } as Record<string, string>,
   recapSays: "The recap says:",
-  earlier: (session: number | null): string => (session === null ? "Earlier:" : `Earlier, session ${session}:`),
+  earlier: (title: string): string => (title ? `Earlier, in “${title}”:` : "Earlier:"),
   answers: {
     fix: "Fix the recap",
     talk: "Talk it through",
@@ -36,8 +36,8 @@ export const plotWords = {
   },
   // (the spoken name starts with the words on the button, so voice control finds it)
   answerFor: (label: string, n: number): string => `${label}, question ${n}`,
-  fixPrefill: (sentence: string, session: number | null): string =>
-    session === null ? `Check this line: “${sentence}”` : `Check this line against session ${session}: “${sentence}”`,
+  fixPrefill: (sentence: string, title: string): string =>
+    title ? `Check this line against “${title}”: “${sentence}”` : `Check this line: “${sentence}”`,
   fixed: "Added to the box under “Tell DMbot what to fix”. Say what should change there and send it. This question stays open until you answer it or the recap is checked again.",
   yourAnswer: {
     fix: "You chose: fix the recap.",
@@ -72,6 +72,7 @@ export const plotWords = {
     stale: "The recap changed while DMbot was answering. Read the questions again.",
     unavailable: "DMbot couldn't answer just now. Send your message again in a minute.",
     failed: "That didn't work. Send your message again.",
+    timed_out: "DMbot didn't answer in time. Send it again.",
   } as Record<string, string>,
   proposalState: {
     open: "",
@@ -89,7 +90,7 @@ export const plotWords = {
     " Leave it as is counts as an answer.",
   waitingCheck: "The Plot check is still running. You can approve when it is done.",
   problem: {
-    "too-soon": "This talk is long enough. Answer the question, or leave it as it is.",
+    "too-soon": "You've talked with DMbot enough for now. Answer the question, or leave it as it is.",
     "not-found": "That question is already gone. The list is up to date now.",
     "bad-text": "That message is empty or too long. Shorten it and try again.",
     "bad-answer": "That answer can't be used. Reload the page and try again.",

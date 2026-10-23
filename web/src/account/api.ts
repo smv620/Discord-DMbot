@@ -565,12 +565,13 @@ export type PlotAnswerKind = "fix" | "changed" | "fine" | "leave";
 export interface PlotIssue {
   id: string;
   kind: string;
-  level: "high" | "medium" | "low";
+  level: "possible" | "probable" | "likely";
   /** The recap sentence's number, and its words. */
   sentence: number;
   sentenceText: string;
   reason: string;
-  source: { text: string; session: number | null };
+  /** `session` is the earlier recap's title ("" when none). */
+  source: { text: string; session: string };
   answer: { kind: PlotAnswerKind; note?: string } | null;
 }
 export interface PlotCheck {
@@ -590,6 +591,8 @@ export interface PlotProposal {
   id: string;
   kind: string;
   label: string;
+  /** Plain words for why a Save failed (state `failed`). */
+  error?: string;
   /** `saving`: Save was pressed and the bot is making the change. */
   state: "open" | "saving" | "saved" | "declined" | "failed";
 }

@@ -46,16 +46,21 @@ const issue = (n: number) => screen.getAllByRole("group")[n - 1]!;
 
 describe("the plot check", () => {
   it("shows nothing while it is switched off", async () => {
-    const { container } = render(<RecapPlotCheck api={mockApi("table")} refId={draft.ref} text="x" onBlocked={() => {}} onFix={() => {}} />);
+    const off = mockApi("table");
+    const { container } = render(<RecapPlotCheck api={off} refId={draft.ref} text="x" onBlocked={() => {}} onFix={() => {}} />);
     await new Promise((r) => setTimeout(r, 20));
     expect(container.textContent).toBe("");
+    expect(calls(off, "plotCheck")).toHaveLength(0); // switched off means no request at all
   });
 
   it("lists each question with the recap's sentence and the earlier note, and Approve waits", async () => {
     const { blocked } = await open();
     expect(within(issue(1)).getByText("Ulfgar opened the gate.")).toBeTruthy();
     expect(within(issue(1)).getByText(/Ulfgar fell to the ghoul/)).toBeTruthy();
-    expect(within(issue(1)).getByText(/Earlier, session 6:/)).toBeTruthy();
+    expect(within(issue(1)).getByText(/Earlier, in “The Bridge at Dusk”:/)).toBeTruthy();
+    // the server's levels are possible, probable and likely
+    expect(within(issue(1)).getByText(new RegExp(w.level.likely!))).toBeTruthy();
+    expect(within(issue(2)).getByText(new RegExp(w.level.probable!))).toBeTruthy();
     await waitFor(() => expect(blocked).toHaveBeenLastCalledWith(w.waitingOn(2)));
   });
 
@@ -81,7 +86,7 @@ describe("the plot check", () => {
   it("Fix the recap sends only the recap's sentence to the fix box, and answers nothing yet", async () => {
     const { api, fix } = await open();
     fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.fix, 1) }));
-    expect(fix).toHaveBeenCalledWith(w.fixPrefill("Ulfgar opened the gate.", 6));
+    expect(fix).toHaveBeenCalledWith(w.fixPrefill("Ulfgar opened the gate.", "The Bridge at Dusk"));
     expect(await screen.findByText(w.fixed)).toBeTruthy();
     expect(calls(api, "answerPlotIssue")).toHaveLength(0);
   });
@@ -115,6 +120,26 @@ describe("the plot check", () => {
     expect(await within(issue(1)).findByText(w.proposalState.saving!)).toBeTruthy();
     expect(await within(issue(1)).findByText(w.proposalState.saved!, undefined, { timeout: 8000 })).toBeTruthy();
   }, 30_000);
+
+  it("shows the reason a Save failed, in the bot's words", async () => {
+    await open();
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+    fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "nosave please" } });
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
+    const save = await within(issue(1)).findByRole("button", { name: new RegExp(`^${w.save}:`) }, { timeout: 8000 });
+    fireEvent.click(save);
+    expect(await within(issue(1)).findByText(/changed while it was being saved/, undefined, { timeout: 8000 })).toBeTruthy();
+  }, 30_000);
+
+  it("offers no talk when the talk calls are missing", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    delete api.plotChat;
+    delete api.plotChatSend;
+    render(<RecapPlotCheck api={api} refId={draft.ref} text={draft.text} onBlocked={() => {}} onFix={() => {}} />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect(screen.queryByRole("button", { name: w.answerFor(w.answers.talk, 1) })).toBeNull();
+  });
 
   it("says DMbot could not answer a message, so it can be sent again", async () => {
     await open();

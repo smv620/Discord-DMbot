@@ -719,26 +719,27 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const plotIssues = new Map<string, PlotIssue[]>();
   const plotTalk = new Map<string, PlotMessage[]>(); // the talk about each question
   const plotAnswerIn = new Map<string, number>(); // looks left before PlotBot answers
+  const plotWontSave = new Set<string>(); // notes whose Save fails (a message with "nosave" in it)
   const plotSavingSeen = new Set<string>(); // notes that have been read once as "saving"
   const seedPlot = (): PlotIssue[] => [
     {
       id: "i1",
       kind: "dead_acts",
-      level: "high",
+      level: "likely",
       sentence: 1,
       sentenceText: "Ulfgar opened the gate.",
       reason: "Ulfgar died in session 6.",
-      source: { text: "Ulfgar fell to the ghoul at the bridge.", session: 6 },
+      source: { text: "Ulfgar fell to the ghoul at the bridge.", session: "The Bridge at Dusk" },
       answer: null,
     },
     {
       id: "i2",
       kind: "item_twice",
-      level: "medium",
+      level: "probable",
       sentence: 2,
       sentenceText: "Mara kept the silver key.",
       reason: "The silver key was last with Brannoch.",
-      source: { text: "Brannoch pocketed the silver key.", session: 5 },
+      source: { text: "Brannoch pocketed the silver key.", session: "The Silver Key" },
       answer: null,
     },
   ];
@@ -1585,6 +1586,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           plotAnswerIn.delete(key);
           // The first message gets an answer with a suggested note; "fail" in the words makes the bot give up.
           const asked = talk.filter((m) => m.role === "dm" && m.state === "waiting");
+          if (asked.some((m) => /nosave/.test(m.text))) plotWontSave.add(`p${talk.length}`);
           talk = talk.map((m) => (m.role === "dm" && m.state === "waiting" ? { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" } : m));
           if (asked.length > 0 && !/fail/.test(asked[0]!.text))
             talk = [
@@ -1608,7 +1610,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           if (p.state !== "saving") return p;
           const seen = plotSavingSeen.has(p.id);
           plotSavingSeen.add(p.id);
-          return seen ? { ...p, state: "saved" as const } : p;
+          if (!seen) return p;
+          return plotWontSave.has(p.id)
+            ? { ...p, state: "failed" as const, error: "Ulfgar's note changed while it was being saved, so nothing was changed." }
+            : { ...p, state: "saved" as const };
         }),
       }));
       plotTalk.set(key, talk);

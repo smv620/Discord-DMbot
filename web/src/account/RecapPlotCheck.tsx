@@ -15,7 +15,7 @@ import { ApiError, type AccountApi, type PlotAnswerKind, type PlotCheck, type Pl
 import { keepFocus } from "./focus";
 
 const POLL_MS = 2000;
-const POLL_LIMIT = 30; // about a minute: the check is one careful AI call
+const POLL_LIMIT = 60_000; // about a minute, in milliseconds: the check is one careful AI call
 
 export default function RecapPlotCheck({
   api,
@@ -49,6 +49,7 @@ export default function RecapPlotCheck({
   const firstText = useRef(text);
   const changed = useRef(false); // the text changed since the last finished check
   const looks = useRef(0);
+  const misses = useRef(0); // looks in a row that failed: each waits twice as long (2s, 4s, 8s)
   const live = RECAPS_LIVE && PLOT_CHECK_LIVE && !!api.plotCheck && !!api.answerPlotIssue;
 
   const read = async (): Promise<PlotCheck | null> => {
@@ -91,18 +92,27 @@ export default function RecapPlotCheck({
   // Approve opens (the API still refuses an approval if a question it knows of is open).
   useEffect(() => {
     if (!live || !checking || gaveUp) return;
+    const wait = POLL_MS * 2 ** Math.min(misses.current, 2);
     const timer = setTimeout(async () => {
-      looks.current += 1;
+      looks.current += wait; // time spent waiting, so slower looks after failures still end at about a minute
       if (looks.current >= POLL_LIMIT) {
         setGaveUp(true);
         return;
       }
-      await read();
+      misses.current = (await read()) ? 0 : misses.current + 1;
       setTick((n) => n + 1);
-    }, POLL_MS);
+    }, wait);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, checking, gaveUp, tick]);
+
+  // Once the check is no longer running, a later check (after an edit) may give up afresh.
+  useEffect(() => {
+    if (check && check.state !== "checking") {
+      setGaveUp(false);
+      misses.current = 0;
+    }
+  }, [check?.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = (check?.issues ?? []).filter((i) => i.answer === null).length;
   // Approve waits for the check and for every question. (The API's own `approveBlocked` is as of the
@@ -260,6 +270,7 @@ function Issue({
   const [messages, setMessages] = useState<PlotMessage[]>([]);
   const [chatSlow, setChatSlow] = useState(false);
   const looks = useRef(0);
+  const misses = useRef(0);
   const savedSeen = useRef(new Set<string>());
   const titleId = `plot-issue-${issue.id}`;
   const level = words.level[issue.level] ?? "";
@@ -283,7 +294,12 @@ function Issue({
   // or a note to save (about two minutes at most, then it says so).
   const waiting = messages.some((m) => (m.role === "dm" && (m.state === "waiting" || m.state === "working")) || m.proposals.some((p) => p.state === "saving"));
   useEffect(() => {
-    if (talking && api.plotChat) void readChat();
+    if (talking && api.plotChat) {
+      setChatSlow(false);
+      looks.current = 0;
+      misses.current = 0;
+      void readChat();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talking]);
   const [tick, setTick] = useState(0);
@@ -298,12 +314,21 @@ function Issue({
         setChatSlow(true);
         return;
       }
-      await readChat();
+      misses.current = (await readChat()) ? 0 : misses.current + 1;
       setTick((n) => n + 1);
-    }, 2000);
+    }, 2000 * 2 ** Math.min(misses.current, 2));
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talking, waiting, chatSlow, tick]);
+  // A message that failed because the recap changed: read the check again, once for each.
+  useEffect(() => {
+    for (const m of messages)
+      if (m.state === "failed" && m.error === "stale" && !savedSeen.current.has(`stale:${m.id}`)) {
+        savedSeen.current.add(`stale:${m.id}`);
+        onSaved();
+      }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
   // A note that was saved: the question may have been answered by it.
   useEffect(() => {
     for (const m of messages)
@@ -372,18 +397,20 @@ function Issue({
         <button type="button" class="button secondary" aria-label={words.answerFor(words.answers.fix, n)} onClick={onFix}>
           {words.answers.fix}
         </button>
-        <button
-          type="button"
-          class="button secondary"
-          aria-expanded={talking}
-          aria-label={words.answerFor(words.answers.talk, n)}
-          onClick={() => {
-            onTalk(!talking);
-            if (!talking) setTimeout(() => chatRef.current?.focus(), 0);
-          }}
-        >
-          {words.answers.talk}
-        </button>
+        {api.plotChat && api.plotChatSend && (
+          <button
+            type="button"
+            class="button secondary"
+            aria-expanded={talking}
+            aria-label={words.answerFor(words.answers.talk, n)}
+            onClick={() => {
+              onTalk(!talking);
+              if (!talking) setTimeout(() => chatRef.current?.focus(), 0);
+            }}
+          >
+            {words.answers.talk}
+          </button>
+        )}
         <button
           type="button"
           class="button secondary"
@@ -458,7 +485,7 @@ function Issue({
                         </button>
                       </div>
                     ) : (
-                      <p role="status">{words.proposalState[p.state]}</p>
+                      <p role="status">{p.state === "failed" && p.error ? p.error : words.proposalState[p.state]}</p>
                     )}
                   </div>
                 ))}
