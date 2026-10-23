@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from dmbot import imports_switch
@@ -62,6 +62,11 @@ class Settings:
     # line to log at start-up when the old setting name was used.
     ai_models: AIModels = DEFAULT_MODELS
     ai_model_notice: str = ""
+    # Who writes the recap (the creative tier, #2575): "anthropic" (the default) or "gemini", which
+    # needs `gemini_key` (a billing-enabled Google key) and a Gemini name in AI_MODEL_CREATIVE.
+    # Off unless set; with no key the writer stays on Anthropic and `ai_model_notice` says so.
+    ai_provider_creative: str = "anthropic"
+    gemini_key: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
@@ -357,6 +362,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
 
     ai_models, ai_notice = parse_ai_models(get)
+    ai_provider_creative, ai_models, gemini_notice = parse_creative_provider(get, ai_models)
+    ai_notice = " ".join(n for n in (ai_notice, gemini_notice) if n)
 
     admin_primary = _admin_id(get, "DMBOT_ADMIN_PRIMARY_ID")
     admin_secondary = _admin_id(get, "DMBOT_ADMIN_SECONDARY_ID")
@@ -391,6 +398,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_key=get("ANTHROPIC_API_KEY"),
         ai_models=ai_models,
         ai_model_notice=ai_notice,
+        ai_provider_creative=ai_provider_creative,
+        gemini_key=get("GEMINI_API_KEY"),
         memory_keep_days=keep_days,
         free_users=free_users,
         enforce_plans=enforce_raw in ("1", "true", "on"),
@@ -446,6 +455,12 @@ def parse_server_ids(raw: str) -> frozenset[int]:
 
 
 MODEL_NAME = re.compile(r"^claude-[a-z0-9][a-z0-9._-]{1,80}$")
+GEMINI_MODEL_NAME = re.compile(r"^gemini-[a-z0-9][a-z0-9._-]{1,80}$")
+NO_GEMINI_KEY_NOTICE = (
+    "AI_PROVIDER_CREATIVE is gemini but GEMINI_API_KEY is empty, so the recap is written by the "
+    "Anthropic model as before. Set the key (scripts/set-key GEMINI_API_KEY) and restart to use "
+    "Gemini."
+)
 OLD_MODEL_NOTICE = (
     "Your .env still has AI_MODEL. It works for now, as AI_MODEL_FAST (the model for all the "
     "quick jobs, not only Find names as before), but please rename it to AI_MODEL_FAST, "
@@ -484,7 +499,12 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
                 notice = BOTH_MODEL_NOTICE
             elif old:
                 raw, shown, notice = _unquote(old), "AI_MODEL", OLD_MODEL_NOTICE
-        if raw and not MODEL_NAME.match(raw):
+        gemini_writes = (
+            tier == "creative" and _unquote(get("AI_PROVIDER_CREATIVE")).lower() == "gemini"
+        )
+        if (
+            raw and not gemini_writes and not MODEL_NAME.match(raw)
+        ):  # (a Gemini name: checked later)
             raise ConfigError(
                 f"{shown} in .env isn't a Claude model name. Use something like "
                 f"{getattr(DEFAULT_MODELS, tier)} (no quotes or spaces), or leave it empty to "
@@ -492,6 +512,30 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice
+
+
+def parse_creative_provider(
+    get: Callable[[str], str], models: AIModels
+) -> tuple[str, AIModels, str]:
+    """(who writes the recap, the models to use, a line to log). `AI_PROVIDER_CREATIVE` is
+    `anthropic` (the default, also when empty) or `gemini`. With `gemini`, AI_MODEL_CREATIVE must
+    be a Gemini model name (nothing here guesses one) and GEMINI_API_KEY must be set; with no key
+    the writer is the Anthropic default instead and the line says so. A bad value stops start-up
+    naming the setting (never the value of a key)."""
+    provider = _unquote(get("AI_PROVIDER_CREATIVE")).lower() or "anthropic"
+    if provider not in ("anthropic", "gemini"):
+        raise ConfigError("AI_PROVIDER_CREATIVE in .env must be anthropic or gemini.")
+    if provider == "anthropic":
+        return provider, models, ""
+    name = _unquote(get("AI_MODEL_CREATIVE"))
+    if not GEMINI_MODEL_NAME.match(name):
+        raise ConfigError(
+            "AI_PROVIDER_CREATIVE is gemini, so AI_MODEL_CREATIVE in .env must be a Gemini model "
+            "name (it starts with gemini-, no quotes or spaces)."
+        )
+    if not get("GEMINI_API_KEY"):
+        return "anthropic", replace(models, creative=DEFAULT_MODELS.creative), NO_GEMINI_KEY_NOTICE
+    return provider, replace(models, creative=name), ""
 
 
 def _admin_id(get: Callable[[str], str], name: str) -> int | None:
