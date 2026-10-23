@@ -10,6 +10,7 @@ import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
+import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-delete";
 import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
 import { handoverToken } from "./Handover";
 import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
@@ -30,6 +31,7 @@ import {
   type Person,
   type RecordingEntry,
 } from "./api";
+import CampaignDelete from "./CampaignDelete";
 import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
 import CampaignFacts from "./CampaignFacts";
@@ -1016,7 +1018,9 @@ function CampaignsSection({ me }: { me: Me }) {
   const [all, setAll] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const offeredIds = new Set(me.offers.outgoing.map((o) => o.campaignId));
-  const { first, older } = foldCampaigns(me.campaigns, offeredIds);
+  // A campaign on a server DMbot can't reach is listed only once the website can delete it (#2555).
+  const listed = CAMPAIGN_DELETE_LIVE ? me.campaigns : me.campaigns.filter((c) => c.serverReachable !== false);
+  const { first, older } = foldCampaigns(listed, offeredIds);
   // After a hand-over the older ones can all be gone while the list is open: the button goes with
   // them, so the list closes too (and a later fold starts closed).
   const open = all && older.length > 0;
@@ -1055,6 +1059,14 @@ function CampaignsSection({ me }: { me: Me }) {
                 setDone(text.handOverDone(person.name));
                 await refresh();
               }}
+              onGone={async () => {
+                setDone(campaignDeleteWords.problem["not-found"] ?? null);
+                await refresh();
+              }}
+              onDeleted={async (name, channelsLeft) => {
+                setDone(CAMPAIGN_DELETE_LIVE ? `${campaignDeleteWords.deleted(name)}${channelsLeft ? ` ${campaignDeleteWords.channelsLeft}` : ""}` : "");
+                await refresh();
+              }}
             />
           ))}
         </ul>
@@ -1084,6 +1096,8 @@ function CampaignRow({
   offer,
   onWithdrawn,
   onHandedOver,
+  onDeleted,
+  onGone,
   tryIt = false,
 }: {
   campaign: Campaign;
@@ -1092,6 +1106,9 @@ function CampaignRow({
   /** Gets the name of the person the offer was for, to say they'll be told. */
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
+  /** The campaign was deleted from this card (#2555). */
+  onDeleted: (name: string, channelsLeft: boolean) => Promise<void>;
+  onGone: () => Promise<void>;
   /** A Try It account: a Try It campaign can't be handed over (#2534). */
   tryIt?: boolean;
 }) {
@@ -1107,7 +1124,10 @@ function CampaignRow({
         {/* Linked only when the API sends the campaign's address (#2416). */}
         {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
       </p>
-      <p class="muted small">{campaign.serverName}</p>
+      <p class="muted small">
+        {CAMPAIGN_DELETE_LIVE && campaign.serverReachable === false && !campaign.serverName ? campaignDeleteWords.unknownServer : campaign.serverName}
+      </p>
+      {CAMPAIGN_DELETE_LIVE && campaign.serverReachable === false && <p class="note small">{campaignDeleteWords.unreachable}</p>}
       <CampaignFacts campaign={campaign} />
       <Notice message={notice} />
       {offer && (
@@ -1138,6 +1158,18 @@ function CampaignRow({
       )}
       {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
         <EmailHandover campaign={campaign} refId={campaign.ref} />
+      )}
+      {/* Only the plan holder is offered Delete: the API says so with `canDelete` (a campaign with no owner yet
+          can be deleted by its game masters); an API without it falls back to the owner. */}
+      {CAMPAIGN_DELETE_LIVE && (campaign.canDelete ?? campaign.role === "owner") && campaign.ref && api.deleteCampaign && (
+        <CampaignDelete
+          api={api}
+          refId={campaign.ref}
+          name={campaign.name}
+          tryIt={tryIt}
+          onDeleted={(channelsLeft) => void onDeleted(campaign.name, channelsLeft)}
+          onGone={() => void onGone()}
+        />
       )}
       {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton

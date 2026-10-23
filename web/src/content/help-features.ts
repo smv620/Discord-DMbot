@@ -29,6 +29,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "account",
+    whatsNew: "Delete a campaign from the website",
+    text: "On My Account, open the campaign's card and press Delete this campaign. Only the person whose plan the campaign uses sees it. It says what goes and that it can't be undone. To keep a copy, download a backup first. Then type the campaign's name and press Delete it. You can't delete while a session is running. A campaign on a server DMbot can't reach any more still shows in your list; you can back it up or delete it there, and its Discord channels stay until a server admin removes them.",
+  },
+  {
+    audience: "account",
     whatsNew: "Receive a campaign by email",
     text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on (if you play on a server where DMbot already runs this campaign, your Discord account simply becomes its DM there), then take the campaign, or say no thanks. If you take it, it moves to your account, its play time comes out of your hours, and the DM who offered it stays on as a co-DM. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the DM to hand the campaign over again.",
   },
