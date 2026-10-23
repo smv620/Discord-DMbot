@@ -10696,7 +10696,6 @@ for _old, _new, _times in _VIEW_STEPS:
     _door = _door.replace(_old, _new)
 WEB_GRAPH_VIEWS = WEB_GRAPH_VIEWS + _door
 
-
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
