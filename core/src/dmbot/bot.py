@@ -265,6 +265,7 @@ from dmbot.memory.ontology import Tally
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
+from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -441,6 +442,7 @@ from dmbot.ui.recap_dm import RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, ShortRecapButton, ask_key, ask_view
+from dmbot.ui.revealed_report import UndoRevealedButton, report_text, revealed_view
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
@@ -927,6 +929,16 @@ class DMBotTree(app_commands.CommandTree["DMBot"]):
         await _failed(interaction, cause, f"/{command}")
 
 
+def _fixed(texts: list[str]) -> Callable[[], Awaitable[list[str]]]:
+    """Words already read (an imported session's lines were filtered to the people who agree
+    when they were read, just before)."""
+
+    async def read() -> list[str]:
+        return texts
+
+    return read
+
+
 class DMBot(commands.AutoShardedBot):
     """One process serving the shards in `settings.shards` (one shard by default).
 
@@ -1200,6 +1212,14 @@ class DMBot(commands.AutoShardedBot):
         # The names in a DM's own campaign background (#2167): suggestions only, on the fast tier.
         self.background_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
+            if self.ai_client
+            else None
+        )
+        # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
+        self.background_read_ai = (
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ], Feature.NAMES_BACKGROUND_READ
+            )
             if self.ai_client
             else None
         )
@@ -1504,6 +1524,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             UndoButton,
             UndoConnectionButton,
+            UndoRevealedButton,
             UndoManyButton,
             UndoListButton,
             UndoSpellingButton,
@@ -1522,7 +1543,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(ImportButton)  # 📥 Import sessions (#2154)
         import_button.use_switch(self.settings.imports_enabled_for)  # (hidden where off)
         self.add_dynamic_items(NamesButton)  # 📇 Names, the way into /dmbot names (#1986)
-        self.add_dynamic_items(BackstoryButton)  # 📜 Upload backstory, from the Main Menu (#2380)
+        self.add_dynamic_items(
+            BackstoryButton
+        )  # 📜 Upload campaign lore, from the Main Menu (#2380)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -2784,6 +2807,7 @@ class DMBot(commands.AutoShardedBot):
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.ask_about_claims(table)),
+            ("names said at the table", lambda: self.reveal_names_said(table)),
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
@@ -9256,6 +9280,62 @@ class DMBot(commands.AutoShardedBot):
                 return
             log.info(numbers.line())
 
+    async def reveal_names_said(self, table: Table) -> None:
+        """After a session: a name the story was holding back from the players (a backstory name,
+        or one the DM added by hand) that someone at the table said or typed is shown to them now
+        (#2404). Code only, whole names, only recorded people's table lines (the DM's included,
+        never the sidebar). The DM screen says which, with an Undo. A count in the log."""
+        if (
+            self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            sessions = await self.transcripts.sessions(gid, cid, limit=1000)
+            number = sum(1 for s in sessions if s.started_at <= (table.started_at or 0)) or 1
+
+            async def spoken() -> list[str]:
+                # Asked last, right before the names are matched: a person can stop at any moment
+                agreed = await self.consent.consenting(gid)
+                recorded = {line.user_id for line in lines} & set(agreed)
+                return table_lines(lines, recorded=recorded)
+
+            await self._reveal_said(gid, cid, spoken, f"Session {number}")
+
+    async def _reveal_said(
+        self, gid: int, cid: str, texts: Callable[[], Awaitable[list[str]]], where: str
+    ) -> None:
+        """Show the held-back names the table said (`texts` reads the words, after everything
+        else is loaded), and say so on the DM screen (see above)."""
+        if self.memory is None:
+            return
+        held = await unrevealed_names(self.memory, gid, cid)
+        found = said(held, await texts())
+        if not found:
+            return
+        written = await self.memory.reveal_said(gid, cid, [f.entity_id for f in found])
+        if not written.value or written.batch is None:
+            return
+        if self.lookup is not None:
+            self.lookup.drop([cid])
+        log.info("Names said at the table and shown: %d", len(written.value))  # a count only
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or campaign.dm_screen_channel_id is None:
+            return
+        shown = [f.name for f in found if f.entity_id in set(written.value)]
+        waiting = await self.memory.waiting_connections(gid, cid, written.value)
+        if not await self.post(
+            campaign.dm_screen_channel_id,
+            report_text(shown, where=where, waiting=waiting),
+            view=revealed_view(cid, written.batch),
+        ):
+            # The names are shown and the DM could not be told: say so in the log (a count only)
+            log.warning("Names shown at the table, but the DM screen could not say so")
+
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
         transcript everyone may read (#1407). The DM screen asks, privately, once for each such
@@ -10126,6 +10206,16 @@ class DMBot(commands.AutoShardedBot):
         if not lines:
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
+        # What an imported session says is what was said at the table: held-back names it says
+        # are shown, as after a live session (#2404).
+        try:
+            await self._reveal_said(
+                gid, ready.campaign_id, _fixed([t for _, t in lines]), "an imported session"
+            )
+        except Exception:
+            log.exception(
+                "Import: showing the names the session said failed"
+            )  # never stops the scan
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
             agreed=set(agreed), game_only=True,
