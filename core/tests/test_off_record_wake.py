@@ -93,6 +93,17 @@ class Wake(unittest.IsolatedAsyncioTestCase):
             [(x.user_id, x.duration_ms) for x in self.table.unsaved.lines()], [(DM, 900_000)]
         )
 
+    async def test_a_pause_that_ended_while_down_marks_the_session_being_resumed(self) -> None:
+        """`restore` runs before the table is in `tables`: the resuming table still gets it."""
+        self.bot.tables.pop(GUILD)
+        self.bot._starting[GUILD] = self.table
+        self.bot._off_record_gap(GUILD, MIA, 1_000.0, 1_600.0)
+        (marker,) = self.table.unsaved.lines()
+        self.assertEqual((marker.user_id, marker.duration_ms), (MIA, 600_000))
+        self.bot._starting.clear()
+        self.bot._off_record_gap(GUILD, MIA, 2_000.0, 2_600.0)  # no session at all: nothing
+        self.assertEqual(len(self.table.unsaved.lines()), 1)
+
     async def test_no_transcript_no_marker(self) -> None:
         self.bot.transcripts = None
         self.bot._add_gaps(self.table, [(MIA, 1000.0, 1900.0)])

@@ -1411,6 +1411,7 @@ class DMBot(commands.AutoShardedBot):
         self._follow_ups: dict[int, asyncio.Task[None]] = {}
         # Stopped sessions still writing down their last words, by server.
         self._ending: dict[int, list[Table]] = {}
+        self._starting: dict[int, Table] = {}  # sessions being resumed after a restart (#2466)
         self._session_locks: dict[int, asyncio.Lock] = {}
         self._resume_started = False
         self._closing = False
@@ -1860,7 +1861,8 @@ class DMBot(commands.AutoShardedBot):
 
     def _off_record_gap(self, guild_id: int, user_id: int, began: float, ended: float) -> None:
         """A stretch off the record is over: its marker goes in the session's transcript."""
-        table = self.tables.get(guild_id)
+        # (a session being resumed after a restart is not in `tables` yet: `_starting` has it)
+        table = self.tables.get(guild_id) or self._starting.get(guild_id)
         if table is not None:
             self._add_gaps(table, [(user_id, began, ended)])
 
@@ -1899,9 +1901,11 @@ class DMBot(commands.AutoShardedBot):
         line itself is kept out of every transcript by the caller. They are off the record in core
         at once, with no await, so a line that arrives a moment later is already dropped; the
         rest (saving, ears, the table's line, their private note) follows."""
-        refused = self.off_the_record.start_pause(guild_id, user_id, WAKE_MINUTES)
+        refused = self.off_the_record.start_pause(
+            guild_id, user_id, WAKE_MINUTES, never_shorten=True
+        )
         if refused is not None:
-            return  # not recorded or not listening: nothing was paused
+            return  # not recorded, not listening, or already off the record for longer
         self._track(self._pause_by_phrase(guild_id, user_id), "off-the-record")
 
     async def _pause_by_phrase(self, guild_id: int, user_id: int) -> None:
@@ -4176,10 +4180,14 @@ class DMBot(commands.AutoShardedBot):
         # Off the record (#2466): a pause survives a restart. It is put back before the allowlist
         # goes to ears, so nobody who asked not to be recorded is let in.
         await self.consent.agreed(guild.id)  # (loaded: a pause is only for someone who agreed)
-        await self.off_the_record.restore(guild.id, saved.paused)
-        # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
-        # when it connects (_on_ears_link_change).
-        await self.start_table(table)
+        self._starting[guild.id] = table  # so a pause that ended while down can mark the transcript
+        try:
+            await self.off_the_record.restore(guild.id, saved.paused)
+            # Sends the allowlist, then the join. If ears isn't connected yet, it gets both
+            # when it connects (_on_ears_link_change).
+            await self.start_table(table)
+        finally:
+            self._starting.pop(guild.id, None)
         await self.off_the_record.say_expired(guild.id, saved.paused)
         log.info("Resuming session (restart %d in a row)", streak)
         return True

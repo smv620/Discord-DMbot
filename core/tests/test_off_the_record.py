@@ -13,6 +13,7 @@ from dmbot.off_the_record import (
     TABLE_BACK,
     TABLE_OFF,
     OffTheRecord,
+    Paused,
     paused_text,
     said_back,
     said_off,
@@ -331,6 +332,21 @@ class TheService(unittest.IsolatedAsyncioTestCase):
         await self.otr.pause(G, ALICE, 5)
         self.assertTrue(await self.otr.resume(G, ALICE))
         self.assertTrue(self.consent.has_consent(G, ALICE))
+
+    async def test_the_phrase_never_shortens_a_longer_pause(self) -> None:
+        self.assertIsNone(self.otr.start_pause(G, ALICE, 15))
+        kept = self.otr.start_pause(G, ALICE, 5, never_shorten=True)
+        assert kept is not None and kept.ok  # nothing to do: she is off for longer already
+        self.assertGreater(self.consent.paused_until(G, ALICE) or 0, self.clock.now + 600)
+        self.assertIsNone(self.otr.start_pause(G, BOB, None))  # until they resume
+        self.assertTrue((self.otr.start_pause(G, BOB, 5, never_shorten=True) or Paused(False)).ok)
+        self.assertTrue(self.consent.is_paused(G, BOB))
+        self.assertIsNone(self.consent.paused_until(G, BOB))  # still until they resume
+        # a shorter pause is extended to five minutes, never cut
+        self.assertIsNone(self.otr.start_pause(G, DM, 5))
+        self.clock.now += 240
+        self.assertIsNone(self.otr.start_pause(G, DM, 5, never_shorten=True))
+        self.assertGreater(self.consent.paused_until(G, DM) or 0, self.clock.now + 250)
 
     async def test_saying_it_gets_the_line_that_says_how_to_come_back_sooner(self) -> None:
         await self.otr.pause(G, ALICE, 5, said_it=True)

@@ -215,7 +215,9 @@ class OffTheRecord:
         await self._tell_ears(guild_id)
         await self._tell_table(guild_id, TABLE_BACK)
 
-    def start_pause(self, guild_id: int, user_id: int, minutes: int | None) -> Paused | None:
+    def start_pause(
+        self, guild_id: int, user_id: int, minutes: int | None, *, never_shorten: bool = False
+    ) -> Paused | None:
         """The part of a pause that must happen at once, with no await: the refusal, or None
         once this person is off the record in core (so a line that arrives a moment later is
         already dropped). Only while listening, and only someone who agreed."""
@@ -225,6 +227,17 @@ class OffTheRecord:
             return Paused(False, why=NOT_LISTENING)
         if not self._consent.agreed_now(guild_id, user_id):
             return Paused(False, why=NOT_RECORDED)
+        if never_shorten and self._consent.is_paused(guild_id, user_id):
+            # Saying the phrase while already off the record for longer changes nothing.
+            ends = self._consent.paused_until(guild_id, user_id)
+            if (
+                minutes is not None
+                and ends is not None
+                and ends - self._consent._clock() >= minutes * 60
+            ):
+                return Paused(True, int(self._wall() + (ends - self._consent._clock())))
+            if minutes is not None and ends is None:
+                return Paused(True, None)  # until they press Resume: longer than any length
         self._consent.pause(
             guild_id, user_id, None if minutes is None else minutes * 60
         )  # (nothing is captured from here on: the allowlist follows at once)
