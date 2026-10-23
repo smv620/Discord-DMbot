@@ -8,7 +8,7 @@ asked (at most 15 minutes, or until they fetch it).
 
 Checked again when the bot builds it, because the queue-time check can be stale: the sender must
 still be the campaign's owner or one of its game masters, and the campaign's owner's plan must
-include copies (Try It has none; the bot owns the plan rules, `plan_gate`). A campaign too big for
+include copies (Try It has none; the bot owns the plan rules, `plan_allows`). A campaign too big for
 a restore to take (`BackupTooBig`) fails with `too_big` and nothing is kept. The file is never
 logged; only the outcome word is.
 """
@@ -53,9 +53,9 @@ class Host(Protocol):
 
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
 
-    async def plan_gate(
-        self, action: str, guild_id: int, campaign: Campaign, user_id: int
-    ) -> str | None: ...
+    async def plan_allows(
+        self, action: str, guild_id: int, campaign: Campaign, *, fail_open: bool = True
+    ) -> bool: ...
 
     async def export_campaign(self, guild_id: int, campaign_id: str) -> Any: ...
 
@@ -74,9 +74,10 @@ class WebBackups:
                 "UPDATE web_backups SET state = 'working', stage = 'reading', claimed_at = %s,"
                 " updated_at = %s WHERE (guild_id, id) = (SELECT guild_id, id FROM web_backups"
                 " WHERE guild_id = %s AND (state = 'waiting' OR (state = 'working'"
-                " AND claimed_at < %s)) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
+                " AND claimed_at < %s)) AND created_at >= %s ORDER BY created_at LIMIT 1"
+                " FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, user_id",
-                (now, now, guild_id, now - RETAKE_AFTER_S),
+                (now, now, guild_id, now - RETAKE_AFTER_S, now - KEEP_FOR_S),
             )
             row = await cur.fetchone()
         if row is None:
@@ -133,7 +134,8 @@ async def build(host: Host, guild_id: int, item: Request, store: WebBackups) -> 
         if item.user_id not in campaign.dm_user_ids and item.user_id != campaign.owner_user_id:
             await store.failed(guild_id, item, NOT_ALLOWED)
             return NOT_ALLOWED
-        if await host.plan_gate("copy", guild_id, campaign, item.user_id) is not None:
+        # A copy holds the campaign's secrets, so a plan that cannot be checked is a no.
+        if not await host.plan_allows("copy", guild_id, campaign, fail_open=False):
             await store.failed(guild_id, item, PLAN)
             return PLAN
         data = await host.export_campaign(guild_id, campaign.id)

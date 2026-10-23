@@ -47,14 +47,17 @@ class Backing(Base):
         async def get_campaign(g: int, c: str) -> Any:
             return await self.campaigns.get(g, c)
 
-        async def plan_gate(action: str, g: int, campaign: Any, user: int) -> str | None:
-            return plan
+        async def plan_allows(
+            action: str, g: int, campaign: Any, *, fail_open: bool = True
+        ) -> bool:
+            assert not fail_open
+            return plan is None
 
         async def export_campaign(g: int, c: str) -> Any:
             return await self.campaigns.export(g, c)
 
         return SimpleNamespace(
-            get_campaign=get_campaign, plan_gate=plan_gate, export_campaign=export_campaign
+            get_campaign=get_campaign, plan_allows=plan_allows, export_campaign=export_campaign
         )
 
     async def build_next(self, guild: int, host: Any = None) -> str:
@@ -96,6 +99,30 @@ class Backing(Base):
             await self.db_sql(THURSDAY.id, "UPDATE web_backups SET state = 'failed'")
             self.assertTrue(made)
         self.assertEqual(await self.refused(self.session, ref), "too_soon")
+
+    async def test_fetching_a_copy_does_not_reset_the_count_of_requests(self) -> None:
+        ref = self.cref(THURSDAY.id, self.one)
+        for _ in range(5):
+            made = await campaign_backup.request(self.web, self.session, ref)
+            self.assertEqual(await self.build_next(THURSDAY.id), "")
+            await campaign_backup.fetch(self.web, self.session, ref, made)
+        self.assertEqual(await self.refused(self.session, ref), "too_soon")
+
+    async def test_a_copy_older_than_fifteen_minutes_is_not_served(self) -> None:
+        ref = self.cref(THURSDAY.id, self.one)
+        made = await campaign_backup.request(self.web, self.session, ref)
+        self.assertEqual(await self.build_next(THURSDAY.id), "")
+        await self.db_sql(THURSDAY.id, "UPDATE web_backups SET created_at = created_at - 1000")
+        with self.assertRaises(RecapError):
+            await campaign_backup.fetch(self.web, self.session, ref, made)
+
+    async def test_the_website_role_cannot_read_the_table_itself(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT has_table_privilege('dmbot_web', 'web_backups', 'SELECT') AS can"
+            )
+            row = await cur.fetchone()
+        self.assertFalse(row["can"])
 
     async def db_sql(self, guild: int, statement: str, *args: Any) -> None:
         async with self.db.guild(guild) as conn:

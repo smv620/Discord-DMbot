@@ -12177,7 +12177,8 @@ WEB_BACKUPS = (
     -- as for the delete); a game master of the campaign may in a server the session can reach.
     -- Anyone else gets NULL. The plan (copies are for a paid plan, none for Try It) is judged by
     -- the bot, which owns the plan check, and it says so in the row. A person who already has a
-    -- copy on the way gets that one back; at most 5 requests an hour.
+    -- copy on the way gets that one back; at most 5 requests in 15 minutes (a fetched copy
+    -- keeps its row, without the file, until then, so fetching does not reset the count).
     CREATE FUNCTION dmbot_web_backup_add(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -12203,11 +12204,10 @@ WEB_BACKUPS = (
             END IF;
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('web_backup:' || g::TEXT || c || me, 0));
-        DELETE FROM web_backups b WHERE b.guild_id = g AND b.campaign_id = c
-            AND b.created_at < now_s - 900;
+        DELETE FROM web_backups b WHERE b.guild_id = g AND b.created_at < now_s - 900;
         SELECT b.id INTO have FROM web_backups b
             WHERE b.guild_id = g AND b.campaign_id = c AND b.user_id = me
-              AND b.state IN ('waiting', 'working', 'done')
+              AND (b.state IN ('waiting', 'working') OR (b.state = 'done' AND b.file IS NOT NULL))
             ORDER BY b.created_at DESC LIMIT 1;
         IF FOUND THEN
             RETURN jsonb_build_object('status', 'ok', 'id', have);
@@ -12227,16 +12227,23 @@ WEB_BACKUPS = (
     CREATE FUNCTION dmbot_web_backup_read(g BIGINT, c TEXT, bid TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
-        r web_backups%ROWTYPE;
+        r RECORD;
     BEGIN
         IF dmbot_current_user() IS NULL
            OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
             RETURN NULL;
         END IF;
-        SELECT b.* INTO r FROM web_backups b
+        -- Named columns, so a poll never reads the file itself.
+        SELECT b.state, b.stage, b.error, b.file_name, b.size, b.created_at, b.updated_at,
+               (b.file IS NOT NULL) AS has_file INTO r
+            FROM web_backups b
             WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid
-              AND b.user_id = dmbot_current_user();
+              AND b.user_id = dmbot_current_user()
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900;
         IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF r.state = 'done' AND NOT r.has_file THEN
             RETURN NULL;
         END IF;
         RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
@@ -12245,8 +12252,8 @@ WEB_BACKUPS = (
     END
     $fn$;
 
-    -- The file, once, for the person who asked: the row is deleted as it is read. NULL when it is
-    -- not theirs, not ready or already taken.
+    -- The file, once, for the person who asked: it is emptied from the row as it is read. NULL when
+    -- it is not theirs, not ready or already taken.
     CREATE FUNCTION dmbot_web_backup_take(g BIGINT, c TEXT, bid TEXT) RETURNS BYTEA
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -12256,10 +12263,17 @@ WEB_BACKUPS = (
            OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
             RETURN NULL;
         END IF;
-        DELETE FROM web_backups b
+        -- The file leaves the row as it is read; the row stays (empty) for the request count.
+        SELECT b.file INTO out FROM web_backups b
             WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid
               AND b.user_id = dmbot_current_user() AND b.state = 'done' AND b.file IS NOT NULL
-            RETURNING b.file INTO out;
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900
+            FOR UPDATE;
+        IF out IS NULL THEN
+            RETURN NULL;
+        END IF;
+        UPDATE web_backups b SET file = NULL, size = 0
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid;
         RETURN out;
     END
     $fn$;

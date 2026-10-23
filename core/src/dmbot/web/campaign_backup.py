@@ -104,4 +104,5 @@ async def fetch(db: Database, session: Session, ref: str, backup_id: str) -> tup
     raw = found["f"] if found else None
     if raw is None or info is None:
         raise RecapError("not_found")
-    return bytes(raw), str(info["fileName"]) or "campaign.dmbot.json.gz"
+    # Held whole: the file is at most a restore's limit, and the database cannot stream it.
+    return raw, str(info["fileName"]) or "campaign.dmbot.json.gz"
