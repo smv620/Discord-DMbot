@@ -170,3 +170,46 @@ describe("the real client", () => {
     ]);
   });
 });
+
+// Last in the file on purpose: these use fake timers, and axe (above) must run on real ones.
+describe("Approve never stays locked", () => {
+  const never = { state: "checking" as const, approveBlocked: true, issues: [], versions: [] };
+
+  async function watch(look: () => Promise<typeof never>, afterOpen: () => void = () => {}) {
+    live.on = true;
+    vi.useFakeTimers();
+    const api = mockApi("table");
+    api.plotCheck = look;
+    const blocked = vi.fn();
+    render(<RecapPlotCheck api={api} refId={draft.ref} text="x" onBlocked={blocked} onFix={() => {}} />);
+    await vi.advanceTimersByTimeAsync(200); // (the page runs its first look after a short frame wait)
+    expect(blocked).toHaveBeenLastCalledWith(w.waitingCheck); // while it runs, Approve waits
+    afterOpen();
+    await vi.advanceTimersByTimeAsync(70_000); // past the limit
+    return blocked;
+  }
+
+  it("opens Approve with a plain line when the check never finishes", async () => {
+    const blocked = await watch(async () => never);
+    expect(blocked).toHaveBeenLastCalledWith(null);
+    expect(screen.getByText(w.gaveUp)).toBeTruthy();
+  });
+
+  it("keeps looking after a look fails, and still opens Approve at the limit", async () => {
+    let looks = 0;
+    let failing = false;
+    const blocked = await watch(
+      async () => {
+        looks += 1;
+        if (failing) throw new ApiError("network"); // the opening look works, every later one fails
+        return never;
+      },
+      () => {
+        failing = true;
+      },
+    );
+    expect(looks).toBeGreaterThan(5); // it did not stop at the first failure
+    expect(blocked).toHaveBeenLastCalledWith(null);
+    expect(screen.getByText(w.gaveUp)).toBeTruthy();
+  });
+});

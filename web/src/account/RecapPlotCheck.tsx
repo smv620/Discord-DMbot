@@ -34,7 +34,8 @@ export default function RecapPlotCheck({
 }) {
   const [check, setCheck] = useState<PlotCheck | null>(null);
   const [failed, setFailed] = useState(false);
-  const [slow, setSlow] = useState(false);
+  const [gaveUp, setGaveUp] = useState(false); // the check never finished: Approve must not stay locked
+  const [tick, setTick] = useState(0); // one more look after each one, whether it worked or not
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [talking, setTalking] = useState<string | null>(null);
@@ -70,27 +71,35 @@ export default function RecapPlotCheck({
     firstText.current = text;
     looks.current = 0;
     changed.current = true;
-    setSlow(false);
+    setGaveUp(false);
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
   const checking = check?.state === "checking";
+  // Look again every two seconds while the check runs. A look that fails (a dropped connection) does not
+  // end the watching: the next one is still made. After about a minute the page stops and says so, and
+  // Approve opens (the API still refuses an approval if a question it knows of is open).
   useEffect(() => {
-    if (!live || !checking) return;
+    if (!live || !checking || gaveUp) return;
     const timer = setTimeout(async () => {
       looks.current += 1;
+      if (looks.current >= POLL_LIMIT) {
+        setGaveUp(true);
+        return;
+      }
       await read();
-      if (looks.current >= POLL_LIMIT) setSlow(true);
+      setTick((n) => n + 1);
     }, POLL_MS);
     return () => clearTimeout(timer);
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, checking, gaveUp, tick]);
 
   const open = (check?.issues ?? []).filter((i) => i.answer === null).length;
   // Approve waits for the check and for every question. (The API's own `approveBlocked` is as of the
   // last look, so it is not used here: it would stay true after the DM answers. Approve itself is
   // refused by the API if a question is still open.)
-  const why = !live || check === null
+  const why = !live || check === null || gaveUp
     ? null
     : checking
       ? words.waitingCheck
@@ -152,9 +161,9 @@ export default function RecapPlotCheck({
       </h3>
       <p class="muted">{words.lead}</p>
       <p role="status" aria-live="polite" class="small">
-        {checking ? (changed.current ? words.checkingChange : words.checking) : said}
+        {checking && !gaveUp ? (changed.current ? words.checkingChange : words.checking) : said}
       </p>
-      {slow && <p class="note">{words.slow}</p>}
+      {gaveUp && <p class="note" role="status">{words.gaveUp}</p>}
       {!checking && check.issues.length === 0 && <p>{words.none}</p>}
       {!checking && (
         <ul class="plot-issues">

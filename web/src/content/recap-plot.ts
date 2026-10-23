@@ -12,7 +12,7 @@ export const plotWords = {
   lead: "DMbot compared this recap with your earlier sessions. These are questions, not rulings. You decide, and you can leave any question as it is.",
   checking: "Checking the recap…",
   checkingChange: "Checking the change…",
-  slow: "The check is taking a while. Open this page again in a minute. You can still read and edit the recap.",
+  gaveUp: "The check is taking too long, so Approve is open. You can approve now, or open this page again in a minute to see its questions.",
   none: "Nothing to ask. DMbot found no mismatch.",
   loadFailed: "We couldn't load the plot check. Nothing was changed. Open this page again in a minute.",
   level: { high: "Worth a look", medium: "Maybe", low: "Small" } as Record<string, string>,
