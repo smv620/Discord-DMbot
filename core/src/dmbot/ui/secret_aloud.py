@@ -91,6 +91,14 @@ def opened_text(name: str, entries: int = 1) -> str:
     )
 
 
+async def settle(bot: Any, campaign: Any, alias_id: str) -> None:
+    """The DM answered about this name, so the exposure the session recorded for it is settled and
+    the summary will not ask again (#2410). Nothing here changes what the players see."""
+    exposures = getattr(bot, "exposures", None)
+    if exposures is not None:
+        await exposures.settle_alias(campaign.guild_id, campaign.id, alias_id)
+
+
 def name_in(interaction: discord.Interaction) -> str:
     """The name the question was about, read back from the message being answered (already
     escaped there), or a plain word if it can't be read."""
@@ -165,6 +173,7 @@ class SecretAloudButton(
             return
         name = name_in(interaction)
         if self.act == "keep":
+            await settle(bot, campaign, self.alias_id)
             await interaction.response.edit_message(
                 content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
@@ -183,6 +192,7 @@ class SecretAloudButton(
             return
         if bot.lookup is not None:
             bot.lookup.drop([campaign.id])
+        await settle(bot, campaign, self.alias_id)
         await interaction.response.edit_message(
             content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )

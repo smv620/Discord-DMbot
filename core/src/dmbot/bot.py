@@ -248,6 +248,7 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.exposures import ExposureStore, find, secret_connections
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
@@ -1032,6 +1033,8 @@ class DMBot(commands.AutoShardedBot):
         # Campaign memory (#126): names the DM gives, suggestions after each session, and
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
+        # Secrets said at the table, recorded for the DM's summary; nothing applies them yet (#2410)
+        self.exposures = ExposureStore(memory._db) if memory is not None else None
         self.lookup = (
             LookupCache(memory, in_use=self._campaign_has_a_table) if memory is not None else None
         )
@@ -2869,6 +2872,7 @@ class DMBot(commands.AutoShardedBot):
             ("what was said", lambda: self.ask_about_claims(table)),
             ("names said at the table", lambda: self.reveal_names_said(table)),
             ("secrets said aloud", lambda: self.ask_about_secrets(table)),
+            ("secret exposures", lambda: self.record_exposures(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             (
@@ -9415,6 +9419,39 @@ class DMBot(commands.AutoShardedBot):
         ):
             # The names are shown and the DM could not be told: say so in the log (a count only)
             log.warning("Names shown at the table, but the DM screen could not say so")
+
+    async def record_exposures(self, table: Table, ended_at: int | None = None) -> None:
+        """After a session: remember the secret names and secret connections the players said or
+        typed (#2410). Nothing is applied and nobody is told here: the players see no change
+        until the summary goes out. Only the words of people recorded now count (the same rule as
+        the secret-name question), never the DM sidebar. The log gets a count, never a name."""
+        if (
+            self.memory is None
+            or self.exposures is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            names = await secret_names(self.memory, gid, cid)
+            connections = await secret_connections(self.memory, gid, cid)
+            if not names and not connections:
+                return
+            lines = await self.transcripts.lines(gid, table.transcript_session_id)
+            agreed = await self.consent.consenting(gid)  # asked after the lines were read
+            players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
+            found = find(names, connections, players_lines(lines, players=players))
+            if not found:
+                return
+            waiting = await self.exposures.record(
+                gid, cid, table.started_at or ended_at or int(time.time()), found
+            )
+            log.info("Secrets said at the table: %d found, %d waiting", len(found), waiting)
 
     async def ask_about_secrets(self, table: Table) -> None:
         """After a session: a name the DM keeps secret was said by a player, so it is now in the
