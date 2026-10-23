@@ -12152,7 +12152,12 @@ WEB_BACKUPS = (
     -- like any backup, so it is never logged and never kept beyond that; the row is gone with its
     -- campaign, isolated per server, and not itself in a backup.
     CREATE TABLE web_backups (
-        {_memory_scope()}
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        -- ON UPDATE CASCADE like the tables a move rewrites (#2550): a campaign that changes
+        -- server or id carries its waiting copies with it.
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
         id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{{32}}$'),
         user_id     BIGINT NOT NULL CHECK (user_id > 0),
         state       TEXT NOT NULL DEFAULT 'waiting'
