@@ -193,6 +193,8 @@ AUDIENCE: dict[str, str] = {
             "ui.continuity.ContinuityButton",
             "ui.guide.GuideButton",
             "ui.heard_review.HeardReviewButton",
+            # The person who posted the picture, or a DM (`_is_dm`); a stranger is refused (#2450).
+            "ui.image_fix.FixTextButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
