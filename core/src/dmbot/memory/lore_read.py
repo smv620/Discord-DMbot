@@ -394,7 +394,9 @@ async def read_lore(
     names: list[bg.Found] = []
     links: list[bg.Connection] = []
     by = SHAPE_LINES
-    slices = [(listed.names[i : i + by], []) for i in range(0, len(listed.names), by)]
+    slices: list[tuple[list[str], list[str]]] = [
+        (listed.names[i : i + by], []) for i in range(0, len(listed.names), by)
+    ]
     slices += [([], listed.links[i : i + by]) for i in range(0, len(listed.links), by)]
     shaped = await asyncio.gather(
         *(_shape(shape_ai, text, a, b, own, gate, stats) for a, b in slices)
