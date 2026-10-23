@@ -11037,7 +11037,9 @@ class DMBot(commands.AutoShardedBot):
         while True:
             await self.run_plot_talk()
             rounds += 1
-            if rounds % PLOT_TALK_SWEEP_EVERY == 0 and self.plot_talk is not None:
+            if (
+                rounds % PLOT_TALK_SWEEP_EVERY == 1 and self.plot_talk is not None
+            ):  # (first round too)
                 for guild in list(self.guilds):  # about hourly: talks older than thirty days go
                     try:
                         await self.plot_talk.sweep(guild.id)

@@ -160,6 +160,16 @@ class Quoting(unittest.TestCase):
         self.assertIsNotNone(pt.parse(raw('The "Silver" session said so.'), ctx()))
         self.assertIsNotNone(pt.parse(raw('Then "Mira laughed" in the recap.'), ctx()))
 
+    def test_every_unicode_quotation_mark_quotes(self) -> None:
+        for mark in ("〝x〞", "❝x❞", "″x″", "‹x›"):  # (the span's words must be allowed)
+            opened, closed = mark[0], mark[-1]
+            line = f"He said {opened}the moon is a lie{closed} once."
+            self.assertIsNone(pt.parse(raw(line), ctx()), mark)
+
+    def test_a_name_with_apostrophes_is_not_a_single_word(self) -> None:
+        self.assertIsNone(pt.parse(raw("Then \"a'b'c'd\" came."), ctx()))
+        self.assertIsNone(pt.parse(raw('The "' + "x" * 40 + '" came.'), ctx()))
+
     def test_the_issues_own_source_may_be_quoted(self) -> None:
         self.assertIsNotNone(pt.parse(raw('It says "Ulfgar the dwarf fell in the vault".'), ctx()))
 
