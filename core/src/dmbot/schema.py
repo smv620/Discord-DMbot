@@ -11707,6 +11707,75 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+
+def _approve_with_versions() -> str:
+    """`dmbot_recap_approve` (RECAP_APPROVAL) as it was, plus a new version in `recap_accepted`
+    when the approved text is not the newest accepted one (#2122). Taken from the earlier
+    migration's text, so the two cannot drift apart."""
+    start = RECAP_APPROVAL.index("    CREATE FUNCTION dmbot_recap_approve(")
+    end = RECAP_APPROVAL.index("    $fn$;", start) + len("    $fn$;")
+    body = RECAP_APPROVAL[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+    body = body.replace(
+        "        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;\n",
+        "        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;\n"
+        "        last_hash TEXT;\n        last_version INT;\n",
+        1,
+    )
+    keep = "        RETURN 'approved';\n    END"
+    assert keep in body
+    return body.replace(
+        keep,
+        "        -- The text the DM approved becomes the session's summary in the campaign\n"
+        "        -- notes: a new version unless it is the newest one again. Never overwritten.\n"
+        "        SELECT a.text_hash, a.version INTO last_hash, last_version FROM recap_accepted a\n"
+        "            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_\n"
+        "            ORDER BY a.version DESC LIMIT 1;\n"
+        "        IF NOT FOUND OR last_hash <> expected THEN\n"
+        "            INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version,\n"
+        "                text_hash, title, summary, accepted_by, accepted_at)\n"
+        "            VALUES (g, c, at_, COALESCE(last_version, 0) + 1, expected, job.title,\n"
+        "                job.summary, dmbot_current_user(), now_s);\n"
+        "        END IF;\n" + keep,
+        1,
+    )
+
+
+RECAP_ACCEPTED = (
+    """
+    -- Each version of a recap text the DM approved (#2122, docs/PLAN.md, "PlotBot checks every
+    -- recap"): it becomes that session's summary in the campaign notes, which PlotBot, the
+    -- pre-session note, recall and later checks read (the newest version per session). Never
+    -- overwritten: an approval of different text adds the next version. A new table, so no rows
+    -- change and no backfill policy; rows go with their campaign.
+    CREATE TABLE recap_accepted (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_at  BIGINT NOT NULL,
+        version     INTEGER NOT NULL CHECK (version >= 1),
+        text_hash   TEXT NOT NULL,
+        title       TEXT NOT NULL,
+        summary     TEXT NOT NULL,
+        accepted_by BIGINT NOT NULL,
+        accepted_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, session_at, version),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
+    );
+    """
+    + _isolate("recap_accepted")
+    + _approve_with_versions()
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -11935,11 +12004,13 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
+    ("0209_recap_accepted", RECAP_ACCEPTED),  # each approved version of a recap (#2122)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "recap_accepted",
     "secret_exposures",
     "merge_restores",
     "transcript_respells",
