@@ -68,6 +68,7 @@ describe("What's new", () => {
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
     expect(held.map((h) => h.title)).toEqual([
+      "Your shared rules in one place", // until #2460 part 2 merges and dev1 deploys it
       "My Account shows each campaign at a glance", // until #2460 merges and dev1 deploys it
       "Every recap says which session it is", // until #2418 merges and dev1 deploys it
       "A page for each campaign", // until #2416 merges, its API field is live and dev1 deploys it

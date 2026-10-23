@@ -230,6 +230,12 @@ export interface Held extends Entry {
 
 export const held: Held[] = [
   {
+    date: "2026-10-23",
+    title: "Your shared rules in one place",
+    what: "My Account has a Shared rules page. For each campaign you run, it lists the house rules and homebrew you share with other tables and the ones you use from other tables. You read it there, and each line says where to change it in Discord.",
+    reason: "In review (#2460); held until dev1 deploys it.",
+  },
+  {
     date: "2026-10-22",
     title: "My Account shows each campaign at a glance",
     what: "Each campaign on My Account now shows at a glance whether DMbot is listening, your part in it, and its sessions, hours played, players, NPCs, start date and last played. Tap the name to open it. The page now lists your campaigns first, then your characters, then your plan and billing.",

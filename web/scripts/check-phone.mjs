@@ -177,6 +177,7 @@ const pages = [
     await page.getByRole("button", { name: /Check what will be kept/ }).click();
     await page.getByText(/^Checked:/).first().waitFor();
   }],
+  ["shared rules: what a campaign shares and uses", "/account/sharing?demo=table"],
   ["names: the list", "/account/names/100.cmp1?demo=table"],
   ["names: a name open to change", "/account/names/100.cmp1?demo=table", async (page) => {
     // The longest name's row, so a long unbroken name is measured; open its editor, search for a

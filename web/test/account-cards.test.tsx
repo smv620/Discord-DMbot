@@ -12,6 +12,7 @@ import type { AccountApi, Campaign } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import { text } from "../src/content/account";
 import { houseRulesCard, homebrewCard, transcriptsCard } from "../src/content/account-cards";
+import { sharingCard } from "../src/content/sharing";
 
 afterEach(cleanup);
 
@@ -106,6 +107,11 @@ describe("the sections of My Account", () => {
     const at = (name: string) => order.findIndex((t) => t.includes(name));
     expect(at(text.campaignsHeading)).toBeGreaterThanOrEqual(0);
     expect(at(text.campaignsHeading)).toBeLessThan(at(text.charactersHeading));
+    await screen.findByRole("heading", { level: 2, name: sharingCard.heading });
+    const withSharing = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent ?? "");
+    const place = (name: string) => withSharing.findIndex((t) => t.includes(name));
+    expect(place(text.charactersHeading)).toBeLessThan(place(sharingCard.heading));
+    expect(place(sharingCard.heading)).toBeLessThan(place(text.planHeading));
     expect(at(text.charactersHeading)).toBeLessThan(at(text.planHeading));
     expect(at(text.planHeading)).toBeLessThan(at(text.myAccountHeading));
     for (const gone of [houseRulesCard.heading, homebrewCard.heading, transcriptsCard.heading])
@@ -114,6 +120,19 @@ describe("the sections of My Account", () => {
 });
 
 describe("a person who only plays", () => {
+  it("gets no Shared rules section, which is for the campaigns you run (#2460)", async () => {
+    const api = mockApi("table");
+    const real = api.me.bind(api);
+    api.me = async () => {
+      const got = await real();
+      if (got === null) return got;
+      return { ...got, campaigns: got.campaigns.filter((c) => c.role === "player") };
+    };
+    show(api);
+    await screen.findByRole("heading", { level: 2, name: text.campaignsHeading });
+    expect(screen.queryByRole("heading", { level: 2, name: sharingCard.heading })).toBeNull();
+  });
+
   it("gets no recaps link, which is a DM's list", async () => {
     const api = mockApi("table");
     const real = api.me.bind(api);

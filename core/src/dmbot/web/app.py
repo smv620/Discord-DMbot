@@ -47,6 +47,7 @@ from dmbot.web import (
     relationships,
     sessions,
     shared_recaps,
+    sharing,
     strays,
     support,
     tokens,
@@ -1468,6 +1469,14 @@ def create_app(
         """The campaigns with a house rule or a followed set in the person's servers."""
         session, _token = signed
         return {"campaigns": await house_rule_pages.list_campaigns(db, session)}
+
+    # The Shared rules page (#2460 part 2): what the person's campaigns publish and follow.
+    @app.get("/me/shared-rules")
+    async def me_shared_rules(signed: Signed) -> dict[str, Any]:
+        """The campaigns the person runs that publish or follow a house-rules set or homebrew
+        pack, read-only; a player of a table sees nothing here."""
+        session, _token = signed
+        return {"campaigns": await sharing.list_sharing(db, session)}
 
     @app.get("/me/campaigns/{ref}/house-rules")
     async def me_house_rules(ref: str, signed: Signed) -> dict[str, Any]:

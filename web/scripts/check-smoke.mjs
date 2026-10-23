@@ -154,6 +154,14 @@ await visit("House rules: campaigns, a campaign's rules and its followed set", "
   await step("the download button", () => page.getByRole("button", { name: "Save as a text file" }).waitFor());
 });
 
+await visit("Shared rules: what a campaign shares and uses", "/account/sharing", async (page) => {
+  await page.getByRole("heading", { level: 1, name: "Shared rules" }).waitFor();
+  await step("the campaign", () => seen(page, "The Brynwater Crossing"));
+  await step("what it shares", () => seen(page, "Brynwater table rules"));
+  await step("what it uses", () => seen(page, "Frostmaiden pack"));
+  await step("where to change it", () => seen(page, "Change it in Discord: ⚙️ Settings → 📚 Shared rules"));
+});
+
 await visit("Homebrew: campaigns, a campaign's shared entries by kind", "/account/homebrew", async (page) => {
   await page.getByRole("heading", { level: 1, name: "Homebrew" }).waitFor();
   await step("the campaign list", () => seen(page, "The Brynwater Crossing"));
