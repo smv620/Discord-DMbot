@@ -120,6 +120,28 @@ def request_in(text: str, *, in_character: bool = False) -> Request | None:
     return Request(found.group("verb").casefold(), rest)
 
 
+# "Hey DMbot, off the record": said to DMbot, so an NPC's "this is off the record" can't trip it
+# (#2466). The call must have its "hey" (or hi, okay), and "off the record" must be what follows it,
+# up to the end of the sentence; "please" and "go" may come first.
+_OFF_LEAD = r"(?:please|can you|could you|let's|lets|i'm|i am|going|go|we're|we are|to)"
+_OFF_RECORD = re.compile(
+    rf"^(?:{_OFF_LEAD}[\s,]{{1,3}}){{0,4}}off(?: the)? record\b",
+    re.IGNORECASE,
+)
+
+
+def asks_off_record(text: str) -> bool:
+    """The line calls DMbot ("Hey DMbot") and asks to go off the record. A plain "off the record"
+    never does, and neither does a bare "DMbot" (a story about it). Pure."""
+    line = text[:MAX_LINE_CHARS]
+    for match in _CALL.finditer(line):
+        if not match.group("greeting"):
+            continue
+        if _OFF_RECORD.match(line[match.end() :].strip(" ,;:-.!?")):
+            return True
+    return False
+
+
 def _called(line: str) -> Request | None:
     """The question after the last real call of DMbot in the line, up to the end of it. A
     call is "Hey DMbot" anywhere, or a bare "DMbot" followed by a pause or a question word;

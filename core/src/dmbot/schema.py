@@ -10703,6 +10703,17 @@ SESSION_PAUSES = """
     ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
 """
 
+OFF_RECORD_LINES = """
+    -- A stretch where a person was off the record (#2466) is one marker line in the transcript,
+    -- in both versions: "(Mia was off the record, 20:14-20:19)". It is stored as a line of its
+    -- own kind under that person (so a consent stop or "Delete my past transcripts" takes it
+    -- with their other lines) and holds no speech: when it began, how long it lasted, and the
+    -- words "off the record". The one change is the list of kinds the column accepts.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question', 'off_record'));
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -10913,6 +10924,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
+    ("0198_off_record_lines", OFF_RECORD_LINES),  # the "off the record" marker line (#2466)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

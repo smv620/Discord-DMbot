@@ -16,6 +16,7 @@ from dmbot.off_the_record import (
     paused_text,
     said_back,
     said_off,
+    said_off_by_voice,
 )
 
 G, ALICE, BOB, DM = 1, 11, 12, 99
@@ -150,6 +151,21 @@ class TheRestart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(otr2._timers), {(G, ALICE), (G, 0)})  # a timer for each with an end
         otr2.end_session(G)
 
+    async def test_the_start_of_a_stretch_survives_a_restart(self) -> None:
+        gaps: list[tuple[int, int, float, float]] = []
+        _, otr = self.build()
+        await otr.pause(G, ALICE, None)
+        saved = self.saved[-1]
+        self.assertEqual(saved["since"], {str(ALICE): 50_000.0})
+        otr.end_session(G)
+        self.wall.now += 400
+        self.clock.now += 400
+        _, otr2 = self.build()
+        otr2._gap = lambda g, who, began, ended: gaps.append((g, who, began, ended))
+        await otr2.restore(G, saved)
+        await otr2.resume(G, ALICE)
+        self.assertEqual(gaps, [(G, ALICE, 50_000.0, 50_400.0)])  # from the first start
+
     async def test_a_pause_that_ran_out_while_down_is_not_restored_and_the_table_is_told(
         self,
     ) -> None:
@@ -238,6 +254,70 @@ class TheService(unittest.IsolatedAsyncioTestCase):
         self.otr._save = save
         await asyncio.gather(self.otr.pause(G, ALICE, None), self.otr.pause(G, BOB, None))
         self.assertEqual(set(saved[-1]["people"]), {str(ALICE), str(BOB)})
+
+    def watch_gaps(self) -> list[tuple[int, int, float, float]]:
+        """The stretches the transcript is told about; the wall clock is ours to move."""
+        gaps: list[tuple[int, int, float, float]] = []
+        self.now = 5000.0
+        self.otr._wall = lambda: self.now
+        self.otr._gap = lambda g, who, began, ended: gaps.append((g, who, began, ended))
+        return gaps
+
+    async def test_a_stretch_off_the_record_is_told_when_it_ends_by_resume(self) -> None:
+        gaps = self.watch_gaps()
+        await self.otr.pause(G, ALICE, 15)
+        await self.otr.pause(G, ALICE, None)  # a new length is still the same stretch
+        self.now += 120
+        await self.otr.resume(G, ALICE)
+        self.assertEqual(gaps, [(G, ALICE, 5000.0, 5120.0)])
+
+    async def test_it_is_told_when_the_timer_ends_it(self) -> None:
+        gaps = self.watch_gaps()
+        await self.otr.pause(G, ALICE, 5)
+        self.now += 300
+        self.clock.now += 300
+        await self.otr._after((G, ALICE), 0)
+        self.assertEqual(gaps, [(G, ALICE, 5000.0, 5300.0)])
+
+    async def test_the_tables_break_is_one_stretch_for_the_table(self) -> None:
+        gaps = self.watch_gaps()
+        await self.otr.pause_table(G, None)
+        self.now += 600
+        await self.otr.resume_table(G)
+        self.assertEqual(gaps, [(G, 0, 5000.0, 5600.0)])
+
+    async def test_the_end_of_the_session_hands_back_the_open_stretches_instead(self) -> None:
+        gaps = self.watch_gaps()
+        await self.otr.pause(G, ALICE, None)
+        await self.otr.pause_table(G, 15)
+        self.now += 60
+        open_ones = self.otr.end_session(G)
+        self.assertEqual(sorted(open_ones), [(0, 5000.0, 5060.0), (ALICE, 5000.0, 5060.0)])
+        self.assertEqual(gaps, [])  # the caller marks these in the closing transcript
+        self.assertEqual(self.otr.end_session(G), [])
+
+    async def test_someone_who_stopped_leaves_no_marker(self) -> None:
+        gaps = self.watch_gaps()
+        await self.otr.pause(G, ALICE, 5)
+        self.otr.forget(G, ALICE)
+        self.assertEqual(self.otr.end_session(G), [])
+        self.assertEqual(gaps, [])
+
+    async def test_a_broken_transcript_hook_never_undoes_the_resume(self) -> None:
+        def broken(*_: Any) -> None:
+            raise RuntimeError("no transcript")
+
+        self.watch_gaps()
+        self.otr._gap = broken
+        await self.otr.pause(G, ALICE, 5)
+        self.assertTrue(await self.otr.resume(G, ALICE))
+        self.assertTrue(self.consent.has_consent(G, ALICE))
+
+    async def test_saying_it_gets_the_line_that_says_how_to_come_back_sooner(self) -> None:
+        await self.otr.pause(G, ALICE, 5, said_it=True)
+        self.assertEqual(self.said[-1], said_off_by_voice("Alice", 5))
+        self.assertIn("Press ▶️ Resume now in your DMs", self.said[-1])
+        self.assertIn("off the record for 5 minutes", self.said[-1])
 
     async def test_resume_now_puts_them_back_and_says_so(self) -> None:
         await self.otr.pause(G, ALICE, None)

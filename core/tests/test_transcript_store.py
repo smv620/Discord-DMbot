@@ -118,6 +118,21 @@ class StoreTests(DatabaseTest):
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD), frozenset({11, 12, 13}))
         self.assertEqual(await self.campaigns.special_channel_ids(GUILD + 9), frozenset())
 
+    async def test_an_off_the_record_marker_is_kept_but_is_not_speech(self) -> None:
+        """#2466: a gap's marker is a line of its own kind; it is not counted as speech and not
+        a speaker."""
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        marker = Line(
+            START * 1000 + 60_000, 5, "off the record", "off the record", 300_000,
+            sidebar="off_record",
+        )  # fmt: skip
+        await self.store.add_lines(GUILD, sid, [marker, line(5, DM, "table speech")])
+        (counted,) = await self.store.sessions(GUILD, self.campaign.id)
+        self.assertEqual((counted.lines, counted.speakers), (1, (DM,)))
+        lines = await self.store.lines(GUILD, sid)
+        kept = next(x for x in lines if x.sidebar)
+        self.assertEqual((kept.sidebar, kept.user_id, kept.duration_ms), ("off_record", 5, 300_000))
+
     async def test_sidebar_lines_are_kept_apart_and_never_edited(self) -> None:
         sid = await self.store.open_session(GUILD, self.campaign.id, START)
         asked_from = Lineage(ref="a1b2c3", via=VIA_VOICE, stt="deepgram nova-3 host")

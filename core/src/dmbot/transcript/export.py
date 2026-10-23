@@ -18,6 +18,7 @@ import unicodedata
 from collections.abc import Collection, Iterable, Mapping, Sequence
 
 from dmbot.transcript.models import (
+    OFF_RECORD,
     QUESTION_KINDS,
     SIDEBAR_TABLE_QUESTION,
     Line,
@@ -131,6 +132,8 @@ def speaker_order(lines: Iterable[Line], version: str = AS_HEARD) -> list[int]:
     a person has the same label in both."""
     order: list[int] = []
     for line in sorted(lines, key=lambda x: x.started_ms):
+        if line.sidebar == OFF_RECORD:
+            continue  # a gap's marker is not someone speaking
         if line.sidebar and line.sidebar not in QUESTION_KINDS:
             continue
         if version == CLEANED and (line.sidebar or line.typed):
@@ -144,6 +147,14 @@ def clock(seconds: float) -> str:
     """Time since the session started: 0:42:10."""
     s = max(0, int(seconds))
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+
+OFF_RECORD_TEXT = "was off the record"  # the same words as the buttons and the chat lines
+
+
+def _hhmm(unix_ms: int) -> str:
+    """A time of day in UTC, like the "Started … UTC" line of the file: 20:14."""
+    return time.strftime("%H:%M", time.gmtime(unix_ms / 1000))
 
 
 def duration(seconds: int) -> str:
@@ -302,7 +313,11 @@ def render(
     typed_lines = [line for line in everything if line.typed and not line.sidebar]
     table_lines = [line for line in everything if not line.sidebar and not line.typed]
     shown_typed = typed_lines if version == AS_HEARD else []
-    shown_sidebar = [line for line in everything if line.sidebar] if version == AS_HEARD else []
+    shown_sidebar = (
+        [line for line in everything if line.sidebar and line.sidebar != OFF_RECORD]
+        if version == AS_HEARD
+        else []
+    )
     spoken = [
         Spoken(
             line.user_id,
@@ -348,6 +363,13 @@ def render(
             safe=True,
         )
         timed.append((line.started_ms, f"{who} {TYPED_TAG}: {said}"))
+    for line in everything:  # "[0:12:04] (Mia was off the record, 20:14 to 20:19)", both versions
+        if line.sidebar == OFF_RECORD:
+            when = clock((line.started_ms - start_ms) / 1000)
+            span = f"{_hhmm(line.started_ms)}\u2013{_hhmm(line.started_ms + line.duration_ms)}"
+            timed.append(
+                (line.started_ms, f"[{when}] ({person(line.user_id)} {OFF_RECORD_TEXT}, {span})")
+            )
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
     body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))

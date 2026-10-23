@@ -41,6 +41,12 @@ SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 # transcript. DMbot's answer to either is a SIDEBAR_ANSWER line.
 SIDEBAR_TABLE_QUESTION = "table_question"
 QUESTION_KINDS = (SIDEBAR_QUESTION, SIDEBAR_TABLE_QUESTION)
+# A stretch where someone was off the record (#2466): the marker line "(Mia was off the record,
+# 20:14-20:19)" in both versions, so a reader sees the gap is on purpose. Stored with the sidebar
+# kinds so it needs no new table; it holds no speech (nothing was captured), only when it began
+# (`started_ms`) and how long it lasted (`duration_ms`).
+OFF_RECORD = "off_record"
+OFF_RECORD_WORDS = "off the record"
 VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
 # Typed in the table's chat (#1118): not speech, so no speech-to-text in its lineage.
 VIA_TABLE_CHAT = "table-chat"
@@ -103,7 +109,12 @@ class Line:
     message_id: int = 0
 
     def __post_init__(self) -> None:
-        if self.sidebar not in ("", SIDEBAR_ANSWER, *QUESTION_KINDS):  # not at the database
+        if self.sidebar not in (
+            "",
+            SIDEBAR_ANSWER,
+            OFF_RECORD,
+            *QUESTION_KINDS,
+        ):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
         tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()
         if tidy != self.entity:  # one line, never blank, never too long for the database

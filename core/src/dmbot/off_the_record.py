@@ -26,6 +26,9 @@ from dmbot.consent import ConsentStore
 
 log = logging.getLogger(__name__)
 
+# "Hey DMbot, off the record" pauses the speaker for this long.
+WAKE_MINUTES = 5
+
 # The choices on the pause buttons, in minutes; None is "until I press Resume".
 CHOICES: tuple[int | None, ...] = (5, 15, None)
 
@@ -61,6 +64,12 @@ def said_off(name: str, minutes: int | None) -> str:
     return f"⏸️ {name} is off the record for {minutes} minutes."
 
 
+def said_off_by_voice(name: str, minutes: int) -> str:
+    """After "Hey DMbot, off the record" (said or typed): the same line, and how to come back sooner
+    (nothing of them is heard while they are off, so there is no saying it back)."""
+    return said_off(name, minutes) + " Press ▶️ Resume now in your DMs to come back sooner."
+
+
 def said_back(name: str) -> str:
     return f"▶️ {name} is back on the record."
 
@@ -93,6 +102,7 @@ class OffTheRecord:
         listening: Callable[[int], bool],
         drop: Callable[[int, int | None], None] = lambda guild_id, user_id: None,
         save: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
+        gap: Callable[[int, int, float, float], None] | None = None,
         wall: Callable[[], float] = time.time,
     ) -> None:
         self._consent = consent
@@ -103,6 +113,10 @@ class OffTheRecord:
         self._drop = drop  # forget what the person is saying right now (None: everyone)
         self._save = save  # keep the pauses with the saved session, so a restart keeps them
         self._wall = wall
+        # Told when a stretch off the record ends: (server, person or 0 for the table, from, to)
+        # in Unix seconds, so the transcript can show the gap on purpose (#2466).
+        self._gap = gap
+        self._since: dict[tuple[int, int], float] = {}
         self._timers: dict[tuple[int, int], asyncio.Task[None]] = {}
         self._locks: dict[int, asyncio.Lock] = {}  # per server, see `_keep`
 
@@ -130,9 +144,30 @@ class OffTheRecord:
         # (a timer and a button) could otherwise write the older state last.
         try:
             async with self._locks.setdefault(guild_id, asyncio.Lock()):
-                await self._save(guild_id, self._consent.snapshot(guild_id))
+                snapshot = self._consent.snapshot(guild_id)
+                since = {
+                    ("table" if who == 0 else str(who)): at
+                    for (g, who), at in self._since.items()
+                    if g == guild_id
+                }
+                if since:
+                    snapshot["since"] = since
+                await self._save(guild_id, snapshot)
         except Exception as exc:
             log.error("Couldn't save the pauses with the session (%s)", type(exc).__name__)
+
+    def _begin(self, key: tuple[int, int]) -> None:
+        """A pause starts (a new length keeps the first start: it is one stretch off the record)."""
+        self._since.setdefault(key, self._wall())
+
+    def _end(self, key: tuple[int, int]) -> None:
+        """A pause is over: the transcript is told when it began and ended."""
+        began = self._since.pop(key, None)
+        if began is not None and self._gap is not None:
+            try:
+                self._gap(key[0], key[1], began, self._wall())
+            except Exception as exc:  # the pause is over whatever the transcript did
+                log.error("Couldn't note a stretch off the record (%s)", type(exc).__name__)
 
     def _until(self, minutes: int | None) -> int | None:
         return None if minutes is None else int(self._wall() + minutes * 60)
@@ -153,10 +188,12 @@ class OffTheRecord:
             self._timers.pop(key, None)
             if user_id == 0:
                 self._consent.resume_table(guild_id)
+                self._end(key)
                 await self._back_table(guild_id)
             else:
                 # (resumed whatever the clocks say: a timer a hair early must not leave them off)
                 self._consent.resume(guild_id, user_id)
+                self._end(key)
                 if self._consent.agreed_now(guild_id, user_id):  # not someone who just stopped
                     await self._back_person(guild_id, user_id)
         except asyncio.CancelledError:
@@ -175,7 +212,9 @@ class OffTheRecord:
         await self._tell_ears(guild_id)
         await self._tell_table(guild_id, TABLE_BACK)
 
-    async def pause(self, guild_id: int, user_id: int, minutes: int | None) -> Paused:
+    async def pause(
+        self, guild_id: int, user_id: int, minutes: int | None, *, said_it: bool = False
+    ) -> Paused:
         """Take this person off the record. Only while listening, and only someone who agreed.
         Pausing again replaces the earlier pause (a new length)."""
         if minutes not in CHOICES:
@@ -187,11 +226,14 @@ class OffTheRecord:
         self._consent.pause(
             guild_id, user_id, None if minutes is None else minutes * 60
         )  # (nothing is captured from here on: the allowlist follows at once)
+        self._begin((guild_id, user_id))
         self._drop(guild_id, user_id)
         self._arm((guild_id, user_id), minutes)
         await self._keep(guild_id)
         await self._tell_ears(guild_id)
-        told = await self._tell_table(guild_id, said_off(self._name_of(guild_id, user_id), minutes))
+        name = self._name_of(guild_id, user_id)
+        line = said_off_by_voice(name, minutes) if said_it and minutes else said_off(name, minutes)
+        told = await self._tell_table(guild_id, line)
         log.info("Off the record: a person paused for %s", minutes)
         return Paused(True, self._until(minutes), told=told)
 
@@ -203,6 +245,7 @@ class OffTheRecord:
         # (a pause whose time just ran out still gets its list sent and its line said)
         if not self._consent.resume(guild_id, user_id) and had_timer is None:
             return False
+        self._end((guild_id, user_id))
         await self._back_person(guild_id, user_id)
         return True
 
@@ -213,6 +256,7 @@ class OffTheRecord:
         if not self._listening(guild_id):
             return Paused(False, why=NOT_LISTENING)
         self._consent.pause_table(guild_id, None if minutes is None else minutes * 60)
+        self._begin((guild_id, 0))
         self._drop(guild_id, None)
         self._arm((guild_id, 0), minutes)
         await self._keep(guild_id)
@@ -227,6 +271,7 @@ class OffTheRecord:
             had_timer.cancel()
         if not self._consent.resume_table(guild_id) and had_timer is None:
             return False
+        self._end((guild_id, 0))
         await self._back_table(guild_id)
         return True
 
@@ -236,12 +281,19 @@ class OffTheRecord:
         timer = self._timers.pop((guild_id, user_id), None)
         if timer is not None:
             timer.cancel()
+        self._since.pop((guild_id, user_id), None)  # no marker: their lines are deleted anyway
 
     async def restore(self, guild_id: int, saved: dict[str, Any]) -> None:
         """After a restart that resumes the session, before anyone's audio is let in: put the
         saved pauses back (those not run out) and arm their timers for the time left."""
         back = self._consent.restore(guild_id, saved)
         now_c = self._consent._clock()
+        began = dict(saved.get("since") or {})
+        for who in back:
+            at = began.get("table" if who == 0 else str(who))
+            self._since[(guild_id, who)] = (
+                float(at) if isinstance(at, int | float) else self._wall()
+            )
         for who in back:
             ends = (
                 self._consent._table_paused[guild_id][0]
@@ -270,8 +322,14 @@ class OffTheRecord:
         if "table" in saved and saved["table"] is not None and saved["table"] <= now:
             await self._tell_table(guild_id, TABLE_BACK)
 
-    def end_session(self, guild_id: int) -> None:
-        """The listening session is over: every pause ends with it, quietly."""
+    def end_session(self, guild_id: int) -> list[tuple[int, float, float]]:
+        """The listening session is over: every pause ends with it, quietly. The stretches that
+        were still on, as (person or 0 for the table, from, to), for the closing transcript."""
         self._consent.end_session(guild_id)
         for key in [k for k in self._timers if k[0] == guild_id]:
             self._timers.pop(key).cancel()
+        now = self._wall()
+        return [
+            (key[1], self._since.pop(key), now)
+            for key in [k for k in self._since if k[0] == guild_id]
+        ]

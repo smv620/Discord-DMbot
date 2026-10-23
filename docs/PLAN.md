@@ -1157,8 +1157,10 @@ the way other Discord bots handle opt-ins. No typing, and no slash command neede
   was off the record, 20:14–20:19)". Nothing is cut from a transcript, because nothing was recorded, so
   this fits the unedited raw transcript (#933). **Saying it** works only when it is said to DMbot: **"Hey
   DMbot, off the record"** (spoken or typed) pauses the speaker for 5 minutes. A plain "off the record"
-  is never acted on, because NPCs say it in the story; a line said as a named NPC never triggers
-  (#1624). There is no spoken "back on the record", since DMbot hears nothing from a paused person;
+  is never acted on, because NPCs say it in the story; the call must carry its "Hey", and a line
+  said as a named NPC never triggers (#1624). *Built (2026-10-23, CloudDev):* the spoken phrase is not
+  held for the speaker label that decides "as a named NPC": a wrongly paused person only presses ▶️,
+  while waiting would keep recording them; the line that said it reaches neither transcript nor memory. There is no spoken "back on the record", since DMbot hears nothing from a paused person;
   they come back with ▶️, the timer, or the session's end. It is not retroactive: what was said before
   the pause stays on the record.
 - **No thanks** is not remembered: that person is asked again next session, and the
