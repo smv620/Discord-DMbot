@@ -1861,11 +1861,6 @@ names panel nor the speech-to-text hints can be a fixed list.
       **❓ Party theory** (The party at 0.5, Theory) waits for guesses (#2412): until then a party belief
       below 1.0 is refused. Listing each connection in the summary, with who believes it and the line it
       came from, is the next step.
-      or typed, the DM's own table words too (a DM slip is the first case), never the DM sidebar or the DM screen, and nobody who is not recorded now, in
-      `secret_exposures`: which secret and how often, never a line or who said it. Nothing is applied and the
-      players see no change. An answer the DM gives another way (the live "Is it revealed now?", or the
-      after-session "keep it secret?") settles the exposure so the summary will not ask again; an answer during the session is kept for it, so the recording at the end leaves it settled. A later session that says the name again is a new exposure. An exposure holds a count only, so a person who stops being recorded afterwards leaves no words behind; the summary (next slice) reads the exposures again before it applies them. The summary
-      that tells the DM and applies the exposures (with Recant) is the next slice.
     - *Built (CloudDev, 2026-10-23, #2411):* **recaps rank by how connected a name is.** `importance` is the
       number of live connections an entry has in The truth, secret ones included, plus a quarter for each
       entry two steps out, capped at 20 (`memory/importance.py`, computed in code from the connections and
