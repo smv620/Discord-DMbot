@@ -1,0 +1,147 @@
+"""`recap_run --compare` (#2575): two blind drafts from the same beats, the key apart."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from dmbot.devtools.recap_run import compare as cmp
+from dmbot.devtools.recap_run.__main__ import parse_args
+
+
+def job(summary: str, state: str = "ready", beats: Any = None) -> Any:
+    return SimpleNamespace(
+        title="The Door", summary=summary, housekeeping=(), music=("soft",), to_confirm=(),
+        state=state, beats=beats if beats is not None else [{"what": "x"}], speakers=(1, 2),
+        split={"m": 1}, grade={},
+    )  # fmt: skip
+
+
+def counted(model: str) -> Any:
+    return SimpleNamespace(model=model, calls=2, input_tokens=1000, output_tokens=500)
+
+
+def outcome(summary: str, model: str, state: str = "ready") -> Any:
+    return SimpleNamespace(
+        job=job(summary, state), stopped="", creative=counted(model), formatting=counted("fmt"),
+        careful=counted("careful"), fast=counted("fast"),
+    )  # fmt: skip
+
+
+class Runner:
+    """A stand-in for `run_text` that records how it was called."""
+
+    def __init__(self, leak: bool = False) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.leak = leak
+
+    async def __call__(
+        self, inputs: Any, fast: Any, careful: Any, consenting: Any, **kw: Any
+    ) -> Any:
+        self.calls.append(kw)
+        which = len(self.calls) - 1
+        text = "《Calm》 Tavin lit the fire." if which == 0 else "《Calm》 Tavin warmed his hands."
+        return outcome(text, kw["creative_models"][0])
+
+
+WRITERS = [
+    cmp.Writer("Anthropic claude-writer", "c0", "f0", ("claude-writer", "fmt")),  # type: ignore[arg-type]
+    cmp.Writer("Gemini gemini-writer", "c1", "f1", ("gemini-writer", "fmt")),  # type: ignore[arg-type]
+]
+
+
+class TheComparison(unittest.IsolatedAsyncioTestCase):
+    async def run_it(
+        self, runner: Runner, order: tuple[int, int], leaks: bool = False
+    ) -> tuple[Path, list[str], int]:
+        folder = Path(tempfile.mkdtemp()) / "cmp"
+        said: list[str] = []
+        code = await cmp.run_compare(
+            runner, SimpleNamespace(), "fast", "careful", None,  # type: ignore[arg-type]
+            session_at=1, models=("fast", "careful"), writers=WRITERS, folder=folder,
+            prices={"claude-writer": (4, 20), "gemini-writer": (1, 5)},
+            checks_of=lambda o: [("names ok", True, "")], leaks=lambda o: leaks,
+            voice_tags=False, order=order, emit=said.append,
+        )  # fmt: skip
+        return folder, said, code
+
+    async def test_two_blind_drafts_and_a_separate_key(self) -> None:
+        runner = Runner()
+        folder, said, code = await self.run_it(runner, (1, 0))
+        self.assertEqual(code, 0)
+        a, b = (folder / "A.txt").read_text(), (folder / "B.txt").read_text()
+        self.assertIn("warmed his hands", a)  # the second writer's draft is A this time
+        self.assertIn("lit the fire", b)
+        self.assertEqual(
+            (folder / "key.txt").read_text(),
+            "A = Gemini gemini-writer\nB = Anthropic claude-writer\n",
+        )
+        for text in (a, b, *said):
+            self.assertNotIn("gemini", text.lower())
+            self.assertNotIn("claude", text.lower())
+            self.assertNotIn("anthropic", text.lower())
+
+    async def test_the_second_writer_starts_from_the_first_ones_beat_sheet(self) -> None:
+        runner = Runner()
+        await self.run_it(runner, (0, 1))
+        self.assertNotIn("start", runner.calls[0])
+        state, fields = runner.calls[1]["start"]
+        self.assertEqual(state, "checked")
+        self.assertEqual(fields["beats"], [{"what": "x"}])
+        self.assertEqual(fields["speakers"], (1, 2))
+        self.assertEqual([c["creative"] for c in runner.calls], ["c0", "c1"])
+
+    async def test_costs_and_checks_are_printed_by_letter(self) -> None:
+        _, said, _ = await self.run_it(Runner(), (0, 1))
+        text = "\n".join(said)
+        self.assertIn("== Draft A ==", text)
+        self.assertIn("== Draft B ==", text)
+        self.assertIn("PASS  names ok", text)
+        self.assertIn(
+            "writer: 2 calls, in 1000, out 500, $0.014", text
+        )  # 4*1000+20*500 per million
+
+    async def test_a_draft_that_names_a_secret_writes_nothing(self) -> None:
+        folder, _said, code = await self.run_it(Runner(), (0, 1), leaks=True)
+        self.assertEqual(code, 3)
+        self.assertFalse(folder.exists())
+
+    async def test_a_first_run_with_no_beats_stops_plainly(self) -> None:
+        class NoBeats(Runner):
+            async def __call__(self, *a: Any, **kw: Any) -> Any:
+                out = await super().__call__(*a, **kw)
+                out.job.beats, out.job.state = [], "queued"
+                return out
+
+        _folder, said, code = await self.run_it(NoBeats(), (0, 1))
+        self.assertEqual(code, 1)
+        self.assertIn("nothing to compare", " ".join(said))
+
+    def test_the_coin_gives_both_orders(self) -> None:
+        self.assertEqual(cmp.blind_order(lambda n: 0), (0, 1))
+        self.assertEqual(cmp.blind_order(lambda n: 1), (1, 0))
+
+
+class TheArguments(unittest.TestCase):
+    def test_compare_needs_a_folder_and_a_gemini_model(self) -> None:
+        for argv in (
+            ["--session", "1", "c", "2", "--compare"],
+            ["--session", "1", "c", "2", "--compare", "--out", "x"],
+            ["--session", "1", "c", "2", "--compare", "--gemini-model", "g"],
+            ["--golden", "--compare", "--out", "x", "--gemini-model", "g"],
+        ):
+            with self.assertRaises(SystemExit):
+                parse_args(argv)
+
+    def test_the_model_flags_go_only_with_compare(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(["--session", "1", "c", "2", "--gemini-model", "g"])
+
+    def test_a_good_compare_line_is_accepted(self) -> None:
+        args = parse_args(
+            ["--session", "1", "c", "2", "--compare", "--out", "x", "--gemini-model", "g"]
+        )
+        self.assertTrue(args.compare)

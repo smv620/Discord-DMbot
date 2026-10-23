@@ -187,10 +187,13 @@ async def run_text(
     creative_models: tuple[str, str] = ("creative", "formatting"),
     critics: bool = False,
     story: pl.Story | None = None,
+    start: tuple[str, dict[str, Any]] | None = None,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
+    if start is not None:  # `--compare`: the second writer begins at the first one's beat sheet
+        store.job = replace(store.job, state=start[0], **start[1])
     fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
     creative_c = Counting(creative, creative_models[0]) if creative is not None else None
     formatting_c = Counting(formatting, creative_models[1]) if formatting is not None else None
@@ -575,6 +578,16 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--no-critics", action="store_true",
         help="leave out the critics loop (#2255), to compare with the recap before it",
     )  # fmt: skip
+    parser.add_argument(
+        "--compare", action="store_true",
+        help="with --session or --transcript: the same beats written by Claude and by Gemini, "
+        "saved blind as A.txt and B.txt in --out with the key apart (needs --gemini-model)",
+    )  # fmt: skip
+    parser.add_argument("--gemini-model", metavar="NAME", help="with --compare: the Gemini model")
+    parser.add_argument(
+        "--claude-model", metavar="NAME",
+        help="with --compare: the Claude writer (default: the creative model on file)",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -594,8 +607,19 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error("--transcript needs --dm NAME, the DM's name as the file spells it")
     elif args.dm or args.names:
         parser.error("--dm and --names go with --transcript")
-    if args.out and not args.transcript:
-        parser.error("--out goes with --transcript")
+    if args.compare:
+        if args.golden or args.review or args.audio or args.keep:
+            parser.error(
+                "--compare goes with --session or --transcript, and takes no --audio or --keep"
+            )
+        if not args.out or not args.gemini_model:
+            parser.error(
+                "--compare needs --out DIR (for the drafts and the key) and --gemini-model"
+            )
+    elif args.gemini_model or args.claude_model:
+        parser.error("--gemini-model and --claude-model go with --compare")
+    if args.out and not (args.transcript or args.compare):
+        parser.error("--out goes with --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
         parser.error("--hours is the session's length in hours, from 0.25 to 24")
     if args.hours is not None and args.golden:
@@ -876,6 +900,8 @@ async def _session(
         if not args.yes:
             print("Nothing was run. Add --yes to spend the money.")
             return 0
+        if args.compare:
+            return await _compare(args, inputs, fast, careful, models, prices, agreed, at)
         out = await run_text(
             inputs, fast, careful, agreed, session_at=at, models=models, **_WRITERS
         )
@@ -902,6 +928,49 @@ async def _session(
         return 0 if out.job.state == "ready" else 1
     finally:
         await db.close()
+
+
+async def _compare(
+    args: argparse.Namespace,
+    inputs: pl.Inputs,
+    fast: Client,
+    careful: Client,
+    models: tuple[str, str],
+    prices: dict[str, tuple[float, float]],
+    consenting: Callable[[], Awaitable[Collection[int]]] | None,
+    session_at: int,
+) -> int:
+    """`--compare` (#2575): Claude and Gemini write from the same beats; two blind drafts."""
+    from dmbot.ai import DEFAULT_MODELS
+    from dmbot.devtools.recap_run import compare as cmp
+
+    all_models = parse_ai_models(lambda name: os.environ.get(name, ""))[0]
+    claude_model = args.claude_model or DEFAULT_MODELS.creative
+    writers = cmp.writers_from_env(
+        lambda name: os.environ.get(name, ""),
+        all_models,
+        claude_model,
+        args.gemini_model,
+        register=_OPEN_CLIENTS.append,
+    )
+    if writers is None:
+        return 2
+    shown = {**prices, **prices_of(args.price, [claude_model, args.gemini_model])}
+    return await cmp.run_compare(
+        run_text,
+        inputs,
+        fast,
+        careful,
+        consenting,
+        session_at=session_at,
+        models=models,
+        writers=writers,
+        folder=Path(args.out),
+        prices=shown,
+        checks_of=lambda out: final_checks(out.job, out.inputs) if out.job.summary else [],
+        leaks=lambda out: names_a_secret_anywhere(out.job, out.inputs),
+        voice_tags=voice_tags_on(),
+    )
 
 
 def read_transcript_inputs(
@@ -970,6 +1039,8 @@ async def _transcript(
     folder = Path(args.out) if args.out else None
     if folder is not None and folder.is_dir():
         rv.clear_old(folder)  # nothing of an earlier run is left to be mixed into this one
+    if args.compare:
+        return await _compare(args, inputs, fast, careful, models, prices, None, 1)
     out = await run_text(inputs, fast, careful, session_at=1, models=models, **_WRITERS)
     lines = report(out, prices)
     if lines == [REFUSED]:

@@ -1,0 +1,227 @@
+"""`recap_run --compare`: the same session written by two story models, read blind (#2575).
+
+The beats are made once (by the first run) and the second writer starts from the very same beat
+sheet, so the comparison is of the writers, not of two different beat sheets. Each draft goes
+through the same checks and critics as a live recap. The drafts are written as `A.txt` and `B.txt`
+with no provider or model name in them, and which is which goes in `key.txt`, a separate file the
+reader opens only afterwards. Which writer is A is a coin toss. The terminal report labels each
+draft A or B and prints its checks, tokens and cost, and names no provider or model. The second
+run starts after the beats, so its numbers are the writing and the checks only; the first run's
+also hold the beat sheet (said in the report). Files are private to the user; a recap holds the
+DM's campaign, so **paste nothing from them into GitHub but the scores and counts.**
+"""
+
+from __future__ import annotations
+
+import secrets
+from collections.abc import Awaitable, Callable, Collection, Sequence
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from dmbot.ai import AIModels, AIModelTier, AnthropicClient, GeminiClient
+from dmbot.devtools.recap_run import review as rv
+from dmbot.recaps import pipeline as pl
+from dmbot.recaps.pipeline import Client
+
+if TYPE_CHECKING:
+    from dmbot.devtools.recap_run.__main__ import Outcome
+
+DRAFT_FILES = ("A.txt", "B.txt")
+KEY_FILE = "key.txt"
+
+
+@dataclass(frozen=True, slots=True)
+class Writer:
+    """One of the two story models: how it is shown in the key, and the clients that use it."""
+
+    label: str  # for key.txt only, e.g. "Anthropic claude-opus-5-5"
+    creative: Client
+    formatting: Client
+    models: tuple[str, str]  # (creative, formatting) model names, for the cost lookup
+
+
+def blind_order(pick: Callable[[int], int] = secrets.randbelow) -> tuple[int, int]:
+    """Which writer is draft A: (0, 1) or (1, 0), by a coin that is not the same every time."""
+    return (0, 1) if pick(2) == 0 else (1, 0)
+
+
+def start_from(first: Outcome) -> tuple[str, dict[str, Any]]:
+    """The state and job fields a second run starts with: the first run's checked beat sheet, its
+    speakers and its split, at the state just after the beats were checked. Raises `ValueError`
+    when the first run did not get that far."""
+    job = first.job
+    if not job.beats or job.state in ("queued", "beats"):
+        raise ValueError("the first writer's run did not reach the beat sheet")
+    return "checked", {
+        "beats": list(job.beats),
+        "speakers": tuple(job.speakers),
+        "split": job.split,
+    }
+
+
+def draft_text(out: Outcome, *, voice_tags: bool) -> str:
+    """The recap as a reader sees it, and nothing that names a provider or a model."""
+    job = out.job
+    return rv.recap_text(
+        job.title,
+        job.summary,
+        list(job.housekeeping),
+        list(job.music),
+        voice_tags=voice_tags,
+        names_given=True,
+        to_confirm=list(job.to_confirm),
+    )
+
+
+def write_blind(
+    folder: Path,
+    outcomes: Sequence[Outcome],
+    labels: Sequence[str],
+    order: tuple[int, int],
+    *,
+    voice_tags: bool,
+) -> list[str]:
+    """`A.txt`, `B.txt` and, apart, `key.txt`. `order[i]` is which outcome is draft i."""
+    rv.private_dir(folder)
+    key: list[str] = []
+    for slot, which in enumerate(order):
+        text = draft_text(outcomes[which], voice_tags=voice_tags)
+        rv.write_private(folder / DRAFT_FILES[slot], text)
+        key.append(f"{'AB'[slot]} = {labels[which]}")
+    rv.write_private(folder / KEY_FILE, "\n".join(key) + "\n")
+    return key
+
+
+def summary_lines(
+    out: Outcome,
+    letter: str,
+    prices: dict[str, tuple[float, float]],
+    checks: list[tuple[str, bool, str]],
+    *,
+    with_beats: bool,
+) -> list[str]:
+    """One draft's terminal report: state, every check, calls and tokens and the cost of each
+    model's share. Fixed words and counts; no provider, no model, no text of the recap."""
+    job = out.job
+    rows = [
+        f"== Draft {letter} ==",
+        f"state: {job.state}" + (f" ({out.stopped})" if out.stopped else ""),
+    ]
+    rows += [
+        f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" ({d})" if d else "") for name, ok, d in checks
+    ]
+    if job.grade:
+        rows.append("  grader: " + ", ".join(f"{k} {v}" for k, v in job.grade.items()))
+    parts = [("writer", out.creative), ("formatter", out.formatting), ("checks", out.careful)]
+    if with_beats:
+        parts.append(("beat sheet and the rest", out.fast))
+    total = 0.0
+    priced = True
+    for name, counted in parts:
+        if counted is None:
+            continue
+        price = prices.get(counted.model)
+        cost = (
+            f"${(counted.input_tokens * price[0] + counted.output_tokens * price[1]) / 1e6:.3f}"
+            if price
+            else "no price on file"
+        )
+        if price:
+            total += (counted.input_tokens * price[0] + counted.output_tokens * price[1]) / 1e6
+        else:
+            priced = False
+        used = f"in {counted.input_tokens}, out {counted.output_tokens}"
+        rows.append(f"  {name}: {counted.calls} calls, {used}, {cost}")
+    note = "" if priced else " (without the model with no price)"
+    rows.append(f"  total: ${total:.3f}{note}")
+    return rows
+
+
+def writers_from_env(
+    get: Callable[[str], str], models: AIModels, claude_model: str, gemini_model: str,
+    *, register: Callable[[AnthropicClient], None],
+) -> list[Writer] | None:  # fmt: skip
+    """The two writers: Claude and Gemini, each on its own client (so no fallback from one to the
+    other hides which wrote a draft). None, after a plain line, when a key is missing."""
+    import sys
+
+    key, gemini_key = get("ANTHROPIC_API_KEY"), get("GEMINI_API_KEY")
+    if not key or not gemini_key:
+        print("recap_run: --compare needs ANTHROPIC_API_KEY and GEMINI_API_KEY", file=sys.stderr)
+        return None
+    claude = AnthropicClient(key, replace(models, creative=claude_model))
+    gemini = AnthropicClient(
+        key, replace(models, creative=gemini_model), gemini=GeminiClient(gemini_key)
+    )
+    register(claude)
+    register(gemini)
+    return [
+        Writer(
+            f"Anthropic {claude_model}", claude.tier(AIModelTier.CREATIVE),
+            claude.tier(AIModelTier.FORMATTING), (claude_model, models.formatting),
+        ),
+        Writer(
+            f"Gemini {gemini_model}", gemini.tier(AIModelTier.CREATIVE),
+            gemini.tier(AIModelTier.FORMATTING), (gemini_model, models.formatting),
+        ),
+    ]  # fmt: skip
+
+
+RunText = Callable[..., Awaitable["Outcome"]]
+
+
+async def run_compare(
+    run_text: RunText,
+    inputs: pl.Inputs,
+    fast: Client,
+    careful: Client,
+    consenting: Callable[[], Awaitable[Collection[int]]] | None,
+    *,
+    session_at: int,
+    models: tuple[str, str],
+    writers: list[Writer],
+    folder: Path,
+    prices: dict[str, tuple[float, float]],
+    checks_of: Callable[[Outcome], list[tuple[str, bool, str]]],
+    leaks: Callable[[Outcome], bool],
+    voice_tags: bool,
+    order: tuple[int, int] | None = None,
+    emit: Callable[[str], None] = print,
+) -> int:
+    """Both writers on the same beats. 0 when both drafts finished, 1 when one did not, 3 when a
+    draft names something the DM keeps secret (nothing is written then)."""
+    first = await run_text(
+        inputs, fast, careful, consenting, session_at=session_at, models=models,
+        creative=writers[0].creative, formatting=writers[0].formatting,
+        creative_models=writers[0].models, critics=True,
+    )  # fmt: skip
+    try:
+        start = start_from(first)
+    except ValueError as exc:
+        emit(f"recap_run: {exc}; nothing to compare.")
+        return 1
+    second = await run_text(
+        inputs, fast, careful, consenting, session_at=session_at, models=models,
+        creative=writers[1].creative, formatting=writers[1].formatting,
+        creative_models=writers[1].models, critics=True, start=start,
+    )  # fmt: skip
+    outcomes = (first, second)
+    if any(leaks(o) for o in outcomes):
+        emit("recap_run: a draft names something the DM keeps secret, so nothing is written.")
+        return 3
+    order = order or blind_order()
+    write_blind(folder, outcomes, [w.label for w in writers], order, voice_tags=voice_tags)
+    emit(
+        f"Wrote {DRAFT_FILES[0]} and {DRAFT_FILES[1]} in {folder}, and which is which in "
+        f"{KEY_FILE}. Read the drafts first; open the key after. Draft costs: the second "
+        "writer starts from the first one's beat sheet, so the beat sheet is in one draft's "
+        "numbers only."
+    )
+    for slot, which in enumerate(order):
+        emit("")
+        for line in summary_lines(
+            outcomes[which], "AB"[slot], prices, checks_of(outcomes[which]), with_beats=which == 0
+        ):
+            emit(line)
+    return 0 if all(o.job.state == "ready" for o in outcomes) else 1
