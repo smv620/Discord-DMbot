@@ -2,8 +2,8 @@
 at scale", step 3; #126). Pure: no Discord, no database.
 
 One name per line: `name | kind | other names | secret names`. Only the name is needed;
-other names and secret names are separated by `,` or `;` (as in the Add a name form); a name
-with a comma or semicolon in it is written in double quotes.
+other names and secret names are separated by `,` or `;`; a name with a comma or semicolon in it
+is written in double quotes (only here: the Add a name form does not read quotes).
 Lines starting with `#` are notes and are skipped, so the template's instructions and a
 download's header can stay in the file when it's uploaded again.
 """
@@ -574,7 +574,9 @@ def _person(
     if cells[3]:
         out.refused.append((number, NO_SECRETS_FOR_PEOPLE))
         return
-    names = _names(" ; ".join([cells[0], cells[2]]))
+    # The first name is read whole, as for any row (so one with a comma or quote stays one name).
+    first = " ".join(cells[0].split())
+    names = [first, *(n for n in _names(cells[2]) if name_key(n) != name_key(first))]
     plays = _names(cells[5])
     if len(names) > MAX_PER_LINE or len(plays) > MAX_PER_LINE:
         out.refused.append((number, TOO_MANY_OTHERS))
@@ -781,3 +783,8 @@ def render_files(
         "\n".join(_prelude(campaign=campaign, secrets=secrets, part=(i, len(chunks))) + body) + "\n"
         for i, body in enumerate(chunks, 1)
     ]
+
+
+# For the readers of these cells outside this module (the AI list merge, #2482).
+split_cell = _pieces
+join_cell = _joined
