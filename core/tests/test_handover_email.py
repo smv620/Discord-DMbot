@@ -36,7 +36,9 @@ NEW = "new.owner@example.org"
 OTHER_NEW = "someone.else@example.com"
 
 
-class Offering(DatabaseTest):
+class OfferBase(DatabaseTest):
+    enforce_plans = False
+
     async def asyncSetUp(self) -> None:
         if not SUPERUSER_URL:
             if REQUIRE_DB:
@@ -60,7 +62,7 @@ class Offering(DatabaseTest):
             for name, group in LIMITS.items()
         }
         self.app = create_app(
-            settings(link_token_secret=LINK_SECRET),
+            settings(link_token_secret=LINK_SECRET, enforce_plans=self.enforce_plans),
             self.web,
             FakeDiscord(),
             payments=FakeProvider(b"h" * 32, SITE),
@@ -103,10 +105,16 @@ class Offering(DatabaseTest):
             return [dict(r) for r in await cur.fetchall()]
 
     def token_of(self, link: str) -> str:
+        """What the page sends: the link's whole fragment, `<server>-<offer>-<secret>`."""
         found = re.search(r"/handover#([\w-]+)$", link)
         assert found is not None, link
         return found.group(1)
 
+    def secret_of(self, link: str) -> str:
+        return self.token_of(link).split("-", 2)[2]
+
+
+class Offering(OfferBase):
     async def test_the_offer_is_emailed_and_the_owner_is_told_only_that(self) -> None:
         got = await self.offer()
         self.assertEqual((got.status_code, got.json()), (200, {"status": "emailed"}))
@@ -120,7 +128,7 @@ class Offering(DatabaseTest):
     async def test_the_offer_holds_a_hash_of_the_token_and_no_address(self) -> None:
         await self.offer()
         [row] = await self.offers()
-        token = self.token_of(self.transport.sent[0][1])
+        token = self.secret_of(self.transport.sent[0][1])
         self.assertEqual(row["token_hash"], hashlib.sha256(token.encode()).hexdigest())
         self.assertEqual((row["via_email"], row["to_user_id"], row["to_name"]), (True, 0, ""))
         self.assertEqual((row["status"], row["from_user_id"]), ("open", ALICE.id))

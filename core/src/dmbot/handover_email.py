@@ -125,7 +125,7 @@ async def offer_by_email(
         owner=owner_name,
         campaign=campaign_name,
         server=server_name,
-        link=f"{site_url.rstrip('/')}/handover#{token}",
+        link=f"{site_url.rstrip('/')}/handover#{guild_id}-{offer.id}-{token}",
     )
     result = await mailer.send(
         user_id=owner_id,

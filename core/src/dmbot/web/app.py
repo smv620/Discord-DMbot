@@ -42,6 +42,7 @@ from dmbot.web import (
     email_signin,
     entitlements_writer,
     feedback,
+    handover_accept,
     handover_offer,
     imports,
     npc_pages,
@@ -586,6 +587,8 @@ def create_app(
         60, count=6, clock=lambda: float(clock())
     )
 
+    handover_open_limit = RateLimit(60, count=30, clock=lambda: float(clock()))  # by account
+
     async def mail_change_link(user_id: int, new: str, token: str) -> bool:
         """Mail the confirm link to the NEW address. False if it could not be sent."""
         if mailer is None:
@@ -665,6 +668,73 @@ def create_app(
             )
         log.info("An email change was confirmed by user %s", session.user_id)
         return {"address": new}
+
+    @app.delete("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover_withdraw(ref: str, signed: Signed) -> dict[str, str]:
+        """The owner takes back the campaign's open offer (#2532)."""
+        session, _token = signed
+        if not await handover_offer.withdraw(db, session, ref, now=int(clock())):
+            raise HTTPException(status_code=404, detail="not_found")
+        return {"status": "withdrawn"}
+
+    @app.post("/me/handover/look")
+    async def me_handover_look(signed: Signed, request: Request) -> dict[str, Any]:
+        """What a hand-over link offers (#2532): `{"token"}`. Changes nothing; every link that
+        opens nothing now answers `{"status": "ended"}`."""
+        session, _token = signed
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        return await handover_accept.look(
+            db,
+            session,
+            (await small_json(request)).get("token"),
+            now=int(clock()),
+            enforce_plans=settings.enforce_plans,
+        )
+
+    @app.post("/me/handover/accept")
+    async def me_handover_accept(signed: Signed, request: Request) -> dict[str, str]:
+        """Accept: `{"token", "serverId"}`. Ownership moves to the signed-in DMbot account."""
+        session, _token = signed
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await small_json(request)
+        outcome, ref = await handover_accept.accept(
+            db,
+            session,
+            body.get("token"),
+            body.get("serverId"),
+            now=int(clock()),
+            enforce_plans=settings.enforce_plans,
+        )
+        if outcome == "accepted" and ref is not None:
+            return {"status": "accepted", "campaignRef": ref}
+        refusals = {
+            "ended": (409, "ended"),
+            "no_plan": (402, "not_on_a_paid_plan"),
+            "no_slot": (402, "no_free_slot"),
+            "owner": (403, "owner"),
+            "bad_server": (422, "bad_server"),
+        }
+        status, code = refusals.get(outcome, (409, "ended"))
+        raise HTTPException(status_code=status, detail=code)
+
+    @app.post("/me/handover/decline")
+    async def me_handover_decline(signed: Signed, request: Request) -> dict[str, str]:
+        """No thanks: `{"token"}`."""
+        session, _token = signed
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        outcome = await handover_accept.decline(
+            db,
+            session,
+            (await small_json(request)).get("token"),
+            now=int(clock()),
+            enforce_plans=settings.enforce_plans,
+        )
+        if outcome != "declined":
+            raise HTTPException(status_code=409, detail="ended")
+        return {"status": "declined"}
 
     @app.delete("/me/email/pending", status_code=204)
     async def cancel_me_email(signed: Signed) -> Response:

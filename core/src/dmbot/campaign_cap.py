@@ -12,6 +12,7 @@ restore check all ask here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from dmbot import entitlements
 from dmbot.db import Conn
@@ -62,3 +63,24 @@ async def has_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:
         "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"dmbot.owner_slots:{user_id}",)
     )
     return (await room(conn, user_id, now)).fits(1)
+
+
+HandoverVerdict = Literal["ok", "no_plan", "no_slot"]
+
+
+async def handover_verdict(conn: Conn, user_id: int, now: int) -> HandoverVerdict:
+    """May this person receive a campaign handed over by email (#2532; docs/PLAN.md)? Only a paid
+    plan that works, with room for one more: not Try It, a trial extension or the free list."""
+    access = await entitlements.effective(conn, user_id, now)
+    if access.kind != "paid" or not access.works:
+        return "no_plan"
+    return "ok" if (await room(conn, user_id, now)).fits(1) else "no_slot"
+
+
+async def has_paid_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:
+    """The campaign store's free-slot check for an accepted email offer: `handover_verdict`, with
+    the same one-at-a-time lock as `has_room_for_one_more`."""
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"dmbot.owner_slots:{user_id}",)
+    )
+    return await handover_verdict(conn, user_id, now) == "ok"
