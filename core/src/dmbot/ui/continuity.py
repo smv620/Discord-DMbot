@@ -53,7 +53,7 @@ def waiting_text(count: int, pinned: int = 0) -> str:
     """For the DM screen after a session: how many, never what. `pinned`: how many of them go
     against something the DM pinned as 100% truth (#2447), said as a number only."""
     what = "heads-up" if count == 1 else "heads-ups"
-    off = f" 📌 {pinned} {"goes" if pinned == 1 else "go"} against a pin." if pinned else ""
+    off = f" 📌 {pinned} {'goes' if pinned == 1 else 'go'} against a pin." if pinned else ""
     return (
         f"⚠️ **{count} {what} from this session.**{off} Something said at the table may clash "
         "with your story. Nothing changes until you decide. Only you can see the list."
