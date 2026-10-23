@@ -2456,6 +2456,31 @@ and categories are never kinds.
   "needs a look" for the DM (nothing is deleted); a campaign's own kinds and relationships that
   named an older kind name its replacement. Older backups are mapped the same way on load.
 
+**Characters are NPCs or PCs, and who speaks for them (owner, 2026-10-23; Supervisor's details marked).**
+Every character in the story is either a **PC** (a player's character) or an **NPC** (a character the DM
+plays). There is no third kind of character and no "person" in the story.
+1. **Words.** Menus, cards, lists and the website say **NPC** and **PC**, never "person". *(Supervisor:)*
+   gods, named monsters and named animals are NPCs. "God", "monster" and so on stay as the character's
+   description (its creature type or a note), not as separate choices, so the choices never overlap. The
+   real people at the table (the `person` kind below, kept as a separate group in menus, "At the table")
+   are shown as **Player** or **DM**, never "person".
+2. **Who speaks for a character** *(the rule for the story memory)*:
+   - **A PC's own thoughts, feelings, wants, words and choices come only from its player.** DMbot
+     records them as the PC's own only from that player's lines (the speaker who `plays` the PC) or the
+     player's yes. *(Supervisor:)* what the DM says happens to a PC ("you feel a chill", a charm) is
+     recorded as something that happened to the PC, with the DM as its source, not as the PC's own
+     feeling or choice. What another player says about a PC is what *they* said or believe (The party),
+     never the PC's own.
+   - **An NPC's thoughts, feelings, wants, words and actions come only from the DM.** What players say
+     about an NPC is The party's belief, never The truth, as today.
+   - **What came of a PC's action** (did it work, what happened next) is the DM's, as today.
+   - The DM can still fix anything on a card by hand; this rule is about what DMbot records by itself
+     and how it labels the source.
+3. *(Supervisor:)* **Every character has one of the two.** A character with neither is "needs a look"
+   for the DM, never guessed; a PC has a player (`plays`), and one with no player yet is asked about.
+   Existing `god` and creature characters become NPCs with their description kept (nothing is deleted).
+4. *(Supervisor, build):* #2562 (core: the words, the roles, the rule) and the website's words with it.
+
 **Players and the DM in the names (owner, 2026-10-14).** DMbot also learns the names the table uses for
 the **real people** at it, so "Mike, what do you do?" followed by "I run at it with my sword" tells it
 that Mike is the person who just spoke, and that this person plays the character the DM was talking to.

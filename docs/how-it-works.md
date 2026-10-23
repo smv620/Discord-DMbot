@@ -36,7 +36,7 @@ every helper follows the rules below.
 | Helper | Its job, in one line |
 |---|---|
 | 👂 **Ears** | Listens in the game's voice channel, only to people who said yes. |
-| ✍️ **The scribe** | Writes down what each person says. That is the **transcript**. |
+| ✍️ **The scribe** | Writes down what each player and the DM says. That is the **transcript**. |
 | 🧹 **The Cleaner** | Fixes names the scribe heard wrong ("Tavern" → "Tavin"). |
 | 🚦 **The game-or-not check** | Sets aside talk that isn't the game ("who wants pizza?"). |
 | 🏷️ **The who's-talking tag** | Marks each line: a hero, an NPC the DM is voicing, or the DM telling the story. |
