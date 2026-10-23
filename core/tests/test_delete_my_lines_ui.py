@@ -121,8 +121,11 @@ class Stopped(unittest.TestCase):
     def test_the_labels_fit_a_phone_and_the_menu_has_room(self) -> None:
         for label in (c.DELETE_LABEL, c.DELETE_YES_LABEL, c.DELETE_NO_LABEL):
             self.assertLessEqual(len(label), 25, label)
+        menu = c.options_view(GUILD, None, recording=True, sheets=True)
+        self.assertLessEqual(len(menu.children), 5)  # a row holds five; a sixth would wrap
+        # (only a test server's menu also has "Stop saving my voice": six, which Discord wraps)
         full = c.options_view(GUILD, None, recording=True, sheets=True, test_voice="saving")
-        self.assertLessEqual(len(full.children), 5)  # a row holds five; a sixth would wrap
+        self.assertLessEqual(len(full.children), 6)
 
     def test_the_buttons_are_registered_so_they_survive_a_restart(self) -> None:
         for button in (c.DeleteButton, c.DeleteYesButton, c.DeleteNoButton):

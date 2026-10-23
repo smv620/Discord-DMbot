@@ -691,7 +691,8 @@ class SaveAndResume(SessionTests):
         await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         (ids,) = [ids for text, ids in views if "listening again" in text]
         cid = self.campaign.id
-        self.assertEqual(ids, [f"dmbot:stop:{cid}"])  # Settings moved to the DM Bot channel (#1666)
+        # Settings moved to the DM Bot channel (#1666); the table pause is the other control (#2466)
+        self.assertEqual(ids, [f"dmbot:tablepause:{cid}", f"dmbot:stop:{cid}"])
 
     async def test_quick_repeat_restarts_stay_quiet(self) -> None:
         from dmbot.ears.protocol import Status
@@ -1167,7 +1168,8 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        (button,) = call.args[2].children  # only the in-game control (Settings moved, #1666)
+        pause, button = call.args[2].children  # the in-game controls (Settings moved, #1666)
+        self.assertEqual(pause.custom_id, f"dmbot:tablepause:{self.campaign.id}")  # #2466
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)
