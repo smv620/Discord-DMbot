@@ -16,6 +16,7 @@ website's role cannot read the campaign's names.
 from __future__ import annotations
 
 import secrets
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -208,6 +209,15 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         and state not in ("ready", "failed"),
         "canEdit": ready,
         "canPost": ready,
+        # While it goes out or its audio is made (#2419): when the work started on the server, the
+        # step it is on (`check`, `post` or `audio`), the posted message's link, and the server's
+        # clock now, so the page's running clock is right and resumes after a reload. The bot
+        # records the first three (#2435); until its columns are read here they are null, and the
+        # page copes.
+        "postingSince": row.get("posting_since"),
+        "postingStep": row.get("posting_step"),
+        "postedUrl": row.get("posted_url"),
+        "serverNow": int(time.time()),
         "canTryAgain": status == "draft"
         and state in ("ready", "failed")
         and row["tries"] < MAX_TRIES,
