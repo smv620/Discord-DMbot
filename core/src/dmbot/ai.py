@@ -108,6 +108,7 @@ class Feature(enum.StrEnum):
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
     IMAGE = "image"  # an image posted in the table chat, described once (#2450)
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
+    PLOT_CHECK = "plot_check"  # a recap against the earlier accepted ones, for the DM (#2122)
 
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
@@ -143,6 +144,8 @@ FEATURE_TIERS = {
     # layout has to be detailed enough to draw (#2450).
     Feature.IMAGE: AIModelTier.FAST,
     Feature.IMAGE_MAP: AIModelTier.CAREFUL,
+    # Advice for the DM only: code checks every finding against the earlier recaps (#2122).
+    Feature.PLOT_CHECK: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

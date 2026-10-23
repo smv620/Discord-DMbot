@@ -315,7 +315,7 @@ from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
 from dmbot.recaps import requests as recap_requests
-from dmbot.recaps.accepted import AcceptedSection
+from dmbot.recaps.accepted import AcceptedSection, AcceptedStore
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
@@ -324,6 +324,7 @@ from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
+from dmbot.recaps.plot import PlotRunner, PlotStore
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.significance import Memory
@@ -1376,6 +1377,17 @@ class DMBot(commands.AutoShardedBot):
                 story=self.recap_story,
                 critics=True,  # the critics read each draft until they agree (#2255)
             )
+        # PlotBot's check of each ready recap against the earlier accepted ones (#2122): advice for
+        # the DM's recap page only. Off unless DMBOT_PLOT_CHECK is on (it needs the recaps).
+        self.plot_runner: PlotRunner | None = (
+            PlotRunner(
+                PlotStore(recaps.db),
+                AcceptedStore(recaps.db),
+                self.ai_client.tier(FEATURE_TIERS[Feature.PLOT_CHECK], Feature.PLOT_CHECK),
+            )
+            if settings.plot_check_on and self.ai_client and recaps is not None
+            else None
+        )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
         self.recap_audio_files = AudioFiles(settings.data_dir / "recap-audio")
@@ -10967,6 +10979,17 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("The recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
 
+    async def run_plot_checks(self) -> None:
+        """One round of PlotBot's checks of ready recaps (#2122), a few at a time."""
+        if self.plot_runner is None:
+            return
+        for guild in list(self.guilds):
+            try:
+                with log_context(guild_id=guild.id):
+                    await self.plot_runner.round(guild.id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Plot checks failed for a server: %s", type(exc).__name__)
+
     async def _recap_loop(self) -> None:
         """Every minute: the recap jobs that are due and the recaps the DM has pressed Post on
         (#1382). A job resumes where it stopped, so a restart loses nothing."""
@@ -10977,6 +11000,7 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_recaps()
             except Exception:
                 log.exception("The recap jobs failed")
+            await self.run_plot_checks()
             rounds += 1
             if rounds % 60 == 0:  # about hourly: audio older than 180 days goes
                 try:

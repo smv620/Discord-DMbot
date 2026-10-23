@@ -4742,8 +4742,18 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
     `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` while an issue has
     no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
-    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default). The checker itself (part 2b)
-    and the chat (#2123) follow.
+    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
+  - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot's recap loop runs `PlotRunner` (when
+    `DMBOT_PLOT_CHECK` is on): for each ready draft whose text has no check it starts one (at most 6 a campaign an
+    hour, a check that never finished is tried 3 times) and makes one careful-tier call (`Feature.PLOT_CHECK`) with the
+    recap's numbered sentences and the earlier accepted recaps (`memory/plot_check.py`). The call only advises:
+    code keeps a finding only when its kind and level are the fixed words, the sentence number is the recap's and
+    the quote is really in the earlier recap shown (an invented source never reaches the DM); a finding the DM
+    already answered "Not a problem" (same point, same words) is not raised again; an answer written after the
+    text changed is thrown away and the new text is checked afresh. A recap with no earlier accepted recap, an
+    answer that cannot be used or a refused call makes no issue and never holds Approve. This slice reads the earlier
+    accepted recaps only; the code checks against the confirmed story memory, the pre-session note and recall, and
+    re-checking later recaps that name the same people, follow. The chat (#2123) follows.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap

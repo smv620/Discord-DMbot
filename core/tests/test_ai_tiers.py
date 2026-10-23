@@ -169,6 +169,7 @@ class Tiers(unittest.TestCase):
                 Feature.RULE_CONFLICTS: AIModelTier.FAST,  # house rules that disagree (#2284)
                 Feature.IMAGE: AIModelTier.FAST,  # an image posted in the table chat (#2450)
                 Feature.IMAGE_MAP: AIModelTier.CAREFUL,  # a map read again for its layout (#2450)
+                Feature.PLOT_CHECK: AIModelTier.CAREFUL,  # advice for the DM, every finding checked (#2122)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
