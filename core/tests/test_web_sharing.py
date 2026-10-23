@@ -111,13 +111,12 @@ class TheSharing(SharingBase):
     async def test_a_player_and_a_stranger_see_nothing(self) -> None:
         await self.publish(self.one.id, SET_A, "house_rules", "Our Rules")
         await self.follow(self.one.id, SET_B, "homebrew", "Frost Pack")
-        mira = await self.sql_player()
-        self.assertTrue(mira)
+        await self.carol_plays()
         self.assertEqual(await sharing.list_sharing(self.web, await self.signed(CAROL)), [])
         elsewhere = await self.signed(ALICE, [QUILLON])
         self.assertEqual(await sharing.list_sharing(self.web, elsewhere), [])
 
-    async def sql_player(self) -> bool:
+    async def carol_plays(self) -> None:
         # Carol plays in the campaign (a claimed character) but does not run it.
         from dmbot.memory.models import DM as DM_SOURCE
         from dmbot.memory.store import MemoryStore
@@ -129,7 +128,6 @@ class TheSharing(SharingBase):
             "UPDATE memory_entities SET role = 'player_character', played_by = %s WHERE id = %s",
             CAROL.id, made.value.id,
         )  # fmt: skip
-        return True
 
     async def test_a_server_outside_the_session_list_gets_nothing_from_the_door(self) -> None:
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
@@ -154,6 +152,7 @@ class TheDoor(Base):
             rows = await cur.fetchall()
         self.assertGreaterEqual(len(rows), 1)
         for row in rows:
-            self.assertIn("search_path", row["cfg"] or "")
+            self.assertIn("pg_catalog", row["cfg"] or "")  # pinned, not just present
+            self.assertIn("pg_temp", row["cfg"] or "")
             self.assertTrue(row["prosecdef"])
             self.assertFalse(row["public_may"])

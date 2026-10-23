@@ -3189,6 +3189,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_campaign_card", "dmbot_web_campaign_card(BIGINT, TEXT)"),
     # The facts on each campaign's card on My Account (#2460).
     ("dmbot_web_campaign_facts", "dmbot_web_campaign_facts(BIGINT)"),
+    # The Shared rules page (#2460).
     ("dmbot_web_shared_rules", "dmbot_web_shared_rules(BIGINT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
     ("dmbot_web_transcript_sessions", "dmbot_web_transcript_sessions(BIGINT, TEXT)"),

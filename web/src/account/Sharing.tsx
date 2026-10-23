@@ -30,7 +30,7 @@ function Shares({ items }: { items: SharedRuleSet[] }) {
           <li key={`${s.kind}:${s.name}`}>
             <strong>{s.name}</strong>
             <ul class="facts small muted">
-              <li>{text.kinds[s.kind]}</li>
+              <li>{text.kinds[s.kind] ?? text.kinds.homebrew}</li>
               <li>{text.version(s.version)}</li>
               <li>{s.shared ? text.sharing : text.stopped}</li>
               {s.shared && <li>{s.hasCode ? text.codeOn : text.codeOff}</li>}
@@ -52,7 +52,7 @@ function Uses({ items }: { items: FollowedRuleSet[] }) {
           <li key={`${f.kind}:${f.name}`}>
             <strong>{f.name}</strong>
             <ul class="facts small muted">
-              <li>{text.kinds[f.kind]}</li>
+              <li>{text.kinds[f.kind] ?? text.kinds.homebrew}</li>
               <li>{text.from(f.publisher)}</li>
               <li>{text.version(f.version)}</li>
               <li>{f.updating ? text.updating : text.noLongerUpdated}</li>
@@ -122,6 +122,9 @@ export default function SharingPage({ api }: { api: AccountApi }) {
               <section key={c.ref} class="panel" aria-labelledby={`shared-${c.ref}`}>
                 <h2 id={`shared-${c.ref}`}>{c.name}</h2>
                 <p class="small muted">{text.server(c.serverName)}</p>
+                {c.publishes.length === 0 && c.follows.length === 0 && (
+                  <p class="muted">{text.nothingHere}</p>
+                )}
                 {c.publishes.length > 0 && <Shares items={c.publishes} />}
                 {c.follows.length > 0 && <Uses items={c.follows} />}
               </section>
