@@ -12,6 +12,7 @@ question; the next session asks again if a player says it again.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -21,6 +22,8 @@ from dmbot.dm_screen import secret_posts
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
+
+log = logging.getLogger(__name__)
 
 NOT_YOURS = "Only this campaign's DM can answer this. Ask your DM."
 NO_CAMPAIGN = "I can't find this campaign any more, so nothing was changed."
@@ -95,8 +98,13 @@ async def settle(bot: Any, campaign: Any, alias_id: str) -> None:
     """The DM answered about this name, so the exposure the session recorded for it is settled and
     the summary will not ask again (#2410). Nothing here changes what the players see."""
     exposures = getattr(bot, "exposures", None)
-    if exposures is not None:
+    if exposures is None:
+        return
+    try:
         await exposures.settle_alias(campaign.guild_id, campaign.id, alias_id)
+    except Exception as exc:  # bookkeeping must never cost the DM their answer
+        # (the error's text can carry a name, so only its type is logged)
+        log.warning("Couldn't settle a secret exposure: %s", type(exc).__name__)
 
 
 def name_in(interaction: discord.Interaction) -> str:

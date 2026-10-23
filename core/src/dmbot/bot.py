@@ -248,7 +248,7 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
-from dmbot.memory.exposures import ExposureStore, find, secret_connections
+from dmbot.memory.exposures import ExposureStore, find_exposures, secret_connections
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
@@ -9420,7 +9420,7 @@ class DMBot(commands.AutoShardedBot):
             # The names are shown and the DM could not be told: say so in the log (a count only)
             log.warning("Names shown at the table, but the DM screen could not say so")
 
-    async def record_exposures(self, table: Table, ended_at: int | None = None) -> None:
+    async def record_exposures(self, table: Table) -> None:
         """After a session: remember the secret names and secret connections the players said or
         typed (#2410). Nothing is applied and nobody is told here: the players see no change
         until the summary goes out. Only the words of people recorded now count (the same rule as
@@ -9432,6 +9432,8 @@ class DMBot(commands.AutoShardedBot):
             or table.campaign_id is None
             or table.transcript_session_id is None
         ):
+            return
+        if not table.started_at:  # the session's key: without it a re-run would double the rows
             return
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
@@ -9445,12 +9447,10 @@ class DMBot(commands.AutoShardedBot):
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
             agreed = await self.consent.consenting(gid)  # asked after the lines were read
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            found = find(names, connections, players_lines(lines, players=players))
+            found = find_exposures(names, connections, players_lines(lines, players=players))
             if not found:
                 return
-            waiting = await self.exposures.record(
-                gid, cid, table.started_at or ended_at or int(time.time()), found
-            )
+            waiting = await self.exposures.record(gid, cid, table.started_at, found)
             log.info("Secrets said at the table: %d found, %d waiting", len(found), waiting)
 
     async def ask_about_secrets(self, table: Table) -> None:

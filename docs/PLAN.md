@@ -1829,7 +1829,7 @@ names panel nor the speech-to-text hints can be a fixed list.
       or typed (not the DM's own words, never the DM sidebar or the DM screen, and nobody who stopped), in
       `secret_exposures`: which secret and how often, never a line or who said it. Nothing is applied and the
       players see no change. An answer the DM gives another way (the live "Is it revealed now?", or the
-      after-session "keep it secret?") settles the exposure so the summary will not ask again. The summary
+      after-session "keep it secret?") settles the exposure so the summary will not ask again. A later session that says the name again is a new exposure. An exposure holds a count only, so a person who stops being recorded afterwards leaves no words behind; the summary (next slice) reads the exposures again before it applies them. The summary
       that tells the DM and applies the exposures (with Recant) is the next slice.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses

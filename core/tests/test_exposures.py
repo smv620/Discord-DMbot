@@ -14,7 +14,7 @@ from dmbot.memory.exposures import (
     Exposure,
     ExposureStore,
     SecretConnection,
-    find,
+    find_exposures,
     named,
     secret_connections,
 )
@@ -41,8 +41,22 @@ class Finding(unittest.TestCase):
         short = SecretConnection("s" * 32, ("Al",), ("Bo",))
         self.assertEqual(named([short], ["Al and Bo"]), {})
 
+    def test_names_both_ends_share_or_that_sit_inside_each_other_do_not_decide(self) -> None:
+        shared = SecretConnection("s" * 32, ("Mira", "The Stranger"), ("Rook", "The Stranger"))
+        self.assertEqual(named([shared], ["The Stranger"]), {})  # one phrase, not two ends
+        self.assertEqual(named([shared], ["Mira knows Rook"]), {"s" * 32: 1})  # the rest still work
+        inside = SecretConnection("t" * 32, ("Rook",), ("Captain Rook", "Vex"))
+        self.assertEqual(named([inside], ["Captain Rook arrived"]), {})
+        # (its only name for one end could be either: such a connection is not looked for)
+        self.assertEqual(named([inside], ["Rook met Vex"]), {})
+        same = SecretConnection("u" * 32, ("Mira",), ("Mira",))
+        self.assertEqual(named([same], ["Mira Mira"]), {})
+
+    def test_a_name_said_twice_in_one_line_counts_the_line_once(self) -> None:
+        self.assertEqual(named([PLOT], ["Mira and Mira told Rook"]), {PLOT.relation_id: 1})
+
     def test_find_gives_names_then_connections(self) -> None:
-        got = find([AURIL], [PLOT], ["Auril, Auril", "Mira knows Rook"])
+        got = find_exposures([AURIL], [PLOT], ["Auril, Auril", "Mira knows Rook"])
         self.assertEqual(
             got,
             [
@@ -50,7 +64,7 @@ class Finding(unittest.TestCase):
                 Exposure("connection", None, PLOT.relation_id, 1),
             ],
         )
-        self.assertEqual(find([AURIL], [PLOT], ["nothing here"]), [])
+        self.assertEqual(find_exposures([AURIL], [PLOT], ["nothing here"]), [])
 
 
 class Store(MemoryTest):
@@ -116,6 +130,18 @@ class Store(MemoryTest):
         assert row is not None
         self.assertEqual(row["n"], 0)  # (deleted with the connection)
 
+    async def test_a_connection_deleted_meanwhile_does_not_lose_the_other_rows(self) -> None:
+        found = [Exposure("connection", None, "9" * 32, 1), Exposure("name", "auril", None, 2)]
+        self.assertEqual(await self.store.record(GUILD_A, self.c, 100, found), 1)
+        (kept,) = await self.store.pending(GUILD_A, self.c)
+        self.assertEqual(kept.spelling, "auril")
+
+    async def test_a_later_session_saying_a_settled_name_again_is_a_new_exposure(self) -> None:
+        await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "auril", None, 1)])
+        await self.store.settle_name(GUILD_A, self.c, "Auril")
+        await self.store.record(GUILD_A, self.c, 200, [Exposure("name", "auril", None, 1)])
+        self.assertEqual(len(await self.store.pending(GUILD_A, self.c)), 1)
+
     async def test_nothing_crosses_a_campaign_or_a_server(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Other", 8)).id
         await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "auril", None, 1)])
@@ -172,6 +198,29 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], 500)
         self.assertEqual([e.kind for e in args[3]], ["name", "connection"])
 
+    async def test_without_a_campaign_a_session_or_secrets_nothing_is_recorded(self) -> None:
+        table = SimpleNamespace(
+            guild_id=GUILD_A, campaign_id="c" * 32, transcript_session_id="s1", started_at=500
+        )
+        for change in (
+            {"started_at": 0},
+            {"transcript_session_id": None},
+            {"campaign_id": None},
+        ):
+            bot = self.bot([line(PLAYER, "Auril Mira Rook")])
+            await DMBot.record_exposures(bot, SimpleNamespace(**{**vars(table), **change}))
+            bot.exposures.record.assert_not_awaited()
+        bot = self.bot([line(PLAYER, "Auril")])
+        with (
+            patch("dmbot.bot.secret_names", AsyncMock(return_value=[])),
+            patch("dmbot.bot.secret_connections", AsyncMock(return_value=[])),
+        ):
+            await DMBot.record_exposures(bot, table)
+        bot.exposures.record.assert_not_awaited()
+        bot.campaigns.get = AsyncMock(return_value=None)
+        await self.run_step(bot, [AURIL])
+        bot.exposures.record.assert_not_awaited()
+
     async def test_the_dm_the_sidebar_and_people_not_recorded_never_count(self) -> None:
         bot = self.bot(
             [
@@ -196,6 +245,10 @@ class Settling(unittest.IsolatedAsyncioTestCase):
         store.settle_alias.assert_awaited_once_with(GUILD_A, "c" * 32, "a" * 32)
         await settle(SimpleNamespace(), campaign, "a" * 32)  # (older stand-ins have none)
         await settle(SimpleNamespace(exposures=None), campaign, "a" * 32)
+        broken = SimpleNamespace(
+            exposures=SimpleNamespace(settle_alias=AsyncMock(side_effect=OSError))
+        )
+        await settle(broken, campaign, "a" * 32)  # a failing update never reaches the DM
 
 
 if __name__ == "__main__":

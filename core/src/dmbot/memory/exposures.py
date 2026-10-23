@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
-from dmbot.db import Database
+from psycopg import errors
+
+from dmbot.db import Conn, Database
 from dmbot.memory.models import spelling_key
 from dmbot.memory.secret_aloud import MIN_KEY, SecretName, spoken
 from dmbot.memory.store import MemoryStore
@@ -46,6 +48,20 @@ def _pattern(key: str) -> re.Pattern[str]:
     return re.compile(rf"(?<=\s){re.escape(key)}(?=\s)")
 
 
+def _inside(small: str, big: str) -> bool:
+    """`small` is `big` or some whole words of it ("rook" in "captain rook")."""
+    return f" {small} " in f" {big} "
+
+
+def _apart(a: set[str], b: set[str]) -> tuple[set[str], set[str]]:
+    """The two ends' names with the ones that could be told apart by the words alone: a name both
+    ends share ("the stranger") or one that sits inside a name of the other end ("Rook" in
+    "Captain Rook") is left out of both, or one phrase would seem to name both ends."""
+    shared = {x for x in a for y in b if _inside(x, y) or _inside(y, x)}
+    shared |= {y for x in a for y in b if _inside(x, y) or _inside(y, x)}
+    return a - shared, b - shared
+
+
 def named(connections: Sequence[SecretConnection], texts: Iterable[str]) -> dict[str, int]:
     """For each secret connection, how many lines name both its ends (any name of each). A name
     shorter than `MIN_KEY` is too common a word to look for."""
@@ -56,7 +72,8 @@ def named(connections: Sequence[SecretConnection], texts: Iterable[str]) -> dict
         b = {spelling_key(n) for n in c.object}
         a = {k for k in a if len(k) >= MIN_KEY}
         b = {k for k in b if len(k) >= MIN_KEY}
-        if a and b and not (a & b):
+        a, b = _apart(a, b)
+        if a and b:
             ends.append((c.relation_id, a, b))
             for k in a | b:
                 wanted.setdefault(k, _pattern(k))
@@ -118,7 +135,7 @@ async def secret_connections(
         ]
 
 
-def find(
+def find_exposures(
     secret_names: Sequence[SecretName],
     connections: Sequence[SecretConnection],
     texts: Sequence[str],
@@ -128,9 +145,6 @@ def find(
     out = [
         Exposure("name", spelling_key(s.text), None, s.times) for s in spoken(secret_names, texts)
     ]
-    seen = {e.spelling for e in out}
-    # (`spoken` reports one entry for each spelling, whatever the alias, so no duplicates)
-    assert len(seen) == len(out)
     counts = named(connections, texts)
     out += [Exposure("connection", None, rid, n) for rid, n in sorted(counts.items())]
     return out
@@ -140,7 +154,7 @@ class ExposureStore:
     """The pending exposures, one campaign at a time (every statement names the server and the
     campaign, and the table has row-level security on top)."""
 
-    def __init__(self, db: Database, *, clock: object = time.time) -> None:
+    def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._clock = clock
 
@@ -150,29 +164,15 @@ class ExposureStore:
         """Remember what a session gave away. Run again for the same session it updates the
         counts of what is still pending and leaves what was settled alone. Returns how many
         are pending for the session."""
-        now = int(self._clock())  # type: ignore[operator]
+        now = int(self._clock())
         async with self._db.guild(guild_id) as conn:
             for e in found:
-                if e.kind == "name":
-                    await conn.execute(
-                        "INSERT INTO secret_exposures (guild_id, campaign_id, session_started_at,"
-                        " kind, spelling, times, created_at)"
-                        " VALUES (%s, %s, %s, 'name', %s, %s, %s)"
-                        " ON CONFLICT (guild_id, campaign_id, session_started_at, spelling)"
-                        " WHERE kind = 'name' DO UPDATE SET times = excluded.times"
-                        " WHERE secret_exposures.status = 'pending'",
-                        (guild_id, campaign_id, session_at, e.spelling, e.times, now),
-                    )
-                else:
-                    await conn.execute(
-                        "INSERT INTO secret_exposures (guild_id, campaign_id, session_started_at,"
-                        " kind, relation_id, times, created_at)"
-                        " VALUES (%s, %s, %s, 'connection', %s, %s, %s)"
-                        " ON CONFLICT (guild_id, campaign_id, session_started_at, relation_id)"
-                        " WHERE kind = 'connection' DO UPDATE SET times = excluded.times"
-                        " WHERE secret_exposures.status = 'pending'",
-                        (guild_id, campaign_id, session_at, e.relation_id, e.times, now),
-                    )
+                # a savepoint each: a connection deleted meanwhile must not lose the other rows
+                try:
+                    async with conn.transaction():
+                        await self._put(conn, guild_id, campaign_id, session_at, e, now)
+                except errors.ForeignKeyViolation:
+                    continue
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM secret_exposures"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_started_at = %s"
@@ -181,6 +181,30 @@ class ExposureStore:
             )
             row = await cur.fetchone()
             return int(row["n"]) if row else 0
+
+    @staticmethod
+    async def _put(
+        conn: Conn, guild_id: int, campaign_id: str, session_at: int, e: Exposure, now: int
+    ) -> None:
+        if e.kind == "name":
+            await conn.execute(
+                "INSERT INTO secret_exposures (guild_id, campaign_id, session_started_at,"
+                " kind, spelling, times, created_at) VALUES (%s, %s, %s, 'name', %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, session_started_at, spelling)"
+                " WHERE kind = 'name' DO UPDATE SET times = excluded.times"
+                " WHERE secret_exposures.status = 'pending'",
+                (guild_id, campaign_id, session_at, e.spelling, e.times, now),
+            )
+        else:
+            await conn.execute(
+                "INSERT INTO secret_exposures (guild_id, campaign_id, session_started_at,"
+                " kind, relation_id, times, created_at)"
+                " VALUES (%s, %s, %s, 'connection', %s, %s, %s)"
+                " ON CONFLICT (guild_id, campaign_id, session_started_at, relation_id)"
+                " WHERE kind = 'connection' DO UPDATE SET times = excluded.times"
+                " WHERE secret_exposures.status = 'pending'",
+                (guild_id, campaign_id, session_at, e.relation_id, e.times, now),
+            )
 
     async def pending(
         self, guild_id: int, campaign_id: str, session_at: int | None = None
