@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 from dmbot.memory import link_edits
-from dmbot.memory.link_words import predicate_for
+from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -305,11 +305,14 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             or other.id == entity_id
         ):
             return _failed(BAD_TARGET)
-        predicate, detail = predicate_for(a.text)
+        predicate, detail, swapped = predicate_for_either(a.text)
+        # "has a niece" typed on Aldric's card is stored as "Mira kin_of Aldric, niece" (#2457)
+        first, second = (other.id, entity_id) if swapped else (entity_id, other.id)
         try:
             await memory.add_relation(
-                guild_id, cid, entity_id, predicate, other.id, source=DM, confidence=1.0,
+                guild_id, cid, first, predicate, second, source=DM, confidence=1.0,
                 status=CONFIRMED, detail=detail[:100], secret=a.flag,
+                directional=predicate == "kin_of" and bool(detail),
             )  # fmt: skip
         except MemoryRuleError:
             return _failed(BAD_TARGET)
@@ -337,8 +340,17 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 return _failed(BAD_TARGET)
             await link_edits.remove(memory, guild_id, cid, link)
         elif a.action == "link-words":
-            predicate, detail = predicate_for(a.text)
-            await link_edits.change_words(memory, guild_id, cid, link, predicate, detail)
+            predicate, detail, swapped = predicate_for_either(a.text)
+            other_end = link.object_id if entity_id == link.subject_id else link.subject_id
+            await link_edits.change_words(
+                memory,
+                guild_id,
+                cid,
+                link,
+                predicate,
+                detail,
+                first=other_end if swapped else entity_id,
+            )  # (a family role is said from the name it belongs to, #2457)
         else:
             return _failed(FAILED)
     except MemoryRuleError:
@@ -353,7 +365,7 @@ async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation,
         return a.flag
     if a.action != "link-words":
         return False
-    predicate, detail = predicate_for(a.text)
+    predicate, detail, _ = predicate_for_either(a.text)
     return any(
         r.status == CONFIRMED
         and r.predicate == predicate
