@@ -341,6 +341,41 @@ class Plans(LinkBase):
         [row] = await self.offers()
         self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])
 
+    async def test_a_free_listed_account_has_its_plans_own_room_not_unlimited(self) -> None:
+        from dmbot import entitlements
+
+        entitlements.configure_free_users([BOB.id])
+        self.addCleanup(entitlements.configure_free_users, ())
+        await self.give_plan(BOB.id, cap=1)
+        await CampaignStore(self.db).create(THURSDAY.id, "Bob's own", BOB.id)  # one owned, cap 1
+        token = await self.link()
+        bob = await self.bob()
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (False, "no_slot"))
+        got = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (402, "no_free_slot"))
+        await grants.give(  # a grant may raise it
+            self.db, "admin@example.invalid", BOB.id, "guild", ends_at=None, note="", now=self.now
+        )
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual((look["canAccept"], look["why"]), (True, None))
+
+    async def test_a_refused_second_decline_sends_nothing(self) -> None:
+        import psycopg
+
+        from tests.pg import TEST_URL
+
+        token = await self.link()
+        bob = await self.bob()
+        async with await psycopg.AsyncConnection.connect(TEST_URL, autocommit=True) as listener:
+            await listener.execute("LISTEN dmbot_handover_decided")
+            first = await self.post(bob, "decline", token=token)
+            second = await self.post(bob, "decline", token=token)
+            seen = [n.payload async for n in listener.notifies(timeout=2)]
+        self.assertEqual((first.status_code, second.status_code), (200, 409))
+        [row] = await self.offers()
+        self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])  # one notice, not two
+
 
 class Moving(LinkBase):
     """Slice C1 (#2532): accepting for another server records the wish and claims the link in one
