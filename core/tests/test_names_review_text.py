@@ -31,6 +31,23 @@ class ReviewTextTest(unittest.TestCase):
         self.assertIn("Around it in your text: \u201cThe abbot of Greyfen waits.\u201d", text)
         self.assertNotIn("Around it", ui.suggestion_text(suggested("Greyfen"), 1))
 
+    def test_only_a_dm_of_the_campaign_sees_the_sentence(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.memory.lore_context import Held
+
+        held = Held()
+        held.put(5, "a" * 32, "The abbot secretly pays them.")
+        client = SimpleNamespace(lore_context=held)
+        campaign = SimpleNamespace(guild_id=5, dm_user_ids=frozenset({9}))
+
+        def seen(user_id: int) -> str:
+            who = SimpleNamespace(client=client, user=SimpleNamespace(id=user_id))
+            return ui.SuggestionReview._context(who, campaign, suggested("Greyfen"))  # type: ignore[arg-type]
+
+        self.assertEqual(seen(9), "The abbot secretly pays them.")
+        self.assertEqual(seen(10), "")  # a server manager who is not a DM
+
     def test_two_rows_so_a_phone_never_cuts_the_labels(self) -> None:
         view = ui.SuggestionReview("c" * 32, ["a" * 32])
         view.match = Match("b" * 32, "Hrothgar")

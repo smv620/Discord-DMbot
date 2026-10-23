@@ -39,6 +39,13 @@ class Around(unittest.TestCase):
         self.assertLessEqual(len(got), CONTEXT_MAX + 2)
         self.assertTrue(got.startswith("…") and got.endswith("…"))
 
+    def test_a_name_is_a_whole_word_and_a_quote_may_span_a_line_break(self) -> None:
+        text = "An annual feast. Ann met Bo.\nHe said hello to\nBrother   Aldric today."
+        self.assertEqual(around(text, "", "Ann"), "Ann met Bo.")
+        self.assertEqual(
+            around(text, "hello to Brother Aldric", "x"), "He said hello to Brother Aldric today."
+        )
+
     def test_the_match_may_differ_in_case(self) -> None:
         self.assertIn("Wyrmhold", around(TEXT, "", "wyrmhold"))
 
@@ -64,6 +71,14 @@ class HeldTest(unittest.TestCase):
         held = Held()
         held.put(1, "e1", "")
         self.assertEqual(held.get(1, "e1"), "")
+
+    def test_expired_sentences_are_freed_even_when_nobody_puts_more(self) -> None:
+        now = [0.0]
+        held = Held(lambda: now[0])
+        held.put(1, "e1", "x")
+        now[0] = HOLD_S + 1
+        held.get(1, "other")
+        self.assertEqual(len(held._items), 0)
 
     def test_a_decided_name_is_forgotten(self) -> None:
         held = Held()

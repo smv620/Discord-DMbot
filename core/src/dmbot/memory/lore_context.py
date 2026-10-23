@@ -28,15 +28,15 @@ def around(text: str, quote: str, name: str, limit: int = CONTEXT_MAX) -> str:
     at = -1
     hit = ""
     for needle in (quote, name):
-        needle = needle.strip()
-        if not needle:
+        words = needle.split()
+        if not words:
             continue
-        found = text.find(needle)
-        if found < 0:
-            match = re.search(re.escape(needle), text, re.IGNORECASE)
-            found = match.start() if match else -1
-        if found >= 0:
-            at, hit = found, needle
+        # Whole words, any spacing or case: the reading checked the quote the same way, against
+        # the text with its spaces squeezed, so a quote may span a line break.
+        pattern = r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)"
+        match = re.search(pattern, text) or re.search(pattern, text, re.IGNORECASE)
+        if match:
+            at, hit = match.start(), match.group()
             break
     if at < 0:
         return ""
@@ -74,6 +74,8 @@ class Held:
         self._items: dict[tuple[int, str], tuple[float, str]] = {}
 
     def put(self, guild_id: int, entity_id: str, sentence: str) -> None:
+        """Hold a sentence. More than `HOLD_MAX` at once: the oldest go, and their cards fall back
+        to the short quote."""
         if not sentence:
             return
         self._drop_old()
@@ -82,9 +84,9 @@ class Held:
         self._items[(guild_id, entity_id)] = (self._now() + HOLD_S, sentence)
 
     def get(self, guild_id: int, entity_id: str) -> str:
+        self._drop_old()  # (so an idle bot frees what has run out too)
         found = self._items.get((guild_id, entity_id))
-        if found is None or found[0] <= self._now():
-            self._items.pop((guild_id, entity_id), None)
+        if found is None:
             return ""
         return found[1]
 
