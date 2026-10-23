@@ -472,11 +472,19 @@ class CampaignStore:
             cur = await conn.execute("SELECT id FROM campaigns WHERE guild_id = %s", (guild_id,))
             return {str(r["id"]) for r in await cur.fetchall()}
 
+    async def has_campaign(self, guild_id: int, campaign_id: str) -> bool:
+        """Whether this server has a campaign with this ID."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
+            )
+            return await cur.fetchone() is not None
+
     async def exists_anywhere(self, campaign_id: str) -> bool:
         """Whether any server has a campaign with this ID, read fresh. A moved campaign keeps its
         ID, so this is how a sweep tells a deleted campaign from one that changed servers."""
         for guild_id in await self.guilds_with_campaigns():
-            if campaign_id in await self.campaign_ids(guild_id):
+            if await self.has_campaign(guild_id, campaign_id):
                 return True
         return False
 

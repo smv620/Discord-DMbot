@@ -124,7 +124,7 @@ class Deleting(Base):
         me = me or SimpleNamespace(campaigns=self.campaigns, recap_audio_files=self.audio)
         before = sum(1 for _ in self.audio_root.glob("*/*"))
         for _ in range(passes):
-            await DMBot._sweep_deleted_campaign_audio(me)  # type: ignore[arg-type]
+            await DMBot._sweep_deleted_campaign_audio(me)
         return before - sum(1 for _ in self.audio_root.glob("*/*"))
 
     async def test_one_pass_removes_nothing_the_next_one_does(self) -> None:

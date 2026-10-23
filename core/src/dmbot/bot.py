@@ -11245,7 +11245,7 @@ class DMBot(commands.AutoShardedBot):
             return
         files = self.recap_audio_files
         strays = set(await asyncio.to_thread(files.strays, keep))
-        seen_before = getattr(self, "_audio_strays", set())
+        seen_before: set[tuple[int, str]] = getattr(self, "_audio_strays", set())
         self._audio_strays = strays  # (this pass's list replaces the last one)
         gone = 0
         for guild_id, campaign_id in sorted(strays & seen_before):
