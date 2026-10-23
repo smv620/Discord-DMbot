@@ -442,7 +442,7 @@ class ThePath(NamesTest):
         labels = [str(getattr(b, "label", "")) for b in view.children]
         self.assertFalse(any("connections" in label for label in labels))
 
-    async def test_a_card_that_turns_secret_before_the_press_is_kept_as_secret(self) -> None:
+    async def test_a_card_whose_name_is_hidden_before_the_press_is_kept_unrevealed(self) -> None:
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
@@ -454,7 +454,8 @@ class ThePath(NamesTest):
             )
         await self.button(view, "✅ Keep").callback(self.it())
         (rel,) = await self.relations()
-        self.assertTrue(rel.secret)  # never stored as a public connection naming a hidden end
+        # not secret (the names are only not shown yet), but never shown to players before both are
+        self.assertEqual((rel.secret, rel.unrevealed), (False, True))
 
     async def test_a_text_with_a_secret_spelling_queues_a_secret_connection(self) -> None:
         text = "Belleros is really the hooded stranger. The hooded stranger lives in Vale Keep."
@@ -731,17 +732,19 @@ class TheStore(NamesTest):
                 ]  # fmt: skip
                 self.assertEqual(len(found), 1, (n, merged_first))
 
-    async def test_a_hidden_entry_can_only_be_linked_as_secret(self) -> None:
+    async def test_a_name_not_shown_yet_does_not_make_the_connection_secret(self) -> None:
         await self.store.add(
             GUILD, self.campaign.id, [NewLink(self.mirelle, "knows", self.oakmere, "q")]
         )
         (plain,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertFalse(plain.secret)
+        # A name the players don't know yet is not a secret one (#2404): the kept connection is
+        # unrevealed instead, and waits for both names.
         await self.memory.set_hidden_from_players(
             GUILD, self.campaign.id, self.oakmere, True, source="dm"
         )
-        (hidden,) = await self.store.waiting(GUILD, self.campaign.id)
-        self.assertTrue(hidden.secret)
+        (unseen,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertFalse(unseen.secret)
 
     async def test_a_proposed_relation_does_not_hide_the_dms_own_connection(self) -> None:
         await self.memory.add_relation(

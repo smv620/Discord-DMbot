@@ -26,6 +26,7 @@ from dmbot.recaps import critics, cues
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
+from dmbot.recaps.held import apply_held
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
 from dmbot.recaps.text import names_a_secret, strip_cues
@@ -118,8 +119,17 @@ def _approval_view(row: dict[str, Any], *, ready: bool) -> dict[str, Any]:
     }
 
 
+def _shareable(row: dict[str, Any]) -> bool:
+    """A recap that may have a public link (#2118, #2119): one being posted or posted, or a ready
+    draft whose text is still exactly the text the DM approved (#2419, "Approve but don't post").
+    The database's doors check the same rule themselves."""
+    if row["status"] in ("posting", "posted"):
+        return True
+    return row["status"] == "draft" and row["state"] == "ready" and _approved(row)
+
+
 def _share_view(row: dict[str, Any]) -> dict[str, Any]:
-    token = row.get("share_token") if row["status"] == "posted" else None
+    token = row.get("share_token") if _shareable(row) else None
     return {"on": bool(token), "path": f"/r/{token}" if token else None}
 
 
@@ -545,7 +555,7 @@ async def post_checks(
     row: dict[str, Any],
     outside_engine: str | None,
     *,
-    must_be_posted: bool = False,
+    must_be_shareable: bool = False,
 ) -> None:
     """The checks Post makes, for approving a text and for sharing it (#2083, #2118): no secret
     name in the text (the whole name, as the bot reads it) and everyone whose lines were used
@@ -557,8 +567,14 @@ async def post_checks(
     )
     names = (await cur.fetchone() or {}).get("r")
     if names is None:  # not a DM of the campaign: nothing is said about the recap
-        raise RecapError("not_found" if must_be_posted else "not_allowed")
-    if must_be_posted and row["status"] != "posted":
+        raise RecapError("not_found" if must_be_shareable else "not_allowed")
+    # The bot's rule too: a name the players haven't been shown yet is allowed when the table said
+    # it in this very session (#2404).
+    cur = await conn.execute(
+        "SELECT dmbot_recap_held_names(%s, %s, %s) AS r", (gid, cid, row["session_at"])
+    )
+    names = apply_held(names, (await cur.fetchone() or {}).get("r"))
+    if must_be_shareable and not _shareable(row):
         raise RecapError("not_posted")
     text = "\n".join([row["title"], strip_cues(row["summary"]), *row["housekeeping"]])
     if names_a_secret(text, names["secret"], names["allowed"]):
@@ -634,7 +650,7 @@ async def share_recap(
         gid, cid, at, row = await _one(conn, ref, session, marks=False)
         if action != "off":
             # Sharing a recap makes it public, so it must pass what Post checks (#2118).
-            await post_checks(conn, gid, cid, row, outside_engine, must_be_posted=True)
+            await post_checks(conn, gid, cid, row, outside_engine, must_be_shareable=True)
         cur = await conn.execute(
             "SELECT dmbot_recap_share(%s, %s, %s, %s, %s) AS r",
             (gid, cid, at, action, secrets.token_urlsafe(32)),

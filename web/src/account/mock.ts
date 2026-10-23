@@ -34,6 +34,7 @@ import type {
   WebNode,
   WebQuery,
   CampaignPage,
+  Timeline,
   WebRevealTarget,
   MyNpcNote,
   NpcPage,
@@ -76,6 +77,13 @@ const campaigns: Campaign[] = [
     lastPlayedAt: "2026-10-02T19:30:00Z",
     status: "active",
     role: "owner",
+    // The card's facts (#2460).
+    live: true,
+    sessions: 12,
+    hoursPlayed: 41.5,
+    players: 4,
+    npcs: 27,
+    startedAt: "2026-03-14T18:00:00Z",
     // A test server: importing is on here though the site's own switch is off (#2260).
     importsOn: true,
   },
@@ -96,6 +104,24 @@ const campaigns: Campaign[] = [
     lastPlayedAt: "2026-09-25T18:00:00Z",
     status: "active",
     role: "co-dm",
+    sessions: 3,
+    hoursPlayed: 9,
+    players: 3,
+  },
+  // A campaign the person plays in (#2460): a card with no DM tools.
+  {
+    id: "cmp-lantern",
+    ref: "100.cmp4",
+    name: "The Lantern Road",
+    serverName: "Thursday Table",
+    lastPlayedAt: "2026-09-18T18:00:00Z",
+    status: "active",
+    role: "player",
+    sessions: 5,
+    hoursPlayed: 15.5,
+    players: 5,
+    npcs: 8,
+    startedAt: "2026-06-01T18:00:00Z",
   },
 ];
 
@@ -436,6 +462,7 @@ function startNames(): NameRow[] {
         others: n % 4 === 0 ? [`${name.split(" ")[0]}`, `${name} the Elder`] : n % 7 === 0 ? [`${name.split(" ").pop()}`] : [],
         secret: n % 9 === 0,
         npcId: npc ? `n${n}` : null,
+        mentions: ((n * 7) % 11) + 1,
       });
     }
   };
@@ -471,6 +498,7 @@ interface WebState {
     direction: WebLink["direction"];
     revealed?: boolean;
     belief?: WebLink["belief"];
+    pinned?: boolean;
   }[];
   nextLink: number;
 }
@@ -500,6 +528,9 @@ function startWeb(big: boolean): WebState {
   // Not revealed to the players yet (#2405): two names and one connection that comes from a backstory.
   for (const i of [3, 8]) if (nodes[i]) nodes[i]!.revealed = false;
   const byId = (id: string) => links.find((l) => l.id === id);
+  // One connection the DM pinned as 100% truth (#2448).
+  const l2 = byId("l2");
+  if (l2) l2.pinned = true;
   const l4 = byId("l4");
   if (l4) l4.revealed = false;
   // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
@@ -548,7 +579,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
    * if every one is secret and the viewer may see them). */
-  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean): WebEdge[] => {
+  const edgesOf = (links: WebState["links"], dm: boolean, full: boolean, pins = false): WebEdge[] => {
     const pairs = new Map<string, WebState["links"]>();
     for (const l of links) {
       if (l.secret && !dm) continue;
@@ -569,6 +600,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           secret: l.secret,
           direction: l.direction,
           ...(full ? { revealed: l.revealed !== false } : {}),
+          // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
+          ...(pins && l.pinned ? { pinned: true } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };
@@ -617,7 +650,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ? { ...current(n), revealed: n.revealed !== false }
           : { id: n.id, name: current(n).name, kind: current(n).kind },
       );
-    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all);
+    const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
     return {
       center: centre,
       nodes,
@@ -927,7 +960,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
       const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true);
+        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
         return found[0] ?? { removed: true };
       };
       if (change.action === "add") {
@@ -943,6 +976,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         link.words = change.words.trim();
       } else if (change.action === "secret") {
         link.secret = change.secret;
+      } else if (change.action === "pin") {
+        link.pinned = change.pinned;
       } else {
         if (change.confirm !== true) throw new ApiError("needs-confirm");
         state.links.splice(state.links.indexOf(link), 1);
@@ -957,12 +992,19 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
       const mine = campaigns.find((c) => c.ref === ref);
+      const role = /\.cp-player$/.test(ref) ? "player" : /\.cp-co$/.test(ref) ? "co-dm" : "owner";
       return {
         ref,
         name: mine?.name ?? "The Brynwater Crossing",
         serverName: mine?.serverName ?? "Thursday Table",
-        role: /\.cp-player$/.test(ref) ? "player" : /\.cp-co$/.test(ref) ? "co-dm" : "owner",
+        role,
         importsOn: mine?.importsOn ?? false,
+        // Only a DM gets the campaign's current choices (#2461), as the real API does.
+        ...(role === "player"
+          ? {}
+          : {
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, gameMasters: 2 } as const,
+            }),
       };
     },
     // The pretend NPC pages (#2266): entry "gone" is not found; a campaign ending `.npc-outside` is
@@ -1090,6 +1132,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           memory.splice(memory.indexOf(row), 1);
           return { ...into, others: [...into.others] };
         }
+        case "merge-many": {
+          // The queue action of #2427: every other name goes into this one, in one change.
+          const others = [...new Set(change.others)].map((other) => memory.find((n) => n.id === other));
+          if (others.length === 0 || others.some((o) => !o)) throw new ApiError("not-found");
+          if (change.others.includes(id)) throw new ApiError("bad-target");
+          for (const other of others as NameRow[]) {
+            row.others.push(other.name, ...other.others.filter((o) => !row.others.includes(o)));
+            memory.splice(memory.indexOf(other), 1);
+          }
+          return { ...row, others: [...row.others] };
+        }
         case "remove":
           memory.splice(memory.indexOf(row), 1);
           return { removed: true };
@@ -1157,6 +1210,60 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return new Blob([[...view.notes, "", ...view.lines].join("\n") + "\n"], {
         type: "text/plain",
       });
+    },
+    // The pretend Story timeline (#2462): a campaign ending `.tl-empty` has no sessions, `.tl-player`
+    // is a player's view (posted recaps only, no address).
+    async timeline(campaignRef): Promise<Timeline> {
+      calls.push(`timeline:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (/\.tl-none$/.test(campaignRef)) throw new ApiError("not-found");
+      const player = /\.tl-player$/.test(campaignRef);
+      const base = {
+        ref: campaignRef,
+        name: "The Brynwater Crossing",
+      };
+      if (/\.tl-empty$/.test(campaignRef)) return { ...base, sessions: [] };
+      return {
+        ...base,
+        sessions: [
+          {
+            number: 1,
+            startedAt: 1_790_000_000,
+            endedAt: 1_790_010_800,
+            recap: { title: "The river crossing", posted: true, ref: player ? null : `${campaignRef}.1790000000` },
+            revealed: ["Ferryman Odo", "Hollow Mill"],
+          },
+          {
+            number: 2,
+            startedAt: 1_790_600_000,
+            endedAt: 1_790_607_200,
+            recap: player ? null : { title: "The abbey at dusk", posted: false, ref: `${campaignRef}.1790600000` },
+            revealed: [],
+          },
+          { number: 3, startedAt: 1_791_200_000, endedAt: null, recap: null, revealed: [] },
+        ],
+      };
+    },
+    async sharedRules() {
+      calls.push("sharedRules");
+      await reachable();
+      signedIn();
+      return [
+        {
+          ref: "200000000000000001.cmp1",
+          name: "The Brynwater Crossing",
+          serverName: "Thursday Table",
+          publishes: [
+            { kind: "house-rules", name: "Brynwater table rules", version: 3, shared: true, hasCode: true },
+            { kind: "homebrew", name: "Marsh creatures", version: 1, shared: false, hasCode: false },
+          ],
+          follows: [
+            { kind: "homebrew", name: "Frostmaiden pack", publisher: "The Long Winter", version: 4, updating: true },
+            { kind: "house-rules", name: "Old Guard rules", publisher: "Grey Keep", version: 2, updating: false },
+          ],
+        },
+      ];
     },
     async houseRuleCampaigns() {
       calls.push("houseRuleCampaigns");
@@ -1359,11 +1466,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       r.approval = { approved: false, choice: "", approvedAt: null, canApprove: false };
       return { recap: { ...r }, triesLeft: r.triesLeft, needsApproval: true };
     },
-    // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
+    // Sharing a recap by a link (#2119, #2419). Only a posted or approved recap can have one.
     async shareRecap(ref, action) {
       calls.push(`shareRecap:${ref}:${action}`);
       const r = await find(ref);
-      if (r.status !== "posted") throw new ApiError("not-posted");
+      const unposted = r.status === "draft" && r.approval?.approved === true;
+      if (r.status === "dropped" || (r.status === "draft" && !unposted))
+        throw new ApiError("not-posted");
       if (action === "off") r.share = { on: false, path: null };
       else if (action === "new" || !r.share?.on) {
         sharedCount += 1;
