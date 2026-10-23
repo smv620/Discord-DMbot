@@ -93,12 +93,3 @@ async def answer_issue(
     if found is None:
         raise RecapError("not_found")
     return dict(found)
-
-
-async def plot_blocks(db: Any, session: Session, ref: str, *, on: bool) -> bool:
-    """Whether Approve must wait: an issue the check found has no answer yet. A check still running,
-    failed or timed out never holds it (PLAN: PlotBot advises, the DM decides)."""
-    if not on:
-        return False
-    view = await read_plot(db, session, ref, on=True)
-    return bool(view["approveBlocked"])

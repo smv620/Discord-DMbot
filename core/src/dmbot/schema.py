@@ -11816,6 +11816,31 @@ RECAP_ACCEPTED = (
     """
 )
 
+
+def _approve_with_plot() -> str:
+    """`dmbot_recap_approve` as 0209 left it, plus the plot gate (#2122): when the website sets
+    `dmbot.plot_gate` for this transaction, a text whose finished check has an issue with no
+    answer is not approved ('plot_open'). It is read under the same lock as the approval, so an
+    issue found between the page's read and the press cannot slip through. A check that is
+    running, failed or missing never holds it (PlotBot advises; the DM decides)."""
+    body = _approve_with_versions()
+    anchor = "        -- While the audio is queued or being made nothing is approved over it"
+    if body.count(anchor) != 1:  # (an earlier migration's text moved)
+        raise RuntimeError("dmbot_recap_approve changed: the plot gate needs a new anchor")
+    gate = (
+        "        IF current_setting('dmbot.plot_gate', true) = 'on' AND EXISTS (\n"
+        "            SELECT 1 FROM plot_checks k JOIN plot_issues i\n"
+        "                ON i.guild_id = k.guild_id AND i.campaign_id = k.campaign_id\n"
+        "                AND i.session_at = k.session_at AND i.text_hash = k.text_hash\n"
+        "            WHERE k.guild_id = g AND k.campaign_id = c AND k.session_at = at_\n"
+        "                AND k.text_hash = expected AND k.state = 'done'\n"
+        "                AND i.answer_kind IS NULL) THEN\n"
+        "            RETURN 'plot_open';\n"
+        "        END IF;\n"
+    )
+    return body.replace(anchor, gate + anchor, 1)
+
+
 PLOT_ISSUES = (
     """
     -- PlotBot's check of a recap against the campaign (#2122, docs/PLAN.md, "PlotBot checks every
@@ -12008,6 +12033,17 @@ PLOT_ISSUES = (
     $do$;
     REVOKE ALL ON FUNCTION dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
+    """
+    + _approve_with_plot()
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
     """
 )
 
