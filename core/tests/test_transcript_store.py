@@ -823,7 +823,7 @@ class BotTests(DatabaseTest):
 
         sid = await self.finished_session()
         # Two people called Sam; the player (Mia's line is already there) only typed first
-        typed = Line(START * 1000 + 1000, STRANGER, "brb", "brb", 0, "game", typed=True)
+        typed = Line(START * 1000 + 1000, STRANGER, "brb", "brb", 0, "off_topic", typed=True)
         said = Line(START * 1000 + 60_000, DM, "Roll for it.", "Roll for it.")
         await self.store.add_lines(GUILD, sid, [typed, said])
         self.guild.get_member = lambda uid: SimpleNamespace(display_name="Sam")

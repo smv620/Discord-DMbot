@@ -160,6 +160,17 @@ class PuttingLinesBack(Refusals):
         self.assertEqual(posted.edit.await_count, edits)
         self.assertEqual(table.hidden, markers)  # still markers
 
+    async def test_a_typed_line_sharing_a_moment_with_a_marker_is_not_shown_again(self) -> None:
+        """Typed lines never had a marker in the live channel; one with a spoken marker's key
+        must not edit that marker (#2447)."""
+        table, posted, _ = await self.left_out_line()
+        (run,) = table.left_out.runs
+        spoken = run.lines[0]
+        typed = Waiting(spoken.speaker, spoken.started_ms, "typed", 1.0, typed=True)
+        edits, markers = posted.edit.await_count, set(table.hidden)
+        self.assertIsNone(await self.bot._show_lines_again(table, [typed]))
+        self.assertEqual((posted.edit.await_count, table.hidden), (edits, markers))
+
     async def test_the_same_put_back_for_someone_recorded_works(self) -> None:
         table, posted, _ = await self.left_out_line()
         (run,) = table.left_out.runs

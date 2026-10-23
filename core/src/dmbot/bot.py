@@ -7020,7 +7020,8 @@ class DMBot(commands.AutoShardedBot):
         late when hidden, or no channel). Consent is checked before every edit: a Stop
         meanwhile leaves the rest as markers."""
         speaker = lines[0].speaker
-        markers = [x for x in lines if (x.speaker, x.started_ms) in table.hidden]
+        # typed lines never had a marker in the live channel and can share a spoken line's key
+        markers = [x for x in lines if not x.typed and (x.speaker, x.started_ms) in table.hidden]
         if not markers:
             return None
         changed = True
