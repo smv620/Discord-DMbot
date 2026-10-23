@@ -10886,8 +10886,11 @@ STORY_TIMELINE = """
                       AND ch.source = 'scan'
                       AND ch.before ->> 'hidden_from_players' = 'true'
                       AND ch.after ->> 'hidden_from_players' = 'false'
-                      AND e.status = 'confirmed' AND NOT e.hidden_from_players
-                      AND NOT e.audience_limited
+                      AND e.status = 'confirmed' AND e.type <> 'person'
+                      AND NOT e.hidden_from_players AND NOT e.audience_limited
+                      -- the DM's plot notes are not names, and a player never gets them
+                      AND (is_dm OR e.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                                   'promise', 'deed'))
                       AND (is_dm OR NOT EXISTS (
                             SELECT 1 FROM memory_aliases a
                             WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id

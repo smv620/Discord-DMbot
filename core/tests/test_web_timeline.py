@@ -253,6 +253,23 @@ class TheReveals(TimelineBase):
         await self.reveal(twice, START + 3800, batch=61)
         self.assertEqual((await self.read(self.carol))["sessions"][0]["revealed"], ["Twice"])
 
+    async def test_plot_notes_and_people_are_never_listed_for_a_player(self) -> None:
+        names = {}
+        for kind in ("quest", "mystery", "thread", "hook", "goal", "promise", "deed", "person"):
+            # Made as a character, then given the kind directly: the store refuses to list a person.
+            made = await self.entity(f"A {kind}")
+            await self.sql("UPDATE memory_entities SET type = %s WHERE id = %s", kind, made)
+            names[kind] = made
+        shown = await self.entity("Ferryman")
+        for n, entity_id in enumerate([*names.values(), shown]):
+            await self.reveal(entity_id, START + 3700, batch=70 + n)
+        for who in (self.bob, self.carol):
+            self.assertEqual((await self.read(who))["sessions"][0]["revealed"], ["Ferryman"])
+        # People are never names on this page, for a game master either.
+        mine = (await self.read(self.session))["sessions"][0]["revealed"]
+        self.assertIn("Ferryman", mine)
+        self.assertNotIn("A person", mine)
+
     async def test_a_name_shown_at_some_other_time_is_not_put_under_a_session(self) -> None:
         late = await self.entity("Late")
         await self.reveal(late, START + 2 * DAY + 90_000, batch=1)  # such as an import, much later

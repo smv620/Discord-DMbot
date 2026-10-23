@@ -3,6 +3,7 @@
 // The Story timeline page (#2462): sessions in order, each with its number, day, length, recap and
 // the names that came out at the table; a player's view has plain titles and no recap address.
 import axe from "axe-core";
+import { readFileSync } from "node:fs";
 import { cleanup, render, screen, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -103,5 +104,15 @@ describe("the page itself", () => {
       rules: { "color-contrast": { enabled: false }, region: { enabled: false } },
     });
     expect(result.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
+  });
+});
+
+describe("the site's rules for the page", () => {
+  const read = (f: string) => readFileSync(`${process.cwd()}/public/${f}`, "utf8");
+  it("serves every campaign's timeline from the one page, and never stores or indexes it", () => {
+    expect(read("_redirects")).toContain("/account/timeline/*  /account/timeline  200");
+    expect(read("_headers")).toMatch(
+      /\/account\/timeline\*\n {2}Cache-Control: no-store\n {2}X-Robots-Tag: noindex, nofollow/,
+    );
   });
 });

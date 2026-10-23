@@ -58,6 +58,10 @@
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
 
+/account/timeline*
+  Cache-Control: no-store
+  X-Robots-Tag: noindex, nofollow
+
 /account/campaigns*
   Cache-Control: no-store
   X-Robots-Tag: noindex, nofollow
