@@ -19,7 +19,7 @@ import {
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { campaignPage as campaignWords } from "../content/campaign-page";
 import { panelWords } from "../content/recap-panel";
-import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { PLOT_CHECK_LIVE, RECAP_AUDIO_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
   ApiError,
   type AccountApi,
@@ -849,8 +849,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
 
       {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} prefill={fixPrefill} />}
-      <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />
-      {!editing && recap.status === "draft" && recap.canEdit && (
+      {/* (the switch is tested here so the build drops a panel that is not live: the page stays within its weight budget) */}
+      {RECAP_NAME_CHECKS_LIVE && <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />}
+      {PLOT_CHECK_LIVE && !editing && recap.status === "draft" && recap.canEdit && (
         <RecapPlotCheck
           key={`plot-${recap.ref}`}
           api={api}

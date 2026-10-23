@@ -83,6 +83,10 @@ export const plotWords = {
   } as Record<string, string>,
   unavailable: "The plot check isn't available right now. You can approve without it.",
   versions: "Earlier approved versions",
+  // (formatted here, not with content/account.ts: that module is a big one, and importing it would put
+  // the whole My Account wording on the recaps page's weight)
+  versionWhen: (epochSeconds: number): string =>
+    new Date(epochSeconds * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
   versionLine: (version: number, when: string): string => `Version ${version}, approved on ${when}`,
   noVersions: "No version has been approved yet.",
   waitingOn: (n: number): string =>

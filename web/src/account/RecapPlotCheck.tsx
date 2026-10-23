@@ -9,7 +9,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { PLOT_CHAT_MAX_LETTERS, PLOT_NOTE_MAX_LETTERS, plotWords as words } from "../content/recap-plot";
-import { shortDateTime } from "../content/account";
 import { PLOT_CHECK_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type PlotAnswerKind, type PlotCheck, type PlotIssue, type PlotMessage } from "./api";
 import { keepFocus } from "./focus";
@@ -222,7 +221,7 @@ export default function RecapPlotCheck({
         ) : (
           <ul class="small">
             {check.versions.map((v) => (
-              <li key={v.version}>{words.versionLine(v.version, shortDateTime(new Date(v.acceptedAt * 1000).toISOString()))}</li>
+              <li key={v.version}>{words.versionLine(v.version, words.versionWhen(v.acceptedAt))}</li>
             ))}
           </ul>
         )}
