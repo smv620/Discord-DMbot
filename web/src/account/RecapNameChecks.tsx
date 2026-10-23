@@ -51,6 +51,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
       setSlow(false);
       return;
     }
+    if (slow) return; // gave up after about a minute; a new answer starts the watching again
     const timer = setTimeout(async () => {
       looks.current += 1;
       const before = new Set((list?.names ?? []).map((n) => n.id));

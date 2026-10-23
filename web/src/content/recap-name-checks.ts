@@ -2,7 +2,7 @@
 // found in the recap and is not sure of. The DM answers each one; DMbot never decides what a name is.
 // The answers are the same as Discord's 📝 Check new names, so answering in either place answers both.
 // Shown only while RECAP_NAME_CHECKS_LIVE is true (recap-words.ts).
-export const NOTE_MAX_LETTERS = 200;
+export const NOTE_MAX_LETTERS = 300; // core's limit for a note kept with a name (name_answers.NOTE_MAX)
 export const SPELLING_MAX_LETTERS = 80;
 
 export const nameCheckWords = {
