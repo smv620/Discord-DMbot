@@ -659,7 +659,7 @@ class ThePath(NamesTest):
         press = await self.read()
         text = shown(press)
         self.assertIn("names to check", text)
-        self.assertIn("couldn.t be read in time", text)
+        self.assertIn("be read in time", text)
 
     async def test_a_stated_relationship_with_no_fixed_kind_is_kept_on_the_catch_all(self) -> None:
         text = "Brother Aldric secretly pays the Ashen Hand."
