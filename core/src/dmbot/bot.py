@@ -271,7 +271,7 @@ from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
-from dmbot.memory.secret_aloud import MAX_ASKED, players_lines, secret_names, spoken
+from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
 from dmbot.memory.secret_reveal import RevealSession, revealed_in
 from dmbot.memory.sheet_questions import Questions as SheetQuestions
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
@@ -9421,10 +9421,10 @@ class DMBot(commands.AutoShardedBot):
             log.warning("Names shown at the table, but the DM screen could not say so")
 
     async def record_exposures(self, table: Table) -> None:
-        """After a session: remember the secret names and secret connections the players said or
-        typed (#2410). Nothing is applied and nobody is told here: the players see no change
-        until the summary goes out. Only the words of people recorded now count (the same rule as
-        the secret-name question), never the DM sidebar. The log gets a count, never a name."""
+        """After a session: remember the secret names and secret connections said or typed at the
+        table (#2410), the DM's own words included. Nothing is applied and nobody is told here:
+        the players see no change until the summary goes out. Only the words of people recorded
+        now count, never the DM sidebar. The log gets a count, never a name."""
         if (
             self.memory is None
             or self.exposures is None
@@ -9446,8 +9446,10 @@ class DMBot(commands.AutoShardedBot):
                 return
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
             agreed = await self.consent.consenting(gid)  # asked after the lines were read
-            players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            found = find_exposures(names, connections, players_lines(lines, players=players))
+            # The DM's own table words count (a slip of the DM's tongue is the first case); the
+            # sidebar is left out by said_lines, and so is anyone not recorded now
+            players = {line.user_id for line in lines} & set(agreed)
+            found = find_exposures(names, connections, said_lines(lines, people=players))
             if not found:
                 return
             waiting = await self.exposures.record(gid, cid, table.started_at, found)
@@ -9477,7 +9479,7 @@ class DMBot(commands.AutoShardedBot):
             lines = await self.transcripts.lines(gid, table.transcript_session_id)
             agreed = await self.consent.consenting(gid)  # asked after the lines were read
             players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            every = spoken(secrets, players_lines(lines, players=players))
+            every = spoken(secrets, said_lines(lines, people=players))
             found = every[:MAX_ASKED]
             alone = campaign.dm_screen_visibility != "private"
             reached = 0  # DMs who got the question privately

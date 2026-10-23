@@ -142,6 +142,21 @@ class Store(MemoryTest):
         await self.store.record(GUILD_A, self.c, 200, [Exposure("name", "auril", None, 1)])
         self.assertEqual(len(await self.store.pending(GUILD_A, self.c)), 1)
 
+    async def test_a_live_answer_leaves_nothing_pending_when_the_session_is_recorded(self) -> None:
+        # "Is it revealed now?" is answered during the session; the exposures are written at its end
+        await self.store.settle_name(GUILD_A, self.c, "Auril", 100)
+        await self.store.record(
+            GUILD_A,
+            self.c,
+            100,
+            [Exposure("name", "auril", None, 3), Exposure("name", "vex", None, 1)],
+        )
+        got = await self.store.pending(GUILD_A, self.c, 100)
+        self.assertEqual([e.spelling for e in got], ["vex"])
+        # and an answer to a name with no live session settles only what is already waiting
+        await self.store.settle_name(GUILD_A, self.c, "Vex")
+        self.assertEqual(await self.store.pending(GUILD_A, self.c), [])
+
     async def test_nothing_crosses_a_campaign_or_a_server(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Other", 8)).id
         await self.store.record(GUILD_A, self.c, 100, [Exposure("name", "auril", None, 1)])
@@ -181,7 +196,7 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
         )
 
     async def run_step(self, bot: Any, names: list[SecretName]) -> None:
-        table = SimpleNamespace(
+        table: Any = SimpleNamespace(
             guild_id=GUILD_A, campaign_id="c" * 32, transcript_session_id="s1", started_at=500
         )
         with (
@@ -199,7 +214,7 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.kind for e in args[3]], ["name", "connection"])
 
     async def test_without_a_campaign_a_session_or_secrets_nothing_is_recorded(self) -> None:
-        table = SimpleNamespace(
+        table: Any = SimpleNamespace(
             guild_id=GUILD_A, campaign_id="c" * 32, transcript_session_id="s1", started_at=500
         )
         for change in (
@@ -221,14 +236,13 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
         await self.run_step(bot, [AURIL])
         bot.exposures.record.assert_not_awaited()
 
-    async def test_the_dm_the_sidebar_and_people_not_recorded_never_count(self) -> None:
-        bot = self.bot(
-            [
-                line(DM_ID, "Auril"),
-                line(PLAYER, "Auril", sidebar="answer"),
-                line(99, "Mira knows Rook"),
-            ]
-        )
+    async def test_the_dms_own_table_words_count_but_not_the_sidebar_or_people_not_recorded(
+        self,
+    ) -> None:
+        bot = self.bot([line(DM_ID, "Auril slipped out")])
+        await self.run_step(bot, [AURIL])  # the DM saying a secret by mistake is the first case
+        bot.exposures.record.assert_awaited_once()
+        bot = self.bot([line(PLAYER, "Auril", sidebar="answer"), line(99, "Mira knows Rook")])
         await self.run_step(bot, [AURIL])
         bot.exposures.record.assert_not_awaited()
 
@@ -242,7 +256,13 @@ class Settling(unittest.IsolatedAsyncioTestCase):
         store = SimpleNamespace(settle_alias=AsyncMock(return_value=1))
         campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32)
         await settle(SimpleNamespace(exposures=store), campaign, "a" * 32)
-        store.settle_alias.assert_awaited_once_with(GUILD_A, "c" * 32, "a" * 32)
+        store.settle_alias.assert_awaited_once_with(GUILD_A, "c" * 32, "a" * 32, None)
+        store.settle_alias.reset_mock()
+        running = SimpleNamespace(campaign_id="c" * 32, started_at=500)
+        await settle(
+            SimpleNamespace(exposures=store, tables={GUILD_A: running}), campaign, "a" * 32
+        )
+        store.settle_alias.assert_awaited_once_with(GUILD_A, "c" * 32, "a" * 32, 500)  # live
         await settle(SimpleNamespace(), campaign, "a" * 32)  # (older stand-ins have none)
         await settle(SimpleNamespace(exposures=None), campaign, "a" * 32)
         broken = SimpleNamespace(

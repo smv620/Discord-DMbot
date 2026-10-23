@@ -11455,7 +11455,7 @@ SECRET_EXPOSURES = f"""
     -- applied: nothing becomes known to the players here, and the summary that tells the DM
     -- applies it later. Holds which secret and how often, never a line or who said it. A name is
     -- kept as its spelling key, a connection as the connection's id. 'settled' once the DM
-    -- answered it another way.
+    -- answered it another way. Transient state, so it is left out of backups.
     CREATE TABLE secret_exposures (
         {_memory_scope()}
         id                 BIGSERIAL,

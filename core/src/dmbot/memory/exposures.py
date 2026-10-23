@@ -5,8 +5,9 @@ nothing, so a player's reader sees no change until the after-session summary goe
 
 Finding is pure code with no AI. A secret name is found by `secret_aloud.spoken` (whole names, the
 way names are compared everywhere). A secret connection is found when one line names both of its
-ends, by any of their names. Only the words of people recorded now count, never the DM sidebar,
-the DM screen or anyone who stopped (`secret_aloud.players_lines`).
+ends, by any of their names. Every table word of a person recorded now counts, the DM's own too
+(the DM saying a secret by mistake is the first case); never the DM sidebar, the DM screen or
+anyone who stopped (`secret_aloud.said_lines`).
 
 What is kept is which secret and how often, never a line and never who said it: a name as its
 spelling key, a connection as its id. An exposure the DM already answered another way (the live
@@ -93,7 +94,9 @@ async def secret_connections(
     memory: MemoryStore, guild_id: int, campaign_id: str
 ) -> list[SecretConnection]:
     """This campaign's confirmed secret connections between confirmed, live entries, with every
-    name of each end, read for this server and campaign only."""
+    name of each end, read for this server and campaign only. A connection that has a player or
+    DM entry (`type = 'person'`) at an end is not looked for: those entries are the table's own
+    people, whose connections are not story secrets."""
     async with memory._read(guild_id, campaign_id) as scope:
         cur = await scope.conn.execute(
             "SELECT r.id AS rid, r.subject_id AS s, r.object_id AS o FROM memory_relations r"
@@ -223,11 +226,30 @@ class ExposureStore:
                 for r in await cur.fetchall()
             ]
 
-    async def settle_name(self, guild_id: int, campaign_id: str, text: str) -> int:
-        """The DM answered about this name another way: it is no longer waiting, in any session."""
-        return await self._settle(guild_id, campaign_id, "spelling", spelling_key(text), "name")
+    async def settle_name(
+        self, guild_id: int, campaign_id: str, text: str, session_at: int | None = None
+    ) -> int:
+        """The DM answered about this name another way: it is no longer waiting, in any session.
+        `session_at`: the session that is running now, when the answer comes during it (the live
+        "Is it revealed now?"): the exposure is only recorded when the session ends, so a settled
+        mark is put down for it now, and the recording leaves a settled row alone."""
+        key = spelling_key(text)
+        settled = await self._settle(guild_id, campaign_id, "spelling", key, "name")
+        if session_at is not None and len(key) >= MIN_KEY:
+            async with self._db.guild(guild_id) as conn:
+                await conn.execute(
+                    "INSERT INTO secret_exposures (guild_id, campaign_id, session_started_at,"
+                    " kind, spelling, times, status, created_at)"
+                    " VALUES (%s, %s, %s, 'name', %s, 1, 'settled', %s)"
+                    " ON CONFLICT (guild_id, campaign_id, session_started_at, spelling)"
+                    " WHERE kind = 'name' DO UPDATE SET status = 'settled'",
+                    (guild_id, campaign_id, session_at, key, int(self._clock())),
+                )
+        return settled
 
-    async def settle_alias(self, guild_id: int, campaign_id: str, alias_id: str) -> int:
+    async def settle_alias(
+        self, guild_id: int, campaign_id: str, alias_id: str, session_at: int | None = None
+    ) -> int:
         """The same, for the name a question's button carries (an alias id)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
@@ -236,7 +258,11 @@ class ExposureStore:
                 (guild_id, campaign_id, alias_id),
             )
             row = await cur.fetchone()
-        return 0 if row is None else await self.settle_name(guild_id, campaign_id, row["text"])
+        return (
+            0
+            if row is None
+            else await self.settle_name(guild_id, campaign_id, row["text"], session_at)
+        )
 
     async def settle_connection(self, guild_id: int, campaign_id: str, relation_id: str) -> int:
         return await self._settle(guild_id, campaign_id, "relation_id", relation_id, "connection")

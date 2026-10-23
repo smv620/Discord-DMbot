@@ -100,8 +100,13 @@ async def settle(bot: Any, campaign: Any, alias_id: str) -> None:
     exposures = getattr(bot, "exposures", None)
     if exposures is None:
         return
+    # The session running now, if the answer comes during it (its exposure is recorded at the end)
+    table = getattr(bot, "tables", {}).get(campaign.guild_id)
+    running = table is not None and table.campaign_id == campaign.id
     try:
-        await exposures.settle_alias(campaign.guild_id, campaign.id, alias_id)
+        await exposures.settle_alias(
+            campaign.guild_id, campaign.id, alias_id, table.started_at or None if running else None
+        )
     except Exception as exc:  # bookkeeping must never cost the DM their answer
         # (the error's text can carry a name, so only its type is logged)
         log.warning("Couldn't settle a secret exposure: %s", type(exc).__name__)
@@ -181,10 +186,10 @@ class SecretAloudButton(
             return
         name = name_in(interaction)
         if self.act == "keep":
-            await settle(bot, campaign, self.alias_id)
             await interaction.response.edit_message(
                 content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
+            await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
             secret_posts.answered(interaction, self.campaign_id)  # (#2156)
             return
         memory = bot.memory
@@ -200,10 +205,10 @@ class SecretAloudButton(
             return
         if bot.lookup is not None:
             bot.lookup.drop([campaign.id])
-        await settle(bot, campaign, self.alias_id)
         await interaction.response.edit_message(
             content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )
+        await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
         secret_posts.answered(interaction, self.campaign_id)  # (#2156)
 
 

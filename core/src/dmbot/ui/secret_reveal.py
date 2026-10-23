@@ -111,10 +111,10 @@ class RevealButton(
             return
         name = name_in(interaction)
         if self.act == "n":
-            await settle(bot, campaign, self.alias_id)
             await interaction.response.edit_message(
                 content=kept_text(), view=None, allowed_mentions=NO_PINGS
             )
+            await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
             secret_posts.answered(interaction, self.campaign_id)  # (#2156)
             return
         memory = bot.memory
@@ -130,10 +130,10 @@ class RevealButton(
             return
         if bot.lookup is not None:
             bot.lookup.drop([campaign.id])
-        await settle(bot, campaign, self.alias_id)
         await interaction.response.edit_message(
             content=opened_text(name, len(written.value)), view=None, allowed_mentions=NO_PINGS
         )
+        await settle(bot, campaign, self.alias_id)  # (after the answer: Discord waits 3 s)
         secret_posts.answered(interaction, self.campaign_id)  # (#2156)
 
 
