@@ -6,7 +6,7 @@ DM who made them. Invented names throughout."""
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import discord
@@ -240,7 +240,7 @@ class ThroughTheRealBot(Settings):
                 channel=MagicMock(send=AsyncMock()), campaign=saved, warning=None
             )
 
-        bot.get_guild = lambda guild_id: SimpleNamespace(id=guild_id)
+        cast(Any, bot).get_guild = lambda guild_id: SimpleNamespace(id=guild_id)
         bot.after_screen_change = AsyncMock()  # type: ignore[method-assign]
         bot.post = AsyncMock()  # type: ignore[method-assign]
         waiting = {
