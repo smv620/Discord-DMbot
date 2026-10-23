@@ -310,5 +310,5 @@ issue (#2123) is counted separately. Not measured on a live campaign yet; the fe
 ## PlotBot's talk about an issue (#2123)
 One careful-tier call for each message the DM sends about an issue: the issue, the recap (at most 3,000
 characters), the earlier turns (at most 8, 500 characters each) and at most 12 campaign entries, so about 2,000 to
-3,500 input tokens, and at most 700 output tokens. A talk has at most 15 messages from a DM on an issue, one at a time. A
+3,500 input tokens, and at most 700 output tokens. A talk has at most 15 messages from a DM on an issue, one at a time, and a campaign's DMs may send at most 30 messages an hour in all, so one campaign costs at most 30 careful-tier calls of this size an hour (about 100,000 input tokens). A
 request to invent story makes no call. Not measured on a live campaign yet; off with `DMBOT_PLOT_CHECK=0`.

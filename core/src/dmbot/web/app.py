@@ -981,6 +981,8 @@ def create_app(
         text = body.get("text") if isinstance(body, dict) else None
         if not isinstance(text, str):
             raise HTTPException(status_code=422, detail="bad_text")
+        if not settings.plot_check_on:  # nothing would answer: the page says PlotBot is not on
+            raise HTTPException(status_code=409, detail="not_allowed")
         try:
             return await send_chat(db, session, ref, issue, text)
         except RecapError as err:

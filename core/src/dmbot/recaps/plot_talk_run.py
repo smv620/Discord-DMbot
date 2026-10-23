@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 CALL_TIMEOUT_S = RETAKE_AFTER_S - 30  # the call always ends before its claim can be taken back
 PER_ROUND = 5  # messages answered in one round in one server
+KEEP_S = 30 * 24 * 3600  # a talk is kept this long, then goes
 
 
 class Completer(Protocol):
@@ -61,6 +62,16 @@ class TalkStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    async def sweep(self, guild_id: int) -> int:
+        """Delete the talks that are over thirty days old, in every campaign of the server (the
+        send door clears a campaign's own as it is used; this reaches the ones never used again)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM plot_chat WHERE guild_id = %s AND created_at < %s",
+                (guild_id, int(self._now()) - KEEP_S),
+            )
+            return int(cur.rowcount)
 
     async def claim_next(self, guild_id: int) -> Message | None:
         """The oldest waiting message (or a stalled one), marked as being worked on."""
@@ -158,6 +169,9 @@ class TalkRunner:
         self._store = store
         self._memory = memory
         self._ai = ai
+
+    async def sweep(self, guild_id: int) -> int:
+        return await self._store.sweep(guild_id)
 
     async def round(self, guild_id: int, *, limit: int = PER_ROUND) -> int:
         """Answer the messages that wait in one server, at most `limit`. Returns how many."""

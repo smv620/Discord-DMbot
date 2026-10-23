@@ -600,6 +600,7 @@ SUMMARY_PARTIAL = (
     "yet, so they are still secret. DMbot will try again after the next session."
 )
 RECAP_ROUND_S = 60
+PLOT_TALK_SWEEP_EVERY = 720  # rounds: about an hour at five seconds
 PLOT_TALK_ROUND_S = 5  # how often the DM's messages to PlotBot are looked for (#2123)
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
@@ -11032,8 +11033,16 @@ class DMBot(commands.AutoShardedBot):
         """Every few seconds (a DM is waiting for the answer), in its own task so a slow check
         never holds an answer up and a slow answer never holds a recap job up."""
         await asyncio.sleep(30)
+        rounds = 0
         while True:
             await self.run_plot_talk()
+            rounds += 1
+            if rounds % PLOT_TALK_SWEEP_EVERY == 0 and self.plot_talk is not None:
+                for guild in list(self.guilds):  # about hourly: talks older than thirty days go
+                    try:
+                        await self.plot_talk.sweep(guild.id)
+                    except Exception as exc:
+                        log.warning("Plot talk sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(PLOT_TALK_ROUND_S)
 
     async def _plot_loop(self) -> None:
