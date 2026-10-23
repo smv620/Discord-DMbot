@@ -20,6 +20,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
+from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -304,6 +305,28 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
             text="", flag=True,
         )  # fmt: skip
     raise RecapError("bad_action")
+
+
+async def queue_reveal(db: Database, session: Session, ref: str, body: object) -> str:
+    """Queue the DM's 👁️ Reveal to players on one name or connection (#2405): `{kind: "name"|"link",
+    id}`. It makes the same calls as Discord's. A name stops being held back from the players
+    through the All names page's own `hide` action switched off (the Names card's switch), so its
+    answer is read at the All names answers; a connection stops being unrevealed through
+    `link-secret` switched off (the one switch the connection card has), read at this web's
+    answers. DM only, re-checked by the door; an id from another campaign is `not_found`. The
+    change log and Undo are Discord's own, since the bot makes those calls."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    kind, target = body.get("kind"), str(body.get("id") or "")
+    if kind not in ("name", "link") or not ID_PATTERN.match(target):
+        raise RecapError("not_found")
+    if kind == "name":
+        return await all_names.queue_action(
+            db, session, ref, target, {"action": "hide", "hidden": False}
+        )
+    return await _queue(
+        db, session, ref, entity=None, action="link-secret", target=target, text="", flag=False
+    )
 
 
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
