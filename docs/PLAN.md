@@ -2213,10 +2213,17 @@ names panel nor the speech-to-text hints can be a fixed list.
   The name card, the connection editor's sentence, the relationship web (label, direction and a `back`
   reading), NPC list and pages ("Connected to: …") and recall's text all show it. Typed or picked
   words give it ("is the niece of"); on the website, words read from the other side ("has a niece")
-  are stored with the two names swapped. With no role, or any detail that is not one of these
-  words, it still reads "is family of" both ways. No migration. Old family rows whose detail is
-  exactly one of the words now read with that role, in the direction they were stored. The lore
-  read's pass 2 is not changed (follow-up).
+  are stored with the two names swapped. Cousin, sibling and spouse are true of both names alike:
+  they read "is the cousin of" from either card and are stored once, smaller ID first. **Which rows
+  carry a direction (Supervisor, 2026-10-23, #2457):** `memory_relations.directional` (migration
+  0204), true only for a role the DM typed or picked; the order of the two names is the meaning
+  only then (a write never sorts it). Older rows, even with a role word as detail, were stored
+  sorted by ID, so their direction is arbitrary: they stay false and keep reading "is family of"
+  both ways. A words change keeps the flag (true when the new words are a role); when two merged
+  rows say the same, the directional one wins. The column is in the change log, in backups (a file
+  from before it restores as false) and in the website's door; no row is updated. With no role,
+  or any detail that is not one of these words, it reads "is family of" both ways. The lore read's
+  pass 2 is not changed (follow-up).
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),

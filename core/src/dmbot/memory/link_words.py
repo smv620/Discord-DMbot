@@ -40,10 +40,12 @@ def connection_words(predicate: str) -> str:
 KIN = "kin_of"
 
 
-def reads_both_ways(predicate: str, detail: str = "") -> bool:
-    """Does the connection read the same from either name? Not a family connection with a role:
-    "niece" is true of one name only (#2457)."""
-    return predicate in BOTH_WAYS and not (predicate == KIN and kin.directional(detail))
+def reads_both_ways(predicate: str, detail: str = "", directional: bool = False) -> bool:
+    """Does the connection read the same from either name? Not a family connection whose role
+    the DM gave a direction: "niece" is true of one name only (#2457)."""
+    return predicate in BOTH_WAYS and not (
+        predicate == KIN and directional and kin.directional(detail)
+    )
 
 
 def predicate_for(words: str) -> tuple[str, str]:
@@ -72,20 +74,20 @@ def predicate_for_either(words: str) -> tuple[str, str, bool]:
     return predicate, detail, False
 
 
-def link_words(predicate: str, detail: str) -> str:
+def link_words(predicate: str, detail: str, directional: bool = False) -> str:
     """How one connection reads from its first name to its second. On the catch-all, the words it
     was said in ("sworn on the ashes of") are the connection's own label (#1303); on family, the
     role ("is the niece of")."""
     if predicate == FALLBACK_PREDICATE and detail:
         return detail
-    if predicate == KIN and (role := kin.role_of(detail)):
+    if predicate == KIN and directional and (role := kin.role_of(detail)):
         return kin.forward(role)
     return connection_words(predicate)
 
 
-def back_words(predicate: str, detail: str) -> str | None:
+def back_words(predicate: str, detail: str, directional: bool = False) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
     niece". None for one that reads the same either way, or has no fixed reading back."""
-    if predicate == KIN and kin.directional(detail):
+    if predicate == KIN and directional and kin.directional(detail):
         return kin.backward(kin.role_of(detail) or "")
     return CONNECTION_BACK.get(predicate)

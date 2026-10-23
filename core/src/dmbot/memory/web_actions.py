@@ -312,6 +312,7 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             await memory.add_relation(
                 guild_id, cid, first, predicate, second, source=DM, confidence=1.0,
                 status=CONFIRMED, detail=detail[:100], secret=a.flag,
+                directional=predicate == "kin_of" and bool(detail),
             )  # fmt: skip
         except MemoryRuleError:
             return _failed(BAD_TARGET)

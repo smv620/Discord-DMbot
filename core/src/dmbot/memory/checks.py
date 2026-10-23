@@ -68,12 +68,14 @@ def conflicts(onto: Ontology, p: PredicateTerm, other_key: str) -> bool:
     return other_key in p.conflicts_with or (other is not None and p.key in other.conflicts_with)
 
 
-def ordered(p: PredicateTerm, subject_id: str, object_id: str, detail: str = "") -> tuple[str, str]:
+def ordered(
+    p: PredicateTerm, subject_id: str, object_id: str, detail: str = "", directional: bool = False
+) -> tuple[str, str]:
     """Two-way relationships are stored once, smaller ID first, so "A ally B" and
     "B ally A" are the same fact (inverse consistency by construction). Not a family connection
     with a role true of one name only ("Mira is the niece of Aldric"): there the order is the
     meaning (#2457)."""
-    if p.key == "kin_of" and kin.directional(detail):
+    if p.key == "kin_of" and directional and kin.directional(detail):
         return subject_id, object_id
     if p.symmetric and object_id < subject_id:
         return object_id, subject_id

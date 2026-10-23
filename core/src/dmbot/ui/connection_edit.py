@@ -270,7 +270,9 @@ class OneConnection(_Menu):
         r = found.relation
         subject = found.names.entities.get(r.subject_id)
         other = found.names.entities.get(r.object_id)
-        words = link_words(predicate, detail)
+        words = link_words(
+            predicate, detail, directional=predicate == "kin_of"
+        )  # (typed by the DM)
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
     async def _other_words(self, interaction: discord.Interaction) -> None:

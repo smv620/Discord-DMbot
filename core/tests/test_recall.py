@@ -305,7 +305,7 @@ class Recalling(MemoryTest):
         for niece, uncle in (("Mira", "Ulfgar"), ("Ulfgar", "Mira")):  # both id orders
             made = await self.memory.add_relation(
                 GUILD_A, self.c, names[niece], "kin_of", names[uncle], source="dm",
-                confidence=1.0, status="confirmed", detail="niece",
+                confidence=1.0, status="confirmed", detail="niece", directional=True,
             )  # fmt: skip
             link = made.value[0]
             self.assertEqual((link.subject_id, link.object_id), (names[niece], names[uncle]))

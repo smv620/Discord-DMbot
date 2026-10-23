@@ -149,7 +149,9 @@ def fact_words(r: Relation) -> str:
     ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
         return _md(r.detail)  # transcript words: never let them format or ping
-    return link_words(r.predicate, r.detail)  # (family reads with its role: "is the niece of")
+    return link_words(
+        r.predicate, r.detail, r.directional
+    )  # (family reads with its role: "is the niece of")
 
 
 def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
@@ -219,7 +221,7 @@ def _rows(
             continue
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
-        ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail)
+        ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
@@ -230,7 +232,7 @@ def _rows(
                 f"is linked (“{_md(r.detail)}”) to"
                 if r.predicate == FALLBACK_PREDICATE and r.detail
                 else (
-                    (back_words(r.predicate, r.detail) or "is connected to")
+                    (back_words(r.predicate, r.detail, r.directional) or "is connected to")
                     if r.predicate == "kin_of"
                     else CARD_BACK.get(r.predicate, "is connected to")
                 )

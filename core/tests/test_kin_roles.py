@@ -61,10 +61,10 @@ class TheWords(unittest.TestCase):
 class TheMutualRoles(unittest.TestCase):
     def test_a_cousin_a_sibling_and_a_spouse_read_the_same_from_either_card(self) -> None:
         for word in ("cousin", "sibling", "spouse"):
-            self.assertTrue(reads_both_ways("kin_of", word))
-            self.assertIsNone(back_words("kin_of", word))
+            self.assertTrue(reads_both_ways("kin_of", word, True))
+            self.assertIsNone(back_words("kin_of", word, True))
             self.assertFalse(kin.directional(word))
-            self.assertEqual(link_words("kin_of", word), f"is the {word} of")
+            self.assertEqual(link_words("kin_of", word, True), f"is the {word} of")
             self.assertEqual(kin.parse(f"has a {word}"), (word, False))  # nothing to swap
         self.assertTrue(kin.directional("niece"))
         self.assertTrue(kin.directional("mother"))
@@ -75,17 +75,21 @@ class TheMutualRoles(unittest.TestCase):
 
 class TheConnectionWords(unittest.TestCase):
     def test_a_role_reads_with_the_role_and_an_empty_one_as_before(self) -> None:
-        self.assertEqual(link_words("kin_of", "niece"), "is the niece of")
-        self.assertEqual(link_words("kin_of", ""), "is family of")
-        self.assertEqual(link_words("kin_of", "my favourite relative"), "is family of")
-        self.assertEqual(back_words("kin_of", "niece"), "has a niece")
-        self.assertEqual(back_words("kin_of", ""), None)
+        self.assertEqual(link_words("kin_of", "niece", True), "is the niece of")
+        self.assertEqual(link_words("kin_of", "", True), "is family of")
+        self.assertEqual(link_words("kin_of", "my favourite relative", True), "is family of")
+        self.assertEqual(back_words("kin_of", "niece", True), "has a niece")
+        self.assertEqual(back_words("kin_of", "", True), None)
+        # an older row (no direction given to its detail) reads as plain family, both ways
+        self.assertEqual(link_words("kin_of", "niece"), "is family of")
+        self.assertIsNone(back_words("kin_of", "niece"))
         self.assertEqual(back_words("member_of", ""), "has as a member")
 
     def test_a_role_is_true_from_one_side_only(self) -> None:
-        self.assertFalse(reads_both_ways("kin_of", "niece"))
-        self.assertTrue(reads_both_ways("kin_of", ""))
-        self.assertTrue(reads_both_ways("ally_of", "niece"))
+        self.assertFalse(reads_both_ways("kin_of", "niece", True))
+        self.assertTrue(reads_both_ways("kin_of", "niece"))  # an older row: no direction
+        self.assertTrue(reads_both_ways("kin_of", "", True))
+        self.assertTrue(reads_both_ways("ally_of", "niece", True))
         self.assertFalse(reads_both_ways("knows", ""))
 
     def test_typed_words_become_family_with_a_role(self) -> None:
@@ -101,9 +105,11 @@ class TheConnectionWords(unittest.TestCase):
 
 
 class TheWebEdges(unittest.TestCase):
-    def row(self, tag: str, a: str, b: str, detail: str) -> dict[str, Any]:
+    def row(
+        self, tag: str, a: str, b: str, detail: str, directional: bool = True
+    ) -> dict[str, Any]:
         return {"id": tag, "a": a, "b": b, "predicate": "kin_of", "detail": detail,
-                "secret": False, "at": 1}  # fmt: skip
+                "directional": directional, "secret": False, "at": 1}  # fmt: skip
 
     def test_a_role_edge_has_a_direction_and_both_readings(self) -> None:
         (edge,) = relationships.edges_from([self.row("1", "b", "a", "niece")], can_edit=True)
@@ -113,15 +119,19 @@ class TheWebEdges(unittest.TestCase):
 
     def test_an_old_family_edge_reads_both_ways_as_before(self) -> None:
         (edge,) = relationships.edges_from([self.row("1", "b", "a", "")], can_edit=True)
+        (old,) = relationships.edges_from([self.row("1", "b", "a", "niece", False)], can_edit=True)
+        self.assertEqual(
+            (old["links"][0]["words"], old["links"][0]["direction"]), ("is family of", "both")
+        )
         (link,) = edge["links"]
         self.assertEqual((link["words"], link["direction"]), ("is family of", "both"))
         self.assertIsNone(link["back"])
 
 
-def relation(subject: str, object_: str, detail: str) -> Any:
+def relation(subject: str, object_: str, detail: str, directional: bool = True) -> Any:
     return SimpleNamespace(
         id="r1", subject_id=subject, object_id=object_, predicate="kin_of", detail=detail,
-        status="confirmed", secret=False,
+        status="confirmed", secret=False, directional=directional,
     )  # fmt: skip
 
 
@@ -143,6 +153,11 @@ class TheCard(unittest.TestCase):
         self.assertEqual(self.words("mira", "niece"), "is the niece of Aldric")
         self.assertEqual(self.words("aldric", "niece"), "has a niece Mira")
 
+    def test_an_older_row_with_a_role_word_reads_as_plain_family_on_both_cards(self) -> None:
+        old = relation("mira", "aldric", "niece", directional=False)
+        rows = name_card._rows(self.lookup, "aldric", [old], True)  # type: ignore[arg-type]
+        self.assertEqual(f"{rows[0].words} {rows[0].other}", "is family of Mira")
+
     def test_a_family_connection_with_no_role_reads_the_same_on_both_cards(self) -> None:
         self.assertEqual(self.words("mira", ""), "is family of Aldric")
         self.assertEqual(self.words("aldric", ""), "is family of Mira")
@@ -161,7 +176,9 @@ class TheStoredDirection(MemoryTest):
     async def test_the_niece_is_the_subject_whichever_id_sorts_first(self) -> None:
         a, b = await self.pair()
         for niece, uncle in ((a, b), (b, a)):
-            made = await self.relate(niece, "kin_of", uncle, status=CONFIRMED, detail="niece")
+            made = await self.relate(
+                niece, "kin_of", uncle, status=CONFIRMED, detail="niece", directional=True
+            )
             row = made.value[0]
             self.assertEqual((row.subject_id, row.object_id), (niece, uncle))
             await self.memory.update_relation(
@@ -181,14 +198,16 @@ class TheStoredDirection(MemoryTest):
         plain = (await self.relate(high, "kin_of", low, status=CONFIRMED)).value[0]
         self.assertEqual(plain.subject_id, low)  # (stored sorted, as a two-way connection is)
         moved = await self.memory.change_relation_words(
-            GUILD_A, self.c, plain.id, "kin_of", "niece", source="dm"
+            GUILD_A, self.c, plain.id, "kin_of", "niece", source="dm", directional=True
         )
         self.assertEqual((moved.value.subject_id, moved.value.detail), (low, "niece"))
 
     async def test_a_merge_keeps_the_roles_direction(self) -> None:
         a, b = await self.pair()
         twin = await self.add("Aldrick", status=CONFIRMED)
-        row = (await self.relate(a, "kin_of", twin, status=CONFIRMED, detail="niece")).value[0]
+        row = (
+            await self.relate(a, "kin_of", twin, status=CONFIRMED, detail="niece", directional=True)
+        ).value[0]
         await self.memory.merge(GUILD_A, self.c, b, twin, source="dm", dm_said_same=True)
         moved = await self.memory.relation(GUILD_A, self.c, row.id)
         assert moved is not None

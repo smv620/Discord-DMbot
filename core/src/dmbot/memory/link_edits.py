@@ -9,6 +9,7 @@ are never logged here.
 
 from __future__ import annotations
 
+from dmbot.memory import kin
 from dmbot.memory.models import DM, REJECTED, Relation, Written
 from dmbot.memory.store import MemoryStore
 
@@ -46,6 +47,7 @@ async def change_words(
     if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()):
         return None
     written = await memory.change_relation_words(
-        guild_id, campaign_id, link.id, predicate, detail[:100], source=DM
-    )
+        guild_id, campaign_id, link.id, predicate, detail[:100], source=DM,
+        directional=predicate == "kin_of" and kin.role_of(detail[:100]) is not None,
+    )  # fmt: skip
     return None if written.value.id == link.id else written

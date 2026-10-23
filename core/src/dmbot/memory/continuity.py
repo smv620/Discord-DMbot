@@ -389,9 +389,9 @@ def _make(
     )
 
 
-def _predicate_words(onto: Ontology, key: str, detail: str) -> str:
+def _predicate_words(onto: Ontology, key: str, detail: str, directional: bool = False) -> str:
     term = onto.predicates.get(key)
-    if key == "kin_of" and (role := kin.role_of(detail)):
+    if key == "kin_of" and directional and (role := kin.role_of(detail)):
         return kin.forward(role)  # "is the niece of", not "is family of" (#2457)
     return detail if key == "associated_with" and detail else (term.label if term else key)
 
