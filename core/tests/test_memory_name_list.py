@@ -3,27 +3,107 @@
 import time
 import unittest
 from pathlib import Path
+from typing import Any
 
 from dmbot.memory.name_list import (
+    ASIDE,
     HEADER,
     MAX_ADDED,
     MAX_FILE_BYTES,
     MAX_LINES,
     MAX_NAMES,
     MAX_PER_LINE,
+    NEAR_SOUND,
+    SOUND,
     TEMPLATE,
     TOO_MANY_OTHERS,
     TOO_MANY_SECRETS,
     OutName,
     OutPerson,
     header,
+    judge_bracket,
     parse,
     render,
     render_files,
+    split_bracket,
 )
 from dmbot.memory.sounds import sound_codes
 from dmbot.transcript.cleaner import likeness
 from dmbot.ui.name_lists import read_upload
+
+
+class Pronunciation(unittest.TestCase):
+    """The bracket after a name (#2447): a respelling, an aside, or a maybe. Pure code."""
+
+    def read(self, line: str) -> Any:
+        parsed = parse(line, secrets=True)
+        self.assertEqual(parsed.refused, [])
+        (one,) = parsed.lines
+        return one
+
+    def test_a_respelling_is_how_to_say_the_name_not_another_name(self) -> None:
+        one = self.read("Tavin (TAV-in) | npc")
+        self.assertEqual((one.name, one.said_as, one.ask, one.others), ("Tavin", "TAV-in", "", ()))
+        one = self.read("Ka'zeth (kah-ZETH) | npc | Kaz")
+        self.assertEqual((one.name, one.said_as, one.others), ("Ka'zeth", "kah-ZETH", ("Kaz",)))
+
+    def test_words_in_the_bracket_make_it_an_aside_kept_as_another_name(self) -> None:
+        one = self.read("Tavin (the rogue) | npc")
+        self.assertEqual((one.name, one.said_as, one.ask), ("Tavin", "", ""))
+        self.assertEqual(one.others, ("Tavin the rogue",))
+        one = self.read("Vex (the Ashen Hand's boss) | npc")
+        self.assertEqual((one.name, one.others), ("Vex", ("Vex the Ashen Hand's boss",)))
+
+    def test_a_plain_word_beats_a_good_sound(self) -> None:
+        # "A" and "of" are plain English: an aside, even though the rest sounds like the name
+        self.assertEqual(self.read("Tavin (a TAV-in) | npc").said_as, "")
+        self.assertEqual(self.read("Tavin (a TAV-in) | npc").others, ("Tavin a TAV-in",))
+
+    def test_a_near_miss_asks_and_changes_nothing_until_answered(self) -> None:
+        one = self.read("Jorvik (YOR-vick) | npc")
+        self.assertEqual(
+            (one.name, one.said_as, one.ask, one.others), ("Jorvik", "", "YOR-vick", ())
+        )
+
+    def test_a_look_alike_without_a_respelling_mark_is_asked_never_accepted_silently(self) -> None:
+        for name, inside in (("Kaela", "Kael"), ("Jon", "John"), ("Sera", "Sara"), ("Vex", "Vix")):
+            self.assertNotEqual(judge_bracket(name, inside), SOUND, (name, inside))
+        self.assertEqual(judge_bracket("Tavin", "TAV-in"), SOUND)
+        self.assertEqual(judge_bracket("Ka'zeth", "kah-ZETH"), SOUND)
+        self.assertEqual(judge_bracket("Tavin", "TAVin"), SOUND)  # a shouted syllable counts
+        self.assertEqual(judge_bracket("Tavin", "tavin"), NEAR_SOUND)  # alike, but no mark
+        self.assertEqual(judge_bracket("Tavin", "the rogue"), ASIDE)
+        self.assertEqual(judge_bracket("Tavin", "rogue"), ASIDE)  # far from the name
+
+    def test_brackets_must_be_a_matching_pair(self) -> None:
+        self.assertIsNone(split_bracket("Tavin (TAV-in]"))
+        self.assertEqual(split_bracket("Tavin [TAV-in]"), ("Tavin", "TAV-in"))
+
+    def test_the_first_line_that_gives_a_pronunciation_decides(self) -> None:
+        for text, said, ask in (
+            ("Tavin (the rogue) | npc\nTavin (TAV-in) | npc", "TAV-in", ""),
+            ("Tavin (TAH-veen) | npc\nTavin (TAV-in) | npc", "TAV-in", ""),
+            ("Tavin (TAV-in) | npc\nTavin (TAY-vin) | npc", "TAV-in", ""),
+            ("Tavin (TAH-veen) | npc\nTavin (tahveen) | npc", "", "TAH-veen"),
+        ):
+            (one,) = parse(text, secrets=True).lines
+            self.assertEqual((one.said_as, one.ask), (said, ask), text)
+
+    def test_a_split_name_remembers_the_whole_one(self) -> None:
+        (one,) = parse("Fenn (Lower Quay) | place", secrets=True).lines
+        self.assertEqual(
+            (one.name, one.whole, one.others), ("Fenn", "Fenn (Lower Quay)", ("Fenn Lower Quay",))
+        )
+
+    def test_no_bracket_and_a_bracket_not_at_the_end_are_left_alone(self) -> None:
+        self.assertEqual(self.read("Tavin | npc").said_as, "")
+        one = self.read("The (old) Mill | place")
+        self.assertEqual((one.name, one.said_as, one.ask), ("The (old) Mill", "", ""))
+
+    def test_the_first_line_for_a_name_decides_its_pronunciation(self) -> None:
+        parsed = parse("Tavin (TAV-in) | npc\nTavin (the rogue) | npc", secrets=True)
+        (one,) = parsed.lines
+        self.assertEqual((one.said_as, one.others), ("TAV-in", ("Tavin the rogue",)))
 
 
 class Template(unittest.TestCase):

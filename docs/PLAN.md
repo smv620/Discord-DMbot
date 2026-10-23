@@ -2029,7 +2029,16 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **One process for prose.** Whatever arrives through 📜 Upload campaign lore or 📥 Add many (a pasted text, a
     file, a link):
     - **A strict names list** (`name (pronunciation) | kind | other names`, one per line) is added straight
-      away, with no AI.
+      away, with no AI. **The bracket after a name** is how to say it only when code judges it a respelling
+      (#2447, built 2026-10-23): after dropping hyphens, stress marks and capitals its sound key is close to
+      the name's, and it holds no plain English word ("the", "of", "a", "an", "and"…). `Tavin (TAV-in)` and
+      `Ka'zeth (kah-ZETH)` keep the bracket as the name's said-as (#1451). Anything else is an aside, kept as
+      another name: `Tavin (the rogue)` gives "Tavin the rogue". A near miss (`Jorvik (YOR-vick)`) asks the DM
+      once after saving, "Is (YOR-vick) how to say **Jorvik**?" with [It's how to say it] and [It's another
+      name]; nothing changes until they answer. A bracket is accepted without asking only when it
+      also looks like a respelling (a hyphen, a stress mark or a shouted syllable: `TAV-in`, `kah-ZETH`); a plain
+      look-alike (`Kaela (Kael)`) is asked. A name the campaign already has with its bracket (a Download all
+      writes `Fenn (Lower Quay)`) stays whole when uploaded back. The first line that gives a pronunciation decides.
     - **Anything with prose in it** goes through the same single AI read as campaign lore: names and the
       connections the text states, each with its quote. Code keeps a connection only when its quote is in the
       text and both names are in this read or the campaign. **Nothing is invented:** no AI (PlotBot included)
@@ -2051,11 +2060,11 @@ names panel nor the speech-to-text hints can be a fixed list.
   - **📌 Asserted or 100% truth:** the lore upload has one switch, **Asserted** (the default) or **📌 100% truth**.
     Kept connections from a truth upload are pinned. Either way, everything uploaded starts not revealed to
     players.
-  - **Pronunciation in the list** (`Moric (MOR-ick) | NPC | Mo`): the bracket after a name is read as how to say
+  - **Pronunciation in the list** (`Tavin (TAV-in) | NPC | Mo`): the bracket after a name is read as how to say
     it only when it looks like a respelling of that name. Code decides, never the AI: its letters (hyphens,
     stress marks and capitals ignored) sound close to the name, and it holds no plain words like "the", "of" or
-    "a". Otherwise it's an aside, kept as an other name with the name in front: `Moric (the rogue)` gives
-    Moric, also called "Moric the rogue". A near miss asks the DM ("Is (the Rogue) how to say Moric?" [It's how
+    "a". Otherwise it's an aside, kept as an other name with the name in front: `Tavin (the rogue)` gives
+    Tavin, also called "Tavin the rogue". A near miss asks the DM ("Is (the Rogue) how to say Tavin?" [It's how
     to say it] [It's another name]). A pronunciation goes to the name's "said as" (#1451).
   - **📌 In the story graph:** the DM can pin or unpin any connection as 100% truth (DM only, with Undo).
   - **Off the rails:** after a session, a claim that contradicts a 📌 truth gives the DM one private DM-screen

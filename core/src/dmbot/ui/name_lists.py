@@ -49,6 +49,7 @@ from dmbot.memory.name_list import (
     OutName,
     OutPerson,
     Parsed,
+    check_name,
     parse,
     render_files,
     template,
@@ -67,7 +68,7 @@ from dmbot.ui.dmbot_commands import (
     _send,
     _tell,
 )
-from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, plan, too_many
+from dmbot.ui.list_matches import UNKNOWN_KIND, KindDiffers, Near, SoundAsk, plan, too_many
 from dmbot.ui.names import (
     KIND_SHORT,
     KINDS,
@@ -707,6 +708,12 @@ async def import_list(
         for word, positions in p.groups.items()
         if (ids := [i for pos in positions if (i := saved[pos]) is not None])
     }
+    await _keep_pronunciations(memory, campaign, p.sounds, saved)
+    sound_asks = [
+        (entity_id, a)
+        for a in p.asks
+        if a.position < len(saved) and (entity_id := saved[a.position]) is not None
+    ]
     counts = Counts(added, look, known, p.dropped, enriched, p.swapped, p.repeated)
     people_lines = await _add_people(interaction, campaign, parsed) if parsed.people else []
     await _send_summary(
@@ -717,6 +724,23 @@ async def import_list(
         await NearQuestions.send(interaction, campaign.id, near, saved)
     if p.kinds:
         await KindDiffQuestions.send(interaction, campaign.id, p.kinds)
+    if sound_asks:
+        await SoundQuestions.send(interaction, campaign.id, sound_asks)
+
+
+async def _keep_pronunciations(
+    memory: Any, campaign: Campaign, sounds: dict[int, str], saved: list[str | None]
+) -> None:
+    """A bracket that is clearly a respelling ("Tavin (TAV-in)") is the name's said-as (#1451,
+    #2447). A failure is logged and the name stays: the DM can set it on the card."""
+    for position, spelling in sounds.items():
+        entity_id = saved[position] if position < len(saved) else None
+        if entity_id is None:
+            continue
+        try:
+            await memory.set_said_as(campaign.guild_id, campaign.id, entity_id, spelling, source=DM)
+        except Exception as exc:  # never the spelling: it is the DM's text
+            log.warning("Couldn't keep a pronunciation from a list (%s)", type(exc).__name__)
 
 
 PEOPLE_SHOWN = 5  # refused player or DM rows named in the summary, then "and N more"
@@ -1440,6 +1464,97 @@ class KindDiffQuestions(_Questions):
                     self.answers[i] = f"✅ Changed {done} to {KIND_SHORT.get(want, want)}." + (
                         "" if done == len(names) else " (The rest were changed or removed already.)"
                     )
+
+            await self.run(interaction, work)
+
+        return handler
+
+
+class SoundQuestions(_Questions):
+    """ "Is (TAH-veen) how to say Tavin?" once for each bracket the list gave that may be a
+    respelling (#2447): [It's how to say it] keeps it as the name's said-as, [It's another name]
+    keeps "Tavin TAH-veen" as another name. Unanswered ones change nothing."""
+
+    def __init__(self, campaign_id: str, items: list[tuple[str, SoundAsk]]) -> None:
+        super().__init__(campaign_id)
+        self.items = items[:QUESTION_ROWS]
+        self.later = len(items) - len(self.items)
+        self.answers: dict[int, str] = {}
+        self.build()
+
+    @classmethod
+    async def send(
+        cls, interaction: discord.Interaction, campaign_id: str, items: list[tuple[str, SoundAsk]]
+    ) -> None:
+        view = cls(campaign_id, items)
+        await interaction.followup.send(
+            view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+        )
+
+    def done(self) -> bool:
+        return len(self.answers) == len(self.items)
+
+    def text(self) -> str:
+        lines = ["🗣️ **How to say a name?** You can ignore this. Nothing changes unless you press."]
+        for i, (_, ask) in enumerate(self.items):
+            line = (
+                f"{i + 1}. Is ({_md(ask.text)}) how to say **{_md(_short(ask.name))}**? "
+                f"Yes: DMbot says it that way. No: it is saved as another name, "
+                f"“{_md(_short(ask.name))} {_md(ask.text)}”."
+            )
+            lines.append(line + (f" {self.answers[i]}" if i in self.answers else ""))
+        if self.later:
+            lines.append(
+                f"{self.later} more were not asked, so nothing was kept for them. "
+                "Set them on the name's card."
+            )
+        if self.done():
+            lines.append("All checked.")
+        return _fit(lines)
+
+    def build(self) -> None:
+        self.clear_items()
+        for i, _ in enumerate(self.items):
+            if i in self.answers:
+                continue
+            self.add_item(
+                _Button(
+                    self._answer(i, True), label=f"{i + 1}. Yes, how to say it",
+                    style=discord.ButtonStyle.primary, row=i,
+                )
+            )  # fmt: skip
+            self.add_item(
+                _Button(self._answer(i, False), label=f"{i + 1}. No, another name", row=i)
+            )
+
+    def _answer(self, i: int, sound: bool) -> Any:
+        async def handler(interaction: discord.Interaction) -> None:
+            async def work(it: discord.Interaction, campaign: Campaign, memory: Any) -> None:
+                if i in self.answers:
+                    return
+                self.answers[i] = "⏳"  # taken now, so a second press can't answer it twice
+                entity_id, ask = self.items[i]
+                try:
+                    if sound:
+                        await memory.set_said_as(
+                            campaign.guild_id, campaign.id, entity_id, ask.text, source=DM
+                        )
+                        self.answers[i] = f"✅ Said as {_md(ask.text)}."
+                    else:
+                        another = f"{ask.name} {ask.text}"
+                        if check_name(another) is not None:  # the list's own limits
+                            self.answers[i] = "Not kept: too long for a name. Set it on the card."
+                            return
+                        await memory.add_alias(
+                            campaign.guild_id, campaign.id, entity_id, another,
+                            kind="short", source=DM, status=CONFIRMED,
+                        )  # fmt: skip
+                        self.answers[i] = f"✅ Also called “{_md(ask.name)} {_md(ask.text)}”."
+                except MemoryRuleError as exc:
+                    self.answers[i] = f"Not kept. {exc} Open the name's card to set it."
+                except Exception:
+                    log.exception("Answering a pronunciation question failed")
+                    self.answers[i] = "That didn't work. Open the name's card to set it."
 
             await self.run(interaction, work)
 

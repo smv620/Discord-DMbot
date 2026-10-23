@@ -50,6 +50,45 @@ def run(text: str, *, secrets: bool = True) -> Plan:
     return plan(parse(text, secrets=secrets).lines, NAMES, secrets=secrets)
 
 
+class Brackets(unittest.TestCase):
+    """The bracket after a name in the plan (#2447)."""
+
+    def test_a_respelling_and_a_question_are_carried_by_place(self) -> None:
+        got = plan(
+            parse("Tavin (TAV-in) | npc\nJorvik (YOR-vick) | npc", secrets=True).lines,
+            NAMES,
+            secrets=True,
+        )
+        self.assertEqual([n.name for n in got.new], ["Tavin", "Jorvik"])
+        self.assertEqual(got.sounds, {0: "TAV-in"})
+        self.assertEqual(
+            [(a.position, a.name, a.text) for a in got.asks], [(1, "Jorvik", "YOR-vick")]
+        )
+
+    def test_an_aside_is_another_name_of_a_new_entry(self) -> None:
+        got = run("Tavin (the rogue) | npc")
+        self.assertEqual((got.new[0].name, got.new[0].others), ("Tavin", ("Tavin the rogue",)))
+
+    def test_a_name_the_campaign_already_has_with_its_bracket_stays_whole(self) -> None:
+        """A Download all writes "Fenn (Lower Quay)"; uploading it back changes nothing."""
+        fenn = "e" * 32
+        known = CampaignLookup.build(
+            LookupData(
+                1,
+                (entity(fenn, "Fenn (Lower Quay)", "place"),),
+                (alias(fenn, "Fenn (Lower Quay)"),),
+                (),
+                (),
+            )
+        )
+        got = plan(parse("Fenn (Lower Quay) | place", secrets=True).lines, known, secrets=True)
+        self.assertEqual((got.new, got.more, got.known), ([], [], 1))  # no stray "Fenn" alias
+
+    def test_a_name_new_to_the_campaign_with_a_bracket_is_split(self) -> None:
+        got = run("Fenn (Lower Quay) | place")
+        self.assertEqual((got.new[0].name, got.new[0].others), ("Fenn", ("Fenn Lower Quay",)))
+
+
 class SameName(unittest.TestCase):
     def test_new_other_names_fold_into_the_known_name(self) -> None:
         p = run("Belleros | NPC | Bel, the old knight, Bell")

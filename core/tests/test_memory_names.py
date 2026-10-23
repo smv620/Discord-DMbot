@@ -1564,6 +1564,35 @@ class Lists(NamesTest):
         )
         self.assertNotIn("Bryn Shander", await self.names())
 
+    async def test_a_bracket_after_a_name_is_how_to_say_it_or_another_name_or_asked(self) -> None:
+        """#2447: Tavin (TAV-in) is said-as; Sera (the rogue) is another name; Jorvik (YOR-vick)
+        is asked once and changes nothing until answered."""
+        sent = await self.add_many(
+            "Tavin (TAV-in) | npc\nSera (the rogue) | npc\nJorvik (YOR-vick) | npc"
+        )
+        names = await self.names()
+        self.assertTrue({"Tavin", "Sera", "Jorvik"} <= set(names))  # the brackets are not in names
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, names["Tavin"].id), "TAV-in"
+        )
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id))
+        aliases = await self.memory.aliases(GUILD, self.campaign.id)
+        self.assertIn("Sera the rogue", {a.text for a in aliases})
+        question = sent[-1]
+        self.assertIn("Is (YOR-vick) how to say **Jorvik**?", question.args[0])
+        await self.press(question.kwargs["view"], "1. Yes, how to say it")
+        self.assertEqual(
+            await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id), "YOR-vick"
+        )
+
+    async def test_the_other_answer_keeps_the_bracket_as_another_name(self) -> None:
+        sent = await self.add_many("Jorvik (YOR-vick) | npc")
+        await self.press(sent[-1].kwargs["view"], "1. No, another name")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id)
+        self.assertIn("Jorvik YOR-vick", {a.text for a in aliases})
+        names = await self.names()
+        self.assertIsNone(await self.memory.said_as(GUILD, self.campaign.id, names["Jorvik"].id))
+
     async def test_undo_for_a_list_says_when_it_is_too_late(self) -> None:
         from dmbot.ui import name_lists
 
