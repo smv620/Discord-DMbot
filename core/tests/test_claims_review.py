@@ -236,6 +236,9 @@ class DmScreen(ConfirmedMemoryTest):
         await DMBot.note_claims(fake, table)  # type: ignore[arg-type]
         fake.post.assert_not_called()  # counted, not yet told: the summary may carry it
         self.assertEqual(table.claims_waiting, 1)
+        # the words are kept for the DM-only summary; the post below never has them
+        self.assertEqual(len(table.claim_preview), 1)
+        self.assertIn("Bram", table.claim_preview[0])
         await DMBot.post_claims(fake, table)  # type: ignore[arg-type]
         self.assertEqual(table.claims_waiting, 0)  # told once
         text = fake.post.await_args.args[1]

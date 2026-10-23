@@ -27,6 +27,29 @@ describe("the Shared rules page", () => {
     expect(screen.getByText("Frostmaiden pack")).toBeTruthy();
   });
 
+  it("has the breadcrumb, and links each campaign's house rules and homebrew pages", async () => {
+    page(mockApi("table"));
+    await screen.findByText("Brynwater table rules");
+    const crumbs = screen.getByRole("navigation", { name: text.crumbsLabel });
+    expect(within(crumbs).getByRole("link", { name: text.account }).getAttribute("href")).toBe("/account");
+    expect(within(crumbs).getByText(text.heading).getAttribute("aria-current")).toBe("page");
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs.some((h) => h.startsWith("/account/house-rules/"))).toBe(true);
+    expect(hrefs.some((h) => h.startsWith("/account/homebrew/"))).toBe(true);
+  });
+
+  it("lists two sets that share a name, each once", async () => {
+    const api = mockApi("table");
+    const read = api.sharedRules!.bind(api);
+    api.sharedRules = async () => {
+      const got = await read();
+      const first = got[0]!;
+      return [{ ...first, publishes: [...first.publishes, { ...first.publishes[0]! }] }, ...got.slice(1)];
+    };
+    page(api);
+    expect(await screen.findAllByText("Brynwater table rules")).toHaveLength(2);
+  });
+
   it("says whether it is still shared, whether a code is on, and which are no longer updated", async () => {
     page(mockApi("table"));
     const rules = (await screen.findByText("Brynwater table rules")).closest("li") as HTMLElement;

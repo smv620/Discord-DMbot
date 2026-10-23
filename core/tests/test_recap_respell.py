@@ -25,10 +25,11 @@ class Recaps(Base):
         async with self.db.guild(1) as conn:
             await conn.execute(
                 "UPDATE recap_jobs SET state = %s, status = %s, title = %s, summary = %s,"
-                " original = %s, approved_hash = %s, audio = %s, audio_text_hash = %s"
+                " original = %s, approved_hash = %s, audio = %s, audio_text_hash = %s,"
+                " audio_choice = %s"
                 " WHERE campaign_id = %s AND session_at = %s",
                 (state, status, TITLE, TEXT, TEXT, hashed if approved else "", audio,
-                 hashed if audio == "ready" else "", campaign.id, at),
+                 hashed if audio == "ready" else "", "text" if approved else "", campaign.id, at),
             )  # fmt: skip
 
     async def respell(self, campaign: Any | None = None) -> Any:
