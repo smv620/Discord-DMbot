@@ -149,6 +149,7 @@ const pages = [
   ["account, free access", "/account?demo=free-paying"],
   ["recap list", "/account/recaps?demo=table"],
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
+  ["a recap unchecked for 3 days (#2297)", "/account/recaps/200000000000000001.cmp9.1789000000?demo=table"],
   ["a recap's names, with how to say each (#2317)", `/account/recaps/${REF}?demo=table`, async (page) => {
     await page.getByText("Names in this campaign").first().click();
     await page.getByRole("button", { name: /Suggest/ }).first().waitFor();
