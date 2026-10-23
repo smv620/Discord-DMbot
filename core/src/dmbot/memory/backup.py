@@ -203,6 +203,7 @@ def _valid(column: str, value: object) -> bool:
         "hidden_from_players",
         "made_before_name_gate",
         "unrevealed",
+        "pinned",
     ):
         return isinstance(value, bool)
     if column == "score":  # an impression's or attitude's feeling (#1655)
@@ -405,6 +406,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "manipulated_by": None,  # from before beliefs (#2409)
                 **raw,
             }
+        elif isinstance(raw, dict) and raw.get("table") == "belief":
+            raw = {"pinned": False, **raw}  # from before the pin (#2447)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":

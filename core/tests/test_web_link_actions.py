@@ -11,8 +11,9 @@ import httpx
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import MemoryRuleError
-from dmbot.web import relationships
+from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
@@ -206,6 +207,47 @@ class TheEdits(Editing):
         done = await self.poll(answer)
         self.assertEqual(done["state"], "done")
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
+
+    async def test_a_dm_pins_and_unpins_a_connection_and_a_retry_is_done(self) -> None:
+        link = await self.free_link("sworn to")
+        pinned = await self.edit(link, action="pin", pinned=True)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(pinned))["state"], "done")
+        self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), {link})
+        again = await self.edit(link, action="pin", pinned=True)  # (a retried job: already so)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(again))["state"], "done")
+        off = await self.edit(link, action="pin", pinned=False)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(off))["state"], "done")
+        self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), set())
+
+    async def test_only_a_dm_can_queue_a_pin_and_it_needs_a_yes_or_no(self) -> None:
+        link = await self.free_link("sworn to")
+        self.assertEqual(await self.refused_edit(link=link, action="pin"), "bad_action")
+        self.assertEqual(
+            await self.refused_edit(link=link, action="pin", pinned="yes"), "bad_action"
+        )
+        self.assertEqual(
+            await self.refused_edit(self.player, link=link, action="pin", pinned=True),
+            "not_allowed",
+        )
+
+    async def test_a_stranger_cannot_queue_a_pin_nor_read_its_answer(self) -> None:
+        link = await self.free_link("sworn to")
+        token = await sessions.sign_in(
+            self.web, ALICE, [DiscordGuild(id=999, name="Elsewhere", manage=True)], now=NOW, days=30
+        )
+        stranger = await sessions.find(self.web, token, now=NOW)  # in another server only
+        self.assertIn(
+            await self.refused_edit(stranger, link=link, action="pin", pinned=True),
+            ("not_found", "not_allowed"),
+        )
+        queued = await self.edit(link, action="pin", pinned=True)
+        with self.assertRaises(RecapError):
+            await self.poll(queued, stranger)
+        await self.apply_all()
+        self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), {link})
 
     async def test_secret_and_known_switch_one_connection(self) -> None:
         link = self.links["rook-keep"]

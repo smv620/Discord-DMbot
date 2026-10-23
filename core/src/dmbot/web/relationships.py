@@ -59,6 +59,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 "words": link_words(str(row["predicate"]), str(row["detail"] or "")),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
+                "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
                 "direction": direction,
                 "at": int(row["at"]),
             }
@@ -79,6 +80,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "words": x["words"],
                         "secret": x["secret"] if can_edit else False,
                         "revealed": x["revealed"] if can_edit else True,
+                        "pinned": x["pinned"] if can_edit else False,
                         "direction": x["direction"],
                     }
                     for x in links
@@ -262,7 +264,8 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}` or `{action: "remove", confirm: true}`. Returns the answer's id."""
+    secret}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
+    answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -279,6 +282,13 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-secret", target=link_id,
             text="", flag=bool(body["secret"]),
+        )  # fmt: skip
+    if action == "pin":  # 📌 100% truth (#2447); the door lets only a DM queue it
+        if not isinstance(body.get("pinned"), bool):
+            raise RecapError("bad_action")
+        return await _queue(
+            db, session, ref, entity=None, action="link-pin", target=link_id,
+            text="", flag=bool(body["pinned"]),
         )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:

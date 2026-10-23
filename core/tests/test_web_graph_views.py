@@ -95,6 +95,25 @@ class TheDm(Views):
         self.assertTrue(cut_full["truncated"])  # the DM's set is bigger than the cap
         self.assertFalse(whole_players["truncated"])  # the players' own set just fits
 
+    async def test_a_pinned_connection_is_marked_for_the_dm_only(self) -> None:
+        link = self.links["mira-keep"]
+        await self.memory.pin(self.g, self.one.id, link, True, source="dm")
+
+        def pins(got: dict[str, Any]) -> dict[str, bool]:
+            return {x["id"]: x["pinned"] for e in got["edges"] for x in e["links"]}
+
+        full = await self.graph(center=self.mira, hops=1, view="full")
+        self.assertTrue(pins(full)[link])
+        self.assertFalse(pins(full)[self.links["mira-rook"]])
+        self.assertFalse(
+            any(pins(await self.graph(center=self.mira, hops=1, view="players")).values())
+        )
+        await self.setScreen("peek")
+        peek = await self.graph(self.player, center=self.mira, hops=1, view="full")
+        self.assertFalse(any(pins(peek).values()))  # a peek never shows the DM's pin
+        await self.memory.pin(self.g, self.one.id, link, False, source="dm")
+        self.assertFalse(pins(await self.graph(center=self.mira, hops=1, view="full"))[link])
+
     async def test_a_view_that_is_neither_is_refused(self) -> None:
         self.assertEqual(await self.refused_with(self.session, view="everything"), "bad_view")
 
