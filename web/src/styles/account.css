@@ -63,7 +63,56 @@
     margin: 0;
   }
 
-  .account .panel h2 {
+  /* The breadcrumb and the four tabs on every page of a campaign (#2461). The "›" is drawn by the
+     style, so a screen reader hears the three names and the list itself, not a symbol. */
+  .account .campaign-nav {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0 0 var(--space-4);
+  }
+
+  .account .crumbs,
+  .account .tabs {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .account .crumbs li + li::before {
+    content: "›";
+    margin-right: var(--space-2);
+    color: var(--text-muted);
+  }
+
+  .account .tabs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    text-decoration: none;
+  }
+
+  .account .tabs a[aria-current] {
+    font-weight: 700;
+    border-color: var(--accent);
+  }
+
+  /* The Shared rules page (#2460): a set or pack, its facts under it, and where to change it. */
+  .account .shared-rules {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .account .panel h2,
+  .account .panel h3 {
     font-size: var(--text-lg);
     margin: 0;
   }
@@ -122,6 +171,16 @@
   .account .ok {
     color: var(--accent);
     font-weight: 600;
+  }
+
+  /* A campaign card's facts (#2460): short phrases that wrap on a phone, never a table. */
+  .account .facts {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-3);
   }
 
   /* A sentence DMbot would have looked at twice (#2297): a pale warning background with the page's
@@ -449,7 +508,8 @@
     overflow: hidden;
   }
 
-  .account .danger h2 {
+  .account .danger h2,
+  .account .danger h3 {
     color: var(--danger);
   }
 
@@ -519,7 +579,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 44px;
+  min-height: var(--tap);
   min-width: 9rem;
 }
 
@@ -652,7 +712,7 @@
 
 .account .cue-help summary {
   cursor: pointer;
-  min-height: 44px;
+  min-height: var(--tap);
   padding: 0.6rem 0;
   display: list-item;
 }

@@ -19,7 +19,7 @@ import {
   type NamesPage,
   type NameSort,
 } from "./api";
-import BackToCampaign from "./BackToCampaign";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -265,7 +265,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
   return (
     <div class="stack names-page">
       <section class="stack" aria-labelledby="names-campaign">
-        <BackToCampaign campaignRef={ref} name={data.campaign} />
+        <CampaignNav api={api} campaignRef={ref} page="names" name={data.campaign} />
         <h2 id="names-campaign">{data.campaign}</h2>
         <p class="muted small">{words.lead}</p>
         <a class="button secondary" href={`/account/web/${encodeURIComponent(ref)}`}>

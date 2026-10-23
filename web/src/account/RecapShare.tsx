@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // Sharing a posted recap by a link (#2119; core #2118): the DM sees the link with Copy, can turn it
-// off, or make a new one (the old one stops). Only a posted recap can have one; the API decides, and
+// off, or make a new one (the old one stops). Only a posted or approved recap can have one; the API decides, and
 // this shows what it says. The API gives the link's path (`/r/<token>`) and the page adds its own
 // address. Shown only while RECAP_SHARE_LIVE is true and the API sent a `share` for the recap.
 import { useRef, useState } from "preact/hooks";
@@ -34,8 +34,10 @@ export default function RecapShareControls({
 
   if (!(RECAPS_LIVE && RECAP_SHARE_LIVE) || !recap.share || !api.shareRecap)
     return null;
-  // A draft or skipped recap has no link to make; say what to do instead of a dead button.
-  if (recap.status !== "posted")
+  // A recap the DM has not approved has no link to make; say what to do instead of a dead button.
+  // One being posted, posted, or approved and not posted may have one (#2119, #2419).
+  const unposted = recap.status === "draft" && recap.approval?.approved === true;
+  if (recap.status === "dropped" || (recap.status === "draft" && !unposted))
     return (
       <section class="panel" aria-labelledby="recap-share">
         <h3 id="recap-share">{words.heading}</h3>
@@ -93,7 +95,11 @@ export default function RecapShareControls({
     <section class="panel" aria-labelledby="recap-share">
       <h3 id="recap-share">{words.heading}</h3>
       <p class="muted small">
-        {link ? words.onLead(words.audio) : words.offLead(words.audio)}
+        {link
+          ? words.onLead(words.audio)
+          : unposted
+            ? words.offLeadApproved(words.audio)
+            : words.offLead(words.audio)}
       </p>
       {problem && (
         <p class="note bad" role="alert">
