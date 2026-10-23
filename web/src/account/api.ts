@@ -42,14 +42,23 @@ export interface Campaign {
   /** ISO date and time of the last session, or null if never played. */
   lastPlayedAt: string | null;
   status: "active" | "paused";
-  /** "owner": uses your hours. "co-dm": you help run it. */
-  role: "owner" | "co-dm";
+  /** "owner": uses your hours. "co-dm": you help run it. "player": you play in it (#2460). */
+  role: "owner" | "co-dm" | "player";
   /** Importing older sessions works in this campaign's server (#2259), even while the site's own
    * IMPORT_LIVE is off: the owner's test servers. Missing from an API older than that. */
   importsOn?: boolean;
   /** The campaign's address, `<server>.<campaign>`, as the other pages' addresses (#2416). Missing
    * from an API older than that: the campaign is then not linked. */
   ref?: string;
+  /** The facts on the card (#2460), each left out when there is none: DMbot is listening there
+   * now, the sessions played, hours played (two decimals), player characters claimed, NPCs the
+   * person may see, and when the campaign was started (ISO). Missing from an older API. */
+  live?: boolean;
+  sessions?: number;
+  hoursPlayed?: number;
+  players?: number;
+  npcs?: number;
+  startedAt?: string;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
