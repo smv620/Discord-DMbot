@@ -148,9 +148,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     peekSwitch.current?.focus();
   }
 
+  const [revealing, setRevealing] = useState<Set<string>>(new Set());
+
   /** A DM shows a name or a connection to the players, then the web is read again. */
   async function reveal(target: WebRevealTarget): Promise<string | null> {
     if (!ref || !api.webReveal) return words.errorFallback;
+    const key = `${target.kind}:${target.id}`;
+    if (revealing.has(key)) return null; // it can take up to a minute: one press at a time
+    setRevealing((now) => new Set(now).add(key));
     try {
       await api.webReveal(ref, target);
     } catch (error) {
@@ -160,6 +165,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         return "";
       }
       return said;
+    } finally {
+      setRevealing((now) => {
+        const next = new Set(now);
+        next.delete(key);
+        return next;
+      });
     }
     setNews({ ok: true, text: words.revealed, n: ++sayings.current });
     await load(center, hops, true);
@@ -408,7 +419,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           nameOf={nameOf}
           canEdit={canEdit}
           act={act}
-          reveal={reveal}
+          reveal={reveal} revealing={revealing}
           onClose={() => setLine(null)}
         />
       )}
@@ -438,7 +449,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   type="button"
                   class="button secondary"
                   aria-label={words.revealFor(n.name)}
-                  onClick={() => void reveal({ kind: "name", id: n.id })}
+                  disabled={revealing.has(`name:${n.id}`)}
+                  onClick={() =>
+                    void reveal({ kind: "name", id: n.id }).then((said) => {
+                      // A refusal or a give-up is said in its own words, never swallowed.
+                      if (said) setNews({ ok: false, text: said, n: ++sayings.current });
+                    })
+                  }
                 >
                   {words.reveal}
                 </button>
@@ -554,6 +571,7 @@ function LinePanel({
   canEdit,
   act,
   reveal,
+  revealing,
   onClose,
 }: {
   edge: WebEdge;
@@ -561,6 +579,7 @@ function LinePanel({
   canEdit: boolean;
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
+  revealing: Set<string>;
   onClose: () => void;
 }) {
   const a = nameOf(edge.a);
@@ -572,7 +591,7 @@ function LinePanel({
       <h2 id="web-line-h">{words.edgePanel(a, b)}</h2>
       <ol class="stack">
         {edge.links.map((l, i) => (
-          <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} />
+          <LinkRow key={l.id} n={i + 1} link={l} a={a} b={b} canEdit={canEdit} act={act} reveal={reveal} revealing={revealing} />
         ))}
       </ol>
       {canEdit && <AddLink edge={edge} act={act} />}
@@ -591,6 +610,7 @@ function LinkRow({
   canEdit,
   act,
   reveal,
+  revealing,
 }: {
   n: number;
   link: WebEdge["links"][number];
@@ -599,6 +619,7 @@ function LinkRow({
   canEdit: boolean;
   act: (change: WebLinkChange, ok: string) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
+  revealing: Set<string>;
 }) {
   const [text, setText] = useState(link.words);
   const [problem, setProblem] = useState<string | null>(null);
@@ -626,6 +647,7 @@ function LinkRow({
             type="button"
             class="button secondary"
             aria-label={words.revealLink(n)}
+            disabled={revealing.has(`link:${link.id}`)}
             onClick={() => void reveal({ kind: "link", id: link.id }).then(setProblem)}
           >
             {words.reveal}
