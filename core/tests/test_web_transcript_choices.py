@@ -187,3 +187,21 @@ class Settling(Base):
             done = await self.store_t.settle_topics(THURSDAY.id, self.sid, {ALICE.id})
             self.assertEqual((done.turned_back, done.left_out), (0, 6))
         self.assertEqual((await self.topics()).count("off_topic"), 6)
+
+    async def test_a_mixed_stretch_gives_the_same_answer_every_run(self) -> None:
+        await self.store_t.add_lines(
+            THURSDAY.id,
+            self.sid,
+            [
+                Line(BASE_MS + 1_000, BOB.id, "one", "one", 1000),
+                Line(BASE_MS + 2_000, BOB.id, "x", "x", 20_000, "off_topic"),
+                Line(BASE_MS + 22_000, ALICE.id, "y", "y", 10_000, "off_topic"),
+                Line(BASE_MS + 33_000, BOB.id, "z", "z", 30_000, "off_topic"),
+                Line(BASE_MS + 70_000, BOB.id, "two", "two", 1000),
+            ],
+        )
+        first = await self.store_t.settle_topics(THURSDAY.id, self.sid, {ALICE.id})
+        after_first = await self.topics()
+        second = await self.store_t.settle_topics(THURSDAY.id, self.sid, {ALICE.id})
+        self.assertEqual(await self.topics(), after_first)
+        self.assertEqual(first, second)

@@ -484,16 +484,16 @@ async def _choices(
 
 async def _session_id(
     db: Database, session: Session, ref: str, number: int, *, now: int, enforce_plans: bool
-) -> tuple[int, str, str]:
-    """(server, campaign, the session's id) for a numbered session, or a refusal. A session whose
-    transcript was deleted has nothing to change, and counts as not found."""
+) -> tuple[int, str, str, int]:
+    """(server, campaign, the session's id, when it started in Unix seconds) for a numbered
+    session, or a refusal. A session whose transcript was deleted has nothing to change, and counts as not found."""
     guild_id, campaign_id, found = await _sessions(
         db, session, ref, now=now, enforce_plans=enforce_plans
     )
     wanted = next((s for s in found["sessions"] if int(s["number"]) == number), None)
     if wanted is None or _deleted_at(wanted) is not None:
         raise RecapError("not_found")
-    return guild_id, campaign_id, str(wanted["id"])
+    return guild_id, campaign_id, str(wanted["id"]), int(wanted["startedAt"])
 
 
 def _speaker_id(raw: str) -> int:
@@ -524,7 +524,7 @@ async def stretch(
     same people who may read the as-heard file. At most 200 lines; nothing found is "not found"."""
     who = _speaker_id(speaker)
     _span(from_ms, to_ms)
-    guild_id, campaign_id, sid = await _session_id(
+    guild_id, campaign_id, sid, began = await _session_id(
         db, session, ref, number, now=now, enforce_plans=enforce_plans
     )
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -537,27 +537,16 @@ async def stretch(
     found = row["found"] if row else None
     if found is None or not found["lines"]:
         raise RecapError("not_found")
-    start_ms = None
-    out = []
     # The time shown is since the session began, like the file's own lines.
-    async with db.user(session.user_id, session=session.id_hash) as conn:
-        await _scoped(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
-        )
-        sessions_row = await cur.fetchone()
-    for item in (sessions_row["found"] if sessions_row else {}).get("sessions", []):
-        if str(item["id"]) == sid:
-            start_ms = int(item["startedAt"]) * 1000
-    for line in found["lines"]:
-        at = int(line["startedMs"])
-        out.append(
+    return {
+        "lines": [
             {
-                "when": export.clock((at - (start_ms or at)) / 1000),
-                "text": " ".join(str(line["heard"]).split()),
+                "when": export.clock((int(x["startedMs"]) - began * 1000) / 1000),
+                "text": " ".join(str(x["heard"]).split()),
             }
-        )
-    return {"lines": out}
+            for x in found["lines"]
+        ]
+    }
 
 
 async def choose(
@@ -577,7 +566,7 @@ async def choose(
     else is refused (`not_a_dm`). How many lines changed; none is not an error."""
     who = _speaker_id(speaker)
     _span(from_ms, to_ms)
-    guild_id, campaign_id, sid = await _session_id(
+    guild_id, campaign_id, sid, _began = await _session_id(
         db, session, ref, number, now=now, enforce_plans=enforce_plans
     )
     async with db.user(session.user_id, session=session.id_hash) as conn:

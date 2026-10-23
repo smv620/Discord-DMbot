@@ -40,8 +40,9 @@ AS_HEARD_NOTE = (
 )
 CLEANED_NOTE = (
     "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be "
-    "wrong. Chat clearly not about the game is left out, and a short note says how long "
-    'it was spoken. The "As heard" version (/transcript) still has every word. Only people '
+    "wrong. Long chat clearly not about the game is left out, and a short note says how long "
+    "it was spoken; when DMbot is unsure, it keeps the line. The DM can put left-out chat back "
+    'on the website. The "As heard" version (/transcript) still has every word. Only people '
     "who agreed were recorded."
 )
 SIDEBAR_NOTE = (
@@ -67,7 +68,7 @@ HOW_TO_READ = (
     'about the rules or running the game, like "roll initiative" or "what\'s my AC?"; '
     "{non-game_content} is chat that isn't about the game (these two are not characters). "
     "The cleaned file replaces off-topic chat with a note of how long it lasted; the "
-    "as-heard file keeps every word."
+    "as-heard file keeps every word, and a DM can put the chat back in the cleaned file."
 )
 # What a line is when it is not the person's character speaking (#53).
 TOPIC_TAGS = {TABLE_TALK: "table_talk", OFF_TOPIC: "non-game_content"}

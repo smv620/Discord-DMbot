@@ -12020,9 +12020,9 @@ TOPIC_CHOICES = """
     -- dmbot_web_transcript_choose: a DM of the campaign puts one person's stretch back (the lines
     -- count as game talk, so the cleaned file and its downloads include them and the readers take
     -- them up) or leaves it out again. Only that person's spoken lines between the two start
-    -- times; "put back" changes lines that are left out, "leave out" only lines a DM or the
-    -- filter turned back, never a plain game line. Who and when are kept. Answers the number of
-    -- lines changed, 'not_allowed' for anyone who is not a DM of the campaign, NULL when the
+    -- times; "put back" changes lines that are left out, "leave out" only lines a DM put back,
+    -- never a plain game line or one the filter itself kept. Who and when are kept. Answers the
+    -- number of lines changed, 'not_allowed' for anyone who is not a DM of the campaign, NULL when the
     -- caller is not in the server or there is no such session.
     CREATE FUNCTION dmbot_web_transcript_choose(
         g BIGINT, c TEXT, sid TEXT, who BIGINT, from_ms BIGINT, to_ms BIGINT, back BOOLEAN)
@@ -12056,7 +12056,7 @@ TOPIC_CHOICES = """
                 WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
                   AND l.sidebar IS NULL AND NOT l.typed
                   AND l.started_ms BETWEEN from_ms AND to_ms AND l.topic = 'game'
-                  AND (l.topic_by IS NOT NULL OR l.leaned);
+                  AND l.topic_by IS NOT NULL;
         END IF;
         GET DIAGNOSTICS n = ROW_COUNT;
         RETURN jsonb_build_object('status', 'ok', 'changed', n);

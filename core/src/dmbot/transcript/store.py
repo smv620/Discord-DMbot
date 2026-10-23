@@ -57,7 +57,7 @@ class Settled:
     """How the off-topic filter's end-of-session pass treated a session's spoken lines (#2567):
     counts only, for the logs, so the filter can be tuned on real sessions."""
 
-    kept: int  # lines not left out (game or table talk), before the pass
+    kept: int  # lines the filter kept in the first place (game or table talk)
     turned_back: int  # lines the filter had left out and the pass kept after all
     left_out: int  # lines still left out
     put_back: int  # lines a DM had put back (never changed by the pass)
@@ -389,20 +389,22 @@ class TranscriptStore:
         changes. Safe to run twice."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, user_id, started_ms, duration_ms, topic,"
+                "SELECT id, user_id, started_ms, duration_ms, topic, leaned,"
                 " topic_by IS NOT NULL AS decided"
                 " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL AND NOT typed"
                 " ORDER BY started_ms, id",
                 (session_id,),
             )
             rows = await cur.fetchall()
+            # A line this pass already turned back counts as the filter's off-topic call again, so
+            # the same lines give the same answer however many times it runs.
             spoken = [
                 Spoken(
                     int(r["user_id"]),
                     int(r["started_ms"]),
                     int(r["duration_ms"]) / 1000,
                     "",
-                    r["topic"],
+                    OFF_TOPIC if r["leaned"] and not r["decided"] else r["topic"],
                     decided=bool(r["decided"]),
                 )
                 for r in rows
@@ -410,8 +412,8 @@ class TranscriptStore:
             leaned = lean_to_keeping(spoken, dm_ids)
             back = [
                 int(r["id"])
-                for r, new in zip(rows, leaned, strict=True)
-                if r["topic"] == OFF_TOPIC and new.topic == GAME
+                for r, was, new in zip(rows, spoken, leaned, strict=True)
+                if was.topic == OFF_TOPIC and new.topic == GAME and r["topic"] == OFF_TOPIC
             ]
             if back:
                 await conn.execute(
@@ -419,9 +421,13 @@ class TranscriptStore:
                     " WHERE session_id = %s AND id = ANY(%s) AND topic_by IS NULL",
                     (session_id, back),
                 )
-        turned = len(back)
         left = sum(1 for x in leaned if x.topic == OFF_TOPIC)
         put = sum(1 for r in rows if r["decided"] and r["topic"] != OFF_TOPIC)
+        turned = sum(
+            1
+            for was, new in zip(spoken, leaned, strict=True)
+            if was.topic == OFF_TOPIC != new.topic
+        )
         return Settled(len(rows) - left - put - turned, turned, left, put)
 
     async def unread_put_back(
