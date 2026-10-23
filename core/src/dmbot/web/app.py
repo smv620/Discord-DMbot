@@ -713,7 +713,7 @@ def create_app(
         "no_lines_kept": (422, "no_lines_kept"),
         "too_many_lines": (413, "too_many_lines"),
         "too_many_speakers": (413, "too_many_speakers"),
-        "not_posted": (409, "not_posted"),  # only a posted recap has a public link (#2118)
+        "not_posted": (409, "not_posted"),  # a link needs a posted or approved recap (#2119)
         "bad_action": (422, "bad_action"),
         "not_in_plan": (409, "not_in_plan"),
         "audio_unavailable": (409, "audio_unavailable"),  # not set up here, or the month's used up

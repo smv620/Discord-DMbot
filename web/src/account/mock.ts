@@ -1454,11 +1454,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       r.approval = { approved: false, choice: "", approvedAt: null, canApprove: false };
       return { recap: { ...r }, triesLeft: r.triesLeft, needsApproval: true };
     },
-    // Sharing a posted recap by a link (#2119). Only a posted recap can have one.
+    // Sharing a recap by a link (#2119, #2419). Only a posted or approved recap can have one.
     async shareRecap(ref, action) {
       calls.push(`shareRecap:${ref}:${action}`);
       const r = await find(ref);
-      if (r.status !== "posted") throw new ApiError("not-posted");
+      const unposted = r.status === "draft" && r.approval?.approved === true;
+      if (r.status === "dropped" || (r.status === "draft" && !unposted))
+        throw new ApiError("not-posted");
       if (action === "off") r.share = { on: false, path: null };
       else if (action === "new" || !r.share?.on) {
         sharedCount += 1;

@@ -102,7 +102,9 @@ export default function PublicRecapPage({
     <article class="public-recap">
       <h2>{recap.title}</h2>
       {sessionLine(recap) !== "" && <p class="small">{sessionLine(recap)}</p>}
-      <p class="note">{words.posted(sessionDay(recap.postedAt))}</p>
+      <p class="note">
+        {recap.postedAt === null ? words.approved : words.posted(sessionDay(recap.postedAt))}
+      </p>
       {(recap.audio.voice || recap.audio.music) && (
         <div class="card">
           <RecapPlayer
