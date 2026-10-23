@@ -17,8 +17,10 @@ from dmbot.memory.link_words import (
     predicate_for_either,
     reads_both_ways,
 )
+from dmbot.memory.models import CONFIRMED
 from dmbot.ui import name_card
 from dmbot.web import relationships
+from tests.test_memory_store import GUILD_A, MemoryTest
 
 
 class TheWords(unittest.TestCase):
@@ -54,6 +56,21 @@ class TheWords(unittest.TestCase):
         self.assertEqual(kin.parse("has an uncle"), ("uncle", True))
         for text in ("is family of", "is the niece", "knows", "is the boss of", "has a friend"):
             self.assertIsNone(kin.parse(text), text)
+
+
+class TheMutualRoles(unittest.TestCase):
+    def test_a_cousin_a_sibling_and_a_spouse_read_the_same_from_either_card(self) -> None:
+        for word in ("cousin", "sibling", "spouse"):
+            self.assertTrue(reads_both_ways("kin_of", word))
+            self.assertIsNone(back_words("kin_of", word))
+            self.assertFalse(kin.directional(word))
+            self.assertEqual(link_words("kin_of", word), f"is the {word} of")
+            self.assertEqual(kin.parse(f"has a {word}"), (word, False))  # nothing to swap
+        self.assertTrue(kin.directional("niece"))
+        self.assertTrue(kin.directional("mother"))
+        self.assertFalse(kin.directional(""))
+        self.assertEqual(kin.parse("is the mother of"), ("mother", False))
+        self.assertEqual(kin.parse("is the grandmother of"), ("grandmother", False))
 
 
 class TheConnectionWords(unittest.TestCase):
@@ -133,3 +150,46 @@ class TheCard(unittest.TestCase):
     def test_the_sentence_says_the_role(self) -> None:
         got = name_card.sentence(self.lookup, relation("mira", "aldric", "niece"))  # type: ignore[arg-type]
         self.assertEqual(got, "Mira is the niece of Aldric")
+
+
+class TheStoredDirection(MemoryTest):
+    """The order of the two names is the meaning for a role, so a write must never sort it."""
+
+    async def pair(self) -> tuple[str, str]:
+        return await self.add("Mira", status=CONFIRMED), await self.add("Aldric", status=CONFIRMED)
+
+    async def test_the_niece_is_the_subject_whichever_id_sorts_first(self) -> None:
+        a, b = await self.pair()
+        for niece, uncle in ((a, b), (b, a)):
+            made = await self.relate(niece, "kin_of", uncle, status=CONFIRMED, detail="niece")
+            row = made.value[0]
+            self.assertEqual((row.subject_id, row.object_id), (niece, uncle))
+            await self.memory.update_relation(
+                GUILD_A, self.c, row.id, source="dm", status="rejected"
+            )
+
+    async def test_a_cousin_with_no_direction_is_still_stored_once_smaller_id_first(self) -> None:
+        a, b = await self.pair()
+        row = (
+            await self.relate(max(a, b), "kin_of", min(a, b), status=CONFIRMED, detail="cousin")
+        ).value[0]
+        self.assertEqual((row.subject_id, row.object_id), (min(a, b), max(a, b)))
+
+    async def test_changing_the_words_to_a_role_keeps_who_is_the_first_name(self) -> None:
+        a, b = await self.pair()
+        low, high = sorted((a, b))
+        plain = (await self.relate(high, "kin_of", low, status=CONFIRMED)).value[0]
+        self.assertEqual(plain.subject_id, low)  # (stored sorted, as a two-way connection is)
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, plain.id, "kin_of", "niece", source="dm"
+        )
+        self.assertEqual((moved.value.subject_id, moved.value.detail), (low, "niece"))
+
+    async def test_a_merge_keeps_the_roles_direction(self) -> None:
+        a, b = await self.pair()
+        twin = await self.add("Aldrick", status=CONFIRMED)
+        row = (await self.relate(a, "kin_of", twin, status=CONFIRMED, detail="niece")).value[0]
+        await self.memory.merge(GUILD_A, self.c, b, twin, source="dm", dm_said_same=True)
+        moved = await self.memory.relation(GUILD_A, self.c, row.id)
+        assert moved is not None
+        self.assertEqual((moved.subject_id, moved.object_id), (a, b))

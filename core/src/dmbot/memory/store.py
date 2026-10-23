@@ -3377,7 +3377,7 @@ class MemoryStore:
             found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
             if len(found) != len(set(mention_ids)):
                 raise MemoryRuleError(NOT_FOUND)
-        s, o = ordered(pred, subject_id, object_id)
+        s, o = ordered(pred, subject_id, object_id, detail)
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
@@ -4820,7 +4820,7 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
             continue
         pred = onto.predicates.get(row["predicate"])
         if pred is not None:
-            subject, obj = ordered(pred, subject, obj)
+            subject, obj = ordered(pred, subject, obj, str(row["detail"]))
         moves[row["id"]] = {"subject_id": subject, "object_id": obj}
         forget(state[row["id"]])
         moved = dataclasses.replace(state[row["id"]], subject_id=subject, object_id=obj)

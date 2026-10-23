@@ -380,7 +380,8 @@ class RecallService:
             if predicate == ROSTER_GROUP_LINK:
                 if onto.is_a(str(shown[b]["type"]), "faction"):
                     groups.setdefault(a, []).append(names[b])
-            elif predicate == "kin_of" and (family := kin.role_of(str(r["detail"] or ""))):
+            elif predicate == "kin_of" and kin.directional(str(r["detail"] or "")):
+                family = kin.role_of(str(r["detail"])) or ""
                 # a family role is true of one name only (#2457): "is the niece of Aldric" on the
                 # one, "has a niece: Mira" on the other
                 ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")

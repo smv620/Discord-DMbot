@@ -21,6 +21,11 @@ ROLES = (
     "grandmother", "grandfather", "granddaughter", "grandson",
 )  # fmt: skip
 
+# Roles that are true of both names alike (Mira is Aldric's cousin and Aldric is Mira's): they read
+# "is the cousin of" from either card, are never swapped on the website, and keep the id-sorted
+# storage every two-way connection has.
+MUTUAL = frozenset({"sibling", "spouse", "cousin"})
+
 _ALT = "|".join(sorted(ROLES, key=len, reverse=True))
 # "is the niece of", "niece of", "is a niece of", "the daughter to"
 _FORWARD = re.compile(rf"^(?:(?:is|was)\s+)?(?:(?:the|a|an)\s+)?({_ALT})\s+(?:of|to)$")
@@ -32,6 +37,13 @@ def role_of(detail: str) -> str | None:
     """The role a connection's detail is, or None when it is no family word of the list."""
     word = " ".join(detail.split()).casefold()
     return word if word in ROLES else None
+
+
+def directional(detail: str) -> bool:
+    """Is the detail a role that is true of one name only (niece, mother…)? Only then does the
+    order of the two names matter (#2457)."""
+    role = role_of(detail)
+    return role is not None and role not in MUTUAL
 
 
 def forward(role: str) -> str:
@@ -54,5 +66,5 @@ def parse(words: str) -> tuple[str, bool] | None:
     if m := _FORWARD.match(clean):
         return m.group(1), False
     if m := _BACKWARD.match(clean):
-        return m.group(1), True
+        return m.group(1), m.group(1) not in MUTUAL
     return None
