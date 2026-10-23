@@ -11,15 +11,18 @@ import { importPage } from "../src/content/import-words";
 const core = (path: string): string =>
   readFileSync(fileURLToPath(new URL(`../../core/src/dmbot/${path}`, import.meta.url)), "utf8");
 
+/** Every `NAME = "code"` constant in a Python source: in these two files each one is an error code,
+ * so a new one is picked up without anyone adding its name here. */
+export function constantsIn(source: string): string[] {
+  return [...source.matchAll(/^[A-Z_]+ = "([a-z_]+)"/gm)].map((m) => m[1] as string);
+}
+
 /** The codes core can put in a file's `error`. */
 function codesInCore(): Set<string> {
   const found = new Set<string>();
   // The reader's reasons: UNREADABLE = "unreadable" and the like, in the importer and the doc reader.
   for (const file of ["transcript/importer.py", "transcript/import_link.py"]) {
-    for (const m of core(file).matchAll(/^([A-Z_]+) = "([a-z_]+)"/gm)) {
-      if (["UNREADABLE", "UNKNOWN_FORMAT", "NO_SPEAKER_NAMES", "NOT_A_GOOGLE_DOC", "NOT_SHARED", "TOO_BIG", "UNREACHABLE", "REPEATED_LINK"].includes(m[1] as string))
-        found.add(m[2] as string);
-    }
+    for (const code of constantsIn(core(file))) found.add(code);
   }
   // The file's own: File(name, None, "not_txt", None) in the web reader.
   for (const m of core("web/imports.py").matchAll(/File\(name, None, "([a-z_]+)", None\)/g)) found.add(m[1] as string);
@@ -32,6 +35,10 @@ describe("the import error codes", () => {
   it("are read from core (a guard that the reading works)", () => {
     expect(codes.size).toBeGreaterThanOrEqual(12);
     for (const known of ["unreadable", "unknown_format", "not_txt", "doc_not_shared", "repeated_link"]) expect(codes).toContain(known);
+  });
+
+  it("picks up a new constant without its name being listed (proved with a made-up one)", () => {
+    expect(constantsIn('A = "a_code"  # one\nNEW_REASON = "brand_new"\nlower = "x"\nB = "has space"')).toEqual(["a_code", "brand_new"]);
   });
 
   it("each have plain words on the import page", () => {
