@@ -50,6 +50,7 @@ from dmbot.web import (
     sharing,
     strays,
     support,
+    timeline,
     tokens,
 )
 from dmbot.web import homebrew as homebrew_pages
@@ -1408,6 +1409,19 @@ def create_app(
         session, _token = signed
         try:
             return await transcript_pages.list_sessions(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/timeline")
+    async def me_timeline(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's sessions in order with their recaps and the names shown at the table
+        (#2462). Anyone in the server reads it; a game master sees more recaps."""
+        session, _token = signed
+        try:
+            return await timeline.read_timeline(
                 db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
             )
         except RecapError as err:
