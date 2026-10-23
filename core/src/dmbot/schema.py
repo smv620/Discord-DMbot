@@ -10967,7 +10967,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
-    ("0195_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
+    ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
