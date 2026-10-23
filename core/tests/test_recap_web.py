@@ -415,6 +415,17 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertEqual({r["campaign"]: r["respelledAt"] for r in listed}["One"], 777)
 
+    async def test_the_recap_carries_the_progress_fields_and_the_servers_clock(self) -> None:
+        """(#2419) The page's clock reads `postingSince` against the server's own `serverNow`; until
+        the bot records them (#2435) they are null, and the clock is always a whole number."""
+        read = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(
+            (read["postingSince"], read["postingStep"], read["postedUrl"]), (None, None, None)
+        )
+        self.assertIsInstance(read["serverNow"], int)
+        listed = await list_recaps(self.web, self.session)
+        self.assertTrue(all("serverNow" in r for r in listed))
+
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
         got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
