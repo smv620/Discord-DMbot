@@ -285,6 +285,7 @@ class NamesHome(_Menu):
         reviews: Reviews | None = None,
         left_out: bool = False,
         connections: int = 0,
+        look_alikes: int | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -312,6 +313,12 @@ class NamesHome(_Menu):
         self.add_item(_Button(self._browse, label="📚 Browse by kind", style=grey, row=1))
         self.add_item(_Button(self._add_many, label="📥 Add many", style=grey, row=1))
         self.add_item(_Button(self._download, label="📤 Download all", style=grey, row=1))
+        if look_alikes is not None:  # the DM's: names that may be one name (#2426)
+            from dmbot.ui.look_alikes import label as look_alikes_label
+
+            self.add_item(
+                _Button(self._look_alikes, label=look_alikes_label(look_alikes), style=grey, row=1)
+            )
         self.add_item(_Button(self._new_thread, label="🧵 New thread", style=grey, row=3))
         self.add_item(_Button(self._new_promise, label="🤝 Add a promise", style=grey, row=3))
         # Players' D&D Beyond sheets (#723): read again now, not only at /dmbot start.
@@ -394,6 +401,11 @@ class NamesHome(_Menu):
             await all_names.reply(interaction, self.campaign_id)
             return
         await show_card(interaction, self.campaign_id, self.open.values[0])
+
+    async def _look_alikes(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.look_alikes import show_look_alikes
+
+        await show_look_alikes(interaction, self.campaign_id)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_background import ask_connections
@@ -526,6 +538,11 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             connections = await links.count(campaign.guild_id, campaign.id)
         except Exception:
             log.exception("Couldn't count the waiting connections")
+    look_alikes = None
+    if memory is not None and sees_secrets(campaign, interaction.user.id):  # DMs only (#2426)
+        from dmbot.ui.look_alikes import count_groups
+
+        look_alikes = await count_groups(interaction, campaign.id)
     text, shown = home_text(names, campaign, waiting, reviews)
     known = sum(1 for e in names.entities.values() if e.status == CONFIRMED)
     await _send(
@@ -538,6 +555,7 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
             reviews,
             left_out=known > len(shown),
             connections=connections,
+            look_alikes=look_alikes,
         ),
     )
 

@@ -74,6 +74,9 @@ AUDIENCE: dict[str, str] = {
             "consent_dm.DeleteYesButton",
             "consent_dm.KeepButton",
             "consent_dm.MenuButton",
+            "consent_dm.OffRecordButton",  # off the record: only your own recording (#2466)
+            "consent_dm.OffRecordForButton",
+            "consent_dm.ResumeButton",
             "consent_dm.SaveVoiceButton",
             "consent_dm.StartButton",
             "consent_dm.StopButton",
@@ -158,6 +161,9 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.recap_panel.RecapsButton",
             "dm_screen.rules_cards.RulesCardButton",
             "dm_screen.set_suggestion.SuggestionButton",
+            "dm_screen.table_pause.PauseTableButton",  # the table's off the record (#2466)
+            "dm_screen.table_pause.PauseTableForButton",
+            "dm_screen.table_pause.ResumeTableButton",
             "dm_screen.set_update.SetUpdateButton",
             "dm_screen.settings.FeaturesButton",
             "dm_screen.settings.HomebrewButton",
@@ -190,6 +196,7 @@ AUDIENCE: dict[str, str] = {
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
+            "ui.name_card.UndoManyButton",
             "ui.name_card.UndoConnectionButton",
             "ui.name_card.UndoSpellingButton",
             "ui.name_card.FinishPastButton",
@@ -221,6 +228,9 @@ AUDIENCE: dict[str, str] = {
 CHECKED_ELSEWHERE: dict[str, list[str]] = {
     # The clock's store checks the DM in the same transaction as the change.
     "dm_screen.clock.ClockPicker": ["dmbot.timebot.store:ClockStore.pick"],
+    "ui.name_card.UndoManyButton": [
+        "dmbot.ui.names:_campaign_for"
+    ],  # the same press as UndoButton: its callback asks it
     "dm_screen.clock.ClockUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.CombatUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.SplitUndoButton": [

@@ -1204,18 +1204,16 @@ describe("free access (#806)", () => {
     expect(text.freeHoursLeft(1, 87, null)).toBe("");
   });
 
-  it("no limits: no hours line, and campaigns say 'You run it', not 'Uses your hours'", async () => {
+  it("no limits: no hours line, and campaigns say 'You run it'", async () => {
     showFree("table", { kind: "free", unlimited: true });
     await screen.findByText(text.freeAccess);
     expect(screen.queryByRole("progressbar")).toBeNull();
-    expect((await screen.findAllByText(text.youRunItFree)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(text.youRunIt)).toBeNull();
+    expect((await screen.findAllByText("You run it")).length).toBeGreaterThan(0);
   });
 
-  it("a capped grant keeps the hours wording on its campaigns", async () => {
+  it("a capped grant says 'You run it' too", async () => {
     showFree("table", { kind: "free", hours: { used: 1, cap: 87, renewsOn: null } });
-    expect((await screen.findAllByText(text.youRunIt)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(text.youRunItFree)).toBeNull();
+    expect((await screen.findAllByText("You run it")).length).toBeGreaterThan(0);
   });
 
   it("an offer to a no-limits person doesn't talk about slots or hours", async () => {
