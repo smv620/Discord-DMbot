@@ -1823,6 +1823,44 @@ names panel nor the speech-to-text hints can be a fixed list.
       for a slip, a misheard word, or a name the DM will change to keep the mystery. A player's **guess** is
       never a reveal: it becomes a theory, drawn as uncertain. Red herrings and lies are beliefs the truth
       disagrees with. See docs/STORY_MEMORY.md section 9, "Assertions, perspectives and evidence".
+    - *Built, slice 1 (CloudDev, 2026-10-23, #2410, migration 0200):* **nothing becomes revealed before the
+      DM is told.** After a session DMbot only **records** the secret names (the whole-name matcher) and the
+      secret connections (one line naming both ends, by any of their names) that people recorded now said
+      or typed, the DM's own table words too (a DM slip is the first case), never the DM sidebar or the DM
+      screen, and nobody who is not recorded now, in `secret_exposures`: which secret and how often, never a
+      line or who said it. Nothing is applied and the players see no change. An answer the DM gives another
+      way (the live "Is it revealed now?", or the after-session "keep it secret?") settles the exposure so
+      the summary will not ask again; an answer during the session is kept for it, so the recording at the
+      end leaves it settled. A later session that says the name again is a new exposure. An exposure holds a
+      count only, so a person who stops being recorded afterwards leaves no words behind; the summary
+      reads the exposures again before it applies them.
+    - *Built, slice 2 (CloudDev, 2026-10-23, #2410, migration 0201):* after the exposures are recorded,
+      **one private summary** goes to the campaign's DMs (the DM screen while it is private, a private message
+      to each DM when players may look at it, also when the screen opens up while it is being sent): each
+      secret listed once however many sessions it was said in, numbered, with a **↩️ Recant** button; at most
+      ten, and "and N more" for the rest, which come in the next summary and are not shown until then. It
+      replaces the secret-name question. **Only after the message was seen by a DM** is each listed secret
+      shown to the players, in a change of its own (a name's secret flag cleared on every name with that
+      spelling; a connection's secret flag cleared, so The party believes it as a Revealed Fact), so
+      ↩️ Recant undoes exactly that one through the change log. If the message cannot be sent (private
+      messages closed), nothing is shown and the screen says so without a name. If showing one fails after
+      the message went out, it is tried again once, and if it still fails the DMs are told privately, with
+      no name, that some were not shown yet and will be after the next session. Recant on something changed
+      again since says so and leaves it.
+    - *Built, slice 3 (CloudDev, 2026-10-23, #2410):* the **🆕 new names** list rides in that same
+      message (up to five names and "and N more", with the **📝 Check new names** button on its own row),
+      so the DM gets one message after a session instead of two. It does not replace the check itself:
+      the button opens the same private check. When the session said no secrets, or the summary could not
+      be sent, the names go out on their own exactly as before, so a list is never lost to the summary.
+      The count of things said at the table that wait for the check (🔗) rides in the same message when
+      it is on the DM screen, with the 🗣️ Check what was said button (a private copy has no server for
+      that button, so the screen post keeps telling it). The check now has the connection choices:
+      **✅ Remember** (The truth and The party), **🤫 True, but secret** (The truth only; players are not
+      shown it) and **❌ Not true**. An answer that remembers a fact has its own **↩️ Undo** while the page is
+      open (the change log's Undo; the question then waits again). A state ("Roan is dead") has no secret flag, so it has no 🤫.
+      **❓ Party theory** (The party at 0.5, Theory) waits for guesses (#2412): until then a party belief
+      below 1.0 is refused. Listing each connection in the summary, with who believes it and the line it
+      came from, is the next step.
     - **Revealed is a belief, not a flag:** players see what **The party** believes (theories marked "?"), and
       Full View shows **The truth**. "Revealed" decides only what players see; every listener still uses
       every name.
@@ -2250,7 +2288,9 @@ names panel nor the speech-to-text hints can be a fixed list.
   only for the campaign's DMs). One name per line: `name | kind | other names | secret
   names` (the fourth part so a DM's download reads back with its secret names; only the
   campaign's DMs may add them, and managers get a template without it). Other names are
-  separated by `,` or `;`, as in the ➕ Add a name form; lines starting with `#` are
+  separated by `,` or `;`, as in the ➕ Add a name form; a name with a comma, semicolon or leading quote in
+  it is written in double quotes (a quote inside is doubled), which Download all does for you, so a download
+  uploaded again gives back the same names (#2482); lines starting with `#` are
   skipped. Decided while building:
   - the whole list is saved as **one change** (one Undo, one reload for live
     transcription) rather than batches of 200, since a list is capped at 2,000 lines; a

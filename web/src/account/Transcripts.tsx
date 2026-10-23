@@ -349,8 +349,6 @@ function Download({
   );
 }
 
-/** The transcript's lines, the first page the API gave and "Show more" for the next ones. Nothing
- * is said unless there is more. */
 /** The moment asked for in the address, `#t=<milliseconds since the session began>` (#2402), or
  * null. Anything that is not a plain whole number is no moment. */
 export function momentFromHash(hash: string): number | null {
@@ -368,7 +366,9 @@ export function lineOffsetSeconds(line: string): number | null {
 /** The line that began at or just before the moment: the last one whose start is not after it. A
  * moment before the first line is the first line (such as `#t=0`). Null only when the loaded lines
  * may stop before the moment is reached (`more`) or none has a start: the caller loads the next page
- * and asks again. */
+ * and asks again. Lines that share a start (the clock counts whole seconds) are told apart by taking the
+ * last of them: the moment is the end of that second, so the line that had begun by then is the
+ * newest one. */
 export function lineAtMoment(lines: string[], ms: number, more: boolean): number | null {
   let found: number | null = null;
   for (const [i, line] of lines.entries()) {
@@ -380,6 +380,8 @@ export function lineAtMoment(lines: string[], ms: number, more: boolean): number
   return more ? null : found;
 }
 
+/** The transcript's lines, the first page the API gave and "Show more" for the next ones. Nothing
+ * is said unless there is more. */
 function Lines({
   api,
   campaignRef,
@@ -411,7 +413,15 @@ function Lines({
   }
   // A link can ask for a moment (#2402, the Check names card). Pages are loaded one after another until
   // the line is reached, then it is marked and scrolled into view; no moment behaves as before.
-  const moment = typeof window === "undefined" ? null : momentFromHash(window.location.hash);
+  // The address can change without the page reloading (a second moment link on the same page), so
+  // the hash is state that follows `hashchange`.
+  const [hash, setHash] = useState(() => (typeof window === "undefined" ? "" : window.location.hash));
+  useEffect(() => {
+    const follow = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, []);
+  const moment = momentFromHash(hash);
   const marked = moment === null ? null : lineAtMoment(lines, moment, next !== null);
   const markedRef = useRef<HTMLLIElement | null>(null);
   useEffect(() => {
@@ -419,8 +429,11 @@ function Lines({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moment, marked, next, state]);
   useEffect(() => {
-    if (marked !== null) markedRef.current?.scrollIntoView?.({ block: "center" });
-  }, [marked]);
+    if (marked === null) return;
+    markedRef.current?.scrollIntoView?.({ block: "center" });
+    // Focus the line so a screen reader reads it: it has no other way to know where the page jumped.
+    markedRef.current?.focus?.({ preventScroll: true });
+  }, [marked, hash]);
   if (lines.length === 0)
     return (
       <p class="panel" role="status">
@@ -433,7 +446,7 @@ function Lines({
         {lines.map((line, i) => (
           <li
             key={i}
-            {...(i === marked ? { ref: markedRef, class: "moment", "aria-current": "location" as const } : {})}
+            {...(i === marked ? { ref: markedRef, class: "moment", tabIndex: -1, "aria-current": "location" as const } : {})}
           >
             {line}
           </li>

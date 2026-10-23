@@ -23,7 +23,7 @@ from html.parser import HTMLParser
 from pathlib import PurePath
 
 from dmbot.memory.models import name_key
-from dmbot.memory.name_list import MAX_PER_LINE, lines_for
+from dmbot.memory.name_list import MAX_PER_LINE, join_cell, lines_for, split_cell
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 200_000  # about a 100-page document
@@ -427,10 +427,9 @@ def merge_lists(lists: list[str]) -> str:
             row = merged[key]
             row[1] = row[1] or cells[1]
             for at in (2, 3):
-                seen = {name_key(x) for x in re.split(r"[;,]", row[at]) if x.strip()}
-                new = [x.strip() for x in re.split(r"[;,]", cells[at]) if x.strip()]
-                extra = [x for x in new if name_key(x) not in seen]
-                row[at] = "; ".join(p for p in [row[at], *extra] if p)
+                seen = {name_key(x) for x in _parts(row[at])}
+                extra = [x for x in _parts(cells[at]) if name_key(x) not in seen]
+                row[at] = join_cell([*_parts(row[at]), *extra])
     out: list[str] = []
     for key in order:
         name, kind, others, secrets = merged[key]
@@ -439,7 +438,7 @@ def merge_lists(lists: list[str]) -> str:
 
 
 def _parts(cell: str) -> list[str]:
-    return [x.strip() for x in re.split(r"[;,]", cell) if x.strip()]
+    return [x.strip() for x in split_cell(cell) if x.strip()]
 
 
 def clean_reply(reply: str) -> str:
