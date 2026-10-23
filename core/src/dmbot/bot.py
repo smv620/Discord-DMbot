@@ -324,6 +324,7 @@ from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
 from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
+from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.significance import Memory
@@ -12774,6 +12775,8 @@ def register_backup_sections(
     # and its session recaps (#1382), whose audio files go with the campaign (#1383)
     campaigns.register_section(RecapSection(forget_audio=forget_audio))
     campaigns.register_section(AcceptedSection())  # the recaps the DM approved (#2122)
+    campaigns.register_section(PlotIssuesSection())  # PlotBot's issues and the DM's answers
+    campaigns.register_section(PlotFineSection())  # ... and what the DM said was not a problem
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
 

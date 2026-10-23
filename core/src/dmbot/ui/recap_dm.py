@@ -85,6 +85,10 @@ AUDIO_WHY = {
 ASK_WHICH_AUDIO = (
     "Which audio should DMbot make? Pressing one approves the text. Nothing is posted."
 )
+PLOT_OPEN = (
+    "PlotBot has points about this recap that need your answer first. Open your recap page "
+    '({link}), answer them ("Leave it as is" is always an answer), then approve.'
+)
 TOO_LATE = "I couldn't approve that now. The text changed, or the audio is already being made."
 NO_AUDIO = (
     "Voice-over and music can't be made for this campaign right now (the plan, the narration "
@@ -254,6 +258,16 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 + ".\nEdit the text on your recap page, then press Approve again.",
             )
             return
+        if bot.settings.plot_check_on and await bot.recaps.plot_open(
+            campaign.guild_id, campaign.id, self.session_at
+        ):  # (the store checks it again in the approval's own statement)
+            page = (
+                page_link(bot.settings.site_url, campaign.guild_id, campaign.id, job.session_at)
+                if bot.settings.site_url
+                else "on the website"
+            )
+            await _tell(interaction, PLOT_OPEN.format(link=page))
+            return
         if self.act in ("ap", "aa", "ak") and job.approved and job.audio_choice:
             if self.act == "ap" and job.audio_choice == approval.TEXT:
                 # Approved as text only already (kept, or a post the bot's checks stopped and put
@@ -288,6 +302,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 approval.TEXT,
                 expected=expected,
                 post=posting,
+                plot_gate=bot.settings.plot_check_on,
             ):
                 await _tell(interaction, TOO_LATE)
                 return
@@ -323,6 +338,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             interaction.user.id,
             choice,
             expected=expected,
+            plot_gate=bot.settings.plot_check_on,
         ):
             await _tell(interaction, TOO_LATE)
             return

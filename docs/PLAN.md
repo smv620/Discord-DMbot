@@ -4742,7 +4742,11 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
     `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` (checked inside the approval door, under its lock) while an issue has
     no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
-    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default). The checker itself (part 2b)
+    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
+    The Discord Approve button is held the same way (a plain line pointing to the recap page, and the store
+    refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
+    (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
+    checked and a restored campaign is checked afresh. The checker itself (part 2b)
     and the chat (#2123) follow.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot

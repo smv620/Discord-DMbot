@@ -9,8 +9,10 @@ import time
 
 import httpx
 
+from dmbot.campaigns.models import CampaignError
 from dmbot.consent import TERMS_VERSION
 from dmbot.recaps.approval import text_hash
+from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.web import sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
@@ -259,6 +261,85 @@ class Answering(PlotBase):
         await self.checked(state="running")
         ok = await self.client.post(f"/me/recaps/{self.ref}/approve", json={"choice": "text"})
         self.assertEqual(ok.status_code, 200, ok.text)
+
+
+class DiscordAndBackup(PlotBase):
+    async def test_the_discord_approve_waits_for_open_issues_too(self) -> None:
+        await self.checked()
+        issue = await self.issue("a1")
+        digest = await self.hash_of()
+        args = (THURSDAY.id, self.one.id, 100, ALICE.id, "text")
+        refused = await self.store.approve(*args, expected=digest, plot_gate=True)
+        self.assertFalse(refused)
+        self.assertFalse((await self.state(self.one.id)).approved_hash)  # nothing approved
+        self.assertTrue(await self.store.plot_open(THURSDAY.id, self.one.id, 100))
+        await self.answer(issue, "leave")
+        self.assertFalse(await self.store.plot_open(THURSDAY.id, self.one.id, 100))
+        self.assertTrue(await self.store.approve(*args, expected=digest, plot_gate=True))
+
+    async def test_with_the_switch_off_the_discord_approve_is_not_held(self) -> None:
+        await self.checked()
+        await self.issue("a1")
+        digest = await self.hash_of()
+        args = (THURSDAY.id, self.one.id, 100, ALICE.id, "text")
+        self.assertTrue(await self.store.approve(*args, expected=digest, plot_gate=False))
+
+    async def test_a_check_that_is_not_done_never_holds_the_discord_approve(self) -> None:
+        await self.checked(state="running")
+        await self.issue("a1")
+        digest = await self.hash_of()
+        args = (THURSDAY.id, self.one.id, 100, ALICE.id, "text")
+        self.assertTrue(await self.store.approve(*args, expected=digest, plot_gate=True))
+
+    async def test_the_issues_and_the_fine_notes_travel_in_the_backup(self) -> None:
+        self.campaigns.register_section(PlotIssuesSection())
+        self.campaigns.register_section(PlotFineSection())
+        await self.checked()
+        issue = await self.issue("a1")
+        await self.answer(issue, "fine", "A different Ulfgar.")
+        data = await self.campaigns.export(THURSDAY.id, self.one.id)
+        self.assertEqual(len(data["sections"]["plot_issues"]), 1)
+        self.assertEqual(data["sections"]["plot_fine"][0]["note"], "A different Ulfgar.")
+        self.assertNotIn("plot_checks", data["sections"])  # (the check records are left out)
+        restored = await self.campaigns.import_backup(THURSDAY.id, data, ALICE.id)
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT answer_kind FROM plot_issues WHERE campaign_id = %s", (restored.id,)
+            )
+            self.assertEqual([r["answer_kind"] for r in await cur.fetchall()], ["fine"])
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM plot_fine WHERE campaign_id = %s", (restored.id,)
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)
+
+    async def test_a_damaged_row_is_refused_in_plain_words(self) -> None:
+        issues, fine = PlotIssuesSection(), PlotFineSection()
+        good = {
+            "id": "a" * 8, "session_at": 100, "text_hash": "b" * 64, "kind": "place",
+            "level": "likely", "sentence": 1, "sentence_text": "x", "reason": "y",
+            "source_text": "z", "source_session": "Session 4", "fine_key": "c" * 32,
+            "created_at": 5, "answer_kind": None, "answer_note": "", "answered_by": None,
+            "answered_at": None,
+        }  # fmt: skip
+        self.assertEqual(len(issues.check([good])), 1)
+        for bad in (
+            {**good, "kind": "scolding"},
+            {**good, "level": "certain"},
+            {**good, "sentence": 0},
+            {**good, "id": "X"},
+            {**good, "answer_kind": "fine"},  # answered, but by no one
+            {**good, "answer_kind": "maybe", "answered_by": "7", "answered_at": 1},
+            {**good, "extra": 1},
+        ):
+            with self.assertRaises(CampaignError):
+                issues.check([bad])
+        with self.assertRaises(CampaignError):
+            issues.check([good, good])
+        ok = {"fine_key": "c" * 32, "note": "n", "by_user": "7", "at": 1}
+        self.assertEqual(len(fine.check([ok])), 1)
+        for bad in ({**ok, "by_user": "-1"}, {**ok, "note": "x" * 501}, {**ok, "at": True}):
+            with self.assertRaises(CampaignError):
+                fine.check([bad])
 
 
 class Off(PlotBase):
