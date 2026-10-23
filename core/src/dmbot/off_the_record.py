@@ -67,7 +67,7 @@ def said_off(name: str, minutes: int | None) -> str:
 def said_off_by_voice(name: str, minutes: int) -> str:
     """After "Hey DMbot, off the record" (said or typed): the same line, and how to come back sooner
     (nothing of them is heard while they are off, so there is no saying it back)."""
-    return said_off(name, minutes) + " Press ▶️ Resume now in your DMs to come back sooner."
+    return said_off(name, minutes) + f" {name} can come back sooner with ▶️ Resume now in their DMs."
 
 
 def said_back(name: str) -> str:

@@ -316,7 +316,7 @@ class TheService(unittest.IsolatedAsyncioTestCase):
     async def test_saying_it_gets_the_line_that_says_how_to_come_back_sooner(self) -> None:
         await self.otr.pause(G, ALICE, 5, said_it=True)
         self.assertEqual(self.said[-1], said_off_by_voice("Alice", 5))
-        self.assertIn("Press ▶️ Resume now in your DMs", self.said[-1])
+        self.assertIn("Alice can come back sooner with ▶️ Resume now in their DMs", self.said[-1])
         self.assertIn("off the record for 5 minutes", self.said[-1])
 
     async def test_resume_now_puts_them_back_and_says_so(self) -> None:

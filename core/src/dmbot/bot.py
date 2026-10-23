@@ -1899,7 +1899,9 @@ class DMBot(commands.AutoShardedBot):
                 return  # not recorded or not listening: nothing was paused
             await self._dm_message(
                 user_id,
-                paused_text(done.until) + ("" if done.told else NOT_TOLD),
+                paused_text(done.until)
+                + " What you said just now was not saved."
+                + ("" if done.told else NOT_TOLD),
                 resume_view(guild_id),
             )
 

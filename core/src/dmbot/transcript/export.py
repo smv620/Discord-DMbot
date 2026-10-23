@@ -149,7 +149,9 @@ def clock(seconds: float) -> str:
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
 
 
-OFF_RECORD_TEXT = "was off the record"  # the same words as the buttons and the chat lines
+OFF_RECORD_TEXT = (
+    "was off the record, nothing recorded"  # the same words as the buttons and the chat lines
+)
 
 
 def _hhmm(unix_ms: int) -> str:
@@ -367,9 +369,9 @@ def render(
         if line.sidebar == OFF_RECORD:
             when = clock((line.started_ms - start_ms) / 1000)
             span = f"{_hhmm(line.started_ms)}\u2013{_hhmm(line.started_ms + line.duration_ms)}"
-            timed.append(
-                (line.started_ms, f"[{when}] ({person(line.user_id)} {OFF_RECORD_TEXT}, {span})")
-            )
+            who = person(line.user_id)
+            who += "," if who.endswith(", DM") else ""  # "(Mia, DM, was off the record, …)"
+            timed.append((line.started_ms, f"[{when}] ({who} {OFF_RECORD_TEXT}, {span})"))
     timed.sort(key=lambda t: t[0])  # stable: a sidebar line follows table speech at the same ms
     body = [text for _, text in timed]
     started = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(session.started_at))

@@ -56,7 +56,7 @@ class OffTheRecordMarkers(unittest.TestCase):
         # 22:13:20 + 5 min = 22:18, to 22:23
         want = [
             "[0:00:05] (Mia): I cast Shield.",
-            "[0:05:00] (Mia was off the record, 22:18\u201322:23)",
+            "[0:05:00] (Mia was off the record, nothing recorded, 22:18\u201322:23)",
             "[0:15:00] (Dee): Run!",
         ]
         self.assertEqual(self.render(export.AS_HEARD), want)
@@ -71,7 +71,7 @@ class OffTheRecordMarkers(unittest.TestCase):
 
     def test_a_dm_marker_carries_the_dm_label_like_other_lines(self) -> None:
         text = export.render("X", session(), [gap(10, 1, MIA)], {MIA: "Mia"}, dms={MIA})
-        self.assertIn("(Mia, DM was off the record,", text)
+        self.assertIn("(Mia, DM, was off the record, nothing recorded,", text)
 
 
 class Render(unittest.TestCase):
