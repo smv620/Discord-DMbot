@@ -446,6 +446,9 @@ class Written[T]:
     batch: int | None
 
 
+# Names one merge takes: the bot, the website and the database door agree (#2426).
+MERGE_MANY_MAX = 50
+
 # ---- beliefs: who believes a connection, and how strongly (#2409; STORY_MEMORY section 9) ----
 
 TRUTH, PARTY, PC_VIEW, NPC_VIEW = "truth", "party", "pc", "npc"
