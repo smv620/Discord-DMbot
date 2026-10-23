@@ -34,15 +34,19 @@ export const aiTrainingSentence = "That text isn't used to train Anthropic's AI.
 
 /**
  * Google (Gemini) as the recap writer, only if whoever runs DMbot switches it on (#2575, code #2582; the owner's
- * sign-off is on #2574). The page cannot tell whether it is on, so it says "only if switched on" and says exactly
- * what the writer is sent, as core/src/dmbot/recaps/draft.py builds it: the story beats (what happened, who and
- * where), the names DMbot knows, the last recap and the DM's fixes for this recap; "the beat sheet only, never the
- * transcript". "Not used to train" is true for Google's paid terms only, so the line says so and links them.
+ * sign-off is on #2574). The page cannot tell whether it is on, so it says "only if switched on" and says what the
+ * writer is sent, as core/src/dmbot/recaps/draft.py and pipeline.py build it: the beat sheet (what happened, who and
+ * where), the names DMbot knows, the last recap, the DM's notes on how recaps should sound and its fixes for this
+ * recap, and short pieces of what the table said aloud (the retelling of earlier sessions before play, up to
+ * PREVIOUS_MAX letters, and for the housekeeping step the table's own housekeeping talk). It is never shown the
+ * transcript as such, so the line says "never the full transcript", not "never the transcript". "Not used to
+ * train" is true under Google's paid terms only, so the line says so and links them. Which recap stages the switch
+ * moves is in #2582; this wording is for the stages that write the recap.
  */
 export const geminiPrivacy = {
   name: "Google (Gemini)",
   lead: "only if switched on.",
-  body: "DMbot can have a recap written by Google's AI instead of Anthropic's. It is off unless whoever runs DMbot turns it on. If it is on, Google gets what is needed to write a recap: the story beats of the session (what happened, who and where), the names DMbot knows, the last recap, and any fixes the DM asked for. It never gets sound or the transcript. On a paid plan, Google doesn't use that text to train its AI.",
+  body: "DMbot can have a recap written by Google's AI instead of Anthropic's. It is off unless DMbot LLC turns it on. If it is on, Google gets a short list of what happened in the session (and who and where), the names DMbot knows, the last recap, the DM's notes on how recaps should sound, any fixes the DM asked for, and short pieces of what the table said, such as when they retold the last session before play. It never gets sound or the full transcript. Google's paid terms say it doesn't use that text to train its AI.",
   country: "Google is a company in the United States.",
   termsText: "Google's terms for paid use",
   termsUrl: "https://ai.google.dev/gemini-api/terms",
