@@ -1703,6 +1703,19 @@ class TheApproveUnchecked(Base):
             (before.summary, 0, "", before.critics),
         )
 
+    async def test_a_write_by_a_step_that_began_before_the_approval_is_refused(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        await self.approve()
+        approved = cr.loop_from_json((await self.state(self.one.id)).critics).approved_at
+        await self.store.update_seen(THURSDAY.id, self.one.id, 100, 0, state="failed")
+        self.assertEqual((await self.state(self.one.id)).state, "prose")  # the stale step: nothing
+        await self.store.update_seen(THURSDAY.id, self.one.id, 100, approved, state="failed")
+        self.assertEqual(
+            (await self.state(self.one.id)).state, "failed"
+        )  # one that saw it: written
+
     async def test_the_page_stops_offering_the_button_once_it_is_approved(self) -> None:
         from dmbot.recaps import critics as cr
 

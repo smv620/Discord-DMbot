@@ -215,8 +215,7 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "canApproveUnchecked": bool(unchecked)
         and state == "prose"
         and not critics.loop_from_json(row.get("critics")).approved_at
-        and status == "draft"
-        and state not in ("ready", "failed"),
+        and status == "draft",
         "canEdit": ready,
         "canPost": ready,
         # While it goes out or its audio is made (#2419): when the work started on the server, the

@@ -4818,7 +4818,7 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       gets "not found"; before the 3 days, `not_yet`; a draft revised since the page showed it, `changed`; a second press
       answers the same) approves it as it is, so only the words the DM read are approved. The database's door (`dmbot_recap_approve_unchecked`, migration
       0207) marks the check done, records who and when in the critics' JSON, and adds the note "Check: DMbot could not
-      finish checking this recap, and the DM approved it as it is."; the bot's worker then runs the title and
+      finish checking this recap. The DM approved it as it is."; the bot's worker then runs the title and
       housekeeping step and the recap is `ready`, after which the usual approval and posting apply. Players see nothing
       before the DM posts, as with any recap. A save of the critics' loop made from before the approval cannot undo it.
   - **Cost:** the owner accepts **two to five times** today's recap cost for this. The per-recap call

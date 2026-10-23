@@ -829,12 +829,68 @@ class Criticising(WorkerHarness):
         )  # fmt: skip
         # the day's tally is at its cap (the waiting tries count in it): only the title step is
         # left, and that must not fail the recap the DM approved
-        with patch.object(self.store, "calls_since", AsyncMock(return_value=pl.DAILY_CALLS + 5)):
+        with patch.object(self.store, "calls_since", AsyncMock(return_value=pl.DAILY_CALLS)):
             job = await self.drive(job, 3)
         self.assertEqual((job.state, job.last_error), ("ready", ""))
         done = cr.loop_from_json(job.critics)
         self.assertEqual((done.done, done.approved_by), (True, 7))  # the DM stays recorded
         self.assertIn("avenge", job.summary)  # the draft is what the DM approved: nothing was cut
+
+    async def approved_waiting(self) -> tuple[Job, Job]:
+        """A recap waiting for its check, and the same one after the DM approved it: the first is
+        what a step already running at that moment would still be holding."""
+        fast = self.fast_for(WITH_MOTIVE)
+        fast.down = True
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        before = await self.drive(await self.go(), 6)
+        loop = cr.loop_from_json(before.critics)
+        await self.store.update(
+            1, self.one.id, 100,
+            critics=replace(
+                loop, done=True, approved_by=7, approved_at=int(self.clock.now)
+            ).to_json(),
+            last_error="", next_at=0,
+        )  # fmt: skip
+        after = await self.store.get(1, self.one.id, 100)
+        assert after is not None
+        return before, after
+
+    async def test_a_step_that_began_before_the_approval_cannot_fail_the_draft(self) -> None:
+        before, after = await self.approved_waiting()
+        await self.worker._fail(1, self.one.id, before, "no agreement")  # (the stale step)
+        now = await self.store.get(1, self.one.id, 100)
+        assert now is not None
+        self.assertEqual((now.state, now.last_error, now.next_at), (after.state, "", 0))
+        # a failure of a step that began after the approval is a real one
+        await self.worker._fail(1, self.one.id, after, "the title could not be made")
+        failed = await self.store.get(1, self.one.id, 100)
+        assert failed is not None
+        self.assertEqual(failed.state, "failed")
+
+    async def test_a_critics_call_that_failed_after_the_approval_waits_for_nothing(self) -> None:
+        before, after = await self.approved_waiting()
+        await self.worker._soft_wait(1, self.one.id, before, before.calls, before.spent, "late")
+        await self.worker._soft_wait(1, self.one.id, after, after.calls, after.spent, "later")
+        now = await self.store.get(1, self.one.id, 100)
+        assert now is not None
+        self.assertEqual((now.last_error, now.next_at, now.errors), ("", 0, after.errors))
+
+    async def test_the_title_step_of_an_approved_draft_adds_at_most_a_few_calls_to_the_day(
+        self,
+    ) -> None:
+        _before, after = await self.approved_waiting()
+        spent = after.spent
+        with patch.object(self.store, "calls_since", AsyncMock(return_value=pl.DAILY_CALLS)):
+            job = await self.drive(after, 3)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertLessEqual(job.spent - spent, pl.APPROVED_TITLE_CALLS)  # counted in the tally
+
+    async def test_past_that_allowance_the_day_is_over_for_an_approved_draft_too(self) -> None:
+        _before, after = await self.approved_waiting()
+        over = AsyncMock(return_value=pl.DAILY_CALLS + pl.APPROVED_TITLE_CALLS)
+        with patch.object(self.store, "calls_since", over):
+            job = await self.drive(after, 1)
+        self.assertEqual((job.state, job.last_error), ("failed", pl.DAILY))
 
     async def test_an_outage_waits_without_failing_or_spending_the_jobs_calls(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)

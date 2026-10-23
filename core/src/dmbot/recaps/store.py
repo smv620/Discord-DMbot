@@ -352,6 +352,24 @@ class RecapStore:
 
     async def update(self, guild_id: int, campaign_id: str, session_at: int, **fields: Any) -> None:
         """Write what a stage produced. Only the listed columns (`_WRITABLE`)."""
+        await self._write(guild_id, campaign_id, session_at, None, fields)
+
+    async def update_seen(
+        self, guild_id: int, campaign_id: str, session_at: int, approval: int, **fields: Any
+    ) -> None:
+        """`update`, but only if the DM's approval of an unchecked draft (#2305) is what the step
+        saw when it started (`approval`: its time, 0 for none): a step that began before the DM
+        approved must not put its wait or its failure over the approval."""
+        await self._write(guild_id, campaign_id, session_at, approval, fields)
+
+    async def _write(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        approval: int | None,
+        fields: dict[str, Any],
+    ) -> None:
         if not fields or not set(fields) <= _WRITABLE:
             raise ValueError(sorted(set(fields) - _WRITABLE))
         sets = ", ".join(f"{name} = %s" for name in fields)
@@ -364,6 +382,8 @@ class RecapStore:
             if fields.get("critics") is not None
             else ""
         )
+        if approval is not None:
+            guard += " AND COALESCE((critics->>'approved_at')::bigint, 0) = %s"
         values: list[Any] = []
         for name, value in fields.items():
             if name in _LISTS:
@@ -378,7 +398,14 @@ class RecapStore:
             await conn.execute(
                 f"UPDATE recap_jobs SET {sets}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
-                (*values, int(self._now()), guild_id, campaign_id, session_at),
+                (
+                    *values,
+                    int(self._now()),
+                    guild_id,
+                    campaign_id,
+                    session_at,
+                    *([] if approval is None else [approval]),
+                ),
             )
 
     # --- the audio tracks (#1383) -------------------------------------------------------

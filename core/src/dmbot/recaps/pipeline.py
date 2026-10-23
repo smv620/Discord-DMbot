@@ -148,6 +148,7 @@ SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 PLOT_TOKENS = 1200  # room for up to eight changes as JSON (the least: see `plot_room`)
 PLOT_TOKENS_PER_SENTENCE = 50  # a change names its sentence, its kind and the reason in words
 PLOT_ROOM_MAX = 12_000  # after doubling too
+APPROVED_TITLE_CALLS = 3  # what the title step of a draft approved unchecked may add to the day
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
 CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
@@ -375,8 +376,10 @@ class RecapWorker:
         in_loop = job.state == "prose" and self._critics and not loop.done
         spent_today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
         # (the loop stops by itself, below; and a draft the DM approved unchecked only has its
-        # title step left, which the waiting tries' calls in the day's tally must not fail, #2305)
-        if spent_today >= DAILY_CALLS and not in_loop and not loop.approved_at:
+        # title step left, which the waiting tries' calls in the day's tally must not fail, so it
+        # has a small fixed allowance of its own over the day's limit, still counted in it, #2305)
+        limit = DAILY_CALLS + (APPROVED_TITLE_CALLS if loop.approved_at else 0)
+        if spent_today >= limit and not in_loop:
             return await self._fail(gid, cid, job, DAILY)
         inputs = await self._load(gid, cid, job)
         if inputs is None:
@@ -1960,10 +1963,11 @@ class RecapWorker:
         """A critics-loop call failed: count it and wait, but never fail the job (the loop stops
         by itself after `CRITIC_ERRORS_MAX`: a draft not yet read then waits, `_hold`)."""
         errors = job.errors + 1
-        await self._store.update(
+        await self._store.update_seen(
             gid,
             cid,
             job.session_at,
+            0,  # a call of the critics' loop is moot once the DM approved the draft
             errors=errors,
             next_at=int(self._now()) + BACKOFF_S[min(errors, len(BACKOFF_S)) - 1],
             # (a recap that is waiting for its check keeps saying so between its tries)
@@ -1992,7 +1996,15 @@ class RecapWorker:
         if ours and job.tries > 0:
             await self._store.give_back_try(gid, cid, job.session_at)
         reason = f"{why} (check: {check})" if check else why
-        await self._store.update(gid, cid, job.session_at, state="failed", last_error=reason[:200])
+        await self._store.update_seen(
+            gid,
+            cid,
+            job.session_at,
+            # a step that began before the DM approved the draft must not fail it (#2305)
+            cr.loop_from_json(job.critics).approved_at,
+            state="failed",
+            last_error=reason[:200],
+        )
         return await self._store.get(gid, cid, job.session_at)
 
     def _keep_rejected(
