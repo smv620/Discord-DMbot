@@ -17,6 +17,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from dmbot.memory.extractor import quoted, transcript_of
+from dmbot.recaps import unknown_names
 from dmbot.recaps.text import is_known_name, names_a_secret, proper_nouns, words
 
 WINDOW_CHARS = 40_000  # characters of transcript in one call (about 10,000 tokens)
@@ -82,6 +83,10 @@ class Beat:
     # "keep this, do not explain it" (the meaning is not known to the players).
     note: str = ""
     keep: bool = False
+    # The player characters there (#2573): those whose players spoke in the stretch of lines the
+    # beat rests on, and any the beat names. Worked out in code from the table's own lines; the
+    # writer is shown it and a group scene must name all of them or say "the party".
+    present: tuple[str, ...] = ()
 
     @property
     def matters(self) -> bool:
@@ -233,6 +238,9 @@ def check(
     secret_names: Collection[str],
     dm_ids: Collection[int] = (),
     transcript_words: Collection[str] | None = None,
+    aliases: Mapping[str, str] | None = None,
+    party: Mapping[int, Sequence[str]] | None = None,
+    pcs: Sequence[str] = (),
 ) -> tuple[list[Beat], list[str]]:
     """The beats that pass, renumbered, and what was wrong (plain words, for the retry and the
     log). `lines`: line number → cleaned text. `speakers`: line number → speaker. A beat is cut
@@ -241,10 +249,17 @@ def check(
     few beats are left, or if a player who spoke a lot is in none. The DM (`dm_ids`) is not such a
     player: the DM narrates, so a sheet that cites the players' lines for the action is fine
     (#1997). `transcript_words`: every word said in the session, so a name spelt differently from
-    the cited line is not cut when it was said elsewhere (`unsaid_names`)."""
+    the cited line is not cut when it was said elsewhere (`unsaid_names`). `aliases`: another
+    spelling of a name -> the story-memory name, put in after the checks (#2573). `party`: a
+    player -> their characters, and `pcs` every player character, so each beat gets who was
+    present (`present_in`)."""
     problems: list[str] = []
     kept: list[Beat] = []
     cut = {"no line": 0, "unknown name": 0, "secret": 0, "form": 0}
+    canon: dict[str, Collection[str]] = {
+        "names": set(allowed_names) | set(pcs),
+        "secret_names": secret_names,
+    }
     for raw in raw_beats:
         what = " ".join(str(raw.get("what", "")).split())
         if not what or len(what) > BEAT_MAX:
@@ -283,9 +298,16 @@ def check(
             or names_a_secret(where, secret_names, allowed_names)
         ):
             where = ""
+        if aliases:  # the names the table's speech to text spelt another way, put right
+            who = tuple(dict.fromkeys(unknown_names.canonical(w, aliases, **canon) for w in who))
+            what = unknown_names.canonical(what, aliases, **canon)
+        present = present_in(numbers, speakers, party or {}, who, pcs)
         kept.append(
-            Beat(len(kept) + 1, what, who, numbers, kind if kind in KINDS else "event", where)
-        )
+            Beat(
+                len(kept) + 1, what, who, numbers, kind if kind in KINDS else "event", where,
+                present=present,
+            )
+        )  # fmt: skip
         if len(kept) == MAX_BEATS:
             break
     for why, count in cut.items():
@@ -312,6 +334,30 @@ def check(
     return kept, problems
 
 
+def present_in(
+    numbers: Sequence[int],
+    speakers: Mapping[int, int],
+    party: Mapping[int, Sequence[str]],
+    who: Sequence[str],
+    pcs: Sequence[str],
+) -> tuple[str, ...]:
+    """The player characters present in a beat (#2573): those whose players spoke anywhere between
+    its first and last cited line (the stretch, not only the lines it cites: a player who spoke
+    during it was at the table), and any the beat itself names. In the order of `pcs`. A player
+    who spoke is taken as there unless the DM's lines say otherwise; the recap page lets the DM
+    fix a scene."""
+    if not numbers:
+        return ()
+    low, high = min(numbers), max(numbers)
+    here: set[str] = set()
+    for line, user in speakers.items():
+        if low <= line <= high:
+            here.update(party.get(user, ()))
+    named = {" ".join(words(w)) for w in who}
+    here.update(pc for pc in pcs if " ".join(words(pc)) in named)
+    return tuple(pc for pc in pcs if pc in here)
+
+
 def as_json(beats: Sequence[Beat]) -> list[dict[str, object]]:
     return [
         {
@@ -323,6 +369,7 @@ def as_json(beats: Sequence[Beat]) -> list[dict[str, object]]:
             "where": b.where,
             **({"note": b.note} if b.note else {}),
             **({"keep": True} if b.keep else {}),
+            **({"present": list(b.present)} if b.present else {}),
         }
         for b in beats
     ]
@@ -348,6 +395,7 @@ def from_json(data: object) -> list[Beat]:
                     str(item.get("where") or ""),
                     str(item.get("note") or ""),
                     item.get("keep") is True,
+                    tuple(str(p) for p in item.get("present") or [] if isinstance(p, str)),
                 )
             )
         except (KeyError, TypeError, ValueError):
@@ -363,6 +411,7 @@ def sheet(beats: Sequence[Beat], *, notes: bool = False) -> str:
         f"[{b.number}] ({b.kind}) {b.what}"
         + (f" Who: {', '.join(b.who)}." if b.who else "")
         + (f" Where: {b.where}." if b.where else "")
+        + (f" Present: {', '.join(b.present)}." if b.present else "")
         + (f" Matters: {quoted(b.note)}" if notes and b.note else "")
         + (" Matters: keep this detail; do not explain it." if notes and b.keep else "")
         for b in beats
