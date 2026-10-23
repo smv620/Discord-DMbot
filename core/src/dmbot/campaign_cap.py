@@ -65,16 +65,19 @@ async def has_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:
     return (await room(conn, user_id, now)).fits(1)
 
 
-HandoverVerdict = Literal["ok", "no_plan", "no_slot"]
+HandoverVerdict = Literal["ok", "no_plan", "try_it", "no_slot"]
 
 
 async def handover_verdict(conn: Conn, user_id: int, now: int) -> HandoverVerdict:
-    """May this person receive a campaign handed over by email (#2532; docs/PLAN.md)? Only a paid
-    plan that works, with room for one more: not Try It, a trial extension or the free list."""
-    access = await entitlements.effective(conn, user_id, now)
-    if access.kind != "paid" or not access.works:
-        return "no_plan"
-    return "ok" if (await room(conn, user_id, now)).fits(1) else "no_slot"
+    """May this person receive a campaign handed over by email (#2532; docs/PLAN.md)? Only a
+    priced plan that works, with room for one more: not Try It or its trial extension (the
+    same free plan, made longer). A grant or the free list on top of a priced plan does not
+    matter; on their own they do not qualify."""
+    plan, _grant, access = await entitlements.inputs(conn, user_id, now)
+    if not entitlements.has_priced_plan(plan, now):
+        return "try_it" if plan is not None and plan.usable(now) else "no_plan"
+    fits = Room(access.works, access.campaign_cap, await owned_count(conn, user_id)).fits(1)
+    return "ok" if fits else "no_slot"
 
 
 async def has_paid_room_for_one_more(conn: Conn, user_id: int, now: int) -> bool:

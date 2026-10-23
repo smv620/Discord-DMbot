@@ -679,11 +679,7 @@ def create_app(
         if handover_open_limit.take(str(session.user_id)) != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         return await handover_accept.look(
-            db,
-            session,
-            (await small_json(request)).get("token"),
-            now=int(clock()),
-            enforce_plans=settings.enforce_plans,
+            db, session, (await small_json(request)).get("token"), now=int(clock())
         )
 
     @app.post("/me/handover/accept")
@@ -701,7 +697,6 @@ def create_app(
             body.get("token"),
             body.get("serverId"),
             now=int(clock()),
-            enforce_plans=settings.enforce_plans,
         )
         if outcome == "accepted" and ref is not None:
             return {"status": "accepted", "campaignRef": ref}
@@ -710,6 +705,7 @@ def create_app(
         refusals = {
             "ended": (409, "ended"),
             "no_plan": (402, "not_on_a_paid_plan"),
+            "try_it": (402, "not_on_a_paid_plan"),
             "no_slot": (402, "no_free_slot"),
             "owner": (403, "owner"),
             "bad_server": (422, "bad_server"),
@@ -729,8 +725,6 @@ def create_app(
             db,
             session,
             (await small_json(request)).get("token"),
-            now=int(clock()),
-            enforce_plans=settings.enforce_plans,
         )
         if outcome != "declined":
             raise HTTPException(status_code=409, detail="ended")
