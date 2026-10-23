@@ -10757,7 +10757,6 @@ STORY_TIMELINE = """
 """
 
 
-
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
