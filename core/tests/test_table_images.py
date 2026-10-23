@@ -101,19 +101,28 @@ class TableImages(chat.AtTheTableTyped):
         [line] = self.lines()  # the words they typed are read as before; only the picture is not
         self.assertEqual(line.text, "hello")
 
-    async def test_consent_is_asked_again_before_every_download_and_every_ai_call(self) -> None:
+    async def test_a_stop_after_the_first_picture_is_read_stops_the_rest(self) -> None:
         msg = picture()
         msg.attachments = msg.attachments * 3
-        asked = {"n": 0}
+        agreed = {"yes": True}
+        vision = self.vision
 
-        def stops_after_two_questions(guild_id: int, user_id: int) -> bool:
-            asked["n"] += 1
-            return asked["n"] <= 3  # the entry checks and the first picture's, then no more
+        async def read_then_stop(system: str, text: str, **kw: Any) -> Any:
+            got = await Vision.complete(vision, system, text, **kw)
+            agreed["yes"] = False  # they pressed Stop while the first picture was being read
+            return got
 
-        self.bot.consent.has_image_consent = stops_after_two_questions  # type: ignore[method-assign]
+        vision.complete = read_then_stop  # type: ignore[method-assign]
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: agreed["yes"]  # type: ignore[method-assign]
         await self.hear(msg)
-        self.assertLess(len(self.fetched), 3)  # the later pictures were never even downloaded
+        self.assertEqual(self.fetched, [LINK])  # the other two were never even downloaded
+        self.assertEqual(vision.calls, 1)
         self.assertEqual(self.lines(), [])  # and a stopped message leaves no line at all
+
+    async def test_a_stop_before_the_download_reads_nothing(self) -> None:
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: False  # type: ignore[method-assign]
+        await self.hear(picture())
+        self.assertEqual((self.fetched, self.vision.calls, self.lines()), ([], 0, []))
 
     async def test_a_bot_and_a_webhook_are_never_read(self) -> None:
         await self.hear(picture(author=PLAYER, bot=True))

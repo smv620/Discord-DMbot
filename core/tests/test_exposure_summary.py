@@ -58,7 +58,8 @@ class Text(unittest.TestCase):
 
     def test_one_button_for_each_item_five_to_a_row_and_no_more_than_the_cap(self) -> None:
         view = summary_view(list(range(1, 15)), CID, GUILD_A)
-        self.assertEqual(len(view.children), MAX_LISTED)
+        self.assertEqual(len(view.children), MAX_LISTED + 1)  # and the mark every variant has
+        self.assertEqual(view.children[-1].item.custom_id, f"dmbot:xs:{CID}:{GUILD_A}")  # type: ignore[attr-defined]
         rows = [c.item.row for c in view.children if isinstance(c, RecantButton)]
         self.assertEqual((rows.count(0), rows.count(1)), (5, 5))
         first = view.children[0]
@@ -72,14 +73,32 @@ class Text(unittest.TestCase):
         text = summary_text(["Auril (a name)"], 0, new_names=["Bryn", "Oskar"])
         self.assertIn("🆕 **2 new names to check:** **Bryn**, **Oskar**", text)
         view = summary_view([1], CID, GUILD_A, new_names=True)
-        check: Any = view.children[-1]
+        check: Any = next(
+            c
+            for c in view.children
+            if c.item.custom_id.startswith("dmbot:names:review:")  # type: ignore[attr-defined]
+        )
         self.assertEqual(check.item.custom_id, f"dmbot:names:review:{CID}")
         self.assertEqual(check.item.row, 2)
-        private: Any = summary_view([1], CID, GUILD_A, new_names=True, private=True).children[-1]
+        private: Any = summary_view([1], CID, GUILD_A, new_names=True, private=True).children[-2]
         self.assertEqual(private.item.custom_id, f"dmbot:names:recap:{GUILD_A}:{CID}")
         plain = summary_view([1], CID, GUILD_A)
-        self.assertEqual(len(plain.children), 1)  # no names, no extra button
+        self.assertEqual(len(plain.children), 2)  # a Recant and the mark; no names button
         self.assertNotIn("🆕", summary_text(["A"], 0))
+
+    def test_things_to_check_are_spelled_out_for_the_dm_and_dropped_if_too_long(self) -> None:
+        lines = ["**Bram** carries **Heartseeker**? _(you said)_"] * 2
+        text = summary_text([], 0, claims_waiting=4, claim_lines=lines)
+        self.assertIn("• **Bram** carries", text)
+        self.assertIn("…and 2 more in the check.", text)
+        long = ["x" * 600] * 5
+        full = summary_text(
+            ["Name " + "y" * 400] * MAX_LISTED, 0, new_names=["N" * 300] * 5,
+            claims_waiting=9, claim_lines=long,
+        )  # fmt: skip
+        self.assertLessEqual(len(full), 2000)
+        self.assertNotIn("xxx", full)  # the words went; the count stays
+        self.assertIn("9 things said at the table to check", full)
 
     def test_a_long_list_of_long_names_still_fits(self) -> None:
         line = names_line(["N" * 300] * 9)
@@ -226,6 +245,7 @@ class StepBase(Base):
             screen_channel_id=55,
             new_names=[],
             claims_waiting=0,
+            claim_preview=[],
         )
 
     async def waiting_secret(self) -> str:
@@ -318,7 +338,10 @@ class TheStep(StepBase):
         table = self.table()
         table.claims_waiting = 3
         await DMBot.send_exposure_summary(bot, table)
-        self.assertNotIn("🔗", bot.sidebar_send_dm.await_args.args[1])  # (no server to check in)
+        sent_text, sent_view = bot.sidebar_send_dm.await_args.args[1:3]
+        self.assertIn("Open 🗣️ Check what was said on your DM screen", sent_text)  # no button here
+        ids = [getattr(c, "item", c).custom_id for c in sent_view.children]
+        self.assertNotIn(f"dmbot:claims:review:{self.c}", ids)
         self.assertEqual(table.claims_waiting, 3)  # posted by the "new connections" step
 
     async def test_new_names_wait_for_their_own_post_when_the_summary_cannot_go(self) -> None:
@@ -329,13 +352,46 @@ class TheStep(StepBase):
         await DMBot.send_exposure_summary(bot, table)
         self.assertEqual(table.new_names, ["Bryn Shander"])  # the "new names" step posts them
 
-    async def test_without_a_secret_the_names_are_left_for_the_names_step(self) -> None:
+    async def test_without_a_secret_the_message_still_goes_for_names_and_things_to_check(
+        self,
+    ) -> None:
         bot = self.bot(campaign(id=self.c))
         table = self.table()
         table.new_names = ["Bryn Shander"]
+        table.claims_waiting = 2
+        table.claim_preview = ["**Bram** carries **Heartseeker**? _(a player said)_"]
         await DMBot.send_exposure_summary(bot, table)
+        text, view = bot.post_message.await_args.args[1:3]
+        self.assertNotIn("Recant", text)  # no secret, no Recant part
+        self.assertNotIn("Said at the table, now shown", text)
+        self.assertIn("🆕 **1 new name to check:** **Bryn Shander**", text)
+        self.assertIn("• **Bram** carries **Heartseeker**?", text)
+        self.assertIn("…and 1 more in the check.", text)
+        self.assertEqual(table.new_names, [])
+        self.assertEqual((table.claims_waiting, table.claim_preview), (0, []))
+        self.assertEqual(len(view.children), 3)  # the two check buttons and the mark, no Recant
+
+    async def test_with_nothing_to_tell_nothing_is_sent(self) -> None:
+        bot = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(bot, self.table())
         bot.post_message.assert_not_awaited()
-        self.assertEqual(table.new_names, ["Bryn Shander"])
+
+    async def test_the_words_of_what_was_said_go_only_to_the_dm_never_to_the_screen_post(
+        self,
+    ) -> None:
+        from dmbot.ui.claims_review import waiting_text
+
+        # a screen the players can read gets the count from the "new connections" step
+        text = waiting_text(3)
+        self.assertNotIn("Bram", text)
+        bot = self.bot(campaign(id=self.c, dm_screen_visibility="open"))
+        table = self.table()
+        table.claims_waiting = 3
+        table.claim_preview = ["**Bram** carries **Heartseeker**? _(a player said)_"]
+        await DMBot.send_exposure_summary(bot, table)
+        bot.post_message.assert_not_awaited()  # nothing on the screen
+        self.assertIn("Bram", bot.sidebar_send_dm.await_args.args[1])  # privately, in words
+        self.assertEqual(table.claims_waiting, 3)  # the screen is still told the count only
 
     async def test_when_it_cannot_be_sent_nothing_is_shown_and_it_waits(self) -> None:
         alias = await self.waiting_secret()
@@ -493,6 +549,57 @@ class Recanting(StepBase):
         row = await self.store.one(GUILD_A, self.c, 1)
         assert row is not None
         return bot, alias, row
+
+    async def test_the_got_it_button_is_for_the_dm_alone_and_only_closes_itself(self) -> None:
+        from dmbot.ui.exposure_summary import SeenButton
+
+        bot = self.bot(campaign(id=self.c))
+        button = SeenButton(self.c, GUILD_A)
+        view = discord.ui.View(timeout=None)
+        view.add_item(discord.ui.Button(label="👍 Got it", custom_id=button.item.custom_id))
+        view.add_item(discord.ui.Button(label="other", custom_id="dmbot:other"))
+        stranger = self.interaction(bot, user=99)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await button.callback(stranger)
+        stranger.edit_original_response.assert_not_awaited()
+        self.assertEqual([c.label for c in view.children], ["👍 Got it", "other"])  # type: ignore[attr-defined]
+        dm = self.interaction(bot)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await button.callback(dm)
+        # still on the message (it is the summary's mark), but closed
+        self.assertEqual([c.label for c in view.children], ["👍 Seen", "other"])  # type: ignore[attr-defined]
+        self.assertTrue(view.children[0].disabled)  # type: ignore[attr-defined]
+        self.assertEqual(view.children[0].custom_id, button.item.custom_id)  # type: ignore[attr-defined]
+
+    async def test_a_summary_with_got_it_pressed_is_still_pulled_back_after_a_restart(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.dm_screen import secret_posts
+        from dmbot.ui.exposure_summary import SeenButton, summary_view
+
+        bot = self.bot(campaign(id=self.c))
+        view = summary_view([], self.c, GUILD_A, new_names=True, claims=True)
+        with patch("discord.ui.View.from_message", return_value=view):
+            await SeenButton(self.c, GUILD_A).callback(self.interaction(bot))
+        items: list[Any] = [getattr(c, "item", c) for c in view.children]
+        buttons = [SimpleNamespace(custom_id=i.custom_id) for i in items]
+        self.assertTrue(any(b.custom_id.startswith("dmbot:xs:") for b in buttons))
+        self.assertFalse(any(b.custom_id.startswith("dmbot:xr:") for b in buttons))
+        message = SimpleNamespace(
+            id=1, author=SimpleNamespace(id=9), edit=AsyncMock(),
+            components=[SimpleNamespace(children=buttons)],
+        )  # fmt: skip
+
+        async def history(limit: int | None) -> Any:
+            yield message
+
+        secret_posts._posts.clear()  # a restart: nothing remembered
+        secret_posts._searched.clear()
+        changed = await secret_posts.hide(
+            GUILD_A, self.c, channel=SimpleNamespace(history=history), bot_id=9
+        )
+        self.assertEqual(changed, 1)
+        self.assertEqual(message.edit.await_args.kwargs["content"], secret_posts.SUMMARY_HIDDEN)
 
     async def test_recant_hides_exactly_that_one_again_and_closes_the_button(self) -> None:
         bot, alias, row = await self.shown()

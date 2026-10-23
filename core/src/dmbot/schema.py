@@ -3214,6 +3214,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_web_name_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)",
     ),
     ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
+    # How a listed name is said, for the DM's row editor (#2317).
+    ("dmbot_web_all_names_said", "dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])"),
     # The Settings page's choices (#2463), queued for the bot the same way.
     ("dmbot_web_setting_add", "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"),
     ("dmbot_web_setting_read", "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"),
@@ -11143,6 +11145,18 @@ SESSION_PAUSES = """
     ALTER TABLE active_sessions ADD COLUMN paused JSONB NOT NULL DEFAULT '{}';
 """
 
+OFF_RECORD_LINES = """
+    -- A stretch where a person was off the record (#2466) is one marker line in the transcript,
+    -- in both versions: "(Mia was off the record, nothing recorded, 20:14-20:19 UTC)". It is
+    -- stored as a line of its
+    -- own kind under that person (so a consent stop or "Delete my past transcripts" takes it
+    -- with their other lines) and holds no speech: when it began, how long it lasted, and the
+    -- words "off the record". The one change is the list of kinds the column accepts.
+    ALTER TABLE transcript_lines DROP CONSTRAINT transcript_lines_sidebar_check;
+    ALTER TABLE transcript_lines ADD CONSTRAINT transcript_lines_sidebar_check
+        CHECK (sidebar IN ('question', 'answer', 'table_question', 'off_record'));
+"""
+
 # A connection the DM's story holds back from the players until it is said at the table (#2404):
 # a backstory connection starts unrevealed. The column has a default and is added, not updated,
 # so every existing connection reads as revealed and no row-level security needs opening. The
@@ -11551,6 +11565,52 @@ STORY_TIMELINE = """
     REVOKE ALL ON FUNCTION dmbot_web_story_timeline(BIGINT, TEXT) FROM PUBLIC;
 """
 
+ALL_NAMES_SAID = """
+    -- How to say a name, for the All names page's row editor (#2317). The list door
+    -- (dmbot_web_all_names) is not touched; this one answers, for a DM and for the entries just
+    -- listed, the id of the entry's main name (the confirmed, public name that reads the same as
+    -- the entry's own, as dmbot_web_set_said_as accepts it) and how the narrator says it. NULL for
+    -- anyone who is not a DM of the campaign, so a manager never learns a spelling, and an entry
+    -- with no such name is simply left out.
+    CREATE FUNCTION dmbot_web_all_names_said(g BIGINT, c TEXT, ids TEXT[]) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        -- (a page is 20 names; a longer list is no page's, so it gets nothing)
+        IF cardinality(ids) > 100
+           OR dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'id', m.entity_id, 'aliasId', m.alias_id, 'saidAs', m.said_as))
+            FROM (
+                SELECT DISTINCT ON (e.id) e.id AS entity_id, a.id AS alias_id, a.said_as
+                FROM memory_entities e
+                JOIN memory_aliases a
+                  ON a.guild_id = e.guild_id AND a.campaign_id = e.campaign_id
+                 AND a.entity_id = e.id
+                WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (ids)
+                  AND e.status = 'confirmed' AND e.type <> 'person'
+                  AND NOT a.secret AND a.status = 'confirmed'
+                  AND a.kind <> 'misheard' AND a.used_by IS NULL
+                  AND lower(a.text) = lower(e.name)
+                ORDER BY e.id, a.id
+            ) m), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_all_names_said(BIGINT, TEXT, TEXT[]) FROM PUBLIC;
+"""
 
 SECRET_EXPOSURES = f"""
     -- Secrets said or typed at the table, waiting for the DM to be told (#2410, docs/PLAN.md,
@@ -11833,6 +11893,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0185_web_graph_party", WEB_GRAPH_PARTY),  # the web reads The party's beliefs (#2409)
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
+    ("0188_all_names_said", ALL_NAMES_SAID),  # how to say a name, for the Names page (#2317)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
     ("0190_pinned_truth", PINNED_TRUTH),  # the DM's 📌 100% truth (#2447)
     ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
@@ -11842,6 +11903,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)
     ("0197_web_setting_actions", SETTING_ACTIONS),  # settings chosen on the website (#2463)
+    ("0198_off_record_lines", OFF_RECORD_LINES),  # the "off the record" marker line (#2466)
     ("0199_merge_restores", MERGE_RESTORES),  # where a merge moved notes and a sheet (#2438)
     ("0200_secret_exposures", SECRET_EXPOSURES),  # secrets said at the table, recorded (#2410)
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
