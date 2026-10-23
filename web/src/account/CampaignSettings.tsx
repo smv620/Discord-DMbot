@@ -14,6 +14,9 @@ export const POLL_MS = [400, 800, 1500, 2500];
 /** After this long waiting the page says it is slow; after the next, that the bot is away. */
 export const SLOW_AFTER_MS = 8000;
 export const OFFLINE_AFTER_MS = 30000;
+/** Once the bot has been quiet that long the page looks less often, up to the hour the queue keeps a choice. */
+export const LATE_POLL_MS = 30000;
+export const GIVE_UP_MS = 3600000;
 
 type Phase =
   | { kind: "idle" }
@@ -177,9 +180,12 @@ export default function CampaignSettings({
     }
     const started = Date.now();
     for (let i = 0; live.current; i += 1) {
-      await new Promise((r) => setTimeout(r, POLL_MS[Math.min(i, POLL_MS.length - 1)]));
+      const behind = Date.now() - started > OFFLINE_AFTER_MS;
+      await new Promise((r) => setTimeout(r, behind ? LATE_POLL_MS : POLL_MS[Math.min(i, POLL_MS.length - 1)]));
       if (!live.current) return;
       const waited = Date.now() - started;
+      // The queue forgets a choice after an hour, so a bot that never answers ends here.
+      if (waited > GIVE_UP_MS) return set(setting, { kind: "error", message: words.timedOut });
       let got;
       try {
         got = await api.campaignSettingAnswer(campaignRef, answer);
@@ -188,8 +194,7 @@ export default function CampaignSettings({
         if (error instanceof ApiError && error.kind === "not-found") return set(setting, { kind: "error", message: words.timedOut });
         // Being signed out or no longer a game master will not mend by waiting.
         if (error instanceof ApiError && (error.kind === "not-allowed" || error.kind === "signed-out")) return set(setting, { kind: "error", message: refusal(error.kind) });
-        if (waited > OFFLINE_AFTER_MS) return set(setting, { kind: "error", message: words.failed });
-        continue;
+        continue; // a look that fails is tried again until the hour is up
       }
       if (got.state === "done") {
         setValues((before) => (before ? { ...before, [setting]: value } : before));
@@ -199,8 +204,9 @@ export default function CampaignSettings({
         if (got.error === "needs_confirm") return set(setting, { kind: "confirm", value });
         return set(setting, { kind: "error", message: answerWords(got.error, got.note) });
       }
-      if (waited > OFFLINE_AFTER_MS) return set(setting, { kind: "offline" });
-      if (waited > SLOW_AFTER_MS) set(setting, { kind: "saving", slow: true });
+      // Offline is a thing to say, not a reason to stop: the bot may still answer within the hour.
+      if (waited > OFFLINE_AFTER_MS) set(setting, { kind: "offline" });
+      else if (waited > SLOW_AFTER_MS) set(setting, { kind: "saving", slow: true });
     }
   }
 
@@ -210,7 +216,7 @@ export default function CampaignSettings({
   }
 
   const settingRows: CampaignSettingName[] = ["visibility", "level", "retention"];
-  const discordOnly: (keyof typeof words.paths)[] = owner ? ["handOver", "pause", "delete"] : [];
+  const discordOnly: (keyof typeof words.paths)[] = owner ? ["handOver", "delete"] : [];
   return (
     <section class="stack" aria-labelledby="settings-heading" id="settings">
       <h2 id="settings-heading">{words.groups.settings}</h2>
@@ -234,10 +240,15 @@ export default function CampaignSettings({
           {s && <span class="block">{words.gameMastersCount(s.gameMasters)}</span>}
           <span class="small muted block">{words.doThisInDiscord(words.paths.gameMasters)}</span>
         </li>
+        <li>
+          <span class="campaign-name">{words.settingsLabels.pause}</span>
+          {s && <span class="block">{s.paused ? words.pausedYes : words.pausedNo}</span>}
+          {/* Every game master sees whether it is paused; only the owner is given the steps. */}
+          {owner && <span class="small muted block">{words.doThisInDiscord(words.paths.pause)}</span>}
+        </li>
         {discordOnly.map((key) => (
           <li key={key}>
             <span class="campaign-name">{words.settingsLabels[key]}</span>
-            {key === "pause" && s && <span class="block">{s.paused ? words.pausedYes : words.pausedNo}</span>}
             <span class="small muted block">{words.doThisInDiscord(words.paths[key])}</span>
             {key === "delete" && <span class="small muted block">{words.deleteWarning}</span>}
           </li>
