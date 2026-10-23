@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import CONFIRMED, PROPOSED, MoreNames, NewName, name_key
@@ -50,6 +50,16 @@ class Near:
 
 
 @dataclass(frozen=True, slots=True)
+class SoundAsk:
+    """A bracket after a new name that may be how to say it: "Is (TAH-veen) how to say Tavin?"
+    asked once after saving (#2447)."""
+
+    position: int  # in `Plan.new`
+    name: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class KindDiffers:
     """A known name whose kind the list gives differently. Never changed unasked."""
 
@@ -72,6 +82,8 @@ class Plan:
     look: int = 0  # new names waiting in 📝 Check new names that aren't asked about
     dropped: int = 0  # other names already used by another name
     repeated: int = 0  # lines that turned out to be a name earlier in the list
+    sounds: dict[int, str] = field(default_factory=dict)  # `new` place → how to say it (#2447)
+    asks: list[SoundAsk] = field(default_factory=list)  # a bracket that may be how to say it
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +107,18 @@ def plan(lines: list[ListLine], names: CampaignLookup, *, secrets: bool) -> Plan
     listed: dict[str, list[_Listed]] = defaultdict(list)  # sound code → new names
     budget = [BUDGET]
     for line in lines:
+        if line.whole and name_key(line.whole) in owner:
+            # "Fenn (Lower Quay)" was split into "Fenn" and an aside, but the campaign (or an
+            # earlier line) already has the whole name: it is that name, as Download all writes
+            # it (#2447).
+            line = replace(
+                line,
+                name=line.whole,
+                others=tuple(o for o in line.others if name_key(o) != name_key(line.whole)),
+                said_as="",
+                ask="",
+                whole="",
+            )
         key = name_key(line.name)
         owners = {
             owner[k] for k in map(name_key, (line.name, *line.others, *line.secrets)) if k in owner
@@ -128,6 +152,10 @@ def plan(lines: list[ListLine], names: CampaignLookup, *, secrets: bool) -> Plan
                 tuple(others), tuple(secret),
             )
         )  # fmt: skip
+        if line.said_as:
+            out.sounds[position] = line.said_as
+        elif line.ask:
+            out.asks.append(SoundAsk(position, line.name, line.ask))
         for k in (key, *map(name_key, others), *map(name_key, secret)):
             owner[k] = position
         if line.kind is not None and not unclear:  # a confirmed name: later lines compare

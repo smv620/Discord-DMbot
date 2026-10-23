@@ -11259,6 +11259,87 @@ BACKSTORY_LINK_WORDS = """
     ALTER TABLE backstory_links ADD COLUMN detail TEXT NOT NULL DEFAULT '';
 """
 
+# The DM's 📌 100% truth (#2447): a flag on The truth's belief in a connection (a new belief row
+# each time it is set or cleared, so the change log and Undo work as for any belief), and the flag
+# a connection waiting from a campaign-lore upload carries until the DM keeps it. Both columns have
+# defaults, so no row changes. The relationship web's door tells a DM, and only a DM seeing
+# everything, which connections are pinned.
+_PINNED_LINK = (
+    "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,\n"
+    "                    'revealed', " + _PARTY_KNOWS_R + ")"
+)
+_door_pinned = UNREVEALED_CONNECTIONS[
+    UNREVEALED_CONNECTIONS.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships") :
+]
+assert _door_pinned.count(_PINNED_LINK) == 1
+PINNED_TRUTH = """
+    ALTER TABLE memory_beliefs ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE backstory_links ADD COLUMN truth BOOLEAN NOT NULL DEFAULT false;
+    """ + _door_pinned.replace(
+    _PINNED_LINK,
+    _PINNED_LINK[:-1] + ",\n                    'pinned', (is_dm AND sees_all) AND EXISTS"
+    " (SELECT 1 FROM memory_beliefs tb"
+    " JOIN memory_perspectives tp ON tp.guild_id = tb.guild_id"
+    " AND tp.campaign_id = tb.campaign_id AND tp.id = tb.perspective_id"
+    " WHERE tp.kind = 'truth' AND tb.guild_id = r.guild_id AND tb.campaign_id = r.campaign_id"
+    " AND tb.relation_id = r.id AND tb.pinned AND tb.seq = (SELECT max(x.seq)"
+    " FROM memory_beliefs x WHERE x.guild_id = tb.guild_id AND x.campaign_id = tb.campaign_id"
+    " AND x.perspective_id = tb.perspective_id AND x.relation_id = tb.relation_id)))",
+    1,
+)
+
+LINK_PIN_ACTION = """
+    -- The website's 📌 pin (#2447): a DM pins a connection as 100% truth, or takes it back, through
+    -- the same queue as the other connection edits ('link-pin': `target_id` the connection, `flag`
+    -- pinned or not). The bot applies it with the call the name card uses, so the change log and
+    -- Undo agree. No row changes: a wider list of actions and the door that checks it.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin'));
+"""
+# Built from the door as it stands now, with `merge-many` (0183), not from the older text: a door
+# built from before that would drop it (found in the review of #2456).
+_door_start = MERGE_MANY.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(")
+_door_end = MERGE_MANY.index("    DO $do$", _door_start)
+_pin_door = MERGE_MANY[_door_start:_door_end]
+for _old, _new, _times in (
+    (
+        "'link-add', 'link-words', 'link-secret', 'link-remove')",
+        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        3,
+    ),
+    (
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove')",
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin')",
+        1,
+    ),
+):
+    assert _pin_door.count(_old) == _times, (_old, _pin_door.count(_old))
+    _pin_door = _pin_door.replace(_old, _new)
+assert _pin_door.count("('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL") == 1
+_pin_door = _pin_door.replace(
+    "('secret', 'hide', 'link-add', 'link-secret') AND fl IS NULL",
+    "('secret', 'hide', 'link-add', 'link-secret', 'link-pin') AND fl IS NULL",
+)
+LINK_PIN_ACTION = (
+    LINK_PIN_ACTION
+    + _pin_door
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+)
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -11684,8 +11765,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0186_web_graph_views", WEB_GRAPH_VIEWS),  # Players / Full View and the peek notice (#2404)
     ("0187_unrevealed_connections", UNREVEALED_CONNECTIONS),  # held-back connections (#2404)
     ("0189_recap_held_names", RECAP_HELD_NAMES),  # the website's recap check, as the bot's (#2404)
+    ("0190_pinned_truth", PINNED_TRUTH),  # the DM's 📌 100% truth (#2447)
     ("0191_backstory_link_words", BACKSTORY_LINK_WORDS),  # catch-all words on waiting links (#2454)
     ("0192_campaign_facts", CAMPAIGN_FACTS),  # each campaign card's facts (#2460)
+    ("0193_link_pin_action", LINK_PIN_ACTION),  # the website pins a connection (#2447)
     ("0194_shared_rules_page", SHARED_RULES_PAGE),  # the Shared rules page (#2460)
     ("0195_session_pauses", SESSION_PAUSES),  # a restart keeps the pauses (#2466)
     ("0196_story_timeline", STORY_TIMELINE),  # recaps and reveals for the timeline (#2462)

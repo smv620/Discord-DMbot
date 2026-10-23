@@ -227,16 +227,31 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
+    await _send(interaction, offer_text(upload, False), BackgroundOffer(campaign.id, upload))
+
+
+TRUTH_OFF = "Lore: may change"
+TRUTH_ON = "Lore: 📌 100% truth"
+
+
+def offer_text(upload: Upload, truth: bool) -> str:
+    """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
+    may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
+    a session goes against it."""
     cents = bg.estimate_cents(len(upload.text))
-    await _send(
-        interaction,
+    how = (
+        "📌 **100% truth.** Connections you keep are pinned, and DMbot tells you privately if a "
+        "session goes against one."
+        if truth
+        else "**May change in play.** (Default)"
+    )
+    return (
         f"📜 **Find the names in {_md(upload.label)}?** Cost: {bg.cost_text(cents)} of your AI "
         "allowance. Nothing is added until you say yes.\n"
-        "DMbot's AI reads it and suggests names (people, places, groups, gods…) and the "
-        "connections your text states, each with its line from the text. You check each one: "
-        "the names in 📝 Check new names, then the connections.\n"
-        f"{rights_text()}",
-        BackgroundOffer(campaign.id, upload),
+        "DMbot's AI suggests names and the connections your text states, each with its line. "
+        "You check each one.\n\n"
+        f"**Treat this lore as:** {how} Tap the lore button to switch.\n\n"
+        f"{rights_text()}"
     )
 
 
@@ -245,8 +260,26 @@ class BackgroundOffer(_Menu):
         super().__init__()
         self.campaign_id = campaign_id
         self.upload = upload
+        self.truth = False  # asked once per upload (#2447): "may change in play" by default
         self.add_item(_Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary))
+        self.switch = _Button(self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary)
+        self.add_item(self.switch)
         self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+
+    async def _flip(self, interaction: discord.Interaction) -> None:
+        """Asserted (a claim the story can still change) or 📌 100% truth (the DM's word that it
+        is true: the connections found are pinned when kept). Shown again with the new choice."""
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # on every press
+            await _tell(interaction, ONLY_DMS)
+            return
+        self.truth = not self.truth
+        self.switch.label = TRUTH_ON if self.truth else TRUTH_OFF
+        await interaction.response.edit_message(
+            content=offer_text(self.upload, self.truth), view=self, allowed_mentions=NO_PINGS
+        )
 
     async def _read(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()  # the checks below are database reads (#88, #351)
@@ -256,6 +289,7 @@ class BackgroundOffer(_Menu):
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
             await _tell(interaction, ONLY_DMS)
             return
+        truth = self.truth  # as it was when Find names was pressed, not when the AI is done
         bot = _bot(interaction)
         ai = bot.background_ai
         memory = _memory(interaction)
@@ -327,7 +361,9 @@ class BackgroundOffer(_Menu):
                 rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
             stored = await store(memory, campaign, found)
-            queued = await queue_links(bot, memory, campaign, found, [read.links], set(own))
+            queued = await queue_links(
+                bot, memory, campaign, found, [read.links], set(own), truth=truth
+            )
             cut = read.cut
             log.info(
                 "Background read: %d names and %d connections suggested%s",
@@ -470,6 +506,8 @@ async def queue_links(
     found: list[bg.Found],
     answers: list[list[bg.Connection]],
     own: set[str],
+    *,
+    truth: bool = False,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -502,7 +540,7 @@ async def queue_links(
 
     kept = bg.keep_connections(answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known)
     rows = [
-        NewLink(a, c.how, b, c.quote, c.secret, c.words)
+        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
@@ -696,7 +734,7 @@ class ConnectionOffer(_Menu):
             # don't know) is kept as secret whichever button was pressed: never a public
             # connection naming a hidden end.
             try:
-                await memory.add_relation(
+                kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
                     detail=c.detail,
@@ -709,6 +747,13 @@ class ConnectionOffer(_Menu):
                     "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
                 )
                 return
+            if c.truth:  # the DM called this upload 100% truth when they uploaded it (#2447)
+                try:
+                    await memory.pin(
+                        campaign.guild_id, campaign.id, kept.value[0].id, True, source=DM
+                    )
+                except MemoryRuleError:  # kept all the same: pinning is one tap on its card
+                    log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
             self.kept += 1
