@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { text } from "../content/account";
-import { formatDate } from "../content/whats-new";
+import { formatDate } from "../content/whats-new-date";
 import { type AccountApi, type MySupport, type SupportMessage, type SupportQuestion } from "./api";
 
 /** "15 October 2026": the site's fixed words (as on What's new), in UTC, so it reads the same on
