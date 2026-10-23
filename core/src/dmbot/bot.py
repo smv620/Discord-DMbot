@@ -9512,7 +9512,9 @@ class DMBot(commands.AutoShardedBot):
             kept = {row.id for row, _ in described}
             gone = [row.id for row in rows if row.id not in kept]
             if gone:  # no longer secret (the DM changed it meanwhile): nothing to tell
-                await self.exposures.mark(gid, cid, gone, "settled")
+                await self.exposures.mark(
+                    gid, cid, [*gone, *(i for g in gone for i in stands_for[g])], "settled"
+                )
             if not described:
                 return
             listed = described[:MAX_LISTED]
@@ -9564,6 +9566,9 @@ class DMBot(commands.AutoShardedBot):
                 # row (the claim then matches nothing and it stays secret), and one pressed now
                 # is told to wait, so it can never fall between the showing and the record of it.
                 if not await self.exposures.mark(gid, cid, [row.id], "applying"):
+                    # taken back (or settled) already: the same secret said in earlier sessions
+                    # must not come back in the next summary
+                    await self.exposures.mark(gid, cid, stands_for[row.id], "settled")
                     continue
                 spelling = [row.spelling] if row.kind == "name" and row.spelling else []
                 relation = [row.relation_id] if row.kind == "connection" and row.relation_id else []

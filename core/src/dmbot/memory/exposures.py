@@ -165,6 +165,7 @@ class Waiting:
     times: int
     status: str
     batch: int | None
+    claimed_at: int | None = None  # when it was claimed to be shown (status `applying`)
 
 
 def dedupe(rows: Sequence[Waiting]) -> tuple[list[Waiting], dict[int, list[int]]]:
@@ -373,7 +374,8 @@ class ExposureStore:
     ) -> list[Waiting]:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, kind, spelling, relation_id, times, status, batch FROM secret_exposures"
+                "SELECT id, kind, spelling, relation_id, times, status, batch, claimed_at"
+                " FROM secret_exposures"
                 f" WHERE guild_id = %s AND campaign_id = %s AND {where} {extra}"
                 " ORDER BY kind DESC, times DESC, id",
                 (guild_id, campaign_id, *params),
@@ -381,7 +383,7 @@ class ExposureStore:
             return [
                 Waiting(
                     int(r["id"]), r["kind"], r["spelling"], r["relation_id"], int(r["times"]),
-                    r["status"], r["batch"],
+                    r["status"], r["batch"], r["claimed_at"],
                 )
                 for r in await cur.fetchall()
             ]  # fmt: skip
@@ -408,9 +410,19 @@ class ExposureStore:
         row in a state it may come from moves, and the count says how many did."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE secret_exposures SET status = %s, batch = COALESCE(%s, batch)"
+                "UPDATE secret_exposures SET status = %s, batch = COALESCE(%s, batch),"
+                " claimed_at = CASE WHEN %s = 'applying' THEN %s ELSE claimed_at END"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
                 " AND status = ANY(%s)",
-                (status, batch, guild_id, campaign_id, list(ids), list(self._FROM[status])),
+                (
+                    status,
+                    batch,
+                    status,
+                    int(self._clock()),
+                    guild_id,
+                    campaign_id,
+                    list(ids),
+                    list(self._FROM[status]),
+                ),
             )
             return cur.rowcount

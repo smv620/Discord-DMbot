@@ -19,6 +19,7 @@ from dmbot.ui.exposure_summary import (
     GONE,
     MAX_LISTED,
     NOTHING,
+    STUCK,
     RecantButton,
     summary_text,
     summary_view,
@@ -444,6 +445,42 @@ class Recanting(StepBase):
         await self.store.mark(GUILD_A, self.c, [row.id], "applying")
         interaction = await self.press(self.bot(campaign(id=self.c)), row.id)
         self.assertEqual(interaction.followup.send.await_args.args[0], BUSY)
+
+    async def test_a_recant_before_the_showing_also_settles_the_same_secret_from_earlier(
+        self,
+    ) -> None:
+        alias = await self.waiting_secret()
+        await self.store.record(
+            GUILD_A, self.c, 50, [Exposure("name", spelling_key("Auril"), None, 1)]
+        )  # said in an earlier session too
+        first = (await self.store.waiting(GUILD_A, self.c))[0]
+        bot = self.bot(campaign(id=self.c))
+
+        async def posted(*args: Any, **kw: Any) -> Any:
+            await self.press(bot, first.id)
+            return MESSAGE()
+
+        bot.post_message = posted
+        await DMBot.send_exposure_summary(bot, self.table())
+        self.assertTrue(await self.is_secret(alias))
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])  # nothing left to show
+        again = self.bot(campaign(id=self.c))
+        await DMBot.send_exposure_summary(again, self.table())
+        again.post_message.assert_not_awaited()  # the next summary has nothing to say
+        self.assertTrue(await self.is_secret(alias))
+
+    async def test_a_claim_that_died_is_not_busy_forever(self) -> None:
+        alias = await self.waiting_secret()
+        row = (await self.store.waiting(GUILD_A, self.c))[0]
+        await self.store.mark(GUILD_A, self.c, [row.id], "applying")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE secret_exposures SET claimed_at = 1")  # long ago
+        interaction = await self.press(self.bot(campaign(id=self.c)), row.id)
+        self.assertEqual(interaction.followup.send.await_args.args[0], STUCK)
+        got = await self.store.one(GUILD_A, self.c, row.id)
+        assert got is not None
+        self.assertEqual(got.status, "settled")
+        self.assertTrue(await self.is_secret(alias))
 
     async def test_a_recant_on_a_settled_row_says_nothing_was_shown(self) -> None:
         await self.waiting_secret()

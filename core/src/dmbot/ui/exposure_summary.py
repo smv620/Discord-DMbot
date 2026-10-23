@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -33,6 +34,11 @@ PER_ROW = 5  # Discord: five buttons to a row
 LABEL_MAX = 80  # characters of a name in the list
 GONE = "DMbot doesn't remember that one any more."
 BUSY = "DMbot is showing that one right now. Press again in a moment."
+STUCK = (
+    "Something went wrong while that one was being shown. Look at its name card: if players can "
+    "see it, undo it there."
+)
+STALE_S = 120  # a claim older than this is a showing that died, not one in progress
 NOTHING = "Nothing to take back: that one was never shown to your players."
 ALREADY = "That one is already taken back."
 SECRET_AGAIN = "↩️ Taken back: number {n} is secret again."
@@ -125,7 +131,14 @@ class RecantButton(
             await _tell(interaction, NOTHING)
             return
         if row.status == "applying":
-            await _tell(interaction, BUSY)
+            claimed = row.claimed_at or 0
+            if time.time() - claimed > STALE_S:
+                # A showing that died (a restart between the claim and the record): let it go, so
+                # it is never "busy" forever. Whether it was shown is for the name's card to say.
+                await exposures.mark(campaign.guild_id, campaign.id, [row.id], "settled")
+                await _tell(interaction, STUCK)
+            else:
+                await _tell(interaction, BUSY)
             return
         if row.status == "applied" and row.batch is not None:
             try:

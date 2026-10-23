@@ -11568,6 +11568,7 @@ EXPOSURE_SUMMARY = """
     -- with no default needed: no row changes. 'applying' is a row claimed while its secret is being
     -- shown, so a Recant pressed meanwhile cannot slip between the claim and the showing.
     ALTER TABLE secret_exposures ADD COLUMN batch BIGINT;
+    ALTER TABLE secret_exposures ADD COLUMN claimed_at BIGINT;
     ALTER TABLE secret_exposures DROP CONSTRAINT secret_exposures_status_check;
     ALTER TABLE secret_exposures ADD CONSTRAINT secret_exposures_status_check
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
