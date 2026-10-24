@@ -460,6 +460,8 @@ class Transcripts(Base):
                 # The recap pages ask it whether a session's transcript was deleted (#2022): the
                 # website's role has no grant on the tables, so this door is the only way in.
                 allowed.add("web/recaps.py")
+                # The recap maker's past-sessions list (#2610) shows which sessions have one.
+                allowed.add("web/past_sessions.py")
             self.assertEqual(callers(door), allowed, door)
 
 
