@@ -3145,6 +3145,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_approve_unchecked",
         "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)",
     ),
+    # The owner's own campaigns in any server, and deleting one from the website (#2554).
+    ("dmbot_web_owned_campaigns", "dmbot_web_owned_campaigns()"),
+    ("dmbot_web_delete_campaign", "dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)"),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11839,6 +11842,216 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+WEB_OWNED_CAMPAIGNS = """
+    -- The website's two doors for a campaign's owner, in any server (#2554, docs/PLAN.md,
+    -- "Everything on the website except picking Discord channels"). The website's role sees a
+    -- server only when it is in the session's own list (`web_session_servers`, not widened here):
+    -- an owner whose server has gone, or whose bot was removed, could not see or delete their own
+    -- campaign. These doors are keyed by the signed-in account and return only list fields, or do
+    -- the one delete. New functions only: no rows change, so no row-level-security policy is
+    -- needed.
+
+    -- The signed-in account's own campaigns in every server DMbot knows. `owner_campaigns` has the
+    -- ids but deliberately no server, so each server of the routing table is looked in, with
+    -- that server's scope, for those ids only.
+    CREATE FUNCTION dmbot_web_owned_campaigns() RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ids TEXT[];
+        g BIGINT;
+        found JSONB;
+        found_all JSONB := '[]'::jsonb;
+        saved TEXT := coalesce(current_setting('dmbot.guild_id', true), '');
+    BEGIN
+        IF me IS NULL THEN
+            RETURN found_all;
+        END IF;
+        SELECT coalesce(array_agg(campaign_id), '{}') INTO ids
+            FROM owner_campaigns WHERE owner_user_id = me;
+        IF cardinality(ids) = 0 THEN
+            RETURN found_all;
+        END IF;
+        FOR g IN SELECT guild_id FROM campaign_guilds ORDER BY guild_id LOOP
+            PERFORM set_config('dmbot.guild_id', g::text, true);
+            SELECT coalesce(jsonb_agg(jsonb_build_object(
+                       'id', c.id, 'guildId', c.guild_id::text, 'name', c.name,
+                       'lastPlayedAt', c.last_played_at) ORDER BY c.name), '[]'::jsonb)
+                INTO found
+                FROM campaigns c
+                WHERE c.guild_id = g AND c.id = ANY (ids) AND c.owner_user_id = me;
+            found_all := found_all || found;
+        END LOOP;
+        PERFORM set_config('dmbot.guild_id', saved, true);
+        RETURN found_all;
+    END
+    $fn$;
+
+    -- Delete a campaign from the website: the same rule as Discord's "Delete this campaign"
+    -- (#1608, #2556). The owner may, in any server; with no owner, any game master who can reach
+    -- the server may. The typed name must match (case and spacing ignored), and not while a
+    -- session runs. The answer says which of these stopped it; 'not_found' for a campaign that is
+    -- not this person's to know about. The caller connects scoped to the campaign's server, like
+    -- every door.
+    CREATE FUNCTION dmbot_web_delete_campaign(g BIGINT, c TEXT, typed TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        camp campaigns%ROWTYPE;
+        is_dm BOOLEAN;
+        had_channels BOOLEAN;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR c IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) INTO is_dm;
+        IF camp.owner_user_id IS DISTINCT FROM me THEN
+            -- Not the owner. Someone who is not a game master of it, or cannot reach its server,
+            -- is told nothing about it; a game master is told it is not theirs to delete.
+            IF NOT is_dm OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+            IF camp.owner_user_id IS NOT NULL THEN
+                RETURN jsonb_build_object('status', 'not_the_owner');
+            END IF;
+        END IF;
+        -- The typed name arrives as its `name_key` (Python's, the one Discord's delete uses), so
+        -- there is one rule for what counts as the same name.
+        IF typed IS DISTINCT FROM camp.name_key THEN
+            RETURN jsonb_build_object('status', 'name_mismatch');
+        END IF;
+        IF EXISTS (SELECT 1 FROM active_sessions a WHERE a.guild_id = g AND a.campaign_id = c) THEN
+            RETURN jsonb_build_object('status', 'session_running');
+        END IF;
+        had_channels := camp.dm_screen_channel_id IS NOT NULL
+            OR camp.transcript_channel_id IS NOT NULL OR camp.gametime_channel_id IS NOT NULL
+            OR camp.dmbchat_channel_id IS NOT NULL OR camp.dm_bot_channel_id IS NOT NULL
+            OR camp.rules_channel_id IS NOT NULL OR camp.npcs_channel_id IS NOT NULL;
+        -- Every table of the campaign goes with its row: each one's foreign key cascades, as
+        -- for Discord's delete.
+        DELETE FROM campaigns WHERE guild_id = g AND id = c;
+        RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels);
+    END
+    $fn$;
+
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_owned_campaigns() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_owned_campaigns() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_delete_campaign(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+WEB_DELETE_NOTICES = (
+    """
+    -- What the bot needs to finish a campaign the website deleted (#2554, part 1b): tidy the
+    -- Discord channels the way Discord's own delete does, and tell the other game masters. The
+    -- website cannot do either, and the campaign's row (with its channel ids) is gone when the bot
+    -- hears of it, so the delete door leaves this note first. It holds the campaign's name, who
+    -- deleted it, the other game masters' IDs and the channel IDs: nothing of the story. The bot
+    -- takes it (deleting the row) within seconds; one it never took is swept after a week. Isolated
+    -- per server, never read by the website's role, and left out of backups: it is not campaign
+    -- data, and has no key to the campaign (which no longer exists).
+    CREATE TABLE web_delete_notices (
+        guild_id             BIGINT NOT NULL,
+        id                   TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        gone_id              TEXT NOT NULL,
+        campaign_name        TEXT NOT NULL CHECK (char_length(campaign_name) <= 200),
+        by_user_id           BIGINT NOT NULL CHECK (by_user_id > 0),
+        other_dms            BIGINT[] NOT NULL DEFAULT '{}',
+        dm_screen_channel_id    BIGINT,
+        transcript_channel_id   BIGINT,
+        gametime_channel_id     BIGINT,
+        dmbchat_channel_id      BIGINT,
+        dm_bot_channel_id       BIGINT,
+        rules_channel_id        BIGINT,
+        npcs_channel_id         BIGINT,
+        created_at           BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX web_delete_notices_waiting ON web_delete_notices (guild_id, created_at);
+    """
+    + _isolate("web_delete_notices")
+    + r"""
+    -- The website's delete door again (replaces 0216's): the same checks and the same delete, and
+    -- first the note above. The answer is unchanged.
+    CREATE OR REPLACE FUNCTION dmbot_web_delete_campaign(g BIGINT, c TEXT, typed TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        camp campaigns%ROWTYPE;
+        is_dm BOOLEAN;
+        had_channels BOOLEAN;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR c IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) INTO is_dm;
+        IF camp.owner_user_id IS DISTINCT FROM me THEN
+            IF NOT is_dm OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+            IF camp.owner_user_id IS NOT NULL THEN
+                RETURN jsonb_build_object('status', 'not_the_owner');
+            END IF;
+        END IF;
+        IF typed IS DISTINCT FROM camp.name_key THEN
+            RETURN jsonb_build_object('status', 'name_mismatch');
+        END IF;
+        IF EXISTS (SELECT 1 FROM active_sessions a WHERE a.guild_id = g AND a.campaign_id = c) THEN
+            RETURN jsonb_build_object('status', 'session_running');
+        END IF;
+        had_channels := camp.dm_screen_channel_id IS NOT NULL
+            OR camp.transcript_channel_id IS NOT NULL OR camp.gametime_channel_id IS NOT NULL
+            OR camp.dmbchat_channel_id IS NOT NULL OR camp.dm_bot_channel_id IS NOT NULL
+            OR camp.rules_channel_id IS NOT NULL OR camp.npcs_channel_id IS NOT NULL;
+        INSERT INTO web_delete_notices (
+            guild_id, id, gone_id, campaign_name, by_user_id, other_dms,
+            dm_screen_channel_id, transcript_channel_id, gametime_channel_id,
+            dmbchat_channel_id, dm_bot_channel_id, rules_channel_id, npcs_channel_id, created_at)
+        SELECT g, replace(gen_random_uuid()::TEXT, '-', ''), c, left(camp.name, 200), me,
+               COALESCE((SELECT array_agg(d.user_id ORDER BY d.user_id) FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id <> me), '{}'),
+               camp.dm_screen_channel_id, camp.transcript_channel_id, camp.gametime_channel_id,
+               camp.dmbchat_channel_id, camp.dm_bot_channel_id, camp.rules_channel_id,
+               camp.npcs_channel_id, floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        -- The server stays on the routing list until the bot has taken the note, so it is looked
+        -- at even if this was its last campaign.
+        INSERT INTO campaign_guilds (guild_id) VALUES (g) ON CONFLICT DO NOTHING;
+        DELETE FROM campaigns WHERE guild_id = g AND id = c;
+        RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+)
+
 IMPORT_STEPS = """
     -- How far each imported session's cleaning has got and when anything about it last moved
     -- (#2564), so the website can show "420 of 900 lines" and say "stalled" when nothing has moved
@@ -12154,13 +12367,16 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
+    ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
+    ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
     "secret_exposures",
+    "web_delete_notices",
     "merge_restores",
     "transcript_respells",
     "image_day_use",
