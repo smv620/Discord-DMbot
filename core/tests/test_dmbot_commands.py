@@ -111,6 +111,60 @@ class CommandTests(DatabaseTest):
         self.assertIsInstance(view, cmds.RestoreChoice)
         self.assertEqual(view.replaceable_ids, [mine.id])
 
+    async def add_sessions(self, campaign_id: str, count: int) -> None:
+        async with self.bot.campaigns._db.guild(GUILD) as conn:
+            for n in range(count):
+                sid = f"{n:032x}"
+                await conn.execute(
+                    "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (sid, GUILD, campaign_id, 1000 + n),
+                )
+                await conn.execute(
+                    "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                    " heard)"
+                    " VALUES (%s, %s, 0, 5, 'hello there')",
+                    (GUILD, sid),
+                )
+
+    async def test_a_copy_with_transcripts_sends_them_in_extra_files_and_says_so(self) -> None:
+        camp = await self.campaigns.create(GUILD, "Mine", DM)
+        await self.add_sessions(camp.id, 2)
+        it = fake_interaction(self.bot)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+        first, second = it.followup.send.call_args_list
+        self.assertIn("more file", first.args[0])
+        self.assertIn("transcripts_1", first.args[0])
+        self.assertTrue(first.kwargs["file"].filename.endswith(".dmbot.json.gz"))
+        (extra,) = second.kwargs["files"]
+        self.assertIn(".transcripts-1-of-1.dmbot.json.gz", extra.filename)
+
+    async def test_a_copy_without_transcripts_is_one_file_as_before(self) -> None:
+        await self.campaigns.create(GUILD, "Mine", DM)
+        it = fake_interaction(self.bot)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
+        self.assertEqual(it.followup.send.call_count, 1)
+
+    async def test_restore_takes_the_transcripts_files_and_refuses_a_wrong_count(self) -> None:
+        camp = await self.campaigns.create(GUILD, "Mine", DM)
+        await self.add_sessions(camp.id, 2)
+        main, parts = await self.campaigns.export_set(GUILD, camp.id)
+        backup = encode_backup(main)
+        it = fake_interaction(self.bot)
+        await cmds.dmbot_restore.callback(it, attachment(backup), attachment(parts[0]))
+        view = it.followup.send.call_args.kwargs["view"]
+        self.assertEqual((len(view.parts), view.wanted), (1, 1))
+        # none given: offered, with a plain warning that it comes back without them
+        none = fake_interaction(self.bot)
+        await cmds.dmbot_restore.callback(none, attachment(backup))  # type: ignore[call-arg]
+        self.assertIn("without them", none.followup.send.call_args.args[0])
+        # a wrong number is refused before anything is offered
+        wrong = fake_interaction(self.bot)
+        await cmds.dmbot_restore.callback(
+            wrong, attachment(backup), attachment(parts[0]), attachment(parts[0])
+        )
+        self.assertIn("came with 1 transcripts file", wrong.followup.send.call_args.args[0])
+
     async def test_backup_needs_a_campaign(self) -> None:
         it = fake_interaction(self.bot)
         await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]

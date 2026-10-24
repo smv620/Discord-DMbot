@@ -78,14 +78,14 @@ KIND_WORDS: dict[str, str] = {
     "group": "faction",
     "faction": "faction",
     "guild": "faction",
-    "creature": "creature",
-    "monster": "creature",
-    "beast": "creature",
+    "creature": "npc",  # a named creature or monster is an NPC (#2562)
+    "monster": "npc",
+    "beast": "npc",
     "item": "item",
     "object": "item",
     "weapon": "item",
-    "god": "deity",
-    "deity": "deity",
+    "god": "npc",  # a god is an NPC; "god" can go in its description (#2562)
+    "deity": "npc",
     "spell": "spell",  # refused: a spell is not kept in campaign memory (SPELL_NOT_KEPT)
     "magic": "spell",
     "event": "event",
@@ -107,13 +107,13 @@ KIND_WORDS: dict[str, str] = {
 # How each kind is written in a download (read back by KIND_WORDS).
 KIND_OUT: dict[str, str] = {
     "npc": "NPC",
-    PC: "player's character",
+    PC: "PC",
     "character": "character",
     "place": "place",
     "faction": "group",
-    "creature": "creature",
+    "creature": "NPC",
     "item": "item",
-    "deity": "god",
+    "deity": "NPC",
     "spell": "spell",
     "event": "event",
     "concept": "other",
@@ -142,11 +142,12 @@ def header(*, secrets: bool, download: bool = False) -> str:
         f"###     {parts}",
         "###",
         "### - Only the name is needed. To skip a part, leave it empty: Ulfgar | | Ulf",
-        "### - kind: NPC, place, group, creature, item, god, event or other.",
-        "###   These work too: person or character (NPC); town, city or location (place);",
-        "###   faction or guild (group); monster or beast (creature); object or weapon",
-        "###   (item); deity (god); idea or thing (other). A named creature, an NPC and a",
-        "###   god are all characters. Spells aren't kept here: look them up with /dmbot rule.",
+        "### - kind: NPC, PC, place, group, item, event or other.",
+        "###   These work too: character, creature, monster, god or deity (NPC); player",
+        "###   character (PC); town, city or location (place); faction or guild (group);",
+        "###   object or weapon (item); idea or thing (other). Every character is an NPC",
+        "###   (the DM plays it) or a PC (a player plays it). Spells aren't kept here:",
+        "###   look them up with /dmbot rule.",
         "###   Another word (like wizard), or no kind? After you add the list, DMbot asks",
         '###   you once what every "wizard" is. If there are many words, the rest wait in',
         "###   Check new names.",
@@ -422,6 +423,16 @@ def kind_of(word: str) -> str | None:
     return None
 
 
+# The words that call a name a creature. They all read as NPC now (#2562), but a plain kind of
+# monster ("goblin") is still refused: it is not one named character.
+_CREATURE_WORDS = frozenset({"creature", "monster", "beast"})
+
+
+def _says_creature(word: str) -> bool:
+    word = " ".join(word.casefold().split())
+    return any(g in _CREATURE_WORDS for g in (word, word.removesuffix("s")))
+
+
 @dataclass(slots=True)
 class _Taking:
     """One name while a list is read: its lines join here, so a name written on many
@@ -518,7 +529,7 @@ def parse(text: str, *, secrets: bool, people: bool = True) -> Parsed:
         if kind_of(word) == "person":
             out.refused.append((number, PERSON_NOT_LISTED))
             continue
-        if kind_of(word) == "creature" and index.srd().is_monster(name):
+        if _says_creature(word) and index.srd().is_monster(name):
             out.refused.append((number, UNNAMED_MONSTER))
             continue
         first = taking.get(key)
@@ -602,7 +613,7 @@ def _person(
             have_plays.append(n)
     if len(have_names) > MAX_PER_NAME or len(have_plays) > MAX_PER_NAME:  # (all the rows joined)
         del have_names[MAX_PER_NAME:], have_plays[MAX_PER_NAME:]
-        out.refused.append((number, f"more than {MAX_PER_NAME} names for one person"))
+        out.refused.append((number, f"more than {MAX_PER_NAME} names for one character"))
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,7 +14,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 BOB = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
@@ -53,7 +53,9 @@ class SignOutEverywhere(DatabaseTest):
         """A browser signed in as this person (its own cookie)."""
         self.discord.user_info = user
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         start = await client.get("/auth/discord/start")
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
@@ -86,7 +88,7 @@ class SignOutEverywhere(DatabaseTest):
 
     async def test_it_needs_a_sign_in_and_the_site_header(self) -> None:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as stranger:
             out = await stranger.post("/me/sign-out-everywhere", headers=HEADERS)
         self.assertEqual(out.status_code, 401)

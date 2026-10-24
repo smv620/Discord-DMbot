@@ -58,7 +58,7 @@ beforeAll(async () => {
 
 describe("the privacy section", () => {
   it("is on the page exactly while recaps are live, and says nothing when switched off", () => {
-    expect(RECAP_AUDIO_LIVE).toBe(false); // narration waits for the owner's ElevenLabs go-ahead
+    expect(RECAP_AUDIO_LIVE).toBe(true); // on since #2617, with ElevenLabs named on the privacy page
     expect(text(off.body)).toBe("");
     expect(privacy.querySelector("#recaps") !== null).toBe(RECAPS_LIVE);
   });
@@ -128,7 +128,7 @@ describe("Help and the emails list", () => {
     expect(all).toContain("It also takes out compass directions");
     // Says no more than the check does: not "never wrong", and no technical words (#2072).
     expect(all).not.toMatch(/never wrong|always right|wrong one|every detail|beats?\b|fact check|AI model/i);
-    expect(all).not.toMatch(/narrat|music/i); // not built yet (#1383)
+    expect(all).toMatch(/narrator's voice and music/); // narration is on (#2617)
     expect(recapEmailStep).toContain("once for each recap");
   });
 });
@@ -161,7 +161,7 @@ describe("the switches and What's new agree", () => {
     ["Share a recap by a link", RECAP_SHARE_LIVE],
     ["Approve the text before any audio", RECAP_AUDIO_LIVE],
     ["Narrated recaps with music", RECAP_AUDIO_LIVE],
-    ["Play a recap's voice and music together", RECAP_AUDIO_LIVE],
+    ["Play a recap's voice and music", RECAP_AUDIO_LIVE],
   ] as const)("holds %s back exactly while its switch is off", (title, on) => {
     expect(held.some((h) => h.title === title)).toBe(!on);
     expect(entries.some((e) => e.title === title)).toBe(on);
