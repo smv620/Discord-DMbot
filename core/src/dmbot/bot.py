@@ -11974,6 +11974,17 @@ class DMBot(commands.AutoShardedBot):
                         continue
                     await self.post(campaign.dm_screen_channel_id, peek_notice(peek.name))
 
+    def _waiting_answers(self, guild_id: int) -> web_actions.Waiting | None:
+        """What the website's answers to waiting connections need (#2635): the claims, the
+        backstory's queue, and who may be recorded now (read when the answer is applied)."""
+        if self.memory is None or self.backstory_links is None:
+            return None
+        return web_actions.Waiting(
+            ClaimStore(self.memory),
+            self.backstory_links,
+            lambda: self.consent.consenting(guild_id),
+        )
+
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -11994,7 +12005,11 @@ class DMBot(commands.AutoShardedBot):
                             web_actions.Outcome(error=web_actions.NOT_ALLOWED)
                             if campaign is None
                             else await web_actions.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, action
+                                self.memory,
+                                guild.id,
+                                campaign.dm_user_ids,
+                                action,
+                                self._waiting_answers(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug

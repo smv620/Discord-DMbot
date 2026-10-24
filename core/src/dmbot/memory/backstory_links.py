@@ -48,6 +48,7 @@ class Waiting:
     ready: bool  # both are confirmed names: the DM may keep it now
     detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # pin it as 100% truth when kept (#2447)
+    id: str = ""  # the waiting row's own id, for the website's queue (#2635)
 
 
 class BackstoryLinks:
@@ -115,7 +116,8 @@ class BackstoryLinks:
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
-                "SELECT subject_id, predicate, object_id, quote, secret, detail, truth, created_at"
+                "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
+                " created_at"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -167,7 +169,7 @@ class BackstoryLinks:
                     Waiting(
                         a, predicate, b, str(r["quote"]), bool(r["secret"]) or hidden,
                         str(entities[a]["name"]), str(entities[b]["name"]),
-                        ready, str(r["detail"]), bool(r["truth"]),
+                        ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -176,10 +178,10 @@ class BackstoryLinks:
             for a, predicate, b, r in move:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
-                    " predicate, object_id, quote, secret, detail, truth, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " predicate, object_id, quote, secret, detail, truth, created_at, id)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
-                     r["detail"], r["truth"], r["created_at"]),
+                     r["detail"], r["truth"], r["created_at"], r["id"]),
                 )  # fmt: skip
         return out
 
