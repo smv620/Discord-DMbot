@@ -2710,6 +2710,7 @@ class Review(NamesTest):
             GUILD, self.campaign.id, entity_id, "Harrow's Caer", source="dm",
             keep_old=False, also_known_as="Harrow's car",
         )  # fmt: skip
+        assert written.batch is not None
         await self.memory.undo(GUILD, self.campaign.id, written.batch)
         entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
         assert entity is not None
