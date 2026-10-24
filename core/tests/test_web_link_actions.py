@@ -17,7 +17,7 @@ from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import Web
 
 
@@ -546,9 +546,11 @@ class TheRoutes(Editing):
             days=30,
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             posted = await client.post(
                 f"/me/campaigns/{self.cref}/web/links",
                 json={"a": self.mira, "b": self.hall, "words": "knows", "secret": False},

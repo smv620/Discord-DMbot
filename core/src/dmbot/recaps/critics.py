@@ -26,7 +26,7 @@ from dmbot.memory.extractor import quoted
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.significance import MEMORY_CHARS, MEMORY_ITEMS, RECAP, Memory
 from dmbot.recaps.split import content_words
-from dmbot.recaps.text import names_a_secret
+from dmbot.recaps.text import at_word_end, names_a_secret
 
 MAX_ROUNDS = 4  # readings of a draft: the first draft and up to three revisions
 MAX_CHANGES = 8  # PlotBot's changes for one reading
@@ -428,10 +428,9 @@ def plot_changes(
             out.append(Change(kind, f"{quote}: {GENERIC[kind]}", True, number))
         else:
             said = raw.get("change")
-            text = " ".join(said.split()) if isinstance(said, str) else ""
+            text = at_word_end(" ".join(said.split()), CHANGE_MAX) if isinstance(said, str) else ""
             explainable = (
                 text
-                and len(text) <= CHANGE_MAX
                 and ties
                 and all(allowed[t] for t in ties)
                 and not names_a_secret(text, secret_names, allowed_names)

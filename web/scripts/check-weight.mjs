@@ -15,9 +15,12 @@ import { checkBuild, table } from "./weight.mjs";
 // Measured on 2026-10-18 (#1947), following the scripts a page loads: the largest HTML is help.html at
 // 39.5 KB, and the largest page in all is /account at 142.6 KB (its script islands and what they
 // import). Each plus 20%, rounded up to the next 5 KB.
+// Raised on 2026-10-24 (#2617): turning narration on brings the audio choice, the player and the names
+// panel into /account/recaps (176.7 KB) and Help's narration steps into help.html (50.3 KB). Each is
+// legitimate and was looked at; both budgets are today's largest plus about 5% of headroom.
 export const budgets = {
-  htmlKB: 50,
-  totalKB: 175,
+  htmlKB: 52,
+  totalKB: 185,
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
 

@@ -37,7 +37,7 @@ from typing import Any
 from dmbot.memory.extractor import quoted, transcript_of
 from dmbot.recaps.beats import Beat, sheet, unsaid_names
 from dmbot.recaps.split import content_words, vocabulary_of
-from dmbot.recaps.text import names_a_secret, proper_nouns, words
+from dmbot.recaps.text import at_word_end, names_a_secret, proper_nouns, words
 
 RECAP = "recap"  # the id a note uses to tie itself to the last accepted recap
 MAX_NOTES = 12
@@ -255,7 +255,8 @@ def _why(
     if not ties or not all(allowed[t] for t in ties) or not isinstance(why, str):
         return ""
     text = " ".join(why.split())
-    if not text or len(text) > WHY_MAX:
+    text = at_word_end(text, WHY_MAX)  # shortened, never dropped for its length (#2597)
+    if not text:
         return ""
     if names_a_secret(text, secret_names, allowed_names):
         return ""
@@ -311,7 +312,8 @@ def check(
         if type(line) is not int or line not in play_lines:
             cut["no line"] += 1
             continue
-        if line in taken or not what or len(what) > DETAIL_MAX:
+        what = at_word_end(what, DETAIL_MAX)
+        if line in taken or not what:
             cut["form"] += 1  # (a line a beat already holds is no left-out detail)
             continue
         ties = _ties(raw.get("ties", []), allowed)

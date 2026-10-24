@@ -46,6 +46,15 @@ class Problem(enum.Enum):
         "The AI service didn't accept DMbot's key. Check ANTHROPIC_API_KEY at "
         "https://console.anthropic.com/settings/keys and in the server's .env."
     )
+    GEMINI_OUT_OF_FUNDS = (
+        "Google's Gemini says DMbot has no credit or has reached its spend cap, so the recap "
+        "writer is paused. Check billing at https://aistudio.google.com/ (the key must be on a "
+        "paid plan)."
+    )
+    GEMINI_KEY_REFUSED = (
+        "Google's Gemini didn't accept DMbot's key. Check GEMINI_API_KEY at "
+        "https://aistudio.google.com/apikey and in the server's .env."
+    )
     DEEPGRAM_KEY_REFUSED = (
         "Deepgram didn't accept DMbot's key, so nothing is being transcribed. Check "
         "DEEPGRAM_API_KEY at https://console.deepgram.com/ and in the server's .env."
