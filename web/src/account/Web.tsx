@@ -25,6 +25,8 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
+import WebWaiting from "./WebWaiting";
+import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
 import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
@@ -433,6 +435,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
           onAlone={setAlone}
         />
+      )}
+
+      {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
+        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
       )}
 
       {nodes.length <= 1 && edges.length === 0 ? (
