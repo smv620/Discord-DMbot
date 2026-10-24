@@ -897,8 +897,8 @@ def check_prose(
     if not count:
         problems.append(f"the recap is empty: write about {length.target} words of narration")
     cues = CUE.findall(summary)
-    if len(cues) > length.sections:
-        problems.append(f"at most {length.sections} emotion sections")
+    # (more sections than the length asks for are not refused: `fix_prose` folds the extra ones
+    # into the last allowed section in code, #2597)
     if len(prose.music) != len(cues):
         problems.append(
             f"give exactly one music prompt for each 《…》 section: {len(cues)} sections, "

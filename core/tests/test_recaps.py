@@ -740,6 +740,18 @@ class TheHardLimits(unittest.TestCase):
         self.assertLessEqual(len(one), rd.STORY_MAX)
         self.assertEqual(rd.fit_summary("short"), "short")
 
+    def test_too_many_sections_are_folded_into_the_last_allowed_one_not_refused(self) -> None:
+        paragraphs = [f"《Calm》 Mira walked on, step {n}." for n in range(9)]
+        raw = rd.Prose("\n\n".join(paragraphs), ("m",) * 9)
+        self.assertEqual(
+            [p for p in prose_problems(raw.summary, "\n".join(raw.music)) if "section" in p], []
+        )  # (the raw draft is not refused for the count)
+        fixed = rd.fix_prose(raw, 6)
+        self.assertEqual(len(rd.CUE.findall(fixed.summary)), 6)
+        self.assertEqual(len(fixed.music), 6)
+        for n in range(9):  # every word survives, the extra cues only come out
+            self.assertIn(f"step {n}.", fixed.summary)
+
     def test_at_word_end_edges(self) -> None:
         self.assertEqual(at_word_end("one two", 7), "one two")  # exact fit
         self.assertEqual(at_word_end("one two", 5), "one")  # cut inside a word: back to the last
