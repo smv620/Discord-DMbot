@@ -52,7 +52,7 @@ COLUMNS = (
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
     " approved_by, approved_at, approved_hash, audio_choice, split, critics,"
-    " posting_since, posting_step, posted_url"
+    " posting_since, posting_step, posted_url, restarted_at, previous"
 )
 
 
@@ -126,6 +126,16 @@ class Job:
     posting_since: int | None = None
     posting_step: str = ""
     posted_url: str = ""
+    # The DM started this recap over (Unix seconds; 0: never, #2608), and the approved or posted
+    # recap that was there before, kept until the new one is approved.
+    restarted_at: int = 0
+    previous: Any = None
+
+    @property
+    def keeps_previous(self) -> bool:
+        """An earlier approved or posted recap is still held for the DM: the new one is not yet
+        approved or posted, so the old one may still be kept (#2608)."""
+        return self.previous is not None and not self.approved_hash and self.status == "draft"
 
     @property
     def finished(self) -> bool:
@@ -186,6 +196,8 @@ def _job(r: dict[str, Any]) -> Job:
         None if r.get("posting_since") is None else int(r["posting_since"]),
         r.get("posting_step") or "",
         r.get("posted_url") or "",
+        int(r.get("restarted_at") or 0),
+        r.get("previous"),
     )
 
 
@@ -850,7 +862,9 @@ class RecapStore:
                 " AS recaps, COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
                 " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0)"
                 " AS narrated FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
-                " AND created_at >= %s AND created_at < %s",
+                # (a recap the DM started over counts in the month they did)
+                " AND COALESCE(NULLIF(restarted_at, 0), created_at) >= %s"
+                " AND COALESCE(NULLIF(restarted_at, 0), created_at) < %s",
                 (guild_id, campaign_id, start, end),
             )
             row = await cur.fetchone()
@@ -872,6 +886,84 @@ class RecapStore:
                 " audio_choice = ''"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
                 " AND status = 'draft' AND state = 'failed'",
+                (guild_id, campaign_id, session_at),
+            )
+            return bool(cur.rowcount)
+
+    async def start_over(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        who: int,
+        *,
+        replace_ok: bool = False,
+    ) -> str:
+        """A DM makes the recap of a session, or makes it again (#2608). One of: `queued` (the
+        worker writes it next round), `needs_confirm` (it has a recap already; ask once, then call
+        again with `replace_ok`), `busy` (it is being written or sent now), `no_lines` (the
+        session's words are gone, so it cannot be written), `not_allowed` (`who` is no DM of the
+        campaign). An approved or posted recap is kept, in `previous`, until the new one is
+        approved. The plan, the switches and the month's allowance are the worker's, as for every
+        recap, and fail closed there."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_recap_start_over(%s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, session_at, who, replace_ok),
+            )
+            row = await cur.fetchone()
+        return str(row["r"]) if row else "not_allowed"
+
+    async def overview(self, guild_id: int, campaign_id: str) -> dict[int, tuple[str, str, bool]]:
+        """For each session of the campaign that has a recap job: (state, status, approved), to say
+        in a session picker what each one has (#2608). Words only, never the recap's text."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, state, status, approved_hash <> '' AS approved"
+                " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            return {
+                int(r["session_at"]): (r["state"], r["status"], bool(r["approved"]))
+                for r in await cur.fetchall()
+            }
+
+    async def others_working(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """Whether another recap of the campaign is being written, so this one waits its turn: the
+        worker runs one at a time for a campaign (#2608)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at <> %s AND state NOT IN ('ready', 'failed') AND status = 'draft'"
+                " LIMIT 1",
+                (guild_id, campaign_id, session_at),
+            )
+            return await cur.fetchone() is not None
+
+    async def keep_previous(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """Put the earlier approved or posted recap back, instead of the new one (#2608): for a new
+        one that failed, or that the DM does not want. Only while the new one is not approved.
+        False:
+        there is nothing to put back."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET state = 'ready', last_error = '', tries = 0,"
+                " title = previous->>'title', summary = previous->>'summary',"
+                " original = previous->>'original',"
+                " housekeeping = ARRAY(SELECT jsonb_array_elements_text(previous->'housekeeping')),"
+                " music = ARRAY(SELECT jsonb_array_elements_text(previous->'music')),"
+                " game_day = (previous->>'game_day')::INTEGER, status = previous->>'status',"
+                " approved_by = (previous->>'approved_by')::BIGINT,"
+                " approved_at = (previous->>'approved_at')::BIGINT,"
+                " approved_hash = previous->>'approved_hash',"
+                " audio_choice = previous->>'audio_choice',"
+                " speakers = ARRAY(SELECT jsonb_array_elements_text(previous->'speakers')::BIGINT),"
+                " grade = previous->'grade', posted_url = previous->>'posted_url',"
+                " decided_at = (previous->>'decided_at')::BIGINT, previous = NULL,"
+                " emailed_at = COALESCE(emailed_at, updated_at), critics = NULL, split = NULL"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                " AND previous IS NOT NULL AND approved_hash = '' AND status = 'draft'"
+                " AND state IN ('ready', 'failed')",
                 (guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
@@ -1001,6 +1093,9 @@ class RecapStore:
                     " AND audio_choice = 'text'"
                 )
         elif action == "drop":
+            # "Not this one" on a recap made again keeps the one it replaced (#2608).
+            if await self.keep_previous(guild_id, campaign_id, session_at):
+                return True
             sql = "status = 'dropped' WHERE status = 'draft'"
         else:
             raise ValueError(action)
