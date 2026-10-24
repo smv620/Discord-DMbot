@@ -855,7 +855,9 @@ class TheEdits(Editing):
         other = await self.campaigns.create(self.g, "Elsewhere", ALICE.id)
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, other.id))
-            self.assertIsNone((await cur.fetchone())["r"])  # not this person's campaign: nothing
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["r"])  # not this person's campaign: nothing
 
     async def test_a_flag_on_a_which_answer_is_refused_by_the_door(self) -> None:
         which = await self.which_question()
@@ -866,7 +868,9 @@ class TheEdits(Editing):
                 " %s, '', true) AS r",
                 (self.g, self.one.id, which),
             )
-            self.assertEqual((await cur.fetchone())["r"]["status"], "bad_text")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["r"]["status"], "bad_text")
 
 
 class Refusals(Editing):
