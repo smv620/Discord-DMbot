@@ -428,7 +428,8 @@ class BackgroundOffer(_Menu):
                 stored,
                 queued,
                 cut=cut,
-                links_found=read.stats.links_listed,
+                # (lines for connections that were already there are not "found" again)
+                links_found=read.stats.links_listed - read.stats.dropped["already_connected"],
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
@@ -529,6 +530,7 @@ async def summary(
                 CUT_NOTHING.format(label=_md(label))
                 if cut
                 else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
+                + _found_note(links_found, queued)
             ),
             allowed_mentions=NO_PINGS,
         )

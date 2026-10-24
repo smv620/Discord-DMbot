@@ -68,6 +68,20 @@ class FoundNoteTest(unittest.TestCase):
         self.assertIn("one only when both names were found", note)
         self.assertIn("saw 1 connection in", _found_note(1, 0))
 
+    def test_the_note_is_also_said_when_no_name_is_new(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.ui.name_background import summary
+
+        interaction = SimpleNamespace(edit_original_response=AsyncMock())
+        campaign = SimpleNamespace(id="c" * 32)
+        asyncio.run(summary(interaction, campaign, "Notes", {}, 0, links_found=4))  # type: ignore[arg-type]
+        text = interaction.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("found no new names", text)
+        self.assertIn("saw 4 connections in your text and kept 0", text)
+
 
 if __name__ == "__main__":
     unittest.main()
