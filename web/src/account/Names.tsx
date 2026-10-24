@@ -44,11 +44,31 @@ function refusal(error: unknown): string | null {
   return words.errors[kind] ?? words.errorFallback;
 }
 
-export default function Names({ api, path }: { api: AccountApi; path: string }) {
+/** The name Discord's "🎤 Say it" button sent the DM here for, from `#said=<the name as written>` (#2317): the
+ * page opens on a search for it and, when one name is exactly that, opens its editor with the cursor in the
+ * "how to say it" box. Anything else (no such name, a long or odd value) just shows the plain list. It is in
+ * the address's fragment, not its query: a name can be a secret, and a query string is written to the site's
+ * logs while a fragment never leaves the browser. */
+export function saidFromHash(hash: string): string {
+  if (!hash.startsWith("#")) return ""; // (only a fragment is read, never a query string)
+  const raw = new URLSearchParams(hash.replace(/^#/, "")).get("said")?.trim() ?? "";
+  return raw.length > 0 && raw.length <= 80 ? raw : "";
+}
+
+export default function Names({ api, path, hash = "" }: { api: AccountApi; path: string; hash?: string }) {
   const ref = namesRefFromPath(path);
+  const sentFor = useRef(saidFromHash(hash)); // the name the link was for, until it has been opened
+  const [focusRow, setFocusRow] = useState<string | null>(null); // the row whose "how to say it" box takes the cursor
   const [view, setView] = useState<View>("loading");
   const [data, setData] = useState<NamesPage | null>(null);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(() => saidFromHash(hash));
+  // Once read, the name leaves the address bar, so it is not left in the history or shared by a screenshot.
+  useEffect(() => {
+    if (saidFromHash(hash) !== "" && typeof window !== "undefined" && window.location.hash !== "") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [kind, setKind] = useState("");
   const [sort, setSort] = useState<NameSort>("name");
   const [busy, setBusy] = useState(false);
@@ -94,6 +114,16 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
       // An editor stays open only for a row still on the page: a search, filter or page change that
       // drops it must not bring it back, with old words in it, when the row returns (#2299).
       setEditing((open) => (open !== null && read.names.some((n) => n.id === open) ? open : null));
+      // Opened from Discord's "Say it" link: the one name that is exactly the name sent, opened once.
+      if (sentFor.current && read.canEdit) {
+        const wanted = sentFor.current.toLocaleLowerCase();
+        const exact = read.names.filter((n) => n.aliasId && n.name.toLocaleLowerCase() === wanted);
+        sentFor.current = ""; // (only the first read: a later search must not open anything)
+        if (exact.length === 1 && api.saveSaidAs) {
+          setEditing(exact[0]!.id);
+          setFocusRow(exact[0]!.id);
+        }
+      }
       pageNow.current = read.page;
       setPageNotice(null);
       return read.page;
@@ -376,6 +406,7 @@ export default function Names({ api, path }: { api: AccountApi; path: string }) 
               ticked={picked.some((r) => r.id === row.id)}
               onTick={() => pick(row)}
               open={editing === row.id}
+              focusSaid={focusRow === row.id}
               onToggle={() => setEditing(editing === row.id ? null : row.id)}
               act={act}
               api={api}
@@ -493,6 +524,8 @@ interface ItemProps {
   ticked: boolean;
   onTick: () => void;
   open: boolean;
+  /** Put the cursor in the "how to say it" box when the editor opens (the link from Discord). */
+  focusSaid?: boolean;
   onToggle: () => void;
   act: (row: NameRow, change: NameChange, ok: string) => Promise<string | null>;
   api: AccountApi;
@@ -500,7 +533,7 @@ interface ItemProps {
   campaignPath: string;
 }
 
-function NameItem({ row, kinds, canEdit, ticked, onTick, open, onToggle, act, api, refId, campaignPath }: ItemProps) {
+function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, api, refId, campaignPath }: ItemProps) {
   const panel = `name-edit-${row.id}`;
   return (
     <li class="name-row">
@@ -552,7 +585,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, onToggle, act, ap
         )}
       </div>
       {canEdit && open && (
-        <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} />
+        <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />
       )}
     </li>
   );
@@ -565,9 +598,10 @@ interface EditorProps {
   act: ItemProps["act"];
   api: AccountApi;
   refId: string;
+  focusSaid: boolean;
 }
 
-function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
+function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps) {
   const [spelling, setSpelling] = useState(row.name);
   const [kindKey, setKindKey] = useState(row.kind);
   const [other, setOther] = useState("");
@@ -615,6 +649,11 @@ function NameEditor({ id, row, kinds, act, api, refId }: EditorProps) {
     setSavedSaid(row.saidAs ?? "");
   }, [row.aliasId, row.saidAs]);
   const saidId = `said-as-${row.id}`;
+  // Arriving from Discord's "Say it" link: the cursor goes to the box this link is for.
+  useEffect(() => {
+    if (focusSaid) document.getElementById(saidId)?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSaid]);
   const saveSaid = async (): Promise<void> => {
     if (!row.aliasId || !api.saveSaidAs || savingSaid) return;
     setSavingSaid(true);

@@ -24,7 +24,7 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
-from dmbot.memory import lore_read
+from dmbot.memory import lore_context, lore_read
 from dmbot.memory.backstory_links import NewLink, Waiting
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
@@ -400,7 +400,9 @@ class BackgroundOffer(_Menu):
                 known,
                 rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
-            stored = await store(memory, campaign, found)
+            stored = await store(
+                memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
+            )
             queued = await queue_links(
                 bot,
                 memory,
@@ -452,12 +454,19 @@ class BackgroundOffer(_Menu):
 
 
 async def store(
-    memory: MemoryStore, campaign: Campaign, found: list[bg.Found]
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: list[bg.Found],
+    held: lore_context.Held | None = None,
+    text: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
-    one Undo. Returns the new suggestions' IDs for each kind."""
+    one Undo. Returns the new suggestions' IDs for each kind. What is stored stays the short quote
+    (the text is never kept, #2167); `held` gets the sentence around each name, cut from `text`
+    while it is still in memory, for the review card to show (#2561): memory only, never stored."""
     names: list[NewName] = []
+    items: list[bg.Found] = []
     for item in found:
         try:
             check_named(item.kind, item.name)  # one refused name must not stop the others
@@ -472,6 +481,7 @@ async def store(
                 item.name, item.kind, PROPOSED, others=item.also, secrets=item.secret, note=note
             )
         )
+        items.append(item)
     stored: dict[str, list[str]] = {}
     if not names:
         return stored
@@ -482,9 +492,15 @@ async def store(
     except MemoryRuleError as exc:
         log.info("Skipped the names from a background: %s", exc)
         return stored
-    for name, entity_id in zip(names, written.value, strict=False):
+    for name, item, entity_id in zip(names, items, written.value, strict=False):
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
+            if held is not None and text:
+                held.put(
+                    campaign.guild_id,
+                    entity_id,
+                    lore_context.around(text, item.quote, item.name),
+                )
     return stored
 
 
