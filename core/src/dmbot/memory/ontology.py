@@ -27,7 +27,6 @@ from dmbot.memory.models import (
     DESCRIPTION_MAX,
     DESTROYED,
     DM,
-    GOD,
     GOING,
     HINTED,
     INTACT,
@@ -195,7 +194,7 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
 LEGACY_KINDS: Mapping[str, tuple[str, str | None]] = {
     "player_character": ("character", PLAYER_CHARACTER),
     "npc": ("character", NPC),
-    "deity": ("character", GOD),
+    "deity": ("character", NPC),  # a god is an NPC (#2562)
     "creature": ("character", NPC),
 }
 # What the migration (and an older backup, and an old change-log row) made of an older kind:
@@ -204,15 +203,28 @@ LEGACY_KINDS: Mapping[str, tuple[str, str | None]] = {
 MIGRATED_KINDS: Mapping[str, tuple[str, str | None, bool]] = {
     "player_character": ("character", PLAYER_CHARACTER, False),
     "npc": ("character", NPC, False),
-    "deity": ("character", GOD, False),
+    "deity": ("character", NPC, False),
     "creature": ("character", None, True),
     "spell": ("concept", None, True),
 }
+GOD_NOTE = "A god."
+
+
+def god_is_an_npc(description: str) -> str:
+    """The description of an entry that was a god and is an NPC now (#2562): it keeps "god" in its
+    words, as a note, unless they already say so. Within the description limit; nothing else is
+    changed."""
+    if re.search(r"\b(god|goddess|deity)\b", description, re.IGNORECASE):
+        return description
+    room = DESCRIPTION_MAX - len(GOD_NOTE) - 1
+    return f"{description[:room].rstrip()} {GOD_NOTE}".strip()
+
+
 SPELL_NOT_KEPT = "Spells aren't kept in campaign memory. To look one up, use /dmbot rule."
 
 
 UNNAMED_MONSTER = (
-    "That's a kind of monster, not one person. Name them (like 'Snot the goblin') "
+    "That's a kind of monster, not one character. Name them (like 'Snot the goblin') "
     "or link it as a stat block on a character."
 )
 

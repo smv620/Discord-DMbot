@@ -297,3 +297,12 @@ One recap is about 3,000 + 3,600 (+ 200 for a new ambience loop) = **about 7,000
 `python -m dmbot.devtools.recap_run --session GUILD CAMPAIGN SESSION_AT --yes` costs what one live recap's text costs: up to nine AI calls (more for a very long session, one for each extra window of the transcript), about 12,000 to 20,000 input tokens and 3,000 to 5,000 output tokens for a normal session, so a few cents on the fast tier plus a little on the careful tier when a check makes it retry. It prints its own estimate first and does nothing without `--yes`. `--audio` adds the narration and music: about 7,000 provider credits (see above). `--golden` runs the three invented sessions: about three times one recap's text cost. Record the real figures here after dev1's first run.
 
 **On a transcript file (#1969):** `recap_run --transcript FILE --dm NAME [--names FILE] [--audio] [--out DIR] --yes` costs the same as `--session` for a file of the same length (it prints the estimate first, and nothing runs without `--yes`). Before any paid call it asks once whether everyone in the file agreed to be recorded and to the test; `--yes` never answers that. Nothing is stored. The file and the outputs stay on the server, so paste nothing from the output into GitHub but the scores, counts and credits.
+
+## PlotBot's check of a recap (#2122)
+One careful-tier call per ready recap text, and one more each time the text changes. The call carries
+the recap's sentences (at most 120) and the newest earlier accepted recaps (at most 40, 1,800
+characters each), so about 10,000 to 25,000 input tokens late in a long campaign and at most
+1,500 output tokens. A recap with no earlier accepted recap makes no call. At most 6 checks begin for
+a campaign in an hour, and a check that never finished is tried at most 3 times. The chat about each
+issue (#2123) is counted separately. Not measured on a live campaign yet; the feature is off
+(`DMBOT_PLOT_CHECK=0`) until it is.

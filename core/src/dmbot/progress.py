@@ -31,6 +31,18 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
+    "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
+    "reading": 5 * 60,  # ... then reads the campaign
+    "packing": 5 * 60,  # ... and packs it
+    # The steps of a recap being made on the website's page (#2636; `recaps.progress`). The name
+    # pass wait is touched every half minute; a part of a long session can take a while.
+    "recap_names": 10 * 60,
+    "recap_reading": 20 * 60,
+    "recap_beats": 10 * 60,
+    "recap_writing": 30 * 60,
+    "recap_checking": 30 * 60,
+    "recap_check_waiting": None,  # written, and tried again later by design (hours, not minutes)
+    "recap_finishing": 10 * 60,
     "recap_ready": None,
     "recap_failed": None,
     "done": None,
@@ -48,7 +60,7 @@ ENDS: Final[Mapping[str, str]] = {
 STALLED_REASON: Final = "stalled"
 RECAP_FAILED_REASON: Final = "recap_failed"
 # What each count measures, for the stages that have one.
-UNITS: Final[Mapping[str, str]] = {"cleaning": "lines"}
+UNITS: Final[Mapping[str, str]] = {"cleaning": "lines", "recap_reading": "parts"}
 
 
 def shape(

@@ -34,6 +34,7 @@ from dmbot.campaigns.store import DAMAGED
 from dmbot.db import Conn, Database
 from dmbot.memory.adventure import AdventureError, AdventureStore
 from dmbot.memory.claims import reads_like_instruction
+from dmbot.word_end import at_word_end
 
 # ---- money --------------------------------------------------------------------------------
 
@@ -192,7 +193,7 @@ def squash(text: str) -> str:
     return " ".join(text.translate(table).casefold().split())
 
 
-def _clean(value: Any, limit: int) -> str | None:
+def _clean(value: Any, limit: int, *, whole: bool = False) -> str | None:
     """A short text from the answer: one line, no control characters, within the limit. None
     when it is not text."""
     if not isinstance(value, str):
@@ -201,7 +202,9 @@ def _clean(value: Any, limit: int) -> str | None:
     text = " ".join(text.split())
     if any("\ud800" <= c <= "\udfff" for c in text):
         return None  # a lone surrogate can't be stored as UTF-8
-    return text[:limit]
+    if whole:  # a name: never shortened (#2607), a cut one is another name
+        return text if len(text) <= limit else None
+    return at_word_end(text, limit)
 
 
 def _load(text: str) -> dict[str, Any] | None:
@@ -262,7 +265,7 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
             if not isinstance(entry, dict):
                 out.drop("no name")
                 continue
-            name = _clean(entry.get("name"), NAME_MAX)
+            name = _clean(entry.get("name"), NAME_MAX, whole=True)
             summary = _clean(entry.get("summary", ""), SUMMARY_MAX)
             quote = _clean(entry.get("quote"), QUOTE_MAX * 4)  # cut to the limit after the check
             if not name or summary is None or quote is None:
@@ -278,7 +281,7 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
             if not _words_in(name, whole):
                 out.drop("name not in the text")  # a real quote can't vouch for an invented name
                 continue
-            out.nodes.append(Node(kind, name, summary, proof[0][:QUOTE_MAX], proof[1]))
+            out.nodes.append(Node(kind, name, summary, at_word_end(proof[0], QUOTE_MAX), proof[1]))
     needs = data.get("needs", [])
     if not isinstance(needs, list):
         out.malformed = True
@@ -291,7 +294,9 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
         for side in ("from", "to"):
             end = entry.get(side)
             end_kind = end.get("kind") if isinstance(end, dict) else None
-            end_name = _clean(end.get("name"), NAME_MAX) if isinstance(end, dict) else None
+            end_name = (
+                _clean(end.get("name"), NAME_MAX, whole=True) if isinstance(end, dict) else None
+            )
             if end_kind not in KINDS or not end_name:
                 break
             ends.append((str(end_kind), name_key(end_name)))
@@ -307,7 +312,7 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
         if proof is None:
             out.drop("quote not in the text")
             continue
-        out.needs.append(Need(ends[0], ends[1], need, proof[0][:QUOTE_MAX], proof[1]))
+        out.needs.append(Need(ends[0], ends[1], need, at_word_end(proof[0], QUOTE_MAX), proof[1]))
     return out
 
 
