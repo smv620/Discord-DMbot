@@ -25,7 +25,7 @@ from dmbot.web.payments import NotResumable, PaymentError, ResumeRefused
 from dmbot.web.settings import load_web_settings
 from dmbot.web.stripe import API_VERSION, HttpTransport, StripeConfig, StripeProvider
 from tests.pg import DatabaseTest
-from tests.test_web_api import ALICE, API, FakeDiscord, settings
+from tests.test_web_api import ALICE, FakeDiscord, settings
 from tests.test_web_payments import PaymentSettings
 
 SECRET = b"w" * 32
@@ -1252,7 +1252,9 @@ class Routes(DatabaseTest):
             settings(), self.db, FakeDiscord(), payments=self.provider, clock=lambda: self.now
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         start = await self.client.get("/auth/discord/start")
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
