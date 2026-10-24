@@ -82,8 +82,8 @@ def campaign_columns(migrations: tuple[tuple[str, str], ...] = schema.MIGRATIONS
 
 
 def exported_keys() -> set[str]:
-    """The keys of the "campaign" dict that `CampaignStore.export` writes."""
-    tree = ast.parse(textwrap.dedent(inspect.getsource(CampaignStore.export)))
+    """The keys of the "campaign" dict that `CampaignStore.export_set` writes."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(CampaignStore.export_set)))
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
             for key, value in zip(node.keys, node.values, strict=True):

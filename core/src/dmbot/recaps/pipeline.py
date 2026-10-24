@@ -66,11 +66,16 @@ FAILED_CHECKS = (
     "DMbot couldn't write this one so that every detail came from what was said, so it wrote "
     "nothing. You can try again."
 )
-TOO_LONG = "The recap came out too long for DMbot to finish. You can try again."
+CUT_OFF = "DMbot's answer was cut off before it was finished. You can try again."
 SERVICE = "The writing service wasn't available. You can try again."
 FUNDS = "DMbot's writing service is unavailable right now. We've been told. Try again later."
 CAP = "This recap has hit its limit for now. You can try again tomorrow."
 DAILY = "This campaign has used up today's recap writing. Try again tomorrow."
+NAMES_WAIT_S = 30 * 60  # the most step 1 waits for the name pass; then it goes on without it
+NAMES_RETRY_S = 30  # how often it looks again
+# The note on a recap held for the name pass (#2628): an explicit marker, so the page shows
+# "checking the names" with the time it has taken and when it last moved, and never a silent wait.
+CHECKING_NAMES = "🔎 Checking the names in the session before the recap is written."
 NO_NAMES = (
     "DMbot couldn't check your campaign's secret names, so it wrote nothing to be safe. "
     "Try again in a minute."
@@ -113,6 +118,14 @@ class Inputs:
     # How connected each name is in The truth, hidden connections too (#2411): numbers by name,
     # used only to rank which beats the writer keeps. No connection and no fact is in it.
     importance: Mapping[str, float] = field(default_factory=dict)
+    # Who is who, from the story memory (#2573): another spelling -> the name (a character the
+    # speech to text heard as a stranger), every player character, and each player's characters.
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    pcs: Sequence[str] = ()
+    party: Mapping[int, Sequence[str]] = field(default_factory=dict)
+    # The name the table uses for a character with a longer name (#2627): full name -> familiar
+    # name, told to the writer beside the full one. Never a secret name; never a check.
+    familiar: Mapping[str, str] = field(default_factory=dict)
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -148,6 +161,7 @@ SPLIT_TOKENS = 200  # room for up to three labelled ends as JSON
 PLOT_TOKENS = 1200  # room for up to eight changes as JSON (the least: see `plot_room`)
 PLOT_TOKENS_PER_SENTENCE = 50  # a change names its sentence, its kind and the reason in words
 PLOT_ROOM_MAX = 12_000  # after doubling too
+APPROVED_TITLE_CALLS = 3  # what the title step of a draft approved unchecked may add to the day
 CRITIC_RESERVE = 5  # calls kept for the title, the housekeeping and a retry once the loop is on
 CRITIC_REVISE_CALLS = 5  # what one revision may need: write, format, facts, grade and a spare
 CRITIC_ERRORS_MAX = 2  # service errors in a try of the loop before a draft not yet read waits
@@ -173,7 +187,7 @@ def unusable(reply: Reply) -> str:
     if reply.refused:
         return "the answer was declined: write it again from the beats"
     if reply.cut:
-        return "the answer was cut off: write it again, shorter"
+        return "the answer was cut off: write it again"
     return ""
 
 
@@ -211,6 +225,7 @@ class RecapWorker:
         notify: Notify,
         unchecked: Notify | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
+        names_ready: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
@@ -235,10 +250,6 @@ class RecapWorker:
         # words only. The worker fills in the event as the answer is checked.
         self._on_call = on_call
         self._last: dict[tuple[int, str, int, str], cl.CallEvent] = {}
-        # The last draft that was too short (+1) or too long (-1): its words and which way, for the
-        # check that a retry moved the length the way it was steered (the owner's rule, #2383).
-        # Dropped with the rejected draft it belongs to.
-        self._lengths: dict[tuple[int, str, int], tuple[int, int]] = {}
         # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
         # in memory only: after a restart the retry just goes without it. Dropped when the stage
         # passes or the job fails.
@@ -268,6 +279,7 @@ class RecapWorker:
         self._notify = notify
         self._unchecked = unchecked  # tells the DM once that a recap could not be checked
         self._allowance = allowance
+        self._names_ready = names_ready  # PlotBot's name pass on the transcript is done (#2628)
         self._now = clock
 
     async def run(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
@@ -358,6 +370,8 @@ class RecapWorker:
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
+        if await self._waiting_for_names(gid, cid, job):
+            return await self._store.get(gid, cid, job.session_at)
         first = job.state == "queued" and job.calls == 0 and job.split is None
         if self._allowance is not None and first:
             # The monthly allowance (#1428), before the first paid call of this recap. A count
@@ -371,9 +385,14 @@ class RecapWorker:
                 return await self._fail(gid, cid, job, over)
         if job.calls >= self._ceiling(job):
             return await self._fail(gid, cid, job, CAP)
-        in_loop = job.state == "prose" and self._critics and not cr.loop_from_json(job.critics).done
+        loop = cr.loop_from_json(job.critics)
+        in_loop = job.state == "prose" and self._critics and not loop.done
         spent_today = await self._store.calls_since(gid, cid, int(self._now()) - DAY_S)
-        if spent_today >= DAILY_CALLS and not in_loop:  # (the loop stops by itself, below)
+        # (the loop stops by itself, below; and a draft the DM approved unchecked only has its
+        # title step left, which the waiting tries' calls in the day's tally must not fail, so it
+        # has a small fixed allowance of its own over the day's limit, still counted in it, #2305)
+        limit = DAILY_CALLS + (APPROVED_TITLE_CALLS if loop.approved_at else 0)
+        if spent_today >= limit and not in_loop:
             return await self._fail(gid, cid, job, DAILY)
         inputs = await self._load(gid, cid, job)
         if inputs is None:
@@ -393,6 +412,32 @@ class RecapWorker:
                 return await self._critique(gid, cid, job, inputs, consenting)
             return await self._finish(gid, cid, job, inputs, consenting)
         return await self._fail(gid, cid, job, "unknown stage")
+
+    async def _waiting_for_names(self, gid: int, cid: str, job: Job) -> bool:
+        """Step 1 waits for PlotBot's name pass on the transcript (#2628), so the beats, the recap
+        and the narration all use the list's spellings. A short, bounded wait that costs nothing
+        and fails nothing: the pass marks the session done whatever happens, and after
+        `NAMES_WAIT_S` the recap goes on regardless. While it waits the job says so
+        (`CHECKING_NAMES`, and each look moves its time). True when the job was put off."""
+        if self._names_ready is None or job.state != "queued" or job.calls > 0:
+            return False
+        waiting = int(self._now()) - job.created_at < NAMES_WAIT_S
+        ready = False
+        if waiting:
+            try:
+                ready = await self._names_ready(gid, cid, job)
+            except Exception:
+                log.exception("Recap: couldn't tell whether the names are checked")
+                ready = True  # a pass that cannot be read must not hold the recap back
+        if ready or not waiting:
+            if job.last_error == CHECKING_NAMES:  # the wait is over: the note goes
+                await self._store.update(gid, cid, job.session_at, last_error="")
+            return False
+        await self._store.update(
+            gid, cid, job.session_at, next_at=int(self._now()) + NAMES_RETRY_S,
+            last_error=CHECKING_NAMES,
+        )  # fmt: skip
+        return True
 
     async def _call(
         self,
@@ -548,7 +593,7 @@ class RecapWorker:
             )
             self._annotate(gid, cid, job, "beats", checks=["cut off"])
             return await self._retry_or_fail(
-                gid, cid, job, ["the answer was cut off: write it again, shorter"], too_long=True
+                gid, cid, job, ["the answer was cut off: write it again"], cut_off=True
             )
         # (everyone whose words went to an AI for this recap: the play, the retelling, and the
         # catching up the housekeeping step reads; the talk went nowhere)
@@ -650,6 +695,10 @@ class RecapWorker:
             secret_names=inputs.secret_names,
             dm_ids=inputs.dm_ids,
             transcript_words={w for s in said for w in words(s.text)},
+            aliases=inputs.aliases,
+            party=inputs.party,
+            pcs=inputs.pcs,
+            ordinary_words=rd.ordinary("\n".join(s.text for s in said)),
         )
         usable = len(kept) >= bt.MIN_BEATS and not any("in no beat" in p for p in problems)
         # (a long session reads in windows; the check is of the whole sheet: it marks the last)
@@ -801,10 +850,11 @@ class RecapWorker:
         message = rd.prose_message(
             rd.pick_beats(sheet, length.beats, importance=inputs.importance),
             inputs.previous,
-            inputs.allowed_names,
+            [n for n in inputs.allowed_names if n not in inputs.aliases],  # (#2573)
             inputs.day,
             retold,
             ending=sheet,
+            familiar=inputs.familiar,
         )
         if job.problems:
             message += rd.prose_retry(
@@ -880,9 +930,9 @@ class RecapWorker:
             previous=inputs.previous,
             setting=inputs.setting,
             transcript="\n".join(s.text for s in said),
-        )  # near-miss names put right, in code (#2027)
+            aliases=inputs.aliases,
+        )  # a misheard spelling back to its name; what is too like a secret refused (#2591)
         transcript = "\n".join(s.text for s in said)
-        last = job.attempt >= PROSE_LAST_ATTEMPT
         self._annotate(gid, cid, job, stage, words=lambda: len(words(narration_of(prose.summary))))
 
         draft: rd.Prose = prose  # (the closure below reads this one; `prose` may be cut later)
@@ -901,59 +951,30 @@ class RecapWorker:
                 refused=refused,
                 style=inputs.style,
                 corrections=inputs.corrections,
+                pcs=inputs.pcs,
             )
 
         problems = checked(False)
-        count = len(words(narration_of(prose.summary)))
-        low, high = rd.length_range(length, last)
-        if low <= count <= high:
-            self._lengths.pop(key, None)  # it fits: nothing to steer
-        else:
-            # A draft of the wrong length is steered (the retry says which way and how far). A
-            # retry that moves the wrong way, not at all, or past the other end fails the job on
-            # our side, so the DM keeps the Try again (#2383).
-            wrong = rd.length_move(self._lengths.get(key), count, length, last)
-            if wrong:
-                kinds = cl.kinds(problems)  # the length problem, and whatever else failed with it
-                log.info(
-                    "Recap: the retry's length is %s: %d words (range %d-%d); %d check(s) "
-                    "failed: %s",
-                    wrong,
-                    count,
-                    low,
-                    high,
-                    len(problems),
-                    ", ".join(kinds),
-                )  # names and counts only
-                self._annotate(gid, cid, job, stage, checks=kinds)
-                return await self._fail(gid, cid, job, FAILED_CHECKS, check="length", ours=True)
-            self._lengths[key] = (count, 1 if count < low else -1)
-        if problems and last and not checked(True):
-            # Length is a quality target, not a grounding rule: on the last try a draft up to
-            # 35% over the target stands if everything else passes (owner, #2013).
+        if problems and job.attempt >= PROSE_LAST_ATTEMPT and not checked(True):
+            # A draft that passes everything but a doubtful scene check stands on the last try.
             problems = []
-            if self._on_note is not None:
-                self._on_note(
-                    f"Accepted at {len(words(narration_of(prose.summary)))} words: over the "
-                    f"{length.high} for about {length.hours:g} hours, within "
-                    f"{round(rd.LAST_UP * 100)}% over the target {length.target}, and every "
-                    "other check passed."
-                )
+        count = len(words(narration_of(prose.summary)))
         self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
         if problems:
             log.info(
-                "Recap: a draft failed %d check(s): %s (%d words, %d to %d wanted, %d section(s) "
+                "Recap: a draft failed %d check(s): %s (%d words, %d wanted, %d section(s) "
                 "of at most %d, about %.2f hours)",
                 len(problems),
                 ", ".join(cl.kinds(problems)),
                 count,
-                low,
-                high,
+                length.target,
                 len(CUE.findall(prose.summary)),
                 length.sections,
                 length.hours,
             )  # names and counts only
-            self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
+            self._keep_rejected(
+                key, prose, inputs, [prose.summary, *prose.music], near_secret=bool(refused)
+            )
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
             facts, asked = await self._facts(
@@ -1074,7 +1095,7 @@ class RecapWorker:
         length: rd.Length,
     ) -> Job | None:
         """The prose stage's try failed. After a draft that passed but graded weak, a revision
-        that fails its checks (cut off, declined, unreadable, too short) leaves that draft
+        that fails its checks (cut off, declined, unreadable, empty) leaves that draft
         standing, checked again against the names as they are now (the DM may have made one
         secret since); otherwise the usual retry, and the last try's failure fails the job. A
         service error or running out of credit during the revision still fails the job."""
@@ -1091,6 +1112,7 @@ class RecapWorker:
                 previous=inputs.previous,
                 setting=inputs.setting,
                 transcript=transcript,
+                aliases=inputs.aliases,
             )
             if not rd.check_prose(
                 prose,
@@ -1105,6 +1127,7 @@ class RecapWorker:
                 refused=refused,
                 style=inputs.style,
                 corrections=inputs.corrections,
+                pcs=inputs.pcs,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -1162,7 +1185,6 @@ class RecapWorker:
         if event is not None:
             event.outcome = outcome
         self._rejected_prose.pop(key, None)
-        self._lengths.pop(key, None)
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
             gid,
@@ -1288,7 +1310,7 @@ class RecapWorker:
         length: rd.Length,
     ) -> rd.Prose | None:
         """The draft without the sentences still flagged, done in code. None when what is left
-        no longer meets the checks (the minimum length above all): then there is no recap."""
+        no longer meets the checks: then there is no recap."""
         cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
         if self._on_note is not None and facts.unsupported:
             self._on_note(
@@ -1308,6 +1330,7 @@ class RecapWorker:
             refused=[],
             style=inputs.style,
             corrections=inputs.corrections,
+            pcs=inputs.pcs,
         ):
             return None
         return cut
@@ -1543,10 +1566,11 @@ class RecapWorker:
         message = rd.prose_message(
             rd.pick_beats(sheet, length.beats, importance=inputs.importance),
             inputs.previous,
-            inputs.allowed_names,
+            [n for n in inputs.allowed_names if n not in inputs.aliases],  # (#2573)
             inputs.day,
             retold,
             ending=sheet,
+            familiar=inputs.familiar,
         ) + rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
         attempt = 1  # the careful writer's room, as for a retry
         kept = self._written.pop(key, None)  # the writer's text, if only the formatter failed
@@ -1593,12 +1617,14 @@ class RecapWorker:
                 previous=inputs.previous,
                 setting=inputs.setting,
                 transcript=transcript,
+                aliases=inputs.aliases,
             )
             if rd.check_prose(
                 revised, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=refused, style=inputs.style, corrections=inputs.corrections,
+                pcs=inputs.pcs,
             ):  # fmt: skip
                 revised = None
         if revised is not None:
@@ -1657,7 +1683,6 @@ class RecapWorker:
 
     def _forget_draft(self, key: tuple[int, str, int]) -> None:
         self._rejected_prose.pop(key, None)
-        self._lengths.pop(key, None)
         self._fallback.pop(key, None)
         self._flags.pop(key, None)
         self._revised.discard(key)
@@ -1666,16 +1691,18 @@ class RecapWorker:
     async def _hold(self, gid: int, cid: str, job: Job, loop: cr.Loop, why: str) -> Job | None:
         """No draft could be read (the service, or the day's tally): the recap waits for its check
         and is never cut, shipped unchecked or failed for waiting. The wait grows (15 minutes, an
-        hour, 4 hours, then every 12 hours) and its tries have a small budget of their own
-        (`cr.wait_budget`: a reading's batches and PlotBot's two calls, or a revision's
-        `cr.WAIT_REVISE_CALLS`; kept out of the job's calls and its ceiling). After 3 days the DM is
-        told once that DMbot hasn't been able to finish checking it and keeps trying; players
-        never see an unchecked draft."""
+        hour, 4 hours, then every 12 hours; minutes when the check failed on our side, #2596) and
+        its tries have a small budget of their own (`cr.wait_budget`: a reading's batches and
+        PlotBot's two calls, or a revision's `cr.WAIT_REVISE_CALLS`; kept out of the job's calls
+        and its ceiling). After 3 days the DM is told once that DMbot hasn't been able to finish
+        checking it and keeps trying; players never see an unchecked draft."""
         now = int(self._now())
         since = loop.since or now
-        delay = cr.wait_for(loop.waits)
+        # A cut or unreadable answer, or the service erroring, is ours to retry within minutes
+        # (#2596); only the day's tally is a rolling day, and waits as long as it needs.
+        delay = cr.wait_for(loop.waits, soon=why != STOP_TALLY)
         if why == STOP_TALLY:
-            delay = max(delay, CHECK_TALLY_RETRY_S)  # the day's tally is a rolling day
+            delay = max(cr.wait_for(loop.waits), CHECK_TALLY_RETRY_S)
         told = loop.told
         if not told and now - since >= cr.UNCHECKED_AFTER_S:
             told = True
@@ -1738,6 +1765,7 @@ class RecapWorker:
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=[], style=inputs.style, corrections=inputs.corrections,
+                pcs=inputs.pcs,
             )  # fmt: skip
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
@@ -1814,7 +1842,7 @@ class RecapWorker:
                 gid, cid, job, ["answer with the title and housekeeping JSON asked for"]
             )
         transcript = "\n".join(x.text for x in self._said(inputs, set(job.speakers)))
-        # Near-miss names put right here too (#2027), and the names the DM is to confirm added.
+        # Aliases put back to their names here too, and what is too like a secret refused (#2591).
         fixed = [
             rd.respelled(
                 rd.Prose(text, ()),
@@ -1823,6 +1851,7 @@ class RecapWorker:
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
                 transcript=transcript,
+                aliases=inputs.aliases,
             )
             for text in (parsed[0], *parsed[1])
         ]
@@ -1842,7 +1871,9 @@ class RecapWorker:
             gid, cid, job, "title", checks=lambda: cl.kinds(problems) if finish is None else []
         )
         if finish is None:
-            self._keep_rejected(key, parsed, inputs, [parsed[0], *parsed[1]])
+            self._keep_rejected(
+                key, parsed, inputs, [parsed[0], *parsed[1]], near_secret=any(r for _, r in fixed)
+            )
             return await self._retry_or_fail(gid, cid, job, problems)
         self._rejected_finish.pop(key, None)
         await self._store.update(
@@ -1892,7 +1923,7 @@ class RecapWorker:
         problems: Sequence[str],
         *,
         last_attempt: int = 1,
-        too_long: bool = False,
+        cut_off: bool = False,
     ) -> Job | None:
         """A check failed: once more on the careful tier (the prose stage twice more), then the
         job fails plainly."""
@@ -1907,7 +1938,7 @@ class RecapWorker:
                 gid,
                 cid,
                 job,
-                TOO_LONG if too_long else FAILED_CHECKS,
+                CUT_OFF if cut_off else FAILED_CHECKS,
                 error=named,
                 check=named,
                 ours=True,
@@ -1957,10 +1988,11 @@ class RecapWorker:
         """A critics-loop call failed: count it and wait, but never fail the job (the loop stops
         by itself after `CRITIC_ERRORS_MAX`: a draft not yet read then waits, `_hold`)."""
         errors = job.errors + 1
-        await self._store.update(
+        await self._store.update_seen(
             gid,
             cid,
             job.session_at,
+            0,  # a call of the critics' loop is moot once the DM approved the draft
             errors=errors,
             next_at=int(self._now()) + BACKOFF_S[min(errors, len(BACKOFF_S)) - 1],
             # (a recap that is waiting for its check keeps saying so between its tries)
@@ -1989,7 +2021,15 @@ class RecapWorker:
         if ours and job.tries > 0:
             await self._store.give_back_try(gid, cid, job.session_at)
         reason = f"{why} (check: {check})" if check else why
-        await self._store.update(gid, cid, job.session_at, state="failed", last_error=reason[:200])
+        await self._store.update_seen(
+            gid,
+            cid,
+            job.session_at,
+            # a step that began before the DM approved the draft must not fail it (#2305)
+            cr.loop_from_json(job.critics).approved_at,
+            state="failed",
+            last_error=reason[:200],
+        )
         return await self._store.get(gid, cid, job.session_at)
 
     def _keep_rejected(
@@ -1998,14 +2038,16 @@ class RecapWorker:
         draft: rd.Prose | tuple[str, list[str]],
         inputs: Inputs,
         texts: Sequence[str],
+        near_secret: bool = False,
     ) -> None:
-        """Keep a rejected draft to send back on the retry (#2026), unless it names a secret: the
-        checks keep secret names out of every retry message, and so must the draft. The retry
-        then goes without it."""
-        if names_a_secret(" ".join(texts), inputs.secret_names, inputs.allowed_names):
+        """Keep a rejected draft to send back on the retry (#2026), unless it names a secret, or a
+        word too like one (`near_secret`, #2591): the checks keep secret names out of every retry
+        message, and so must the draft. The retry then goes without it."""
+        if near_secret or names_a_secret(
+            " ".join(texts), inputs.secret_names, inputs.allowed_names
+        ):
             self._rejected_prose.pop(key, None)
             self._rejected_finish.pop(key, None)
-            self._lengths.pop(key, None)  # the retry gets no draft to move from
         elif isinstance(draft, rd.Prose):
             self._rejected_prose[key] = draft
         else:
@@ -2013,7 +2055,6 @@ class RecapWorker:
 
     def _forget(self, gid: int, cid: str, job: Job) -> None:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
-        self._lengths.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
         self._fallback.pop((gid, cid, job.session_at), None)
         self._flags.pop((gid, cid, job.session_at), None)
