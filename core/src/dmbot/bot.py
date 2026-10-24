@@ -11324,12 +11324,12 @@ class DMBot(commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             if reports and campaign is not None and campaign.dm_screen_channel_id is not None:
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])
-                channel = campaign.dm_screen_channel_id
+                screen = campaign.dm_screen_channel_id
                 await self.post(
-                    channel, name_pass_logic.import_text(reports), views[0] if views else None
+                    screen, name_pass_logic.import_text(reports), views[0] if views else None
                 )
-                for more in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
-                    await self.post(channel, "↩️ More Undo buttons for the report above:", more)
+                for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
+                    await self.post(screen, "↩️ More Undo buttons for the report above:", extra)
         for cid in list(self._import_names.keys() | self._import_unchecked.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
