@@ -7,7 +7,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type AccountApi, type SessionReport } from "../src/account/api";
+import { ApiError, type SessionReport } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import RecapReport, { REPORT_WATCH_LIMIT_MS } from "../src/account/RecapReport";
 import { reportWords as w } from "../src/content/report-words";
@@ -20,7 +20,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function open(campaign = "100.cmp1", api: AccountApi = mockApi("table")) {
+async function open(campaign = "100.cmp1", api: ReturnType<typeof mockApi> = mockApi("table")) {
   render(<RecapReport api={api} campaignRef={campaign} sessionAt={AT} />);
   return api;
 }
