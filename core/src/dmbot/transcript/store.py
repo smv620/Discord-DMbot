@@ -33,6 +33,9 @@ MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 # The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
 # ended sessions, speech only, saying the name's longest word, not already done by this fix.
 def _candidates(one_session: bool = False) -> str:
+    # A line is "done by this fix" when this batch already replaced this very spelling in it: one
+    # list name may be meant by several heard spellings (they share a batch, #2649), and a line
+    # that says two of them gets both fixed.
     # `one_session` (the name pass, #2628): only the session whose id is the next parameter after
     # the campaign's, whatever its end (it is being finished now), instead of every ended session.
     return (
@@ -42,7 +45,7 @@ def _candidates(one_session: bool = False) -> str:
         + " AND l.sidebar IS NULL AND NOT l.typed"
         " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
         " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
-        "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
+        "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s AND r.old_text = %s)"
     )
 
 
@@ -715,7 +718,7 @@ class TranscriptStore:
                     + _candidates(session_id is not None)
                     + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
                     " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
-                    (*scope, longest, campaign_id, batch, *after, PAGE),
+                    (*scope, longest, campaign_id, batch, old, *after, PAGE),
                 )
                 page = await cur.fetchall()
                 if not page:
@@ -753,7 +756,7 @@ class TranscriptStore:
                 "SELECT count(*) AS n"
                 + _candidates(session_id is not None)
                 + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
-                (*scope, longest, campaign_id, batch, *after),
+                (*scope, longest, campaign_id, batch, old, *after),
             )
             remaining = int((await cur.fetchone() or {"n": 0})["n"])
             if updates:
@@ -836,10 +839,14 @@ class TranscriptStore:
             cur = await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND campaign_id = %s"
                 " AND batch = %s AND (%s::int IS NULL OR run = %s)"
-                " RETURNING session_id, line_id, new_text, offsets, was",
+                " RETURNING session_id, line_id, new_text, offsets, was, run, id",
                 (guild_id, campaign_id, batch, run, run),
             )
-            for row in await cur.fetchall():
+            # Last made, first put back: a line fixed twice (two spellings of one name) was
+            # changed by the second fix after the first, so its offsets hold in that order only.
+            for row in sorted(
+                await cur.fetchall(), key=lambda r: (r["run"], r["id"]), reverse=True
+            ):
                 found = await conn.execute(
                     "SELECT id, heard, coalesce(text, heard) AS cleaned FROM transcript_lines"
                     " WHERE id = %s AND sidebar IS NULL AND NOT typed FOR UPDATE",

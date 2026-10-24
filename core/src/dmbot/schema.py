@@ -2923,6 +2923,116 @@ OWNER_LEFT = """
     REVOKE ALL ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) FROM PUBLIC;
 """
 
+RECAP_AGAIN = r"""
+    -- A DM makes or redoes the recap of any past session (#2608).
+    --   restarted_at  when the DM last started this recap over (Unix seconds); the month's
+    --                 allowance counts a restarted recap in the month it was restarted.
+    --   previous      the recap that was approved or posted before the DM started over, kept
+    --                 until the new one is approved (words, approval and where it was posted).
+    --                 Nothing is read from it once the new text is approved or posted.
+    ALTER TABLE recap_jobs ADD COLUMN restarted_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN previous JSONB;
+    -- The one door that starts a recap over. It is for the bot, which has checked nothing but
+    -- that `who` is the person asking; it checks that `who` is a DM of the campaign, that the
+    -- session still has its lines, and that nothing is being written for it now. Not granted to
+    -- the website: its door (`dmbot_recap_redo`) passes the signed-in person.
+    CREATE FUNCTION dmbot_recap_start_over(
+        g BIGINT, c TEXT, at_ BIGINT, who BIGINT, replace_ok BOOLEAN
+    ) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        keep JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g OR who IS NULL OR who <= 0
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = who) THEN
+            RETURN 'not_allowed';
+        END IF;
+        -- The session's words must still exist: retention may have deleted them.
+        IF NOT EXISTS (
+            SELECT 1 FROM transcript_sessions s
+            WHERE s.guild_id = g AND s.campaign_id = c AND s.started_at = at_
+              AND EXISTS (SELECT 1 FROM transcript_lines l
+                          WHERE l.guild_id = g AND l.session_id = s.id AND l.sidebar IS NULL)
+        ) THEN
+            RETURN 'no_lines';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND THEN
+            INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, created_at,
+                                    updated_at, restarted_at)
+                VALUES (g, c, at_, who, now_s, now_s, now_s);
+            RETURN 'queued';
+        END IF;
+        -- Going out, or a worker has it right now: nothing to start over until that ends. A recap
+        -- that waits (a held one, or one between tries) is startable: that is the DM's way out.
+        IF job.status = 'posting' OR job.leased_to > now_s THEN
+            RETURN 'busy';
+        END IF;
+        IF job.state = 'ready' AND job.status IN ('draft', 'posted') AND NOT replace_ok THEN
+            RETURN 'needs_confirm';
+        END IF;
+        keep := NULL;
+        IF job.state = 'ready' AND (job.status = 'posted' OR job.approved_hash <> '') THEN
+            keep := jsonb_build_object(
+                'title', job.title, 'summary', job.summary, 'original', job.original,
+                'housekeeping', to_jsonb(job.housekeeping), 'music', to_jsonb(job.music),
+                'game_day', job.game_day, 'status', job.status,
+                'approved_by', job.approved_by, 'approved_at', job.approved_at,
+                'approved_hash', job.approved_hash, 'audio_choice', job.audio_choice,
+                'speakers', to_jsonb(job.speakers), 'grade', job.grade,
+                'posted_url', job.posted_url, 'decided_at', job.decided_at);
+        ELSIF job.previous IS NOT NULL AND job.approved_hash = '' AND job.status = 'draft' THEN
+            keep := job.previous;  -- started over twice before the new one was approved
+        END IF;
+        UPDATE recap_jobs SET
+            state = 'queued', attempt = 0, errors = 0, restarts = 0, next_at = 0, leased_to = 0,
+            calls = 0, window_count = 0, window_done = 0, last_error = '', problems = '{}',
+            beats = '[]', title = '', summary = '', original = '', housekeeping = '{}',
+            music = '{}', game_day = NULL, status = 'draft', tries = 0, speakers = '{}',
+            grade = '{}', emailed_at = NULL, decided_at = NULL, to_confirm = '{}',
+            names_state = 0, corrections = '{}', approved_by = 0, approved_at = 0,
+            approved_hash = '', audio_choice = '', split = NULL, critics = NULL,
+            audio = 'off', audio_tries = 0, audio_next_at = 0, audio_text_hash = '',
+            audio_credits = 0, audio_error = '', audio_asked_at = 0, posting_since = NULL,
+            posting_step = NULL, posted_url = NULL, respelled_at = NULL,
+            dm_user_id = who, updated_at = now_s, previous = keep,
+            -- (only a recap the DM chose to redo counts again in the month: a failed or held one
+            -- was never counted, and its redo is the same recap)
+            restarted_at = CASE WHEN job.state = 'ready' THEN now_s ELSE job.restarted_at END
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN 'queued';
+    END
+    $fn$;
+    -- The website's door: the signed-in person, a DM of the campaign, in a server on their list.
+    CREATE FUNCTION dmbot_recap_redo(g BIGINT, c TEXT, at_ BIGINT, replace_ok BOOLEAN)
+    RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_allowed';
+        END IF;
+        RETURN dmbot_recap_start_over(g, c, at_, dmbot_current_user(), replace_ok);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_start_over(BIGINT, TEXT, BIGINT, BIGINT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_start_over(BIGINT, TEXT, BIGINT, BIGINT, BOOLEAN)
+        FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN) FROM PUBLIC;
+"""
+
 TRANSCRIPT_ERASURES = (
     """
     -- Who erased their transcripts in a server, and when (#2605). A backup made before that is
@@ -3177,6 +3287,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_recap_redo", "dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN)"),  # #2608
     # Importing older sessions (#2105): each is held to a DM of the campaign.
     ("dmbot_import_agreed", "dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)"),
     (
@@ -3206,6 +3317,10 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The owner's own campaigns in any server, and deleting one from the website (#2554).
     ("dmbot_web_owned_campaigns", "dmbot_web_owned_campaigns()"),
     ("dmbot_web_delete_campaign", "dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)"),
+    # The copy of a campaign the bot builds and the website downloads (#2554, part 1b).
+    ("dmbot_web_backup_add", "dmbot_web_backup_add(BIGINT, TEXT)"),
+    ("dmbot_web_backup_read", "dmbot_web_backup_read(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_backup_take", "dmbot_web_backup_take(BIGINT, TEXT, TEXT)"),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -11783,6 +11898,14 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+RECAP_CALL_LOG = """
+    -- When each AI call of a recap job was made (UTC seconds), kept for two days, so the campaign's
+    -- daily tally counts only the last 24 hours of calls and not a waiting recap's whole lifetime
+    -- (#2308). A job from before this has none: it is counted as it was (its `spent`, while it was
+    -- updated in the last day). The column has a default and is added, not updated: no row changes.
+    ALTER TABLE recap_jobs ADD COLUMN spent_log BIGINT[] NOT NULL DEFAULT '{}';
+"""
+
 TIMELINE_STABLE = """
     -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
     -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
@@ -11981,6 +12104,20 @@ HANDOVER_EMAIL = """
     $do$;
     REVOKE ALL ON FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT) FROM PUBLIC;
 """
+
+RECAP_STORY_ROOM = """
+    -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
+    -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
+    -- only a guard (`fit_summary` shortens past it and logs). The number is
+    -- `recaps.fixed_lines.STORY_COLUMN_MAX`; a test keeps the two equal. The constraint is
+    -- replaced, no row is rewritten, so no row-level security is touched.
+    ALTER TABLE recap_jobs
+        DROP CONSTRAINT recap_jobs_summary_check,
+        DROP CONSTRAINT recap_jobs_original_check,
+        ADD CONSTRAINT recap_jobs_summary_check CHECK (char_length(summary) <= 30000),
+        ADD CONSTRAINT recap_jobs_original_check CHECK (char_length(original) <= 30000);
+"""
+
 
 WEB_OWNED_CAMPAIGNS = """
     -- The website's two doors for a campaign's owner, in any server (#2554, docs/PLAN.md,
@@ -12337,6 +12474,171 @@ IMPORT_STEPS = """
     $do$;
 """
 
+
+WEB_BACKUPS = (
+    """
+    -- The copy of a campaign the website downloads (#2554, part 1b). The website's role cannot read
+    -- the tables a backup holds, so it asks for a copy here and the bot builds it the way
+    -- Discord's Download does (same sections, same packing), from the database alone, so a server
+    -- DMbot cannot reach works too. One row is one request: waiting, then the bot reads and packs
+    -- (`stage`, with `updated_at` for the shared progress shape of #2564), then the file waits in
+    -- `file` (at most 25 MB, what a restore takes) for the person who asked. The row goes when the
+    -- file is fetched, or 15 minutes after the request, whichever is first; the bot sweeps the
+    -- rest. Only the person who asked can read or fetch it. A copy holds the campaign's secrets,
+    -- like any backup, so it is never logged and never kept beyond that; the row is gone with its
+    -- campaign, isolated per server, and not itself in a backup.
+    CREATE TABLE web_backups (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        -- ON UPDATE CASCADE like the tables a move rewrites (#2550): a campaign that changes
+        -- server or id carries its waiting copies with it.
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        stage       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (stage IN ('waiting', 'reading', 'packing', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        file        BYTEA,
+        file_name   TEXT NOT NULL DEFAULT '' CHECK (char_length(file_name) <= 200),
+        size        INT NOT NULL DEFAULT 0,
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        updated_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX web_backups_open ON web_backups (guild_id, created_at)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("web_backups")
+    + r"""
+    -- Ask for a copy. The owner may in any server (the server need not be on the session's list,
+    -- as for the delete); a game master of the campaign may in a server the session can reach.
+    -- Anyone else gets NULL. The plan (copies are for a paid plan, none for Try It) is judged by
+    -- the bot, which owns the plan check, and it says so in the row. A person who already has a
+    -- copy on the way gets that one back; at most 5 requests in 15 minutes (a fetched copy
+    -- keeps its row, without the file, until then, so fetching does not reset the count).
+    CREATE FUNCTION dmbot_web_backup_add(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        camp campaigns%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        have TEXT;
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+    BEGIN
+        IF me IS NULL OR g IS NULL OR c IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF camp.owner_user_id IS DISTINCT FROM me THEN
+            IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                           WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me)
+               OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+                RETURN NULL;
+            END IF;
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('web_backup:' || g::TEXT || c || me, 0));
+        DELETE FROM web_backups b WHERE b.guild_id = g AND b.created_at < now_s - 900;
+        SELECT b.id INTO have FROM web_backups b
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.user_id = me
+              AND (b.state IN ('waiting', 'working') OR (b.state = 'done' AND b.file IS NOT NULL))
+            ORDER BY b.created_at DESC LIMIT 1;
+        IF FOUND THEN
+            RETURN jsonb_build_object('status', 'ok', 'id', have);
+        END IF;
+        IF (SELECT count(*) FROM web_backups b WHERE b.guild_id = g AND b.campaign_id = c
+            AND b.user_id = me) >= 5 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO web_backups (guild_id, campaign_id, id, user_id, created_at, updated_at)
+            VALUES (g, c, rid, me, now_s, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- Where one copy stands, for the person who asked (nobody else): the stage and times for the
+    -- shared progress shape, the plain error word, and the file's name and size once it is ready.
+    CREATE FUNCTION dmbot_web_backup_read(g BIGINT, c TEXT, bid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r RECORD;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        -- Named columns, so a poll never reads the file itself.
+        SELECT b.state, b.stage, b.error, b.file_name, b.size, b.created_at, b.updated_at,
+               (b.file IS NOT NULL) AS has_file INTO r
+            FROM web_backups b
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid
+              AND b.user_id = dmbot_current_user()
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF r.state = 'done' AND NOT r.has_file THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'fileName', r.file_name, 'size', r.size, 'createdAt', r.created_at,
+            'updatedAt', r.updated_at);
+    END
+    $fn$;
+
+    -- The file, once, for the person who asked: it is emptied from the row as it is read. NULL when
+    -- it is not theirs, not ready or already taken.
+    CREATE FUNCTION dmbot_web_backup_take(g BIGINT, c TEXT, bid TEXT) RETURNS BYTEA
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out BYTEA;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        -- The file leaves the row as it is read; the row stays (empty) for the request count.
+        SELECT b.file INTO out FROM web_backups b
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid
+              AND b.user_id = dmbot_current_user() AND b.state = 'done' AND b.file IS NOT NULL
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900
+            FOR UPDATE;
+        IF out IS NULL THEN
+            RETURN NULL;
+        END IF;
+        UPDATE web_backups b SET file = NULL, size = 0
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid;
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_add(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_take(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_backup_add(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_backup_take(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    """
+)
 
 TOPIC_CHOICES = """
     -- Who put a line back (or left it out again) after the session, and what the off-topic filter
@@ -13157,6 +13459,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
     ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
+    (
+        "0205_recap_call_log",
+        RECAP_CALL_LOG,
+    ),  # when each recap call was made, for the day's tally (#2308)
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
@@ -13166,9 +13472,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
+    ("0219_web_backups", WEB_BACKUPS),  # the copy of a campaign the website downloads (#2554)
     ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
+    ("0221_recap_story_room", RECAP_STORY_ROOM),  # the recap story column holds 30,000 (#2601)
     ("0222_npc_or_pc", NPC_OR_PC),  # every character is an NPC or a PC: a god is an NPC (#2562)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
+    ("0224_recap_again", RECAP_AGAIN),  # a DM makes or redoes any session's recap (#2608)
     ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
     ("0227_name_pass", NAME_PASS),  # PlotBot repairs names in a finished transcript (#2628)
     (
@@ -13187,6 +13496,7 @@ ISOLATED_TABLES = (
     "transcript_erasures",
     "secret_exposures",
     "web_delete_notices",
+    "web_backups",
     "merge_restores",
     "transcript_respells",
     "image_day_use",

@@ -26,6 +26,7 @@ from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
+from dmbot.word_end import at_word_end
 
 MAX_NAMES = 200  # suggestions from one document
 NAME_WORDS = 8
@@ -194,7 +195,7 @@ def _spellings(
         key = name_key(other)
         if (
             other
-            and len(other) <= NAME_CHARS
+            and len(other) <= NAME_CHARS  # (a name is never shortened: a cut one is another name)
             and "|" not in other
             and key != name_key(name)
             and key not in skip
@@ -223,6 +224,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         kind = KINDS.get(str(item.get("kind", "")).strip().lower())
         if not isinstance(name, str) or kind is None:
             continue
+        # A name is never shortened (#2607): over the limits it is a sentence, not a name.
         name = " ".join(name.split())
         if (
             not name
@@ -240,8 +242,8 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         quote = item.get("quote")
         kept = ""
         if isinstance(quote, str):
-            words = quote.split()
-            if words and len(words) <= QUOTE_WORDS and _has(haystack, quote):
+            words = quote.split()[:QUOTE_WORDS]  # the front of a verbatim quote is still verbatim
+            if words and _has(haystack, " ".join(words)):
                 kept = " ".join(words)
         out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept))
     return out
@@ -408,6 +410,19 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
 Dropped = Counter[str]
 
 
+def _quote_window(words: list[str], a: str, b: str) -> list[str]:
+    """A quote of more than `QUOTE_WORDS` words cut to that many (#2601): the front, or the back
+    when the front loses one of the two names. Words of a verbatim quote stay verbatim; the check
+    that the text holds the quote and both names still follows, so this only shortens."""
+    if len(words) <= QUOTE_WORDS:
+        return words
+    for window in (words[:QUOTE_WORDS], words[-QUOTE_WORDS:]):
+        said = _squash(" ".join(window))
+        if _has(said, a) and _has(said, b):
+            return window
+    return words[:QUOTE_WORDS]
+
+
 def read_connections(
     reply: str, piece: str, own: Collection[str] = (), dropped: Dropped | None = None
 ) -> list[Connection]:
@@ -431,8 +446,8 @@ def read_connections(
         how = CONNECTIONS.get(word) or next((k for k in own if k.lower() == word), None)
         label = ""
         if word == OTHER:  # the catch-all, kept with the words the text used
-            label = " ".join(str(item.get("words") or "").split())
-            if not label or len(label) > WORDS_CHARS or "|" in label:
+            label = at_word_end(" ".join(str(item.get("words") or "").split()), WORDS_CHARS)
+            if not label or "|" in label:
                 lost["word_not_allowed"] += 1
                 continue
             # The label is the one free text of a connection: its words must be the quote's own,
@@ -448,8 +463,9 @@ def read_connections(
         if not all(isinstance(x, str) for x in (a, b, quote)):
             lost["unreadable"] += 1
             continue
+        # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
-        words = str(quote).split()
+        words = _quote_window(str(quote).split(), a, b)
         if (
             not a
             or not b
@@ -457,7 +473,6 @@ def read_connections(
             or len(b) > NAME_CHARS
             or name_key(a) == name_key(b)
             or not words
-            or len(words) > QUOTE_WORDS
         ):
             lost["bad_names"] += 1
             continue
