@@ -23,6 +23,7 @@ from typing import Any
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
 from dmbot.recaps import critics, cues
+from dmbot.recaps import progress as recap_progress
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
@@ -44,6 +45,8 @@ _COLUMNS = (
     # The posting clock's columns (#2435): the page's `postingSince`, `postingStep` and `postedUrl`
     # are made from them in `_view` (WebDev's #2436 owns those keys).
     " r.posting_since, r.posting_step, r.posted_url,"
+    # How far the work has got (#2636): `progress` in `_view` is made from these (counts and times).
+    " r.created_at, r.updated_at, r.window_count, r.window_done, r.calls, r.errors,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
@@ -230,7 +233,12 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "postingSince": row.get("posting_since"),
         "postingStep": row.get("posting_step"),
         "postedUrl": row.get("posted_url"),
-        "serverNow": int(time.time()),
+        "serverNow": (now := int(time.time())),
+        # While it is made (#2636): the shared progress shape of every website wait, with the step
+        # (`stage`), the parts of a long session read (`done` of `total`), when it began and when
+        # it last moved, and `state` (running, stalled, failed or done); a failure is a fixed code
+        # in `reason`. Counts and codes only. Null once the recap is posted or dropped.
+        "progress": recap_progress.of(row, now=now),
         "canTryAgain": status == "draft"
         and state in ("ready", "failed")
         and row["tries"] < MAX_TRIES,
