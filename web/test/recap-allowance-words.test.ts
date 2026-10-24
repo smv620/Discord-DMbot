@@ -39,10 +39,10 @@ describe("where it shows", () => {
     expect(/recaps a month/.test(answer ?? "")).toBe(RECAPS_LIVE);
   });
 
-  it("is a Help step with what happens when the month is used, and no narration while it is off", () => {
+  it("is a Help step with what happens when the month is used, with the narrated number now narration is on (#2617)", () => {
     const step = recapSteps.map((s) => s.text).find((t) => t.includes("recaps a month"));
     expect(step).toContain("Each campaign gets up to 10 recaps a month.");
     expect(step).toContain("If you use them all, DMbot tells you on the DM screen, and the next recap comes on the 1st of next month.");
-    expect(step).not.toMatch(/narrat/i);
+    expect(step).toContain("Up to 8 of those can be narrated");
   });
 });
