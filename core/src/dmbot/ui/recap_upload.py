@@ -117,7 +117,7 @@ class AskView(discord.ui.View):
         self.draft, self.rights = draft, rights
         self.yes.label = yes
 
-    @discord.ui.button(label="Yes", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Yes, go ahead", style=discord.ButtonStyle.primary)
     async def yes(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
         # (the door checks the DM again; this only keeps a stranger from a forwarded message)
         if interaction.user.id not in self.draft.campaign.dm_user_ids:
@@ -130,7 +130,7 @@ class AskView(discord.ui.View):
         )
         await submit(interaction, answered)
 
-    @discord.ui.button(label="No", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="No, leave it", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
         await _tell(interaction, "👍 Nothing was saved.")
 
