@@ -73,7 +73,7 @@ class CommandTests(DatabaseTest):
 
     async def test_first_start_shows_the_welcome(self) -> None:
         it = fake_interaction(self.bot)
-        await cmds.dmbot_start.callback(it)
+        await cmds.dmbot_start.callback(it)  # type: ignore[call-arg]
         text, kw = it.response.sent[0]
         self.assertIn("never makes up the story", text)
         self.assertIsInstance(kw["view"], cmds.Welcome)
@@ -82,7 +82,7 @@ class CommandTests(DatabaseTest):
     async def test_returning_dm_sees_the_campaign_picker(self) -> None:
         await self.campaigns.create(GUILD, "Frostmaiden", DM)
         it = fake_interaction(self.bot)
-        await cmds.dmbot_start.callback(it)
+        await cmds.dmbot_start.callback(it)  # type: ignore[call-arg]
         text, kw = it.response.sent[0]
         self.assertIn("**Frostmaiden**", text)
         self.assertIsInstance(kw["view"], cmds.CampaignPicker)
@@ -90,14 +90,14 @@ class CommandTests(DatabaseTest):
     async def test_restore_refuses_big_files_before_downloading(self) -> None:
         it = fake_interaction(self.bot)
         file = attachment(b"{}", size=MAX_BACKUP_BYTES + 1)
-        await cmds.dmbot_restore.callback(it, file)
+        await cmds.dmbot_restore.callback(it, file)  # type: ignore[call-arg]
         self.assertIn("too big", it.response.sent[0][0])
         file.read.assert_not_called()
 
     async def test_restore_rejects_files_that_are_not_backups(self) -> None:
         for raw in (b"not json", json.dumps({"hello": 1}).encode()):
             it = fake_interaction(self.bot)
-            await cmds.dmbot_restore.callback(it, attachment(raw))
+            await cmds.dmbot_restore.callback(it, attachment(raw))  # type: ignore[call-arg]
             message = it.followup.send.call_args.args[0]
             self.assertIn("isn't a DMbot campaign backup", message)
 
@@ -106,7 +106,7 @@ class CommandTests(DatabaseTest):
         await self.campaigns.create(GUILD, "Theirs", OTHER_DM)
         backup = encode_backup(await self.campaigns.export(GUILD, mine.id))
         it = fake_interaction(self.bot)
-        await cmds.dmbot_restore.callback(it, attachment(backup))
+        await cmds.dmbot_restore.callback(it, attachment(backup))  # type: ignore[call-arg]
         view = it.followup.send.call_args.kwargs["view"]
         self.assertIsInstance(view, cmds.RestoreChoice)
         self.assertEqual(view.replaceable_ids, [mine.id])
@@ -131,7 +131,7 @@ class CommandTests(DatabaseTest):
         camp = await self.campaigns.create(GUILD, "Mine", DM)
         await self.add_sessions(camp.id, 2)
         it = fake_interaction(self.bot)
-        await cmds.dmbot_backup.callback(it)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         first, second = it.followup.send.call_args_list
         self.assertIn("more file", first.args[0])
         self.assertIn("transcripts_1", first.args[0])
@@ -142,7 +142,7 @@ class CommandTests(DatabaseTest):
     async def test_a_copy_without_transcripts_is_one_file_as_before(self) -> None:
         await self.campaigns.create(GUILD, "Mine", DM)
         it = fake_interaction(self.bot)
-        await cmds.dmbot_backup.callback(it)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         self.assertEqual(it.followup.send.call_count, 1)
 
     async def test_restore_takes_the_transcripts_files_and_refuses_a_wrong_count(self) -> None:
@@ -156,7 +156,7 @@ class CommandTests(DatabaseTest):
         self.assertEqual((len(view.parts), view.wanted), (1, 1))
         # none given: offered, with a plain warning that it comes back without them
         none = fake_interaction(self.bot)
-        await cmds.dmbot_restore.callback(none, attachment(backup))
+        await cmds.dmbot_restore.callback(none, attachment(backup))  # type: ignore[call-arg]
         self.assertIn("without them", none.followup.send.call_args.args[0])
         # a wrong number is refused before anything is offered
         wrong = fake_interaction(self.bot)
@@ -167,13 +167,13 @@ class CommandTests(DatabaseTest):
 
     async def test_backup_needs_a_campaign(self) -> None:
         it = fake_interaction(self.bot)
-        await cmds.dmbot_backup.callback(it)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         self.assertIn("no campaigns here yet", it.response.sent[0][0])
 
     async def test_anyone_can_download_a_complete_copy(self) -> None:
         await self.campaigns.create(GUILD, "Theirs", OTHER_DM)
         it = fake_interaction(self.bot)  # not this campaign's DM
-        await cmds.dmbot_backup.callback(it)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args
         self.assertTrue(sent.kwargs["file"].filename.endswith(".dmbot.json.gz"))
         self.assertIn("complete copy", sent.args[0])
@@ -183,7 +183,7 @@ class CommandTests(DatabaseTest):
         await self.campaigns.create(GUILD, "Mine", DM)
         it = fake_interaction(self.bot)
         it.user.guild_permissions = discord.Permissions(manage_guild=True)  # both: still fine
-        await cmds.dmbot_backup.callback(it)
+        await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         sent = it.followup.send.call_args.kwargs["file"]
         self.assertTrue(sent.filename.endswith(".dmbot.json.gz"))
 
@@ -192,7 +192,7 @@ class CommandTests(DatabaseTest):
         data = await self.campaigns.export(GUILD, mine.id)
         data["version"] = 1
         it = fake_interaction(self.bot)
-        await cmds.dmbot_restore.callback(it, attachment(json.dumps(data).encode()))
+        await cmds.dmbot_restore.callback(it, attachment(json.dumps(data).encode()))  # type: ignore[call-arg]
         self.assertIsInstance(it.followup.send.call_args.kwargs["view"], cmds.RestoreChoice)
 
     async def test_a_boosted_server_is_sent_a_copy_bigger_than_ten_megabytes(self) -> None:
@@ -200,12 +200,12 @@ class CommandTests(DatabaseTest):
         it = fake_interaction(self.bot)
         it.guild.filesize_limit = 50 * 1024 * 1024
         with patch("dmbot.ui.logic.FILE_MAX", 10):  # the standard limit, made tiny
-            await cmds.dmbot_backup.callback(it)
+            await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
         self.assertIn("file", it.followup.send.call_args.kwargs)
         plain = fake_interaction(self.bot)  # the same copy to a standard server is too big
         plain.guild.filesize_limit = 10
         with patch("dmbot.ui.logic.FILE_MAX", 10):
-            await cmds.dmbot_backup.callback(plain)
+            await cmds.dmbot_backup.callback(plain)  # type: ignore[call-arg]
         self.assertNotIn("file", plain.followup.send.call_args.kwargs)
         self.assertIn("too big", plain.followup.send.call_args.args[0])
 
@@ -219,7 +219,7 @@ class CommandTests(DatabaseTest):
             with self.subTest(limit), limit:
                 it = fake_interaction(self.bot)
                 it.guild.filesize_limit = 10  # Discord's number for this server
-                await cmds.dmbot_backup.callback(it)
+                await cmds.dmbot_backup.callback(it)  # type: ignore[call-arg]
                 message = it.followup.send.call_args.args[0]
                 self.assertIn("**Huge\\_\\*one\\*** is too big for DMbot to copy yet", message)
                 self.assertIn("Nothing was lost", message)
@@ -365,7 +365,7 @@ class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
         bot, lock = self.bot_with_a_held_lock()
         it = fake_interaction(bot)
         await lock.acquire()  # a start is setting up the DM screen
-        stopping = asyncio.create_task(cmds.dmbot_stop.callback(it))
+        stopping = asyncio.create_task(cmds.dmbot_stop.callback(it))  # type: ignore[call-arg]
         for _ in range(5):
             await asyncio.sleep(0)
         self.assertTrue(it.response.deferred)  # answered while waiting
@@ -580,7 +580,7 @@ class RestoreEndsWithAnOutcome(unittest.IsolatedAsyncioTestCase):
         bot = SimpleNamespace(stop_session=AsyncMock(side_effect=RuntimeError("bug")))
         it = fake_interaction(bot)  # type: ignore[arg-type]
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
-            await cmds.dmbot_stop.callback(it)
+            await cmds.dmbot_stop.callback(it)  # type: ignore[call-arg]
         self.assertEqual(it.followup.send.await_args.args[0], cmds.STOP_COMMAND_FAILED)
 
 
@@ -679,7 +679,7 @@ class SettingsWhereTheDmLooks(CommandTests):
     async def test_the_settings_command_opens_the_menu_for_the_dm(self) -> None:
         await self.campaigns.create(GUILD, "Frostmaiden", DM)
         it = self.interaction()
-        await cmds.dmbot_settings.callback(it)
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         text, kw = it.response.sent[0]
         self.assertIn("Settings for Frostmaiden", text)
         self.assertTrue(kw["ephemeral"])
@@ -687,7 +687,7 @@ class SettingsWhereTheDmLooks(CommandTests):
     async def test_the_settings_command_refuses_a_player(self) -> None:
         await self.campaigns.create(GUILD, "Frostmaiden", DM)
         it = self.interaction(OTHER_DM)
-        await cmds.dmbot_settings.callback(it)
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         text, _ = it.response.sent[0]
         self.assertIn("Only this campaign's DM", text)
         self.assertNotIn("Settings for", text)
@@ -699,14 +699,14 @@ class SettingsWhereTheDmLooks(CommandTests):
         second = await self.campaigns.create(GUILD, "Newer", DM)
         await self.campaigns.mark_played(GUILD, second.id)
         it = self.interaction()
-        await cmds.dmbot_settings.callback(it)
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         self.assertIn("Settings for Newer", it.response.sent[0][0])
         self.bot.tables[GUILD] = SimpleNamespace(campaign_id=first.id)  # type: ignore[assignment]
         again = self.interaction()
-        await cmds.dmbot_settings.callback(again)
+        await cmds.dmbot_settings.callback(again)  # type: ignore[call-arg]
         self.assertIn("Settings for Older", again.response.sent[0][0])
 
     async def test_the_settings_command_with_no_campaign_points_to_start(self) -> None:
         it = self.interaction()
-        await cmds.dmbot_settings.callback(it)
+        await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         self.assertIn("/dmbot start", it.response.sent[0][0])
