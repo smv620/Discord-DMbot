@@ -22,6 +22,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,6 +91,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
+from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -245,10 +247,22 @@ def create_app(
             return JSONResponse({"error": "busy"}, status_code=503, headers=wait)
         return JSONResponse({"error": "slow_down"}, status_code=429, headers=wait)
 
+    public_host = urlsplit(settings.api_url).hostname
+
     @app.middleware("http")
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        # Through the tunnel (it always sets this header), only the public paths exist (#2625); the
+        # same empty 404 the tunnel gave before the list moved into code. From inside, never.
+        # A request is from outside if it carries the tunnel's header OR names the public API
+        # host: the gate must fail closed, so it does not depend on one detail of the tunnel (the
+        # tunnel keeps the caller's Host). Inside callers use web-api:8080 or localhost.
+        outside = TUNNEL_HEADER in request.headers or (
+            public_host is not None and request_host(request) == public_host
+        )
+        if outside and not is_public(request.url.path):
+            return Response(status_code=404)
         # The payment company's webhook and the mail service's inbound one are checked by their
         # signatures instead (they can't send our header or come from the website).
         webhook = request.url.path.startswith("/webhooks/") or request.url.path == "/mail/inbound"
@@ -1110,6 +1124,20 @@ def create_app(
             return await relationships.read_web(
                 db, session, ref, center=center, hops=steps, view=view
             )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/overview")
+    async def me_campaign_web_overview(
+        ref: str, signed: Signed, view: str | None = None
+    ) -> dict[str, Any]:
+        """Every name the caller may see, which have no connection yet and the groups of linked ones
+        (#2632), so the Story graph never looks empty while the campaign is not. Same people, same
+        names and same view rules as the web above."""
+        session, _token = signed
+        try:
+            return await relationships.read_overview(db, session, ref, view=view)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

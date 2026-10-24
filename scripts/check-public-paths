@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# dev1 runs this after each deploy of the web API (#2625). Read-only: it only asks questions.
+#
+#   scripts/check-public-paths                 uses WEB_API_URL from .env
+#   scripts/check-public-paths https://api.getdmbot.com
+#
+# From outside, every public path (core/src/dmbot/web/public_paths.py) must get the app's own
+# answer: JSON, or a 400, 401 or 405, never Cloudflare's empty 404. A path that is not on the list
+# must get the empty 404. The paths below are the examples in public_paths.py; a test keeps the
+# two lists equal. Run it from a computer outside the server, so the request goes through the
+# tunnel. Exits 0 when every line says ok, 1 otherwise.
+set -uo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+base=${1:-}
+if [ -z "$base" ] && [ -f "$root/.env" ]; then
+  base=$(grep -E '^WEB_API_URL=' "$root/.env" | head -1 | cut -d= -f2-)
+fi
+base=${base%/}
+if [ -z "$base" ]; then
+  echo "Give the API's address, for example scripts/check-public-paths https://api.getdmbot.com" >&2
+  exit 2
+fi
+curl_bin=${DMBOT_CURL:-curl}
+
+# PUBLIC-PATHS (one per line; the test reads between these markers)
+public_paths=(
+  /admin/auth/ways
+  /webhooks/stripe
+  /auth/logout
+  /me
+  /me/recaps
+  /billing/portal
+  /mail/inbound
+  /support
+  /support/mine
+  /recap-audio/ref/voice
+  /recaps/token
+  /recaps/token/audio/voice
+)
+# END-PUBLIC-PATHS
+closed_paths=(/health /personal /not-a-route-at-all)
+
+bad=0
+ask() {
+  # sets code and size for a request with no cookie and a tiny body
+  local out
+  out=$(mktemp)
+  code=$("$curl_bin" -s -o "$out" -w '%{http_code}' -X "$1" "$base$2" -d '{}') || code=000
+  size=$(wc -c <"$out" | tr -d ' ')
+  rm -f "$out"
+}
+for path in "${public_paths[@]}"; do
+  ask POST "$path"
+  if [ "$code" = 404 ] && [ "$size" = 0 ]; then
+    echo "NOT OK  $path  answered the empty 404 (Cloudflare or the app's list is closing it)"
+    bad=1
+  else
+    echo "ok      $path  ($code)"
+  fi
+done
+for path in "${closed_paths[@]}"; do
+  ask GET "$path"
+  if [ "$code" = 404 ] && [ "$size" = 0 ]; then
+    echo "ok      $path  stays closed (empty 404)"
+  else
+    echo "NOT OK  $path  answered $code with $size bytes: it should be the empty 404"
+    bad=1
+  fi
+done
+exit $bad

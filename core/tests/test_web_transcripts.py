@@ -29,7 +29,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
-from tests.test_web_api import ALICE, API, QUILLON, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, QUILLON, THURSDAY, FakeDiscord, settings
 
 START = 1_700_000_000
 CAROL = type(BOB)(id=3003, name="Carol", email="carol@example.com")  # in the server, no DM at all
@@ -808,13 +808,15 @@ class TheRoutes(Base):
             clock=lambda: NOW,
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(self.client.aclose)
 
     async def sign_in(self, user: Any, guilds: Any) -> None:
         token = await sessions.sign_in(self.web, user, guilds, now=NOW, days=30)
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
 
     async def test_the_list_the_read_view_and_the_download_agree(self) -> None:
         await self.sign_in(CAROL, [THURSDAY])
