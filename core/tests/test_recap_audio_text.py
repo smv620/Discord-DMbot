@@ -466,6 +466,40 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TheClosingLine(unittest.TestCase):
+    """#2627: the closing line is its own paragraph, asked for after a long pause."""
+
+    CLOSING = "And so we continue, the epic adventure of The Ember Road."
+
+    def test_the_closing_paragraph_starts_with_the_long_pause(self) -> None:
+        built = script.build("T", None, f"《Tense》 One two three.\n\n{self.CLOSING}")
+        *rest, last = built.paragraphs
+        self.assertTrue(last.closing)
+        self.assertEqual(last.tagged, f"[long pause] {self.CLOSING}")
+        self.assertEqual(last.spoken, self.CLOSING)  # (never read as words: it is a tag)
+        self.assertFalse(any(p.closing for p in rest))
+        self.assertNotIn("[long pause]", rest[-1].tagged)
+
+    def test_the_bare_closing_line_counts_and_other_last_paragraphs_do_not(self) -> None:
+        bare = script.build("T", None, "One two three.\n\nAnd so we continue, the epic tale.")
+        self.assertTrue(bare.paragraphs[-1].closing)
+        plain = script.build("T", None, "One two three.\n\nThe door closed.")
+        self.assertFalse(any(p.closing for p in plain.paragraphs))
+        only = script.build("T", None, self.CLOSING)  # (after the title, still the last)
+        self.assertTrue(only.paragraphs[-1].closing)
+
+    def test_the_voices_timestamps_still_find_a_cue_in_the_closing_paragraph(self) -> None:
+        built = script.build("T", None, "One two.\n\nAnd so we continue, ((pause)) the epic tale.")
+        last = built.paragraphs[-1]
+        [cue] = last.cues
+        self.assertEqual(last.tagged[cue.tagged_offset :].split()[0], "[short")
+
+    def test_a_long_pause_the_dm_wrote_before_it_is_not_doubled(self) -> None:
+        built = script.build("T", None, f"One two.\n\n---\n\n{self.CLOSING}")
+        self.assertEqual(built.paragraphs[-1].tagged.count("[long pause]"), 1)
+        self.assertEqual(built.paragraphs[-2].tagged.count("[long pause]"), 1)  # the scene break
+
+
 class TheShortestRecap(unittest.TestCase):
     """A recap of a short session (180 words, #2013) still has music: at least one section, each
     at least the provider's shortest."""

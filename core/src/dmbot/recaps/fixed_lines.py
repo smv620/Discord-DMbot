@@ -64,6 +64,12 @@ def usable_name(name: str, secret_names: Collection[str]) -> str:
     return clean
 
 
+def is_closing(paragraph: str) -> bool:
+    """Whether a paragraph is the recap's fixed closing line (#2627): the same wording as
+    `CLOSING` and `CLOSING_BARE`, whichever ending and campaign name it was made with."""
+    return paragraph.strip().startswith(CLOSING_BARE.split("{")[0])
+
+
 def ending_for(earlier_sessions: int) -> int:
     """Which ending a recap takes: the number of earlier sessions in the campaign, round the ten.
     Worked out from the campaign's own sessions and not from the last posted recap, so an imported

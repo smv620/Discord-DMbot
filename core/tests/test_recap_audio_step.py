@@ -29,7 +29,13 @@ from dmbot.recaps.audio.eleven import (
     ProviderError,
 )
 from dmbot.recaps.audio.files import FILE_NAMES, KEEP_DAYS, MIX, MUSIC, VOICE, AudioFiles
-from dmbot.recaps.audio.render import GAP_SECONDS, HEAD_SECONDS, TAIL_SECONDS, Renderer
+from dmbot.recaps.audio.render import (
+    CLOSING_GAP_SECONDS,
+    GAP_SECONDS,
+    HEAD_SECONDS,
+    TAIL_SECONDS,
+    Renderer,
+)
 from dmbot.recaps.audio.worker import (
     NO_MIXER,
     NOT_INCLUDED,
@@ -465,6 +471,20 @@ class Rendering(unittest.IsolatedAsyncioTestCase):
         )
         self.assertAlmostEqual(made.seconds, want, places=2)
         self.assertAlmostEqual(self.mixer.voice_seconds, made.seconds, places=2)
+
+    async def test_the_closing_line_follows_a_long_pause_with_the_music_playing_on(self) -> None:
+        """#2627: the closing line is asked for after `[long pause]` and the voice track has at
+        least 1.5 s of silence before it, where an ordinary paragraph gets 0.4 s."""
+        closing = "And so we continue, the epic adventure of The Ember Road."
+        self.script = sc.build("The Silver Lock", 4, f"{SUMMARY}\n\n{closing}")
+        made = await self.render()
+        texts = [b["text"] for _, b in self.fake.paths("text-to-speech") if b]
+        self.assertTrue(texts[-1].startswith("[long pause] And so we continue"))
+        self.assertFalse(any("[long pause]" in t for t in texts[:-1]))
+        n = len(self.script.paragraphs)
+        want = HEAD_SECONDS + 2.0 * n + GAP_SECONDS * (n - 2) + CLOSING_GAP_SECONDS + TAIL_SECONDS
+        self.assertAlmostEqual(made.seconds, want, places=2)
+        self.assertGreaterEqual(CLOSING_GAP_SECONDS, 1.5)
 
     async def test_the_music_sections_follow_the_voices_timestamps(self) -> None:
         made = await self.render()

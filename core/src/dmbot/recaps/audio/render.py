@@ -38,6 +38,9 @@ log = logging.getLogger(__name__)
 HEAD_SECONDS = 2.0  # music before the first word
 TAIL_SECONDS = 1.5  # the music runs this long past the last spoken word (owner, 2026-10-24, #2629)
 GAP_SECONDS = 0.4  # breath between paragraphs
+# The silence before the closing line (owner, 2026-10-24, #2627): a dramatic pause, with the
+# music playing on under it.
+CLOSING_GAP_SECONDS = 1.5
 FFMPEG_SECONDS = 300
 
 Runner = Callable[[list[str]], Awaitable[int]]
@@ -166,7 +169,8 @@ class Renderer:
         closing = 0.0  # how long the last paragraph (the closing line) takes to say
         for number, paragraph in enumerate(script.paragraphs if speaking else ()):
             if number:
-                pcm += _silence(GAP_SECONDS)  # a breath between paragraphs, none after the last
+                # a breath between paragraphs, none after the last; a longer pause before the end
+                pcm += _silence(CLOSING_GAP_SECONDS if paragraph.closing else GAP_SECONDS)
             begun = len(pcm) / (2 * SPEECH_RATE)
             await guard()  # before each paid call: consent, secrets and the cap, again
             speech = await self._provider.speech(
