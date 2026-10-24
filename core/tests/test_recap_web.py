@@ -484,6 +484,28 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
 
+    async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
+        self,
+    ) -> None:
+        """#2639 review: the contract WebDev's page reads, pinned against the real door: the
+        shared shape, counts and codes only, and nothing once the recap is posted."""
+        read = await read_recap(self.web, self.session, self.ref)
+        got = read["progress"]
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertTrue(got["stage"].startswith("recap_"))
+        self.assertIn(got["state"], ("running", "stalled", "failed", "done"))
+        listed = await list_recaps(self.web, self.session)
+        self.assertTrue(all("progress" in r for r in listed))
+        async with self.db.guild(THURSDAY.id) as conn:  # (posted by the bot's own path elsewhere)
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted' WHERE guild_id = %s AND session_at = %s",
+                (THURSDAY.id, 100),
+            )
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["progress"])
+
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
         got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
