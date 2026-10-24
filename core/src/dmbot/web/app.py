@@ -1114,6 +1114,20 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/overview")
+    async def me_campaign_web_overview(
+        ref: str, signed: Signed, view: str | None = None
+    ) -> dict[str, Any]:
+        """Every name the caller may see, which have no connection yet and the groups of linked ones
+        (#2632), so the Story graph never looks empty while the campaign is not. Same people, same
+        names and same view rules as the web above."""
+        session, _token = signed
+        try:
+            return await relationships.read_overview(db, session, ref, view=view)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/size")
     async def me_campaign_web_size(
         ref: str,
