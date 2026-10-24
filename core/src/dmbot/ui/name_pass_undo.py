@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any
 
 import discord
 
 from dmbot.memory.models import DM, KEEP, MemoryRuleError
 from dmbot.mentions import NO_PINGS
-from dmbot.ui.decision_lines import with_outcome
+from dmbot.transcript.name_pass import Fixed
 from dmbot.ui.dmbot_commands import _bot, _tell
 
 log = logging.getLogger(__name__)
@@ -28,16 +29,17 @@ NOTHING = "Nothing to put back: the lines were changed since, or this was undone
 FAILED = "Something went wrong, so nothing was changed. Try again in a moment."
 BACK = "↩️ Put the spellings back in {lines} {lines_word}."
 
+MAX_UNDOS = 20  # (a message holds 25 buttons)
 _TEMPLATE = r"dmbot:namepass:undo:(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,12})"
 
 
 class UndoNamePassButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE
 ):
-    def __init__(self, campaign_id: str, batch: int) -> None:
+    def __init__(self, campaign_id: str, batch: int, name: str = "") -> None:
         super().__init__(
             discord.ui.Button(
-                label="Undo",
+                label=f"Undo {name}"[:80] if name else "Undo",
                 emoji="↩️",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:namepass:undo:{campaign_id}:{batch}",
@@ -88,19 +90,34 @@ class UndoNamePassButton(
             await _tell(interaction, NOTHING)
             return
         text = BACK.format(lines=lines, lines_word="line" if lines == 1 else "lines")
+        await _tell(interaction, text)
         message = interaction.message
         if message is not None:
-            await interaction.response.edit_message(
-                content=with_outcome(message.content, "Undone."),
-                view=None,
-                allowed_mentions=NO_PINGS,
-            )
-            await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
-        else:
-            await _tell(interaction, text)
+            await _drop_button(message, self.batch)
 
 
-def undo_view(campaign_id: str, batch: int) -> discord.ui.View:
+def undo_view(campaign_id: str, fixed: Sequence[Fixed]) -> discord.ui.View | None:
+    """One Undo for each name that was fixed (at most `MAX_UNDOS`: a message holds 25 buttons)."""
+    shown = list(fixed)[:MAX_UNDOS]
+    if not shown:
+        return None
     view = discord.ui.View(timeout=None)
-    view.add_item(UndoNamePassButton(campaign_id, batch))
+    for f in shown:
+        view.add_item(UndoNamePassButton(campaign_id, f.batch, f.name))
     return view
+
+
+async def _drop_button(message: Any, batch: int) -> None:
+    """Take the pressed Undo off the report (the others stay); a message that cannot be edited
+    keeps it, and pressing again is harmless."""
+    try:
+        view = discord.ui.View.from_message(message, timeout=None)
+        keep = [
+            c for c in view.children if getattr(c, "custom_id", "").split(":")[-1] != str(batch)
+        ]
+        view.clear_items()
+        for item in keep:
+            view.add_item(item)
+        await message.edit(view=view if view.children else None, allowed_mentions=NO_PINGS)
+    except Exception:
+        log.info("Name pass undo: couldn't update the report")

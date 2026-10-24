@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -154,21 +154,31 @@ def _bit(line: str, spelling: str) -> str:
     return ("…" if start else "") + line[start:end].strip() + ("…" if end < len(line) else "")
 
 
-def candidates(
-    lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()
-) -> list[Candidate]:
-    """The words in `lines` (cleaned text) worth asking PlotBot about, most heard first. `people`:
-    the names of the people at the table, each whole name and each word of it."""
+@dataclass(frozen=True, slots=True)
+class Survey:
+    items: list[Candidate]  # the words to ask PlotBot about, most heard first
+    guarded: int  # words left as heard because they are close to a secret (or DM-only) name
+    new: int  # words close to no list name: new names, for the after-session scan and the DM
+
+
+def survey(lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()) -> Survey:
+    """The words in `lines` (cleaned text) worth asking PlotBot about, most heard first, and how
+    many were left alone. `people`: the names of the people at the table, each whole name and each
+    word of it."""
     skip = {entry.key for entry in lookup.names} | set(lookup.keep_keys)
     skip |= {key for key in lookup.people_by_key}
     skip |= {p.casefold() for p in people}
     found = group_alike(find_new_names(lines, skip, min_times=1, unlimited=True))
     out: list[Candidate] = []
+    guarded = new = 0
     for suggestion in found:
         spellings = (suggestion.name, *suggestion.also)
         if sum(c.isalpha() for c in suggestion.name) < MIN_LETTERS:
             continue
-        if lookup.keep_as_heard(suggestion.name) or text_names_a_secret(lookup, suggestion.name):
+        if lookup.keep_as_heard(suggestion.name):
+            continue
+        if text_names_a_secret(lookup, suggestion.name):
+            guarded += 1
             continue
         near: dict[str, Near] = {}
         secret = False
@@ -178,8 +188,12 @@ def candidates(
             for n in ranked:
                 if n.entity_id not in near or n.likeness > near[n.entity_id].likeness:
                     near[n.entity_id] = n
-        if secret or not near:
-            continue  # near a secret name: never; near nothing: a new name, not for this pass
+        if secret:
+            guarded += 1  # near a secret name: never asked about, never written
+            continue
+        if not near:
+            new += 1  # near nothing: a new name, for the scan and the DM
+            continue
         shown: list[str] = []
         for line in lines:
             for spelling in spellings:
@@ -199,7 +213,13 @@ def candidates(
             )
         )
     out.sort(key=lambda c: (-c.times, c.heard))
-    return out[:MAX_CANDIDATES]
+    return Survey(out[:MAX_CANDIDATES], guarded, new)
+
+
+def candidates(
+    lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()
+) -> list[Candidate]:
+    return survey(lines, lookup, people).items
 
 
 def question(cands: Sequence[Candidate]) -> str:
@@ -212,56 +232,133 @@ def question(cands: Sequence[Candidate]) -> str:
     return "\n".join(parts)
 
 
-def decide(raw: str, cands: Sequence[Candidate]) -> list[Decision]:
-    """The sure answers in PlotBot's reply, checked: the name must be one of those offered for that
-    candidate, spelled as listed. Everything else (a new name, not sure, a name that was not
-    offered, a number that does not exist, an answer that cannot be read) changes nothing."""
+@dataclass(frozen=True, slots=True)
+class Verdict:
+    sure: list[Decision]  # written into the cleaned text
+    unsure: list[Candidate]  # asked of the DM (a name suggestion with the near names)
+    new: list[Candidate]  # PlotBot says a new name: asked of the DM as any new name
+
+
+def decide(raw: str, cands: Sequence[Candidate]) -> Verdict:
+    """PlotBot's reply, checked: a sure answer must name one of those offered for that candidate,
+    spelled as listed. Everything else is not written: "a new name" is a new name, and anything
+    else (not sure, a name that was not offered, a number that does not exist, a word with no
+    answer, a reply that cannot be read) is unsure."""
+    answers: dict[int, tuple[str, str]] = {}
     try:
         data = json.loads(raw)
-        answers = data["answers"]
+        items = data["answers"]
     except (ValueError, KeyError, TypeError):
-        return []
-    out: list[Decision] = []
-    done: set[int] = set()
-    if not isinstance(answers, list):
-        return []
-    for item in answers:
-        if not isinstance(item, dict):
-            continue
-        n, answer, name = item.get("n"), item.get("answer"), item.get("name")
-        if answer != SURE or type(n) is not int or not 1 <= n <= len(cands) or n in done:
-            continue
-        done.add(n)
-        c = cands[n - 1]
-        match = next(
-            (
-                x
-                for x in c.near
-                if isinstance(name, str) and x.name.casefold() == name.strip().casefold()
-            ),
-            None,
-        )
-        if match is None:
-            continue
-        out.append(Decision(c.heard, c.also, match.entity_id, match.name, c.times))
-    return out
+        items = []
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            n, answer, name = item.get("n"), item.get("answer"), item.get("name")
+            if (
+                type(n) is int
+                and 1 <= n <= len(cands)
+                and n not in answers
+                and isinstance(answer, str)
+                and isinstance(name, str)
+            ):
+                answers[n] = (answer, name)
+    sure: list[Decision] = []
+    unsure: list[Candidate] = []
+    new: list[Candidate] = []
+    for n, c in enumerate(cands, 1):
+        answer, name = answers.get(n, (UNSURE, ""))
+        match = next((x for x in c.near if x.name.casefold() == name.strip().casefold()), None)
+        if answer == SURE and match is not None:
+            sure.append(Decision(c.heard, c.also, match.entity_id, match.name, c.times))
+        elif answer == NEW:
+            new.append(c)
+        else:
+            unsure.append(c)
+    return Verdict(sure, unsure, new)
 
 
 BATCH_BASE = 1_000_000_000  # (a name-pass batch never equals a memory change's small number)
 
 
-def batch_of(session_id: str) -> int:
-    """The Undo number of a session's name pass: one for the session, apart from the memory log's
-    own batch numbers, and the same every time for the same session."""
-    digest = hashlib.sha256(session_id.encode()).digest()
+def batch_of(session_id: str, entity_id: str = "") -> int:
+    """The Undo number of one name's fixes in a session: apart from the memory log's own batch
+    numbers, and the same every time for the same session and name."""
+    digest = hashlib.sha256(f"{session_id}:{entity_id}".encode()).digest()
     return BATCH_BASE + int.from_bytes(digest[:6], "big") % BATCH_BASE
 
 
-def note(done: Collection[tuple[str, str, int]]) -> str:
-    """The DM-screen line: names and counts only. `done`: (the list name, the spellings as heard
-    joined with " / ", how many lines)."""
-    parts = [
-        f"{lines} {'spelling' if lines == 1 else 'spellings'} of {name} (heard as {heard})"
-        for name, heard, lines in done
+@dataclass(frozen=True, slots=True)
+class Fixed:
+    name: str  # the list name written
+    forms: tuple[tuple[str, int], ...]  # the spellings it replaced, with how many times each
+    batch: int  # for its Undo
+
+    @property
+    def times(self) -> int:
+        return sum(n for _, n in self.forms)
+
+
+@dataclass(frozen=True, slots=True)
+class Report:
+    """What the pass did, for the DM and the dev tool: counts and the spellings as heard (the
+    forms are words from a transcript: only the campaign's DM and dev1's terminal see them)."""
+
+    fixed: tuple[Fixed, ...] = ()
+    unsure: tuple[Candidate, ...] = ()
+    new: int = 0  # new names asked of the DM: PlotBot's and the words close to no list name
+    guarded: int = 0
+
+    @property
+    def quiet(self) -> bool:
+        return not (self.fixed or self.unsure or self.new or self.guarded)
+
+
+MAX_FORMS_SHOWN = 6  # spellings listed under one name
+MAX_NAMES_SHOWN = 12
+
+
+def times(n: int) -> str:
+    return f"{n} time" if n == 1 else f"{n} times"
+
+
+def report_text(report: Report) -> str:
+    """The report as the DM reads it (and dev1 on the terminal)."""
+    lines = ["**Names fixed this session**"]
+    for fixed in report.fixed[:MAX_NAMES_SHOWN]:
+        lines.append(f"{fixed.name}: corrected {times(fixed.times)}")
+        for form, n in fixed.forms[:MAX_FORMS_SHOWN]:
+            lines.append(f"  ({n}) {form}")
+        if len(fixed.forms) > MAX_FORMS_SHOWN:
+            lines.append(f"  …and {len(fixed.forms) - MAX_FORMS_SHOWN} more spellings")
+    if len(report.fixed) > MAX_NAMES_SHOWN:
+        lines.append(f"…and {len(report.fixed) - MAX_NAMES_SHOWN} more names")
+    lines.append(f"Not sure (asked the DM): {len(report.unsure)}")
+    for c in report.unsure[:MAX_NAMES_SHOWN]:
+        options = " or ".join(n.name for n in c.near)
+        lines.append(f"  ({c.times}) {c.heard} → {options}?")
+    lines.append(f"New names (asked the DM): {report.new}")
+    lines.append(f"Left as heard (secret-name guard): {report.guarded}")
+    return "\n".join(lines)
+
+
+def counts_line(report: Report) -> str:
+    """The numbers only, safe for logs and the testing logs: no spelling in it."""
+    return (
+        f"{len(report.fixed)} names, {sum(f.times for f in report.fixed)} fixes, "
+        f"{len(report.unsure)} unsure, {report.new} new, {report.guarded} guarded"
+    )
+
+
+def group_forms(pairs: Iterable[tuple[str, int]]) -> tuple[tuple[str, int], ...]:
+    """Spellings counted without regard to case ("keirandal" and "Keirandal" are one), shown as
+    written most often, most heard first."""
+    shown: dict[str, dict[str, int]] = {}
+    for form, n in pairs:
+        shown.setdefault(form.casefold(), {}).setdefault(form, 0)
+        shown[form.casefold()][form] += n
+    grouped = [
+        (max(forms, key=lambda f: (forms[f], f)), sum(forms.values())) for forms in shown.values()
     ]
-    return "Fixed " + ", ".join(parts) + "."
+    grouped.sort(key=lambda t: (-t[1], t[0].casefold()))
+    return tuple(grouped)

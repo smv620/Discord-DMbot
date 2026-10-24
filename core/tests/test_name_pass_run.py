@@ -85,8 +85,17 @@ class ThePass(NamesTest):
         self.assertEqual(await self.heard(), heard)  # what was heard never changes (#933)
         self.assertTrue(await self.done())
         text, view = self.bot.post.await_args.args[1], self.bot.post.await_args.args[2]  # type: ignore[attr-defined]
-        self.assertEqual(text, "Fixed 3 spellings of Kethrandil (heard as Keirandal).")
+        self.assertEqual(
+            text,
+            "**Names fixed this session**\n"
+            "Kethrandil: corrected 3 times\n"
+            "  (3) Keirandal\n"
+            "Not sure (asked the DM): 0\n"
+            "New names (asked the DM): 0\n"
+            "Left as heard (secret-name guard): 0",
+        )
         self.assertIsInstance(view.children[0], name_pass_undo.UndoNamePassButton)
+        self.assertEqual(view.children[0].item.label, "Undo Kethrandil")
 
     async def test_the_prompt_has_the_word_a_short_line_and_the_near_list_names_only(self) -> None:
         await ui.save_name(self.memory, self.campaign, "Drenwick", "npc", [], [])
@@ -110,7 +119,28 @@ class ThePass(NamesTest):
             self.assertEqual(await self.run_pass(), 0)
             self.assertEqual(await self.texts(), before)
         self.assertTrue(await self.done())
-        self.bot.post.assert_not_awaited()  # type: ignore[attr-defined]
+
+    async def test_the_dm_is_told_what_was_not_sure_and_what_was_new(self) -> None:
+        self.ai.complete.return_value = reply({"n": 1, "answer": "unsure", "name": ""})
+        await self.run_pass()
+        text = self.bot.post.await_args.args[1]  # type: ignore[attr-defined]
+        self.assertIn("Not sure (asked the DM): 1\n  (3) Keirandal → Kethrandil?", text)
+        self.ai.complete.return_value = reply({"n": 1, "answer": "new", "name": ""})
+        await self.run_pass()
+        self.assertIn("New names (asked the DM): 1", self.bot.post.await_args.args[1])  # type: ignore[attr-defined]
+
+    async def test_a_word_plotbot_was_not_sure_of_becomes_a_name_question_even_heard_once(
+        self,
+    ) -> None:
+        self.ai.complete.return_value = reply({"n": 1, "answer": "unsure", "name": ""})
+        await self.run_pass()
+        self.assertEqual(self.bot._name_pass_asks[self.session], [("Keirandal", 3)])
+        await self.bot._propose_new_names(
+            GUILD, self.campaign.id, ["Keirandal rode on."], {PLAYER}, self.session
+        )
+        names = [e.name for e in await self.memory.entities(GUILD, self.campaign.id)]
+        self.assertIn("Keirandal", names)  # offered to the DM: the existing hold waits for it
+        self.assertNotIn(self.session, self.bot._name_pass_asks)  # asked once
 
     async def test_a_failed_call_changes_nothing_and_does_not_hold_the_recap_back(self) -> None:
         self.ai.complete.side_effect = RuntimeError("the service is down")
@@ -158,12 +188,10 @@ class ThePass(NamesTest):
         view = self.bot.post.await_args.args[2]  # type: ignore[attr-defined]
         button = view.children[0]
         it = self.it()
-        it.message = SimpleNamespace(content="Fixed 3 spellings.", id=1)
-        it.followup = SimpleNamespace(send=AsyncMock())
+        it.message = SimpleNamespace(content="Fixed.", id=1, edit=AsyncMock(), components=[])
         await button.callback(it)
         self.assertEqual(await self.texts(), before)
-        self.assertEqual(it.response.edited[0][1], None)  # the button is gone
-        self.assertIn("Put the spellings back in 3 lines", it.followup.send.await_args.args[0])
+        self.assertIn("Put the spellings back in 3 lines", it.response.sent[0][0])
         self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
         lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
         self.assertTrue(lookup.keep_as_heard("Keirandal"))
@@ -212,3 +240,48 @@ class ThePass(NamesTest):
         gone = await store.get(GUILD, self.campaign.id, START)
         assert gone is not None
         self.assertTrue(await self.bot.recap_names_ready(GUILD, self.campaign.id, gone))
+
+    async def run_tool(self, *, dry_run: bool) -> Any:
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+
+        async def ask(_system: str, _question: str) -> str:
+            return str(
+                reply(
+                    {"n": 1, "answer": "is", "name": "Kethrandil"},
+                    {"n": 2, "answer": "is", "name": "Kethrandil"},
+                ).text
+            )
+
+        return await name_pass_run.run(
+            self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            people=(), agreed={PLAYER}, now=START, forget_before=0, dry_run=dry_run,
+        )  # fmt: skip
+
+    async def test_the_tool_groups_the_spellings_and_a_dry_run_writes_nothing(self) -> None:
+        await self.transcripts.add_lines(
+            GUILD,
+            self.session,
+            [Line(MS + 50_000, PLAYER, "Then Keirandel left.", "Then Keirandel left.")],
+        )
+        before = await self.texts()
+        dry = await self.run_tool(dry_run=True)
+        self.assertEqual(await self.texts(), before)  # nothing written
+        (fixed,) = dry.fixed
+        self.assertEqual((fixed.name, fixed.times), ("Kethrandil", 4))
+        self.assertEqual(fixed.forms, (("Keirandal", 3), ("Keirandel", 1)))
+        real = await self.run_tool(dry_run=False)
+        self.assertEqual(real.fixed[0].forms, fixed.forms)  # the same numbers as the real run
+        self.assertNotIn("Keirandal", " ".join(await self.texts()))
+        from dmbot.devtools.name_pass.__main__ import output, parse_args
+
+        lines = output(dry, dry_run=True)
+        self.assertTrue(lines[0].startswith("DRY RUN: nothing was written."))
+        self.assertIn("Kethrandil: corrected 4 times\n  (3) Keirandal\n  (1) Keirandel", lines[0])
+        self.assertEqual(lines[-1], "Counts: 1 names, 4 fixes, 0 unsure, 0 new, 0 guarded")
+        args = parse_args(["--guild", "1", "--session", "abc", "--dry-run"])
+        self.assertEqual(
+            (args.guild, args.session, args.dry_run, args.yes), (1, "abc", True, False)
+        )

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +54,9 @@ class PastRespell:
     sessions: int
     remaining: int  # more lines that would change: the next run does them
     run: int  # this run's number within the fix, 0 when it wrote nothing
+    # The spellings it replaced and how many times each (the name pass's report, #2628): words
+    # from a transcript, for the campaign's DM only; never logged.
+    forms: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -679,6 +683,7 @@ class TranscriptStore:
         updates: list[tuple[int, str]] = []
         rows: list[tuple[Any, ...]] = []
         sessions: set[str] = set()
+        forms: Counter[str] = Counter()
         remaining = 0
         scope: tuple[Any, ...] = (
             (guild_id, campaign_id) if session_id is None else (guild_id, campaign_id, session_id)
@@ -724,6 +729,7 @@ class TranscriptStore:
                     if found is None:
                         continue
                     updates.append((int(row["id"]), found.text))
+                    forms.update(found.was)
                     rows.append(
                         (
                             guild_id,
@@ -763,7 +769,13 @@ class TranscriptStore:
                         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         rows,
                     )
-        return PastRespell(len(updates), len(sessions), remaining, run if updates else 0)
+        return PastRespell(
+            len(updates),
+            len(sessions),
+            remaining,
+            run if updates else 0,
+            tuple(forms.most_common()),
+        )
 
     # ---- PlotBot's name pass on a finished session (#2628) ------------------------------------
 

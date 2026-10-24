@@ -300,7 +300,7 @@ from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
-from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
+from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
@@ -372,7 +372,15 @@ from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
-from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
+from dmbot.transcript import (
+    fix_notes,
+    left_out,
+    lookback,
+    name_pass_run,
+    rank_options,
+    refix,
+    speaker_ai,
+)
 from dmbot.transcript import name_pass as name_pass_logic
 from dmbot.transcript import pronounced as pronounced_aloud
 from dmbot.transcript import questions as name_questions
@@ -408,7 +416,6 @@ from dmbot.transcript.models import (
     TranscriptSession,
     line_ref,
 )
-from dmbot.transcript.respell import contains as contains_name
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -1171,6 +1178,7 @@ class DMBot(commands.AutoShardedBot):
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._audio_seen: dict[tuple[int, str, int], tuple[int, int]] = {}
+        self._name_pass_asks: dict[str, list[tuple[str, int]]] = {}  # unsure words (#2628)
         self.audio_waits = recap_audio.AudioWaits()  # the live "Making the audio" lines (#2621)
         self._import_queued: dict[str, list[int]] = {}
         # campaign -> how many of its import's sessions had their name check given up (told once;
@@ -10887,58 +10895,38 @@ class DMBot(commands.AutoShardedBot):
         if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return 0
         lookup = await self.lookup.get(gid, cid)
-        stored = [
-            x
-            for x in await self.transcripts.lines(gid, session_id)
-            if not x.sidebar and not x.typed and (agreed is None or x.user_id in agreed)
-        ]
         people: set[str] = set()
         for uid in users:
             name = self.name_of(gid, uid)
             if not name.startswith("<@"):
                 people.add(name_key(name))
                 people.update(name_key(word) for word in name.split())
-        found = name_pass_logic.candidates([x.text for x in stored], lookup, people)
-        if not found:
-            return 0
-        reply = await self.name_pass_ai.complete(
-            name_pass_logic.SYSTEM,
-            name_pass_logic.question(found),
-            max_tokens=2000,
-            schema=name_pass_logic.SCHEMA,
-        )
-        sure = name_pass_logic.decide(reply.text, found)
-        log.info("Name pass: %d asked, %d sure", len(found), len(sure))  # counts only
-        if not sure:
-            return 0
-        hidden = [n.text for n in lookup.names if n.secret or n.entity_id in lookup.hidden]
+        ai = self.name_pass_ai
+
+        async def ask(system: str, question: str) -> str:
+            reply = await ai.complete(
+                system, question, max_tokens=2000, schema=name_pass_logic.SCHEMA
+            )
+            return str(reply.text)
+
         now = int(time.time())
-        forget_before = now - int(self.memory.keep_days * 86400)
-        batch = name_pass_logic.batch_of(session_id)
-        total = 0
-        done: list[tuple[str, str, int]] = []
-        for decision in sure:
-            lines_for_name = 0
-            for old in (decision.heard, *decision.also):
-                longer = [
-                    n.text for n in lookup.names if n.text != old and contains_name(n.text, old)
-                ]
-                result = await self.transcripts.respell_names(
-                    gid, cid, batch, old, decision.name, longer, hidden,
-                    now=now, forget_before=forget_before, session_id=session_id,
-                )  # fmt: skip
-                lines_for_name += result.lines
-            if lines_for_name:
-                total += lines_for_name
-                heard = " / ".join((decision.heard, *decision.also))
-                done.append((decision.name, heard, lines_for_name))
-        if done and campaign.dm_screen_channel_id is not None:
+        report = await name_pass_run.run(
+            self.transcripts, lookup, ask, gid, cid, session_id,
+            people=people, agreed=agreed, now=now,
+            forget_before=now - int(self.memory.keep_days * 86400),
+        )  # fmt: skip
+        # The words PlotBot was not sure of are name questions for the DM, whatever the scan's own
+        # "heard twice" rule says; the recap is held until they are answered (#2169).
+        if report.unsure:
+            self._name_pass_asks[session_id] = [(c.heard, c.times) for c in report.unsure]
+        if not report.quiet and campaign.dm_screen_channel_id is not None:
             await self.post(
                 campaign.dm_screen_channel_id,
-                name_pass_logic.note(done),
-                name_pass_undo.undo_view(cid, batch),
+                name_pass_logic.report_text(report),
+                name_pass_undo.undo_view(cid, report.fixed),
             )
-        return total
+        log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
+        return sum(f.times for f in report.fixed)
 
     async def _propose_new_names(
         self,
@@ -10982,6 +10970,12 @@ class DMBot(commands.AutoShardedBot):
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
         found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+        # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
+        asked = self._name_pass_asks.pop(session_id, []) if session_id is not None else []
+        have = {name_key(f.name) for f in found}
+        for name, times in asked:
+            if name_key(name) not in skip and name_key(name) not in have:
+                found.append(Suggestion(name, times))
         added: list[str] = []
         for suggestion in found:
             try:
