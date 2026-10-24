@@ -512,6 +512,12 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.recap_again import (
+    AgainButton,
+    KeepButton,
+    again_view,
+    dmbot_recap,  # noqa: F401 (registers it)
+)
 from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
@@ -1670,6 +1676,7 @@ class DMBot(commands.AutoShardedBot):
             recap_audio.ListenButton, recap_audio.KeepAudioButton, recap_audio.MakeAudioAgainButton
         )  # the audio's end, said once (#2621)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
+        self.add_dynamic_items(AgainButton, KeepButton)  # Make a recap again (#2608)
         self.add_dynamic_items(
             ShortRecapButton
         )  # "write a recap anyway?" for a short session (#2104)
@@ -9258,6 +9265,42 @@ class DMBot(commands.AutoShardedBot):
             await self._say_writing(campaign, channel_id, session_at)
         return True
 
+    async def recap_again(
+        self, campaign: Campaign, session_at: int, user_id: int, *, replace_ok: bool = False
+    ) -> str:
+        """A DM makes the recap of a session, or makes it again (#2608). The outcome word: the
+        store's (`queued`, `needs_confirm`, `busy`, `no_lines`, `not_allowed`) or `off` (recaps are
+        switched off for DMbot), `no_plan` or `unchecked` (the plan could not be checked: nothing
+        is spent). Asked for, so the campaign's own recap switch does not stop it; the plan and the
+        month's allowance do, as for every recap (the worker checks the allowance and fails
+        closed). Says on the DM screen that it is being written."""
+        if self.recaps is None or not self.settings.recaps_on:
+            return "off"
+        if user_id not in campaign.dm_user_ids:
+            return "not_allowed"
+        gid = campaign.guild_id
+        if not await self.plan_allows("recap", gid, campaign, fail_open=False):
+            if await self.plan_allows("recap", gid, campaign, fail_open=True):
+                return "unchecked"  # not a no: nothing was spent, so try again
+            return "no_plan"
+        waits = await self.recaps.others_working(gid, campaign.id, session_at)
+        outcome = await self.recaps.start_over(
+            gid, campaign.id, session_at, user_id, replace_ok=replace_ok
+        )
+        if outcome == "queued" and campaign.dm_screen_channel_id is not None:
+            try:
+                await self._say_writing(
+                    campaign,
+                    campaign.dm_screen_channel_id,
+                    session_at,
+                    note="Waiting its turn: another recap of this campaign is first."
+                    if waits
+                    else "",
+                )
+            except Exception:
+                log.exception("Recap again: couldn't say on the DM screen that it is queued")
+        return outcome
+
     async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
         """A recap that DMbot could not finish checking for three days (#2255): said once on the
         DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
@@ -9266,7 +9309,11 @@ class DMBot(commands.AutoShardedBot):
             return
         link = page_link(self.settings.site_url, gid, cid, job.session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
-        await self.post(campaign.dm_screen_channel_id, f"{critics.UNCHECKED_TOLD}{where}")
+        await self.post(
+            campaign.dm_screen_channel_id,
+            f"{critics.UNCHECKED_TOLD}{where}",
+            view=again_view(cid, job.session_at, keep=job.keeps_previous),
+        )
 
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
@@ -9785,7 +9832,13 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     campaign.dm_screen_channel_id,
                     "📜 I couldn't write this session's recap. "
-                    f"Try again from your recap page{where}",
+                    f"Try again from your recap page{where}"
+                    + (
+                        "\nThe recap you had before is kept: press ↩️ to bring it back."
+                        if job.keeps_previous
+                        else ""
+                    ),
+                    view=again_view(cid, job.session_at, keep=job.keeps_previous),
                 )
         if campaign is not None and job.state == "ready" and job.to_confirm:
             await self._queue_recap_names(gid, cid, job, campaign)
