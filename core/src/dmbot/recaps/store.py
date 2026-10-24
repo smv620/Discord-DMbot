@@ -38,6 +38,8 @@ MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
 AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
 STUCK = "The narration and music were never finished. The text is fine."
+AUDIO_AGAIN_WAIT_S = 600  # "Make it again" at most once in 10 minutes, as the website's door does
+_NOW_HASH = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
 AUDIO_LEASE_S = 20 * 60  # the audio takes longer: several provider calls and the mix
 TERMINAL = ("ready", "failed")
 STATES = ("queued", "beats", "checked", "prose", "housekeeping", "ready")
@@ -530,6 +532,67 @@ class RecapStore:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(sets)}, updated_at = %s" + where,
                 (*values, int(self._now()), *args),
+            )
+            return bool(cur.rowcount)
+
+    async def audio_to_tell(self, guild_id: int, *, limit: int = 10) -> list[tuple[str, int, str]]:
+        """(campaign, session, 'ready' or 'failed') of recaps whose audio has finished and whose
+        end the DM has not been told (#2621). Not while the text is dropped; a posted recap is told
+        too (its page carries the audio)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id, session_at, audio FROM recap_jobs"
+                " WHERE guild_id = %s AND state = 'ready' AND audio IN ('ready', 'failed')"
+                " AND audio_told <> audio AND status IN ('draft', 'posting', 'posted')"
+                " ORDER BY updated_at LIMIT %s",
+                (guild_id, limit),
+            )
+            rows = await cur.fetchall()
+        return [(r["campaign_id"], int(r["session_at"]), r["audio"]) for r in rows]
+
+    async def audio_again(self, guild_id: int, campaign_id: str, session_at: int) -> str:
+        """Make the audio again from the Discord button (#2621), under the website door's rules
+        (the website's own door): an approved text that makes audio, whose audio is ready or
+        failed, once every 10 minutes. 'queued', 'too_soon' or 'not_allowed'. The plan and the
+        allowance are checked by the audio step before any paid call."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT audio, audio_choice, audio_asked_at, status,"
+                f" approved_hash = {_NOW_HASH} AS current FROM recap_jobs"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
+                " FOR UPDATE",
+                (guild_id, campaign_id, session_at),
+            )
+            row = await cur.fetchone()
+            if (
+                row is None
+                or row["status"] not in ("draft", "posting")
+                or row["audio"] not in ("ready", "failed")
+                or row["audio_choice"] not in ("voice", "music", "both")
+                or not row["current"]
+            ):
+                return "not_allowed"
+            if int(row["audio_asked_at"]) > now - AUDIO_AGAIN_WAIT_S:
+                return "too_soon"
+            await conn.execute(
+                "UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0,"
+                " audio_error = '', audio_credits = 0, audio_asked_at = %s, updated_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
+                (now, now, guild_id, campaign_id, session_at),
+            )
+        return "queued"
+
+    async def mark_audio_told(
+        self, guild_id: int, campaign_id: str, session_at: int, told: str
+    ) -> bool:
+        """The DM was told the audio is `told` ('ready' or 'failed'). Only while the audio still
+        is that, so a new making that began meanwhile is not marked: False then."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET audio_told = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND audio = %s",
+                (told, guild_id, campaign_id, session_at, told),
             )
             return bool(cur.rowcount)
 

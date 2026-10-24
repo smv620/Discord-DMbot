@@ -765,6 +765,31 @@ export interface TranscriptView {
   next?: number | null;
   /** Set when this session's transcript was deleted: no lines, nothing to save (#1548). */
   transcriptsDeletedAt?: number | null;
+  /** Where each "[… of off-topic chat skipped]" line is in THIS page's `lines`, and which stretch it stands
+   * for (#2568; core #2567). Only the cleaned reading has them; no words are in them. */
+  skips?: TranscriptSkip[];
+  /** Lines kept, left out, and put back by a DM and still in force (cleaned reading). */
+  filter?: { kept: number; leftOut: number; putBack: number };
+}
+
+/** One stretch of off-topic chat left out of the cleaned transcript. `line` is its marker's index in the
+ * page's `lines`; `speaker`, `fromMs` and `toMs` name the stretch to the API (never a Discord id). */
+export interface TranscriptSkip {
+  line: number;
+  speaker: number;
+  fromMs: number;
+  toMs: number;
+  seconds: number;
+  lines: number;
+  /** True when a DM put it back. */
+  putBack: boolean;
+}
+
+/** One line of a left-out stretch, as heard (rendered as text only). */
+export interface StretchLine {
+  when: string;
+  who: string;
+  text: string;
 }
 
 /** A campaign with house rules or a followed set in one of the person's servers (#1521). `ref` is
@@ -968,6 +993,33 @@ export interface WebGraph {
   /** A player may turn peeking on (the visibility allows it). */
   canPeek?: boolean;
   /** Which web this is. */
+  view?: WebView;
+}
+
+/** One group of linked names, as the overview lists it (#2632): the name to put in the middle to see it. */
+export interface WebGroup {
+  center: string;
+  centerName: string;
+  size: number;
+}
+
+/** Every name the person may see, with the ones that have no connection yet and the groups of linked
+ * names (#2632). The graph alone draws one centre's web, so a young campaign looked almost empty. */
+export interface WebOverview {
+  counts: {
+    names: number;
+    /** Connections the person may see (a DM's include the secret ones). */
+    connections: number;
+    connectedNames: number;
+    notConnected: number;
+  };
+  /** The names with no connection yet, by kind then name. A list, not drawn. */
+  tray: WebNode[];
+  /** Groups of two or more linked names, the largest first. */
+  groups: WebGroup[];
+  /** The API stopped at its cap of names. */
+  truncated: boolean;
+  canEdit: boolean;
   view?: WebView;
 }
 
@@ -1319,6 +1371,9 @@ export interface AccountApi {
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
   webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
+  /** The Story graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
+   * older than that: then the page is the graph alone. */
+  webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
     /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
   webPeek?(ref: string): Promise<void>;
   /** A DM shows a name or a connection to the players (#2405). */
@@ -1345,6 +1400,11 @@ export interface AccountApi {
     offset?: number,
   ): Promise<TranscriptView>;
   /** The same text as a file to save, as Discord's download button gives it. */
+  /** The as-heard words of one left-out stretch (anyone who may read the transcript; #2568). */
+  transcriptStretch?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<StretchLine[]>;
+  /** A DM puts a stretch back into the cleaned transcript, or leaves it out again; answers how many lines changed. */
+  transcriptPutBack?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<number>;
+  transcriptLeaveOut?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<number>;
   transcriptFile?(
     campaignRef: string,
     number: number,
@@ -1821,6 +1881,29 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    transcriptStretch: async (campaignRef, number, skip) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/stretch?speaker=${skip.speaker}&fromMs=${skip.fromMs}&toMs=${skip.toMs}`,
+        )) as { lines: StretchLine[] }
+      ).lines,
+    transcriptPutBack: async (campaignRef, number, skip) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/put-back`, {
+          speaker: skip.speaker,
+          fromMs: skip.fromMs,
+          toMs: skip.toMs,
+        })) as { changed: number }
+      ).changed,
+    transcriptLeaveOut: async (campaignRef, number, skip) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/leave-out`, {
+          speaker: skip.speaker,
+          fromMs: skip.fromMs,
+          toMs: skip.toMs,
+        })) as { changed: number }
+      ).changed,
     setCampaignSetting: async (campaignRef, choice) =>
       (
         (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {
@@ -2093,6 +2176,15 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
       )) as { names: number };
+    },
+    webOverview: async (ref, q) => {
+      const params = new URLSearchParams();
+      if (q.view) params.set("view", q.view);
+      const tail = params.toString();
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
+      )) as WebOverview;
     },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});

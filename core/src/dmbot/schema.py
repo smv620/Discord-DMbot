@@ -3366,6 +3366,16 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # Who plays which character in a campaign, for the transcript's labels (#1512).
     ("dmbot_web_transcript_characters", "dmbot_web_transcript_characters(BIGINT, TEXT)"),
     ("dmbot_web_transcript_speakers", "dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)"),
+    # What was left out of a session, and a DM putting it back (#2567).
+    (
+        "dmbot_web_transcript_stretch",
+        "dmbot_web_transcript_stretch(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)",
+    ),
+    ("dmbot_web_transcript_choices", "dmbot_web_transcript_choices(BIGINT, TEXT, TEXT)"),
+    (
+        "dmbot_web_transcript_choose",
+        "dmbot_web_transcript_choose(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN)",
+    ),
     ("dmbot_web_transcript_campaigns", "dmbot_web_transcript_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
@@ -3391,6 +3401,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_web_relationships",
         "dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)",
     ),
+    # Every name the caller may see and which pairs are connected, for the Story graph's count line,
+    # its "Not connected yet" tray and its other groups (#2632).
+    ("dmbot_web_graph_overview", "dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -10907,6 +10920,29 @@ RECAP_POSTING_CLOCK = r"""
         FOR EACH ROW EXECUTE FUNCTION dmbot_recap_posting_clock();
 """
 
+RECAP_AUDIO_TOLD = """
+    -- The DM is told once, on the DM screen, when a recap's audio is ready or has failed (#2621).
+    -- `audio_told` holds the audio state that was told ('ready' or 'failed'); '' when none is. A
+    -- trigger clears it each time the audio is queued, whichever door queued it (approval, the
+    -- website's Make it again, the bot), so a new making is told again and a restart never repeats
+    -- a notice. Recaps whose audio is already ready or failed are marked as told: no old news.
+    ALTER TABLE recap_jobs ADD COLUMN audio_told TEXT NOT NULL DEFAULT '';
+    CREATE POLICY migrate_backfill ON recap_jobs FOR ALL USING (true) WITH CHECK (true);
+    UPDATE recap_jobs SET audio_told = audio WHERE audio IN ('ready', 'failed');
+    DROP POLICY migrate_backfill ON recap_jobs;
+    CREATE FUNCTION dmbot_recap_audio_told_clock() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $fn$
+    BEGIN
+        IF NEW.audio = 'queued' AND OLD.audio IS DISTINCT FROM 'queued' THEN
+            NEW.audio_told := '';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER recap_jobs_audio_told BEFORE UPDATE OF audio ON recap_jobs
+        FOR EACH ROW EXECUTE FUNCTION dmbot_recap_audio_told_clock();
+"""
+
 BELIEFS = (
     f"""
     -- Assertions, perspectives and evidence (#2409; docs/STORY_MEMORY.md, section 9). A connection
@@ -12206,6 +12242,20 @@ WEB_DELETE_NOTICES = (
     """
 )
 
+NAME_PASS = """
+    -- PlotBot's name pass on a finished session's cleaned transcript (#2628): when it was done
+    -- (Unix seconds), 0 when it has not been. The recap of a session waits for it (a bounded wait,
+    -- in code). Every session that exists now is marked done, so nothing old is asked again and no
+    -- old recap waits. A time only, no words.
+    ALTER TABLE transcript_sessions ADD COLUMN names_repaired_at BIGINT NOT NULL DEFAULT 0;
+    -- Migrations run with no server set, so row-level security hides every row: open the table to
+    -- this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON transcript_sessions
+        FOR ALL USING (true) WITH CHECK (true);
+    UPDATE transcript_sessions SET names_repaired_at = GREATEST(COALESCE(ended_at, started_at), 1);
+    DROP POLICY migrate_backfill ON transcript_sessions;
+"""
+
 IMPORT_STEPS = """
     -- How far each imported session's cleaning has got and when anything about it last moved
     -- (#2564), so the website can show "420 of 900 lines" and say "stalled" when nothing has moved
@@ -12288,6 +12338,256 @@ IMPORT_STEPS = """
     $do$;
 """
 
+
+TOPIC_CHOICES = """
+    -- Who put a line back (or left it out again) after the session, and what the off-topic filter
+    -- turned back into game talk (#2567, docs/PLAN.md, "Off-topic talk"). Three columns on a
+    -- line, all defaulted, so no row changes and no backfill policy is needed:
+    --   topic_by / topic_set_at: the DM's choice, final: the filter never flips such a line again;
+    --   leaned: the filter's own "when unsure, keep it" pass turned this line back to game;
+    --   reread: a put-back line the names and story-memory readers have not read yet.
+    -- A line's words are not touched. The raw transcript is unchanged.
+    ALTER TABLE transcript_lines
+        ADD COLUMN topic_by     BIGINT,
+        ADD COLUMN topic_set_at BIGINT,
+        ADD COLUMN leaned       BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN reread       BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- dmbot_web_transcript_stretch: the as-heard words of one person's stretch that was left out,
+    -- put back or turned back by the filter, at most 200 lines, for whoever may read this session
+    -- (anyone in the server, as for the lines). Only that person's spoken lines between the two
+    -- start times, and only ones the filter or a DM touched. NULL when the caller is not in the
+    -- server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_stretch(
+        g BIGINT, c TEXT, sid TEXT, who BIGINT, from_ms BIGINT, to_ms BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('lines', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('startedMs', x.started_ms, 'heard', x.heard)
+                             ORDER BY x.started_ms, x.id)
+            FROM (SELECT l.id, l.started_ms, l.heard FROM transcript_lines l
+                  WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
+                    AND l.sidebar IS NULL AND NOT l.typed
+                    AND l.started_ms BETWEEN from_ms AND to_ms
+                    AND (l.topic = 'off_topic' OR l.leaned OR l.topic_by IS NOT NULL)
+                  ORDER BY l.started_ms, l.id LIMIT 200) x),
+            '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_transcript_choices: how the filter treated a session's spoken lines, and the
+    -- stretches a DM decided, for whoever may read the session. Counts only, and each decided
+    -- stretch as who, from, to and how many lines (a batch is one person's lines set at one moment
+    -- in one direction). NULL when the caller is not in the server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_choices(g BIGINT, c TEXT, sid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'kept', (SELECT count(*) FROM transcript_lines l
+                     WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                       AND NOT l.typed AND l.topic <> 'off_topic' AND NOT l.leaned
+                       AND l.topic_by IS NULL),
+            'leanedBack', (SELECT count(*) FROM transcript_lines l
+                           WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                             AND NOT l.typed AND l.leaned AND l.topic_by IS NULL),
+            'leftOut', (SELECT count(*) FROM transcript_lines l
+                        WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                          AND NOT l.typed AND l.topic = 'off_topic'),
+            'putBack', (SELECT count(*) FROM transcript_lines l
+                        WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                          AND NOT l.typed AND l.topic <> 'off_topic' AND l.topic_by IS NOT NULL),
+            'choices', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'speaker', x.user_id::TEXT, 'fromMs', x.first_ms, 'toMs', x.last_ms,
+                           'lines', x.n, 'putBack', x.put_back) ORDER BY x.first_ms)
+                FROM (SELECT l.user_id, l.topic_set_at, (l.topic <> 'off_topic') AS put_back,
+                             min(l.started_ms) AS first_ms, max(l.started_ms) AS last_ms,
+                             count(*) AS n
+                      FROM transcript_lines l
+                      WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                        AND NOT l.typed AND l.topic_by IS NOT NULL
+                      GROUP BY l.user_id, l.topic_set_at, (l.topic <> 'off_topic')
+                      ORDER BY min(l.started_ms) LIMIT 200) x),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_transcript_choose: a DM of the campaign puts one person's stretch back (the lines
+    -- count as game talk, so the cleaned file and its downloads include them and the readers take
+    -- them up) or leaves it out again. Only that person's spoken lines between the two start
+    -- times; "put back" changes lines that are left out, "leave out" only lines a DM put back,
+    -- never a plain game line or one the filter itself kept. Who and when are kept. Answers the
+    -- number of lines changed, 'not_allowed' for anyone who is not a DM of the campaign, NULL
+    -- when the caller is not in the server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_choose(
+        g BIGINT, c TEXT, sid TEXT, who BIGINT, from_ms BIGINT, to_ms BIGINT, back BOOLEAN)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        n INT;
+    BEGIN
+        IF me IS NULL
+           OR dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) THEN
+            RETURN jsonb_build_object('status', 'not_allowed');
+        END IF;
+        IF back THEN
+            UPDATE transcript_lines l SET topic = 'game', topic_by = me, topic_set_at = now_s,
+                   leaned = FALSE, reread = TRUE
+                WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
+                  AND l.sidebar IS NULL AND NOT l.typed
+                  AND l.started_ms BETWEEN from_ms AND to_ms AND l.topic = 'off_topic';
+        ELSE
+            UPDATE transcript_lines l SET topic = 'off_topic', topic_by = me, topic_set_at = now_s,
+                   reread = FALSE
+                WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
+                  AND l.sidebar IS NULL AND NOT l.typed
+                  AND l.started_ms BETWEEN from_ms AND to_ms AND l.topic = 'game'
+                  AND l.topic_by IS NOT NULL;
+        END IF;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        RETURN jsonb_build_object('status', 'ok', 'changed', n);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_stretch'
+            '(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_choices(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_choose'
+            '(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_stretch(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)
+        FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_choices(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_choose
+        (BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN) FROM PUBLIC;
+"""
+
+
+# The Story graph's overview (#2632): every name the caller may see, and which pairs of names are
+# connected, so the page can say "51 names", list the names with no connection yet beside the
+# graph and offer every group of linked names. The graph door (above) starts at the most-connected
+# name and walks only its confirmed connections, so a young campaign drew 2 names of 51. This door
+# reads the same names and the same connections by the same rules: its first half is cut out of
+# that door's own text (the checks, the view, `vis` and `rel_ids`), so the two can never disagree
+# about who sees what. A test compares them. Read-only: no row changes, no table, nothing in a
+# backup.
+# (Frozen at the graph door's text as of RELATION_DIRECTIONAL: a later migration that redefines
+# `dmbot_web_relationships` must change what this slices from, or the two doors would disagree.)
+_overview_door = RELATION_DIRECTIONAL[
+    RELATION_DIRECTIONAL.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships(") :
+]
+_overview_checks = _overview_door[
+    _overview_door.index("IF dmbot_current_guild() IS DISTINCT FROM g") : _overview_door.index(
+        "IF start_id IS NULL THEN"
+    )
+]
+assert "vis := ARRAY(" in _overview_checks and "rel_ids := ARRAY(" in _overview_checks
+GRAPH_OVERVIEW = (
+    """
+    CREATE OR REPLACE FUNCTION dmbot_web_graph_overview(
+        g BIGINT, c TEXT, cap_names INT, cap_pairs INT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
+        sees_all BOOLEAN;
+        wanted TEXT;
+        screen TEXT;
+        vis TEXT[];
+        rel_ids TEXT[];
+    BEGIN
+        """
+    + _overview_checks
+    + """
+        RETURN jsonb_build_object(
+            'status', 'ok', 'canEdit', is_dm AND sees_all, 'seesAll', sees_all,
+            'view', CASE WHEN sees_all THEN 'full' ELSE 'players' END,
+            'visibility', screen, 'canPeek', is_dm OR screen IN ('peek', 'open'),
+            'total', COALESCE(array_length(vis, 1), 0),
+            'connections', COALESCE(array_length(rel_ids, 1), 0),
+            -- the names, as the graph's nodes tell them; at most `cap_names` (`total` says if more)
+            'names', COALESCE((
+                SELECT jsonb_agg(x.j ORDER BY x.n, x.id) FROM (
+                    SELECT e.id, lower(e.name) AS n, jsonb_build_object(
+                        'id', e.id, 'name', e.name,
+                        'revealed', NOT (e.hidden_from_players OR e.audience_limited),
+                        'kind', CASE WHEN e.type = 'character' THEN
+                                    CASE e.role WHEN 'player_character' THEN 'player_character'
+                                                WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                                ELSE 'character' END
+                                ELSE e.type END,
+                        'secret', CASE WHEN sees_all THEN EXISTS (
+                            SELECT 1 FROM memory_aliases a
+                            WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                              AND a.status <> 'rejected' AND a.secret
+                              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')) END)
+                        AS j
+                    FROM memory_entities e
+                    WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (vis)
+                    ORDER BY lower(e.name), e.id LIMIT GREATEST(cap_names, 1)) x), '[]'::jsonb),
+            -- which two names each visible connection joins, once for each pair, in a fixed order
+            -- so a cut list is the same on every load; `pairsMore` says if pairs were cut
+            'pairs', COALESCE((
+                SELECT jsonb_agg(q.p ORDER BY q.a, q.b) FROM (
+                    SELECT DISTINCT LEAST(r.subject_id, r.object_id) AS a,
+                                    GREATEST(r.subject_id, r.object_id) AS b,
+                                    jsonb_build_array(LEAST(r.subject_id, r.object_id),
+                                                      GREATEST(r.subject_id, r.object_id)) AS p
+                    FROM memory_relations r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+                    ORDER BY 1, 2 LIMIT GREATEST(cap_pairs, 1)) q), '[]'::jsonb),
+            'pairsMore', (
+                SELECT count(*) > GREATEST(cap_pairs, 1) FROM (
+                    SELECT DISTINCT LEAST(r.subject_id, r.object_id),
+                                    GREATEST(r.subject_id, r.object_id)
+                    FROM memory_relations r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)) d));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT) FROM PUBLIC;
+    """
+)
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
@@ -12524,8 +12824,15 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
+    ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
     ("0224_recap_again", RECAP_AGAIN),  # a DM makes or redoes any session's recap (#2608)
+    ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
+    ("0227_name_pass", NAME_PASS),  # PlotBot repairs names in a finished transcript (#2628)
+    (
+        "0228_graph_overview",
+        GRAPH_OVERVIEW,
+    ),  # every name on the Story graph, not only the centre's web (#2632)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
