@@ -2344,7 +2344,9 @@ class MakeAgain(Base):
         await self.lines(self.one.id, 100)
         await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
         async with self.db.guild(THURSDAY.id) as conn:  # a worker has it right now
-            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (NOW + 600,))
+            # (the door judges "right now" by the clock; `NOW` was taken when this file was
+            # imported, so in a run longer than ten minutes `NOW + 600` has already passed)
+            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (int(time.time()) + 600,))
         with self.assertRaises(RecapError) as busy:
             await redo_recap(self.web, self.session, self.ref, replace=True)
         self.assertEqual(busy.exception.code, "busy")
