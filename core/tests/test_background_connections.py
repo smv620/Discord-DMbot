@@ -89,6 +89,39 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(bg.read_connections("not json", TEXT), [])
         self.assertEqual(bg.read_connections('{"connections": 5}', TEXT), [])
 
+    def test_every_dropped_line_is_counted_by_its_reason_and_never_by_its_words(self) -> None:
+        """#2563: the log can say why connections were lost, with counts only."""
+        from collections import Counter
+
+        lines = [
+            link("Brannoch", "enemy", "Mirelle", "Brannoch hates Mirelle with all his heart"),
+            link("Brannoch", "adores", "Mirelle", "Brannoch is the brother of Mirelle"),
+            link("Brannoch", "enemy", "Brannoch", "Brannoch is the brother of Brannoch"),
+            "not an object",
+        ]
+        lost: Counter[str] = Counter()
+        bg.read_connections(json.dumps({"connections": lines}), TEXT, dropped=lost)
+        self.assertEqual(
+            dict(lost),
+            {"not_in_text": 1, "word_not_allowed": 1, "bad_names": 1, "unreadable": 1},
+        )
+        self.assertFalse(any("Brannoch" in key for key in lost))
+
+    def test_kept_connections_say_why_the_rest_were_not(self) -> None:
+        from collections import Counter
+
+        found = bg.read_answer(reply(), TEXT)
+        links = bg.read_connections(reply(), TEXT)
+        lost: Counter[str] = Counter()
+        bg.keep_connections(
+            [links, links], [f for f in found if f.name != "Oakmere"], {}, dropped=lost
+        )
+        self.assertEqual(lost["name_not_found"], 2)  # Oakmere's link, twice
+        self.assertEqual(lost["same_pair"], 2)  # the second copy of the two that were kept
+        lost = Counter()
+        bg.keep_connections([links], found, {}, cap=1, dropped=lost)
+        self.assertEqual(lost["over_cap"], 1)
+
     def test_the_ends_must_be_names_dmbot_will_have(self) -> None:
         found = bg.read_answer(reply(), TEXT)
         links = bg.read_connections(reply(), TEXT)
