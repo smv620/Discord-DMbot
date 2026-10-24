@@ -124,6 +124,8 @@ class Feature(enum.StrEnum):
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
     IMAGE = "image"  # an image posted in the table chat, described once (#2450)
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
+    # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
+    NAME_PASS = "name_pass"
 
 
 # How much a background call may write at least (#2596, the owner 2026-10-24: "the cutoffs are
@@ -182,6 +184,9 @@ FEATURE_TIERS = {
     # layout has to be detailed enough to draw (#2450).
     Feature.IMAGE: AIModelTier.FAST,
     Feature.IMAGE_MAP: AIModelTier.CAREFUL,
+    # Written into the transcript the whole server reads, but only a sure answer naming one of the
+    # offered list names, and the DM can Undo (#2628).
+    Feature.NAME_PASS: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
