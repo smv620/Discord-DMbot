@@ -1353,17 +1353,27 @@ WEB_ROLE_RECAP_POLICY = """
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
 WEB_ROLE_OFFER_POLICY = """
-    -- Creating an offer (#728, #690 follow-up). The website's role has no INSERT on offers
-    -- today (#625 only answers them). Whoever adds a route that creates offers must grant
-    -- exactly OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
-    -- from the website is the signed-in person's own, still open, and not marked as sent,
-    -- claimed or announced. Otherwise the site could save an offer as already delivered and the
-    -- bot's check that the person is still in the server would be skipped.
+    -- Creating an offer (#728, #690 follow-up; #2532). The website's role may INSERT only the
+    -- columns in OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
+    -- from the website is the signed-in owner's own, by email, still open, and not claimed or
+    -- announced. Otherwise the site could write itself an offer on someone else's campaign.
     DROP POLICY IF EXISTS web_new_offer ON campaign_handover_offers;
     CREATE POLICY web_new_offer ON campaign_handover_offers AS RESTRICTIVE FOR INSERT TO dmbot_web
-        WITH CHECK (delivered_at IS NULL AND claimed_at IS NULL AND message_id IS NULL
+        WITH CHECK (via_email AND token_hash IS NOT NULL AND to_user_id = 0
+                    -- an offer from the website is only ever by email (#2532): a Discord offer
+                    -- would be sent to a person as buttons, which PLAN retires; it is born
+                    -- delivered, because the bot has no Discord message to send for it
+                    AND delivered_at = created_at
+                    AND created_at BETWEEN dmbot_now() - 300 AND dmbot_now() + 300
+                    AND claimed_at IS NULL AND message_id IS NULL
                     AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
-                    AND from_user_id = dmbot_current_user());
+                    AND from_user_id = dmbot_current_user()
+                    -- only the campaign's own owner can offer it: without this, anyone in the
+                    -- server could write themselves an offer and then accept it
+                    AND EXISTS (SELECT 1 FROM campaigns c
+                                WHERE c.guild_id = campaign_handover_offers.guild_id
+                                  AND c.id = campaign_handover_offers.campaign_id
+                                  AND c.owner_user_id = campaign_handover_offers.from_user_id));
 """
 
 ACCESS_GRANTS = (
@@ -3450,6 +3460,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_recap_shared", "dmbot_recap_shared(TEXT)"),
     # Approving a recap's text and picking its audio (#2083): the only write to those columns.
     ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
+    # How many hand-over emails a person sent today, for the limit of five (#2532).
+    ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
     # PlotBot's check of a recap: read and answered by a DM (#2122).
     ("dmbot_plot_read", "dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT)"),
     ("dmbot_plot_answer", "dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)"),
@@ -3592,6 +3604,11 @@ OFFER_INSERT_COLUMNS: tuple[str, ...] = (
     "created_at",
     "from_name",
     "to_name",
+    # By email (#2532): the link's hash, the mark that says so, and delivered_at, set at once
+    # because the bot has no Discord message to send for it (the policy allows that only here).
+    "via_email",
+    "token_hash",
+    "delivered_at",
 )
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
@@ -3614,6 +3631,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (owner_user_id)", ("campaigns",)),
     ("SELECT, INSERT", ("campaign_dms",)),
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
+    (f"INSERT ({', '.join(OFFER_INSERT_COLUMNS)})", ("campaign_handover_offers",)),  # #2532
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     # The unsubscribe link (#1229) may be written, never read: the list stays the bot's. The
@@ -12352,6 +12370,46 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+HANDOVER_EMAIL = """
+    -- Hand-over by email (#2532, docs/PLAN.md, "Hand-over by email"): an offer is no longer made to
+    -- a Discord account but sent to an email address, and the person who opens its one-use link
+    -- on the website and accepts becomes the new owner. The address is never stored here (it goes
+    -- in the email and nowhere else): the offer holds only a SHA-256 of the link's token. Until
+    -- the link is used `to_user_id` is 0, which matches nobody; the website's claim sets it to
+    -- the signed-in person, and the rest is the offer machinery of 0021 (one open offer per
+    -- campaign, seven days, the owner told when it ends). A new column on an existing table: no
+    -- rows change, so there is no backfill policy.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN via_email  BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN token_hash TEXT CHECK (token_hash IS NULL OR char_length(token_hash) = 64);
+    CREATE UNIQUE INDEX campaign_handover_offers_token
+        ON campaign_handover_offers (token_hash) WHERE token_hash IS NOT NULL;
+
+    -- How many offers by email this person has sent in the last day, for the limit of five a
+    -- day, counted over all their campaigns and servers (the offers table is scoped to one
+    -- server at a time, so the count reads the mail log, which is everyone's). The caller must
+    -- be that person, or a job with no person set.
+    CREATE FUNCTION dmbot_handover_emails_since(p_user BIGINT, p_since BIGINT) RETURNS INTEGER
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_user() IS NOT NULL AND dmbot_current_user() <> p_user THEN
+            RETURN 0;
+        END IF;
+        RETURN (SELECT count(*)::INTEGER FROM sent_emails e
+                WHERE e.user_id = p_user AND e.kind LIKE 'handover:%' AND e.sent_at >= p_since);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT) FROM PUBLIC;
+"""
+
 RECAP_STORY_ROOM = """
     -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
     -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
@@ -14156,6 +14214,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0209_recap_accepted", RECAP_ACCEPTED),  # each approved version of a recap (#2122)
     ("0210_plot_issues", PLOT_ISSUES),  # PlotBot's check of a recap and its issues (#2122)
     ("0211_plot_chat", PLOT_CHAT),  # the DM's talk with PlotBot about an issue (#2123)
+    ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)

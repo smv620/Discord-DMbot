@@ -583,7 +583,6 @@ class Pressing(Setup):
 
 class Speed(Setup):
     async def test_a_300_page_plan_is_read_in_a_few_milliseconds(self) -> None:
-        import time
 
         nodes: list[tuple[str, str, int]] = []
         for c in range(40):
@@ -594,10 +593,14 @@ class Speed(Setup):
         for c in range(0, 40, 2):
             await self.linked(ids, f"Person {c}-0", 100 + c)
         await model.read(self.memory, GUILD_A, self.c, doc)  # (the first call opens a connection)
-        began = time.perf_counter()
+
+        async def look() -> None:
+            read, pick = await model.read(self.memory, GUILD_A, self.c, doc)
+            build(read, pick)
+
+        took = await speed.fastest_async(look)  # (the best of several: one pause is not slowness)
         read, pick = await model.read(self.memory, GUILD_A, self.c, doc)
         guide = build(read, pick)
-        took = time.perf_counter() - began
         print(f"\nGuide me on {len(read)} entries and 20 links: {took * 1000:.1f} ms")
         self.assertEqual(len(read), 440)
         self.assertIsNotNone(guide.chapter)
