@@ -83,8 +83,8 @@ class TranscriptParts:
     async def _one(self, conn: Conn, guild_id: int, campaign_id: str, sid: str) -> dict[str, Any]:
         cur = await conn.execute(
             f"SELECT {_without('t', _SESSION_DROP)} AS r"
-            " FROM transcript_sessions t WHERE guild_id = %s AND id = %s",
-            (guild_id, sid),
+            " FROM transcript_sessions t WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+            (guild_id, campaign_id, sid),
         )
         session = (await cur.fetchone() or {"r": {}})["r"]
         cur = await conn.execute(
@@ -97,14 +97,16 @@ class TranscriptParts:
         lines = [r["r"] for r in found]
         cur = await conn.execute(
             f"SELECT {_without('s', _SUGGESTION_DROP)} AS r"
-            " FROM transcript_suggestions s WHERE guild_id = %s AND session_id = %s ORDER BY id",
-            (guild_id, sid),
+            " FROM transcript_suggestions s WHERE guild_id = %s AND campaign_id = %s"
+            " AND session_id = %s ORDER BY id",
+            (guild_id, campaign_id, sid),
         )
         suggestions = [r["r"] for r in await cur.fetchall()]
         cur = await conn.execute(
             f"SELECT line_id, {_without('p', _RESPELL_DROP)} AS r"
-            " FROM transcript_respells p WHERE guild_id = %s AND session_id = %s ORDER BY id",
-            (guild_id, sid),
+            " FROM transcript_respells p WHERE guild_id = %s AND campaign_id = %s"
+            " AND session_id = %s ORDER BY id",
+            (guild_id, campaign_id, sid),
         )
         respells = [
             {**r["r"], "line": place[int(r["line_id"])]}
@@ -113,8 +115,8 @@ class TranscriptParts:
         ]
         cur = await conn.execute(
             f"SELECT {_without('i', _IMPORT_DROP)} AS r"
-            " FROM session_imports i WHERE guild_id = %s AND session_id = %s",
-            (guild_id, sid),
+            " FROM session_imports i WHERE guild_id = %s AND campaign_id = %s AND session_id = %s",
+            (guild_id, campaign_id, sid),
         )
         row = await cur.fetchone()
         return {
@@ -250,15 +252,18 @@ class TranscriptParts:
         if not speakers:
             return {}
         source = part.get("guild")
-        servers = {guild_id, source} if type(source) is int else {guild_id}
-        out: dict[int, int] = {}
-        for server in sorted(servers):
-            cur = await conn.execute(
-                "SELECT user_id, erased_at FROM dmbot_erased_speakers(%s, %s)", (server, speakers)
-            )
-            for r in await cur.fetchall():
-                out[int(r["user_id"])] = max(out.get(int(r["user_id"]), 0), int(r["erased_at"]))
+        out = await TranscriptParts._erased_in(conn, guild_id, speakers)
+        if type(source) is int and source != guild_id:
+            for user, at in (await TranscriptParts._erased_in(conn, source, speakers)).items():
+                out[user] = max(out.get(user, 0), at)
         return out
+
+    @staticmethod
+    async def _erased_in(conn: Conn, server: int, speakers: list[int]) -> dict[int, int]:
+        cur = await conn.execute(
+            "SELECT user_id, erased_at FROM dmbot_erased_speakers(%s, %s)", (server, speakers)
+        )
+        return {int(r["user_id"]): int(r["erased_at"]) for r in await cur.fetchall()}
 
     @staticmethod
     async def _insert(
