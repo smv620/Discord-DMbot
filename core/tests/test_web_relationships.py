@@ -207,6 +207,21 @@ class Shaping(unittest.TestCase):
         self.assertEqual(links["3"]["direction"], "a-b")
         self.assertEqual([x["secret"] for x in edge["links"]], [False, False, True])
 
+    def test_every_connection_with_a_reading_back_sends_it_not_only_family(self) -> None:
+        """#2666: the page writes each line from the name in the middle, so a one-way link that
+        reads into the middle ("has as a member") needs its `back` whatever the predicate."""
+        rows = [
+            self.row("1", "a", "b", "member_of", 1),
+            self.row("2", "a", "b", "serves", 2),
+            self.row("3", "a", "b", "ally_of", 3),  # reads the same either way: no back
+        ]
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        links = {x["id"]: x for x in edge["links"]}
+        self.assertEqual(links["1"]["back"], "has as a member")
+        self.assertEqual(links["2"]["back"], "is the boss of")
+        self.assertIsNone(links["3"]["back"])
+        self.assertEqual(links["1"]["words"], "is a member of")
+
     def test_the_secret_flag_is_a_dms_only_and_never_picks_the_label(self) -> None:
         rows = [
             self.row("1", "a", "b", "knows", 1),
