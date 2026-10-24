@@ -872,7 +872,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
       {AFTER_SESSION_REPORT_LIVE && !editing && recap.campaign && recap.canEdit && (
-        <RecapReport api={api} campaignRef={recap.campaign} sessionAt={recap.sessionAt} />
+        <RecapReport key={`${recap.campaign}.${recap.sessionAt}`} api={api} campaignRef={recap.campaign} sessionAt={recap.sessionAt} />
       )}
       {!editing &&
         !recap.working &&
