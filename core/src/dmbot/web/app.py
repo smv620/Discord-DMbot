@@ -91,6 +91,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
+from dmbot.web.plot import answer_issue, read_plot
 from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
@@ -717,6 +718,9 @@ def create_app(
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
+        "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
+        "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
         "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
         "bad_hash": (422, "bad_hash"),
@@ -951,6 +955,36 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/recaps/{ref}/plot")
+    async def me_recap_plot(ref: str, signed: Signed) -> Any:
+        """PlotBot's check of this recap (#2122): its issues and the DM's answers, the accepted
+        versions, and whether Approve must wait. DMs only; anyone else gets `not_found`."""
+        session, _token = signed
+        try:
+            return await read_plot(db, session, ref, on=settings.plot_check_on)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/answer")
+    async def me_recap_plot_answer(ref: str, issue: str, signed: Signed, request: Request) -> Any:
+        """The DM's answer to one issue: `{"kind": "fix" | "changed" | "fine" | "leave",
+        "note"?: text}`. The updated issue. 409 `stale` when the text changed since the check."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        kind = body.get("kind") if isinstance(body, dict) else None
+        note = body.get("note", "") if isinstance(body, dict) else ""
+        if not isinstance(kind, str) or not isinstance(note, str):
+            raise HTTPException(status_code=422, detail="bad_answer")
+        try:
+            return await answer_issue(db, session, ref, issue, kind, note)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/recaps/{ref}/approve")
     async def me_recap_approve(ref: str, signed: Signed, request: Request) -> Any:
         """✅ Approve the text and pick what to make (#2083): `{"choice": "voice" | "music" |
@@ -981,6 +1015,7 @@ def create_app(
                 audio_unavailable=str(facts["audioUnavailable"]),
                 post=post,
                 outside_engine=settings.outside_engine,
+                plot_gate=settings.plot_check_on,  # (checked inside the approval's own lock)
             )
         except RecapError as err:
             if err.problems is not None:
@@ -1830,12 +1865,19 @@ def create_app(
         )
 
     @app.post("/me/recaps/{ref}/{action}")
-    async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
+    async def me_recap_decide(ref: str, action: str, signed: Signed) -> Any:
         """Post to the table (the bot sends it), Try again, or Don't post."""
         session, _token = signed
         try:
-            return await decide(db, session, ref, action)
+            return await decide(
+                db, session, ref, action,
+                plot_gate=settings.plot_check_on, outside_engine=settings.outside_engine,
+            )  # fmt: skip
         except RecapError as err:
+            if err.problems is not None:  # posting an unapproved draft checks its cues first
+                return JSONResponse(
+                    {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
+                )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
