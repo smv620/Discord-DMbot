@@ -131,6 +131,27 @@ class Keeping(unittest.TestCase):
         self.assertIn(("Ulric Stonehand", "Brannoc"), names_)
         self.assertIn(("Ulric Stonehand", "Tavin Ashgrove"), names_)  # "Tavin" is one name
 
+    def test_a_secret_spelling_with_a_title_in_front_stays_secret(self) -> None:
+        """#2591: "Lady Nightshade" is the secret spelling "Nightshade" of Vell Ashgrove."""
+        listed = [
+            bg.Found("Vell Ashgrove", "npc", (), ("Nightshade",), ""),
+            bg.Found("Thieves Guild", "faction", (), (), ""),
+        ]
+        for end in ("Lady Nightshade", "the Nightshade", "Nightshade"):
+            kept = bg.keep_connections([[c(end, "member_of", "Thieves Guild")]], listed, {})
+            self.assertEqual([(x.a, x.secret) for x in kept], [("Vell Ashgrove", True)], end)
+        plain = bg.keep_connections(
+            [[c("Lady Vell", "member_of", "Thieves Guild")]], listed, {}
+        )  # the public name by a word: not secret
+        self.assertEqual([(x.a, x.secret) for x in plain], [("Vell Ashgrove", False)])
+
+    def test_the_connections_past_the_cap_are_all_counted(self) -> None:
+        lost: Counter[str] = Counter()
+        many = [c("Ulric", "knows", f"Place {i}") for i in range(5)]
+        listed = [*LISTED, *(bg.Found(f"Place {i}", "place", (), (), "") for i in range(5))]
+        kept = bg.keep_connections([many], listed, {}, cap=2, dropped=lost)
+        self.assertEqual((len(kept), lost["over_cap"]), (2, 3))
+
     def test_the_same_pair_said_two_ways_is_one_link(self) -> None:
         lost: Counter[str] = Counter()
         kept = bg.keep_connections(
@@ -225,9 +246,26 @@ class Retrying(unittest.IsolatedAsyncioTestCase):
 
 class Counting(unittest.TestCase):
     def test_the_note_adds_up_and_names_the_question(self) -> None:
-        note = ui_bg._found_note(34, 33, ready=30, left=1, questions=["Sister Mara"])
+        note = ui_bg._found_note(
+            34, 33, ready=30, dropped={"which_one": 1}, questions=["Sister Mara"]
+        )
         self.assertIn("Found 34 connections: 30 ready to check, 3 wait for names", note)
         self.assertIn("1 left out (Which Sister Mara?)", note)
+
+    def test_every_reason_is_counted_and_the_parts_add_up_to_what_was_found(self) -> None:
+        dropped = {
+            "same_pair": 2, "already_have": 1, "already_waiting": 1,  # already known: 4
+            "name_not_found": 3, "which_one": 1, "not_in_text": 2,  # left out: 6
+            "cut_before_check": 2, "over_cap": 3,  # not read: 5, and 2 more the model skipped
+        }  # fmt: skip
+        found, ready, waits = 30, 7, 4  # 7 + 4 + 4 + 6 + 5 + 2 = 28, 2 missing: not read too
+        note = ui_bg._found_note(found, ready + waits, ready=ready, dropped=dropped)
+        self.assertIn("Found 30 connections: 7 ready to check, 4 wait for names", note)
+        self.assertIn("4 already known", note)
+        self.assertIn("6 left out", note)
+        self.assertIn("9 not read in time", note)  # 2 cut + 3 over the cap + 4 never shaped
+        numbers = [int(n) for n in re.findall(r"(\d+) (?:ready|wait|already|left|not read)", note)]
+        self.assertEqual(sum(numbers), found)
 
     def test_nothing_is_said_when_nothing_was_lost(self) -> None:
         self.assertEqual(ui_bg._found_note(3, 3), "")
@@ -305,9 +343,9 @@ class WhenKept(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        self.assertEqual(self.button(view, "✅ Keep all 2").disabled, False)
+        self.assertEqual(self.button(view, "✅ Keep all 2 ready").disabled, False)
         press = self.it()
-        await self.button(view, "✅ Keep all 2").callback(press)
+        await self.button(view, "✅ Keep all 2 ready").callback(press)
         kept = await self.relations()
         self.assertEqual(len(kept), 2)
         self.assertTrue(all(r.status == CONFIRMED and r.source == "dm" for r in kept))
@@ -319,12 +357,37 @@ class WhenKept(NamesTest):
         self.assertEqual(len(await self.waiting()), 2)  # they wait again
         self.assertIn("Took back 2", shown(undo))
 
+    async def test_a_title_in_front_of_a_secret_spelling_is_kept_secret_end_to_end(self) -> None:
+        from dmbot.memory.models import NewName
+
+        await self.memory.add_names(
+            GUILD, self.campaign.id,
+            [NewName("Vell Ashgrove", "npc", CONFIRMED, secrets=("Nightshade",)),
+             NewName("Thieves Guild", "faction", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        found = [
+            bg.Found("Vell Ashgrove", "npc", (), ("Nightshade",), ""),
+            bg.Found("Thieves Guild", "faction", (), (), ""),
+        ]
+        links = [[bg.Connection("Lady Nightshade", "member_of", "Thieves Guild", "q")]]
+        queued = await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, found, links, set(), keys=set()
+        )
+        self.assertEqual(queued, 1)
+        (waiting,) = await self.waiting()
+        self.assertTrue(waiting.secret)
+        done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [waiting])
+        self.assertEqual(len(done.kept), 1)
+        (rel,) = [r for r in await self.relations() if r.predicate == "member_of"]
+        self.assertTrue(rel.secret)  # never a public fact about the public name
+
     async def test_only_a_dm_can_keep_all(self) -> None:
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
         stranger = self.it(999)
-        await self.button(view, "✅ Keep all 2").callback(stranger)
+        await self.button(view, "✅ Keep all 2 ready").callback(stranger)
         self.assertEqual(await self.relations(), [])
         self.assertEqual(len(await self.waiting()), 2)
 

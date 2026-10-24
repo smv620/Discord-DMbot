@@ -101,6 +101,7 @@ class Matched:
 
     name: str | None = None
     ambiguous: tuple[str, ...] = ()
+    key: str = ""  # the spelling it matched exactly (title off), "" when matched by a word
 
 
 def _words(text: str) -> list[str]:
@@ -127,13 +128,13 @@ class Ends:
     def match(self, end: str) -> Matched:
         exact = self._exact.get(name_key(end))
         if exact is not None:
-            return Matched(exact)
+            return Matched(exact, key=name_key(end))
         words = stripped(end)
         if not words:
             return Matched()
         joined = self._exact.get(" ".join(words))
         if joined is not None:
-            return Matched(joined)
+            return Matched(joined, key=" ".join(words))
         # by its words: every word of the end is a word of the name, and one of them is a name
         # of some length (not just "of" or "the")
         if not any(len(w) >= SHORTEST and w not in FILLER for w in words):

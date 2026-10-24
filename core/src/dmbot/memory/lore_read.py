@@ -34,7 +34,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.ai import OUTPUT_FLOOR, AIError, Reply, max_output
+from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import request_text
@@ -367,12 +367,13 @@ async def _shape(
         reply = await _call(
             gate, ai, shape_instructions(own), shape_request(names, links), room, bg.schema(own)
         )
-    except AIError:
+    except AIError as exc:
         # A slice that failed is tried again in halves before anything is lost (#2642, as #2596
         # does for a cut answer): only a one-line slice, or one already halved too far, is lost.
         stats.shape_cut += 1
         log.info("Lore read: pass 2 failed for a slice of %d line(s)", lines)
-        if lines <= 1 or depth >= SPLIT_DEPTH:
+        if lines <= 1 or depth >= SPLIT_DEPTH or isinstance(exc, AIOutOfFunds):
+            # (no credit is no reason to ask again in halves: that only fans the failure out)
             stats.dropped["cut_before_check"] += len(links)
             return [], [], True
         return await _halves(ai, text, names, links, own, gate, stats, depth)
