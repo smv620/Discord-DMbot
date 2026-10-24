@@ -29,6 +29,7 @@ import type {
   TranscriptVersion,
   WebEdge,
   WebGraph,
+  WebGroup,
   WebLink,
   WebLinkChange,
   WebNode,
@@ -522,7 +523,7 @@ interface WebState {
   nextLink: number;
 }
 
-function startWeb(big: boolean): WebState {
+function startWeb(big: boolean, lonely = false): WebState {
   const base = startNames();
   const nodes: WebNode[] = base.map((n) => ({ id: n.id, name: n.name, kind: n.kind, secret: n.secret }));
   if (big) {
@@ -562,6 +563,19 @@ function startWeb(big: boolean): WebState {
   // The first the party is wrong about (full view says so); the second is only a hunch.
   if (plain[0]) plain[0].belief = { confidence: 0.6, status: "Party theory", contradicted: true };
   if (plain[1]) plain[1].belief = { confidence: 0.3, status: "Accusation" };
+  // A young campaign (#2632): most names have no connection yet, and a second small group stands apart.
+  if (lonely) {
+    const extra: WebNode[] = [
+      { id: "lone-mill", name: "Old Mill", kind: "place", secret: false },
+      { id: "lone-tree", name: "Hollow Tree", kind: "place", secret: false },
+      { id: "lone-venn", name: "Brother Venn", kind: "npc", secret: false },
+      { id: "lone-wardens", name: "The Wardens", kind: "group", secret: false },
+      { id: "pair-brask", name: "Brask", kind: "npc", secret: false },
+      { id: "pair-ford", name: "Tolle Ford", kind: "place", secret: false },
+    ];
+    nodes.push(...extra);
+    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "ab" });
+  }
   return { nodes, links, nextLink: links.length + 1 };
 }
 
@@ -603,7 +617,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const webs = new Map<string, WebState>();
   const web = (ref: string): WebState => {
     let found = webs.get(ref);
-    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref))));
+    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
     return found;
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
@@ -972,6 +986,60 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       return webGraphOf(ref, query);
+    },
+    // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
+    async webOverview(ref, query) {
+      calls.push(`webOverview:${ref}${query.view ? `:view=${query.view}` : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const dm = view === "dm";
+      const visibility = webVisibility(ref);
+      if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
+      const all = dm ? query.view !== "players" : query.view === "full";
+      const state = web(ref);
+      const seen = state.nodes.filter((n) => all || (!n.secret && n.revealed !== false));
+      const ids = new Set(seen.map((n) => n.id));
+      const usable = state.links.filter(
+        (l) => ids.has(l.a) && ids.has(l.b) && (all || (!l.secret && l.revealed !== false)),
+      );
+      const degree = new Map<string, number>(seen.map((n) => [n.id, 0]));
+      for (const l of usable) {
+        degree.set(l.a, (degree.get(l.a) ?? 0) + 1);
+        degree.set(l.b, (degree.get(l.b) ?? 0) + 1);
+      }
+      const nodeOf = (n: WebNode): WebNode =>
+        all ? { ...n, revealed: n.revealed !== false } : { id: n.id, name: n.name, kind: n.kind };
+      const left = new Set(seen.filter((n) => (degree.get(n.id) ?? 0) > 0).map((n) => n.id));
+      const groups: WebGroup[] = [];
+      while (left.size > 0) {
+        const start = [...left][0]!;
+        const part = new Set([start]);
+        const queue = [start];
+        for (let i = 0; i < queue.length; i += 1) {
+          for (const l of usable) {
+            const there = l.a === queue[i] ? l.b : l.b === queue[i] ? l.a : null;
+            if (there !== null && !part.has(there)) {
+              part.add(there);
+              queue.push(there);
+            }
+          }
+        }
+        part.forEach((id) => left.delete(id));
+        const centre = [...part].sort((x, y) => (degree.get(y) ?? 0) - (degree.get(x) ?? 0))[0]!;
+        groups.push({ center: centre, centerName: state.nodes.find((n) => n.id === centre)!.name, size: part.size });
+      }
+      groups.sort((x, y) => y.size - x.size);
+      const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
+      return {
+        counts: { names: seen.length, connections: usable.length, connectedNames: seen.length - tray.length, notConnected: tray.length },
+        tray,
+        groups,
+        truncated: false,
+        canEdit: dm && all,
+        view: all ? "full" : "players",
+      };
     },
     async webSize(ref, query: WebQuery) {
       calls.push(`webSize:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
