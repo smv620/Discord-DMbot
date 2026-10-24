@@ -82,9 +82,16 @@ class Continuity(ConfirmedMemoryTest):
 
     async def claim(self, *found: Extracted, speakers: dict[str, int] | None = None) -> None:
         await self.claims.propose(
-            GUILD_A, self.c, list(found), speakers or {"1": 7}, opted_in=AGREED,
-            prompt_version="p1", model="m1", session_started_at=LATER,
-        )  # fmt: skip
+            GUILD_A,
+            self.c,
+            list(found),
+            speakers or {"1": 7},
+            opted_in=AGREED,
+            prompt_version="p1",
+            model="m1",
+            session_started_at=LATER,
+            dms={7},
+        )  # fmt: skip  (7 is the DM: an NPC's attitude is only kept from the DM, #2562)
 
     async def check(self, opted_in: set[int] | None = None, levels: Levels = SMALL) -> Any:
         return await self.store.check(
