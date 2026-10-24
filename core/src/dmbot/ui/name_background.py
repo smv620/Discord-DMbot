@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -439,7 +439,7 @@ class BackgroundOffer(_Menu):
                 # (lines for connections that were already there are not "found" again)
                 links_found=read.stats.links_listed - read.stats.dropped["already_connected"],
                 ready=ready,
-                left=sum(read.stats.dropped[k] for k in LEFT_OUT),
+                dropped=read.stats.dropped,
                 questions=questions,
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
@@ -524,7 +524,15 @@ def _waiting_note(queued: int) -> str:
     return CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
 
 
-LEFT_OUT = ("name_not_found", "which_one", "cut_before_check", "over_cap", "not_in_text")
+# What became of each connection line, for the summary (#2642). Every reason `keep_connections`,
+# `read_connections` and the lore read count falls in one of these three, and what is left over
+# (a slice cut at the time limit, a line the model did not shape) is "not read", so the parts
+# always add up to what was found.
+KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
+LEFT_OUT = (
+    "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
+)  # fmt: skip
+NOT_READ = ("cut_before_check", "over_cap")
 
 
 def _found_note(
@@ -532,25 +540,31 @@ def _found_note(
     kept: int,
     *,
     ready: int | None = None,
-    left: int = 0,
+    dropped: Mapping[str, int] | None = None,
     questions: Sequence[str] = (),
 ) -> str:
-    """How many connection lines DMbot saw in the text and what became of them (#2563, #2642), so
-    a shorter list is never a silent one: "Found 34 connections: 30 ready to check, 3 wait for
-    names you haven't confirmed, 1 left out (Which Mara?)". Counts, and the words of an end that
-    fits two names. A connection is kept only when its two ends are names and the words are really
-    in your text; DMbot never guesses one."""
+    """What became of the connection lines DMbot saw in the text (#2563, #2642), so a shorter
+    list is never a silent one: "Found 34 connections: 30 ready to check, 3 wait for names you
+    haven't confirmed, 2 already known, 1 left out (Which Mara?)". The parts add up to `found`.
+    A connection is kept only when its two ends are names and the words are really in your text;
+    DMbot never guesses one. Counts, and the DM's own words for a question, shown to them only."""
     if found <= kept:
         return ""
-    if ready is None:
-        ready = kept
-    waits = max(0, kept - ready)
+    lost = dropped or {}
+    known = sum(lost.get(k, 0) for k in KNOWN_ALREADY)
+    left = sum(lost.get(k, 0) for k in LEFT_OUT)
+    unread = sum(lost.get(k, 0) for k in NOT_READ)
+    # whatever else is missing (cut at the time limit, not shaped) is "not read"
+    unread += max(0, found - kept - known - left - unread)
+    ready_n = kept if ready is None else min(ready, kept)
+    waits = kept - ready_n
     asked = ", ".join(f"Which {_md(q)}?" for q in questions[:3])
-    left_out = f"{left} left out" + (f" ({asked})" if asked else "") if left else ""
     parts = [
-        f"{ready} ready to check" if ready else "",
+        f"{ready_n} ready to check" if ready_n else "",
         f"{waits} wait for names you haven't confirmed" if waits else "",
-        left_out,
+        f"{known} already known" if known else "",
+        f"{left} left out" + (f" ({asked})" if asked else "") if left else "",
+        f"{unread} not read in time" if unread else "",
     ]
     return (
         f"\n🔎 Found {found} connection{'' if found == 1 else 's'}: "
@@ -570,11 +584,11 @@ async def summary(
     cut: bool = False,
     links_found: int = 0,
     ready: int | None = None,
-    left: int = 0,
+    dropped: Mapping[str, int] | None = None,
     questions: Sequence[str] = (),
 ) -> None:
     total = sum(map(len, stored.values()))
-    note = _found_note(links_found, queued, ready=ready, left=left, questions=questions)
+    note = _found_note(links_found, queued, ready=ready, dropped=dropped, questions=questions)
     if not total:
         # Never "no names" after a cut-off: the reading did not finish, so nothing is known (#2454)
         await interaction.edit_original_response(
@@ -678,9 +692,20 @@ async def queue_links(
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
+    if not rows:
+        return 0
+    # A connection already waiting from an earlier reading is not new: it is counted as such (and
+    # not as ready or waiting again), so the summary's parts add up (#2642 review).
+    waiting_now = {
+        (w.subject_id, w.predicate, w.object_id)
+        for w in await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
+    }
+    fresh = [r for r in rows if (r.subject_id, r.predicate, r.object_id) not in waiting_now]
+    if dropped is not None:
+        dropped["already_waiting"] += len(rows) - len(fresh)
     if keys is not None:
-        keys.update((r.subject_id, r.predicate, r.object_id) for r in rows)
-    return int(await store.add(campaign.guild_id, campaign.id, rows)) if rows else 0
+        keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh)
+    return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
 
 
 async def count_ready(bot: Any, campaign: Campaign, keys: set[tuple[str, str, str]]) -> int | None:
@@ -801,7 +826,9 @@ class ConnectionOffer(_Menu):
         return [w for w in waiting if w.ready]
 
     def _set(self, ready: list[Waiting]) -> None:
-        self.all_button.label = f"✅ Keep all {len(ready)}" if len(ready) > 1 else "✅ Keep all"
+        self.all_button.label = (
+            f"✅ Keep all {len(ready)} ready" if len(ready) > 1 else "✅ Keep all"
+        )
         self.all_button.disabled = len(ready) < 2
         self.shown = list(ready)
         self.left = len(ready)

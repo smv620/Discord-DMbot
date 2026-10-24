@@ -528,8 +528,12 @@ def keep_connections(
     reader = Ends(ends, {*ends.values()})
     seen: set[tuple[str, str, str]] = set()
     out: list[Connection] = []
+    answers = [list(piece) for piece in answers]
+    total = sum(len(piece) for piece in answers)
+    looked = 0
     for piece in answers:
         for c in piece:
+            looked += 1
             first, second = reader.match(c.a), reader.match(c.b)
             if first.ambiguous or second.ambiguous:
                 lost["which_one"] += 1
@@ -558,11 +562,13 @@ def keep_connections(
                     c.how,
                     b,
                     c.quote,
-                    name_key(c.a) in hidden or name_key(c.b) in hidden,
+                    # secret when the end was written under a secret spelling, with a title in
+                    # front of it too ("Lady Nightshade", #2591): the matched key counts
+                    bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
                     c.words,
                 )
             )
             if len(out) >= cap:
-                lost["over_cap"] += 1  # (at least one: the rest are not looked at)
+                lost["over_cap"] += total - looked  # the rest are not looked at: all counted
                 return out
     return out

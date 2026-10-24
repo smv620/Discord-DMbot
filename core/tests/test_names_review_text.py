@@ -86,9 +86,18 @@ class FoundNoteTest(unittest.TestCase):
         self.assertEqual(_found_note(3, 3), "")
         self.assertEqual(_found_note(0, 0), "")
         note = _found_note(21, 3)
-        self.assertIn("saw 21 connections in your text and kept 3", note)
-        self.assertIn("one only when both names were found", note)
-        self.assertIn("saw 1 connection in", _found_note(1, 0))
+        self.assertIn("Found 21 connections: 3 ready to check", note)
+        self.assertIn("18 not read in time", note)  # nothing is lost without a number
+        self.assertIn("keeps one only when both ends are names", note)
+        self.assertIn("Found 1 connection:", _found_note(1, 0))
+
+    def test_the_note_never_prints_an_empty_list(self) -> None:
+        from dmbot.ui.name_background import _found_note
+
+        for found, kept in ((4, 0), (4, 1), (9, 2)):
+            note = _found_note(found, kept)
+            self.assertNotIn(": .", note)
+            self.assertNotIn(": ,", note)
 
     def test_the_note_is_also_said_when_no_name_is_new(self) -> None:
         import asyncio
@@ -102,7 +111,7 @@ class FoundNoteTest(unittest.TestCase):
         asyncio.run(summary(interaction, campaign, "Notes", {}, 0, links_found=4))  # type: ignore[arg-type]
         text = interaction.edit_original_response.await_args.kwargs["content"]
         self.assertIn("found no new names", text)
-        self.assertIn("saw 4 connections in your text and kept 0", text)
+        self.assertIn("Found 4 connections: 4 not read in time", text)
 
 
 if __name__ == "__main__":
