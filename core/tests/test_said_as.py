@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from psycopg import errors as pg_errors
 
@@ -145,7 +146,11 @@ class SaidAs(MemoryTest):
 class ReachingTheNarrator(MemoryTest):
     async def inputs(self) -> Any:
         cache = LookupCache(self.memory)
-        bot = SimpleNamespace(lookup=cache)
+        bot = SimpleNamespace(
+            lookup=cache,
+            _recanted=AsyncMock(return_value=()),
+            _secret_ties=AsyncMock(return_value=()),
+        )
         job = SimpleNamespace()
         return await DMBot.recap_audio_inputs(bot, GUILD_A, self.c, job)  # type: ignore[arg-type]
 

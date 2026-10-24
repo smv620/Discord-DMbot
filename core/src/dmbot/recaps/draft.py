@@ -32,7 +32,7 @@ from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
-from dmbot.memory.models import name_key
+from dmbot.memory.models import spelling_key
 from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
@@ -926,10 +926,12 @@ def states_secret_tie(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str
     which, so the retry message carries no name."""
     if not ties:
         return False
-    # ("Veil's daughter" names Veil: the possessive goes before names are compared)
-    sentences = [f" {name_key(re.sub(r"['’]s\b", '', x))} " for x in _sentences_of(text)]
+    # (spelling_key drops a possessive on both sides: "Veil's daughter" names Veil, and an end
+    # called "Dragon's Rest" meets "at Dragon's Rest")
+    sentences = [f" {spelling_key(x)} " for x in _sentences_of(text)]
     for subject, obj in ties:
-        a, b = {name_key(n) for n in subject}, {name_key(n) for n in obj}
+        a = {k for k in (spelling_key(n) for n in subject) if k}
+        b = {k for k in (spelling_key(n) for n in obj) if k}
         a, b = a - b, b - a  # (a name both ends have says nothing about either)
         if not a or not b:
             continue

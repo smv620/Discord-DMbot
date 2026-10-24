@@ -46,18 +46,23 @@ class _EveryName(Collection[str]):
     def __len__(self) -> int:
         return 0
 
+    def __bool__(self) -> bool:
+        return True  # (so a test like `if recanted:` never reads "none")
+
 
 EVERY_NAME = _EveryName()
 
 
 async def recap_recanted(
     exposures: Any, guild_id: int, campaign_id: str, session_at: int | None
-) -> frozenset[str]:
+) -> Collection[str]:
     """The secret names the DM took back for that session (#2591): they stay secret in its recap
-    even though the table said them. Nothing when there is no store or no session; a store that
-    fails is read as "nothing recanted" would be looser, so it raises to the caller's guard."""
-    if exposures is None or session_at is None:
+    even though the table said them. With no store to ask, every name counts as taken back
+    (`EVERY_NAME`); a store that fails raises to the caller's guard, never reads as "none"."""
+    if session_at is None:
         return frozenset()
+    if exposures is None:  # no store to ask: nothing said counts as revealed
+        return EVERY_NAME
     return frozenset(await exposures.recanted(guild_id, campaign_id, session_at))
 
 
@@ -99,6 +104,7 @@ def recap_name_sets(
         # (a secret "name" shorter than this is too common a word to count as said)
         return (
             n.secret
+            and not getattr(n, "clue", False)  # a clue's names stay secret, said or not
             and len(name_key(n.text)) >= MIN_SECRET_LETTERS
             and spoken(n.text)
             and spelling_key(n.text) not in recanted
@@ -118,6 +124,24 @@ def recap_name_sets(
         or (n.entry_hidden and not n.secret and not spoken(n.text))
     }
     return sorted(allowed), sorted(secret)
+
+
+def identity_ties(names: Any) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """A 🤫 spelling is secret because of who it really is ("the hooded stranger" is Belleros): the
+    link between it and the entry's other names is a secret connection too (#2591). Saying
+    both at the table lets both be used, but a sentence that puts them together states the link,
+    so each secret spelling is tied to the entry's public names. Clue names (#1649) are not."""
+    by_entity: dict[str, list[Any]] = {}
+    for n in names.names:
+        if n.confirmed and not n.person:
+            by_entity.setdefault(n.entity_id, []).append(n)
+    ties = []
+    for entries in by_entity.values():
+        public = tuple(dict.fromkeys(n.text for n in entries if not n.secret))
+        for n in entries:
+            if n.secret and not getattr(n, "clue", False) and public:
+                ties.append(((n.text,), public))
+    return ties
 
 
 def recap_people(
