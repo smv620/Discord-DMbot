@@ -430,7 +430,13 @@ WAITING_QUEUE = {
 
 async def queue_waiting(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue the DM's answer to one waiting connection, or Keep all. DM only (the door checks), and
-    the bot applies the very calls the DM screen's buttons make. Returns the answer's id."""
+    the bot applies the very calls the DM screen's buttons make. Returns the answer's id.
+
+    A claim that cannot be kept ends with one of four `error` words, read back by `read_answer`:
+    `gone` (no longer waiting, or dropped for reading like an instruction: final),
+    `name_first` (a new name in it must be answered first), `stopped_recording` (someone it cites
+    is no longer recorded: the claim is deleted) and `cannot_write` (the rules refuse that fact
+    now, for example a plan: it stays waiting)."""
     if not isinstance(body, dict):
         raise RecapError("bad_action")
     action = WAITING_QUEUE.get((str(body.get("kind")), str(body.get("action"))))
