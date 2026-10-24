@@ -112,6 +112,7 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    redo_recap,
     share_recap,
 )
 from dmbot.web.return_path import safe_return_path
@@ -747,6 +748,9 @@ def create_app(
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
+        "needs_confirm": (409, "needs_confirm"),  # it has a recap: ask once, send `replace` (#2608)
+        "busy": (409, "busy"),  # being written or sent now (#2608)
+        "no_lines": (409, "no_lines"),  # the session's transcript is gone: upload one (#2608)
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
         "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
         "bad_sort": (400, "bad_sort"),
@@ -952,6 +956,28 @@ def create_app(
                 enforce_plans=settings.enforce_plans,
             )  # fmt: skip
             return await audio_again(db, session, ref, audio_in_plan=bool(facts["canAudio"]))
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/again")
+    async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Make the recap of a session, or make it again (#2608): `{"replace": true}` once the DM
+        has said yes to "This session already has a recap. Make a new one?". `ref` may be a
+        session that has no recap yet. 409 `needs_confirm`, `busy` or `no_lines`; the recap comes
+        back as in `GET /me/recaps/{ref}`, queued."""
+        session, _token = signed
+        if not settings.recaps_on:
+            raise HTTPException(status_code=409, detail="not_allowed")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        replace = body.get("replace", False) if isinstance(body, dict) else False
+        if not isinstance(replace, bool):
+            raise HTTPException(status_code=422, detail="bad_action")
+        try:
+            return await redo_recap(db, session, ref, replace=replace)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

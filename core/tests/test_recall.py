@@ -610,9 +610,15 @@ class Recalling(MemoryTest):
     ) -> None:
         claims = ClaimStore(self.memory)
         await claims.propose(
-            GUILD_A, self.c, [Extracted("Mira", "ally_of", "Cerric", "", ("C1", "C2"), "dm_said")],
-            {"C1": 7, "C2": 8}, opted_in=AGREED, prompt_version="p", model="m",
+            GUILD_A,
+            self.c,
+            [Extracted("Mira", "ally_of", "Cerric", "", ("C1", "C2"), "dm_said")],
+            {"C1": 7, "C2": 8},
+            opted_in=AGREED,
+            prompt_version="p",
+            model="m",
             session_started_at=S2,
+            dms={7, 8},  # both speak for the NPC here: an NPC's attitude is kept only from a DM
         )  # fmt: skip
         (waiting,) = await claims.waiting(GUILD_A, self.c, opted_in=AGREED)
         done = await claims.confirm(GUILD_A, self.c, waiting.id, opted_in=AGREED)
