@@ -47,7 +47,7 @@ KEY_FILE = "key.txt"
 class Writer:
     """One of the two story models: how it is shown in the key, and the clients that use it."""
 
-    label: str  # for key.txt only, e.g. "Anthropic claude-opus-5-5"
+    label: str  # for key.txt only, e.g. "Anthropic" and the tier it ran
     creative: Client
     formatting: Client
     models: tuple[str, str]  # (creative, formatting) model names, for the cost lookup

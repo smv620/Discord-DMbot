@@ -86,9 +86,9 @@ def rig(gemini_response: FakeResponse, claude_response: FakeResponse | None = No
     client = AnthropicClient(
         "a-secret-key",
         MODELS,
-        session=claude_session,
+        session=claude_session,  # type: ignore[arg-type]
         watch=watch,
-        gemini=gemini,  # type: ignore[arg-type]
+        gemini=gemini,
     )
     return client, gemini_session, claude_session, watch
 
@@ -214,8 +214,8 @@ class TheErrors(unittest.IsolatedAsyncioTestCase):
         client = AnthropicClient(
             "a",
             MODELS,
-            session=claude,
-            fallback=False,  # type: ignore[arg-type]
+            session=claude,  # type: ignore[arg-type]
+            fallback=False,
             gemini=GeminiClient("g", session=gem),  # type: ignore[arg-type]
         )
         with self.assertRaises(AIError):

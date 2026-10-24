@@ -97,9 +97,12 @@ class TheComparison(unittest.IsolatedAsyncioTestCase):
         _, said, _ = await self.run_it(Runner(), (1, 0))
         text = "\n".join(said)
         a, b = text.split("== Draft B ==")
-        labels = lambda block: [  # noqa: E731
-            line.split(":")[0].strip() for line in block.splitlines() if line.startswith("  ")
-        ]
+
+        def labels(block: str) -> list[str]:
+            return [
+                line.split(":")[0].strip() for line in block.splitlines() if line.startswith("  ")
+            ]
+
         self.assertEqual(labels(a), labels(b))
 
     async def test_an_earlier_comparison_in_the_folder_is_cleared_first(self) -> None:
