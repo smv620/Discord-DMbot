@@ -40,7 +40,12 @@ class TheSecretOffer(unittest.TestCase):
         self.assertTrue(relationships._can_be_secret(self.row("is", "a blacksmith")))
 
     def test_a_condition_cannot_however_it_is_spelled(self) -> None:
-        for relationship, obj in (("is", "dead"), (" IS ", "dead"), ("is", "  Dead")):
+        for relationship, obj in (
+            ("is", "dead"),
+            (" IS ", "dead"),
+            ("is", "  Dead"),
+            ("was", "dead"),
+        ):
             with self.subTest(relationship=relationship, obj=obj):
                 self.assertFalse(relationships._can_be_secret(self.row(relationship, obj)))
 
@@ -741,6 +746,25 @@ class TheEdits(Editing):
             await self.refused_queue(self.player, kind="which", action="neither", id=which),
             "not_allowed",
         )
+
+    async def test_a_connection_still_waiting_on_a_name_can_be_skipped_but_not_kept(self) -> None:
+        """Skipping writes no fact, so it works on any waiting link; keeping needs both names."""
+        await self.memory.add_names(
+            self.g, self.one.id, [NewName("Newcomer", "character", "proposed", role="npc")],
+            source="dm",
+        )  # fmt: skip
+        ids = {e.name: e.id for e in await self.memory.entities(self.g, self.one.id)}
+        await self.backstory.add(
+            self.g, self.one.id, [NewLink(self.mira, "knows", ids["Newcomer"], "q")]
+        )
+        (item,) = (await self.waiting_now())["backstory"]
+        self.assertFalse(item["ready"])
+        await self.queue(kind="backstory", action="keep", id=item["id"])
+        self.assertEqual([o.error for o in await self.apply_waiting()], ["not_found"])
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 1)  # kept nothing
+        await self.queue(kind="backstory", action="skip", id=item["id"])
+        self.assertEqual([o.error for o in await self.apply_waiting()][-1:], [""])
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
 
     async def test_a_pick_from_the_website_makes_the_connection_ready_and_it_can_be_kept(
         self,

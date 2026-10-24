@@ -448,7 +448,8 @@ async def _answer_waiting(
     onto = await memory.ontology(guild_id, cid)
     symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
     # both ends are read again here: only a connection whose two names are confirmed is kept
-    ready = [x for x in await w.backstory.waiting(guild_id, cid, symmetric=symmetric) if x.ready]
+    waiting = await w.backstory.waiting(guild_id, cid, symmetric=symmetric)
+    ready = [x for x in waiting if x.ready]
     if a.action == "backstory-keep-all":
         shown = set(a.text.split())  # the ids the page showed: no other is kept
         todo = [x for x in ready if x.id in shown]
@@ -456,12 +457,17 @@ async def _answer_waiting(
             return _failed(NOT_FOUND)
         done_all = await keep.keep_all(memory, w.backstory, guild_id, cid, todo)
         return Outcome(result_id=str(len(done_all.kept))) if done_all.kept else _failed(BAD_TARGET)
+    if a.action == "backstory-skip":
+        # Skipping writes no fact, so a link may be dismissed while it still waits on a name that
+        # is not confirmed yet; only keeping needs both ends confirmed.
+        skipped = next((x for x in waiting if x.id == a.target_id), None)
+        if skipped is None:
+            return _failed(NOT_FOUND)
+        await w.backstory.remove(guild_id, cid, skipped)
+        return Outcome()
     link = next((x for x in ready if x.id == a.target_id), None)
     if link is None:
         return _failed(NOT_FOUND)
-    if a.action == "backstory-skip":
-        await w.backstory.remove(guild_id, cid, link)
-        return Outcome()
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one])
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
