@@ -484,7 +484,7 @@ class ThePath(NamesTest):
         press = self.it()
         await it.response.sent[0][1]["view"]._read(press)
         view = press.edit_original_response.await_args.kwargs["view"]
-        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 1 person"]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 1 NPC"]
         await button.callback(self.it())
         (vecnor,) = await self.entities(CONFIRMED)
         self.assertEqual(vecnor.name, "Vecnor")
@@ -541,7 +541,7 @@ class ThePath(NamesTest):
         await ui.start_review(it, self.campaign.id)
         text, kw = it.response.sent[0]
         self.assertIn("from your background:", text)
-        self.assertRegex(text, r"DMbot's guess: a \*\*[a-z]+\*\*")  # the kind, said plainly
+        self.assertRegex(text, r"DMbot's guess: an? \*\*[A-Za-z]+\*\*")  # the kind, said plainly
         view = kw["view"]
         labels = [b.label for b in view.children]
         self.assertTrue(labels[0].startswith("✅ Yes, a"))

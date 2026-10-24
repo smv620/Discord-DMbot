@@ -39,6 +39,8 @@ MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
 AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
 STUCK = "The narration and music were never finished. The text is fine."
+AUDIO_AGAIN_WAIT_S = 600  # "Make it again" at most once in 10 minutes, as the website's door does
+_NOW_HASH = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
 AUDIO_LEASE_S = 20 * 60  # the audio takes longer: several provider calls and the mix
 TERMINAL = ("ready", "failed")
 STATES = ("queued", "beats", "checked", "prose", "housekeeping", "ready")
@@ -227,6 +229,16 @@ _WRITABLE = frozenset(
     }
 )
 _LISTS = frozenset({"problems", "housekeeping", "music", "speakers", "to_confirm"})
+
+
+# An issue PlotBot found for the exact text `{hash}` that the DM has not answered yet (#2122).
+_PLOT_OPEN = (
+    "EXISTS (SELECT 1 FROM plot_checks k JOIN plot_issues i ON i.guild_id = k.guild_id"
+    " AND i.campaign_id = k.campaign_id AND i.session_at = k.session_at"
+    " AND i.text_hash = k.text_hash WHERE k.guild_id = recap_jobs.guild_id"
+    " AND k.campaign_id = recap_jobs.campaign_id AND k.session_at = recap_jobs.session_at"
+    " AND k.text_hash = {hash} AND k.state = 'done' AND COALESCE(i.answer_kind, '') = '')"
+)
 
 
 class RecapStore:
@@ -522,6 +534,67 @@ class RecapStore:
             )
             return bool(cur.rowcount)
 
+    async def audio_to_tell(self, guild_id: int, *, limit: int = 10) -> list[tuple[str, int, str]]:
+        """(campaign, session, 'ready' or 'failed') of recaps whose audio has finished and whose
+        end the DM has not been told (#2621). Not while the text is dropped; a posted recap is told
+        too (its page carries the audio)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id, session_at, audio FROM recap_jobs"
+                " WHERE guild_id = %s AND state = 'ready' AND audio IN ('ready', 'failed')"
+                " AND audio_told <> audio AND status IN ('draft', 'posting', 'posted')"
+                " ORDER BY updated_at LIMIT %s",
+                (guild_id, limit),
+            )
+            rows = await cur.fetchall()
+        return [(r["campaign_id"], int(r["session_at"]), r["audio"]) for r in rows]
+
+    async def audio_again(self, guild_id: int, campaign_id: str, session_at: int) -> str:
+        """Make the audio again from the Discord button (#2621), under the website door's rules
+        (the website's own door): an approved text that makes audio, whose audio is ready or
+        failed, once every 10 minutes. 'queued', 'too_soon' or 'not_allowed'. The plan and the
+        allowance are checked by the audio step before any paid call."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT audio, audio_choice, audio_asked_at, status,"
+                f" approved_hash = {_NOW_HASH} AS current FROM recap_jobs"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
+                " FOR UPDATE",
+                (guild_id, campaign_id, session_at),
+            )
+            row = await cur.fetchone()
+            if (
+                row is None
+                or row["status"] not in ("draft", "posting")
+                or row["audio"] not in ("ready", "failed")
+                or row["audio_choice"] not in ("voice", "music", "both")
+                or not row["current"]
+            ):
+                return "not_allowed"
+            if int(row["audio_asked_at"]) > now - AUDIO_AGAIN_WAIT_S:
+                return "too_soon"
+            await conn.execute(
+                "UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0,"
+                " audio_error = '', audio_credits = 0, audio_asked_at = %s, updated_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
+                (now, now, guild_id, campaign_id, session_at),
+            )
+        return "queued"
+
+    async def mark_audio_told(
+        self, guild_id: int, campaign_id: str, session_at: int, told: str
+    ) -> bool:
+        """The DM was told the audio is `told` ('ready' or 'failed'). Only while the audio still
+        is that, so a new making that began meanwhile is not marked: False then."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET audio_told = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_at = %s AND audio = %s",
+                (told, guild_id, campaign_id, session_at, told),
+            )
+            return bool(cur.rowcount)
+
     async def approve(
         self,
         guild_id: int,
@@ -532,6 +605,7 @@ class RecapStore:
         *,
         expected: str,
         post: bool = False,
+        plot_gate: bool = False,
     ) -> bool:
         """The DM approved the text as it is now and picked what to make (#2083). Records who and
         when, and the hash of the text, and for any choice but text queues the audio. `expected`:
@@ -541,7 +615,9 @@ class RecapStore:
         older text may be made again. The caller has checked the DM.
         `post` (#2420, "Approve and post text only"): hand the recap to the bot to post in the same
         statement, as the website does, so a refusal leaves nothing approved and half-posted. Only
-        for a text-only choice: audio is made and reviewed before anything is posted."""
+        for a text-only choice: audio is made and reviewed before anything is posted.
+        `plot_gate` (#2122): PlotBot's check is on, so nothing is approved while an issue it found
+        for this very text has no answer (the website's rule, in the same statement)."""
         if choice not in CHOICES or (post and choice != TEXT):
             raise ValueError(choice)
         queue = choice != TEXT
@@ -557,6 +633,8 @@ class RecapStore:
             f" WHERE guild_id = %s AND campaign_id = %s AND session_at = %s AND state = 'ready'"
             f" AND status = 'draft' AND audio <> 'queued' AND {now_hash} = %s"
         )
+        if plot_gate:
+            where += f" AND NOT ({_PLOT_OPEN.format(hash=now_hash)})"
         if queue:
             where += (
                 " AND (audio IN ('off', 'failed')"
@@ -567,7 +645,26 @@ class RecapStore:
                 f"UPDATE recap_jobs SET {sets}" + where,
                 (user_id, int(self._now()), choice, guild_id, campaign_id, session_at, expected),
             )
-            return bool(cur.rowcount)
+            if not cur.rowcount:
+                return False
+            # The approved text becomes the session's next accepted version (#2122), the same
+            # statement-for-statement as the website's door, in this transaction.
+            await conn.execute(
+                "SELECT dmbot_recap_keep_version(%s, %s, %s, %s, %s)",
+                (guild_id, campaign_id, session_at, user_id, int(self._now())),
+            )
+            return True
+
+    async def plot_open(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """Does PlotBot have an issue for this recap's text that the DM has not answered (#2122)?"""
+        now_hash = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT 1 FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+                f" AND session_at = %s AND {_PLOT_OPEN.format(hash=now_hash)}",
+                (guild_id, campaign_id, session_at),
+            )
+            return await cur.fetchone() is not None
 
     async def respell(
         self,
@@ -881,12 +978,20 @@ class RecapStore:
         action: str,
         *,
         require_approved: bool = False,
+        require_current: bool = False,
     ) -> bool:
         """The DM's choice made on the DM screen (#1455), the same two moves the website's page
         makes: `post` (a ready draft becomes 'posting', which the bot then sends after its
-        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready."""
+        checks) or `drop` (a draft is not posted). False: it was already decided, or isn't ready.
+        `require_current`: only if the DM's approval is of the text as it is now, in the same
+        statement (an edit after approving, or a draft never approved, posts nothing)."""
         if action == "post":
             sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+            if require_current:  # an approval of other words than these ends here, in SQL
+                sql += (
+                    " AND approved_hash = encode(sha256(convert_to("
+                    "title || E'\\n' || summary, 'UTF8')), 'hex')"
+                )
             if require_approved:  # the text as it is now is the text the DM approved, in SQL
                 sql += (
                     " AND approved_hash = encode(sha256(convert_to("

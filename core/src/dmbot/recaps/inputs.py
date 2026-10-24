@@ -9,11 +9,13 @@ since a secret name couldn't be kept out.
 from __future__ import annotations
 
 import logging
-from collections.abc import Collection
+from collections.abc import Collection, Iterator, Sequence
 from typing import Any
 
 from dmbot.memory.extractor import readable
-from dmbot.memory.models import name_key
+from dmbot.memory.models import name_key, spelling_key
+from dmbot.memory.secret_aloud import MIN_KEY as MIN_SECRET_LETTERS
+from dmbot.recaps import familiar as fam
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
@@ -30,6 +32,39 @@ def said_in(lines: Any) -> str:
     return " ".join(
         name_key(f"{line.heard} {line.text}") for line in lines if not getattr(line, "sidebar", "")
     )
+
+
+class _EveryName(Collection[str]):
+    """ "Every name is recanted": what the recap uses when it cannot tell which secret names the DM
+    took back, so no secret name counts as said aloud (stricter, never looser)."""
+
+    def __contains__(self, item: object) -> bool:
+        return True
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+    def __bool__(self) -> bool:
+        return True  # (so a test like `if recanted:` never reads "none")
+
+
+EVERY_NAME = _EveryName()
+
+
+async def recap_recanted(
+    exposures: Any, guild_id: int, campaign_id: str, session_at: int | None
+) -> Collection[str]:
+    """The secret names the DM took back for that session (#2591): they stay secret in its recap
+    even though the table said them. With no store to ask, every name counts as taken back
+    (`EVERY_NAME`); a store that fails raises to the caller's guard, never reads as "none"."""
+    if session_at is None:
+        return frozenset()
+    if exposures is None:  # no store to ask: nothing said counts as revealed
+        return EVERY_NAME
+    return frozenset(await exposures.recanted(guild_id, campaign_id, session_at))
 
 
 async def recap_said(
@@ -50,23 +85,64 @@ async def recap_said(
         return None
 
 
-def recap_name_sets(names: Any, said: str | None) -> tuple[list[str], list[str]]:
-    """(the names the recap may use, the names it must not) for a session. A secret name is never
-    allowed. A name the players haven't been shown yet (#2404) is allowed only when the table said
-    it in this session (`said`, from `said_in`): the recap writes what the party knows, and saying
-    a name at the table is how the party learns it. With no `said` (the session's lines can't be
-    read) it is not allowed: stricter, never looser."""
+def recap_name_sets(
+    names: Any, said: str | None, recanted: Collection[str] = ()
+) -> tuple[list[str], list[str]]:
+    """(the names the recap may use, the names it must not) for a session. A name the players
+    haven't been shown yet (#2404) is allowed only when the table said it in this session (`said`,
+    from `said_in`): the recap writes what the party knows, and saying a name at the table is how
+    the party learns it. A 🤫 secret name the table said aloud is the same (#2591, owner decision
+    2026-10-24): only that spelling, and only the name: its secret connections, notes and
+    anything else marked secret about it stay out of the writer's input and are checked in the
+    draft (`Inputs.identity_ties`). A name the DM took back (`recanted`, spelling keys, #2410) is
+    secret again. With no `said` (the session's lines can't be read) nothing is revealed:
+    stricter, never looser."""
 
     def spoken(text: str) -> bool:
         return said is not None and f" {name_key(text)} " in f" {said} "
 
+    def revealed(n: Any) -> bool:
+        # (a secret "name" shorter than this is too common a word to count as said)
+        return (
+            n.secret
+            and not getattr(n, "clue", False)  # a clue's names stay secret, said or not
+            and len(name_key(n.text)) >= MIN_SECRET_LETTERS
+            and spoken(n.text)
+            and spelling_key(n.text) not in recanted
+        )
+
     allowed = {
         n.text
         for n in names.names
-        if n.confirmed and not n.secret and not n.person and (not n.entry_hidden or spoken(n.text))
+        if n.confirmed
+        and not n.person
+        and (revealed(n) if n.secret else (not n.entry_hidden or spoken(n.text)))
     }
-    secret = {n.text for n in names.names if n.secret or (n.entry_hidden and not spoken(n.text))}
+    secret = {
+        n.text
+        for n in names.names
+        if (n.secret and not revealed(n))
+        or (n.entry_hidden and not n.secret and not spoken(n.text))
+    }
     return sorted(allowed), sorted(secret)
+
+
+def identity_ties(names: Any) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """A 🤫 spelling is secret because of who it really is ("the hooded stranger" is Belleros): the
+    link between it and the entry's other names is a secret connection too (#2591). Saying
+    both at the table lets both be used, but a sentence that puts them together states the link,
+    so each secret spelling is tied to the entry's public names. Clue names (#1649) are not."""
+    by_entity: dict[str, list[Any]] = {}
+    for n in names.names:
+        if n.confirmed and not n.person:
+            by_entity.setdefault(n.entity_id, []).append(n)
+    ties: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for entries in by_entity.values():
+        public = tuple(dict.fromkeys(n.text for n in entries if not n.secret))
+        for n in entries:
+            if n.secret and not getattr(n, "clue", False) and public:
+                ties.append(((n.text,), public))
+    return ties
 
 
 def recap_people(
@@ -113,6 +189,22 @@ def recap_people(
     return aliases, pcs, {u: tuple(v) for u, v in party.items()}
 
 
+def familiar_for(
+    names: Any, allowed: Collection[str], lines: Any, previous: str, aliases: dict[str, str]
+) -> dict[str, str]:
+    """{full name: the name the table uses} for the characters the recap may name (#2627), from
+    what the table said in the session (never the DM sidebar) and the earlier recap. A character
+    is a player character or an NPC on the names list; places and things have no familiar name."""
+    entities = getattr(names, "entities", {})
+    ok = set(allowed)
+    characters = sorted({e.name for e in entities.values() if e.type == "character"} & ok)
+    spoken = [line.text for line in lines if not getattr(line, "sidebar", "")]
+    secret = recap_name_sets(names, said_in(lines))[1]
+    return fam.familiar_names(
+        characters, [*spoken, previous], aliases=aliases, secret_names=secret, allowed_names=ok
+    )
+
+
 async def load_inputs(
     *,
     campaigns: Any,
@@ -127,6 +219,8 @@ async def load_inputs(
     notes: NoteStore | None = None,
     with_earlier: bool = True,
     importance: Any | None = None,
+    recanted: Collection[str] = (),
+    relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> Inputs | None:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
@@ -150,21 +244,27 @@ async def load_inputs(
     stored = await clocks.get(guild_id, campaign_id) if clocks is not None else None
     # How connected each name is in The truth (#2411): ranks the beats, gives the writer nothing.
     scores = await importance.get(guild_id, campaign_id) if importance is not None else {}
-    allowed_now, _ = recap_name_sets(names, said_in(lines))
+    said = said_in(lines)
+    allowed_now, secret_now = recap_name_sets(names, said, recanted)
     aliases, pcs, party = recap_people(names, allowed_now)
+    previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
+    familiar = familiar_for(names, allowed_now, lines, previous, aliases)
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),
-        allowed_names=recap_name_sets(names, said_in(lines))[0],
-        secret_names=recap_name_sets(names, said_in(lines))[1],
+        allowed_names=allowed_now,
+        secret_names=secret_now,
+        identity_ties=tuple(identity_ties(names)),
+        relation_ties=tuple(relation_ties),
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
-        previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
+        previous=previous,
         campaign_name=campaign.name,
         earlier=earlier,
         importance=dict(scores),
         aliases=aliases,
         pcs=pcs,
         party=party,
+        familiar=familiar,
         # Which of the ten closing lines: by this session's place in the campaign (#2253).
         ending=fixed_lines.ending_for(sum(1 for s in sessions if s.started_at < session_at)),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
