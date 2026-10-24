@@ -22,8 +22,11 @@ import {
   type ImportMember,
   type ImportPreview,
   type ImportProgress,
+  type JobProgress,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import WorkProgress from "./WorkProgress";
+import { stageWords } from "../content/work-progress";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -36,6 +39,11 @@ const POLL_MS = 3000;
 /** While every unfinished session is only waiting for the DM's answers about names, nothing on the
  * page changes until they answer, so ask once a minute instead (#2230). */
 const SLOW_POLL_MS = 60_000;
+/** While nothing moves (the same `updatedAt`, or a stall) the page asks less often: 3 s, 6, 12, 24, up to 30 s,
+ * and again quickly as soon as something moves. */
+const IDLE_POLL_MAX_MS = 30_000;
+/** After this long with the import still open the page stops looking and offers "Check again". */
+export const WATCH_LIMIT_MS = 45 * 60_000;
 
 type Session = ImportProgress["sessions"][number];
 
@@ -52,6 +60,14 @@ function isFinal(s: Session): boolean {
     s.stage === "done" ||
     s.stage === "failed"
   );
+}
+
+/** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
+ * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
+ * says so); once none can, as failed only if every session failed, else done. */
+function shownState(imp: JobProgress, sessions: Session[]): "running" | "stalled" | "failed" | "done" {
+  if (sessions.some((s) => !isFinal(s))) return imp.state === "stalled" ? "stalled" : "running";
+  return sessions.length > 0 && sessions.every(isFailed) ? "failed" : "done";
 }
 
 function isFailed(s: Session): boolean {
@@ -101,6 +117,20 @@ interface Folded {
 
 /** What to add after a session's state: its reason, or the plain fallback for a failure with no
  * known reason. Nothing for any other state without one, so a line never ends in a bare " · ". */
+/** The words for why the whole import failed: the server sends a code, which is mapped to the page's own
+ * plain words (with a fallback), and never printed as it is. Only a failure has any. */
+function importReason(imp: JobProgress): string | undefined {
+  if (imp.state !== "failed") return undefined;
+  return (imp.reason && words.failedReason[imp.reason]) || words.failedFallback;
+}
+
+/** "120 of 400 lines" while a session is being cleaned (the API's counts, with `unit: "lines"`), else nothing. */
+function lineCount(s: Session): string {
+  const p = s.progress;
+  if (!p || p.state === "done" || typeof p.done !== "number" || typeof p.total !== "number" || p.total <= 0) return "";
+  return p.unit === "lines" ? words.lineCount(p.done, p.total) : "";
+}
+
 function reasonLine(state: string, reason: string | null): string {
   const known = reason ? words.failedReason[reason] : undefined;
   return known ?? (state === "failed" ? words.failedFallback : "");
@@ -155,6 +185,10 @@ export default function Import({
     undefined,
   );
   const [pollTries, setPollTries] = useState(0);
+  // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
+  const lastUpdated = useRef(0);
+  const idleLooks = useRef(0); // looks in a row where nothing moved forward
+  const watchStart = useRef(0);
 
   const fail = (error: unknown): void => {
     const kind = error instanceof ApiError ? error.kind : "server";
@@ -236,18 +270,33 @@ export default function Import({
     if (!importId || !ref || !api.importProgress) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    watchStart.current = Date.now();
+    idleLooks.current = 0;
     const tick = async (): Promise<void> => {
       try {
         const next = await api.importProgress!(ref, importId);
         if (!live) return;
-        setProgress(next);
+        const stamp = next.import?.updatedAt;
+        const older = typeof stamp === "number" && stamp < lastUpdated.current;
+        const moved = typeof stamp === "number" ? stamp > lastUpdated.current : true;
+        if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
+        if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
+        idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
         const open = next.sessions.filter((s) => !isFinal(s));
         if (open.length > 0) {
+          if (Date.now() - watchStart.current > WATCH_LIMIT_MS) {
+            setProblem(words.stoppedWatching); // the page stops here; "Check again" starts it afresh
+            return;
+          }
           const onlyNames = open.every((s) => s.stage === "waiting_for_names");
-          timer = setTimeout(() => void tick(), onlyNames ? SLOW_POLL_MS : POLL_MS);
+          const wait = onlyNames ? SLOW_POLL_MS : Math.min(POLL_MS * 2 ** idleLooks.current, IDLE_POLL_MAX_MS);
+          timer = setTimeout(() => void tick(), wait);
         }
       } catch (error) {
-        if (live) fail(error);
+        if (!live) return;
+        // The import is gone (finished and cleaned up, or its campaign moved): keep the last answer on the page.
+        if (error instanceof ApiError && error.kind === "not-found") setProblem(words.gone);
+        else fail(error);
       }
     };
     void tick();
@@ -601,12 +650,34 @@ export default function Import({
             <RecapsWhyLine why={startedWithoutRecaps} />
           </p>
         )}
-        <p role="status" aria-live="polite">
-          {words.doneCount(
-            progress.sessions.filter((s) => isFinal(s) && !isFailed(s)).length,
-            progress.sessions.length,
-          )}
-        </p>
+        {progress.import ? (
+          <WorkProgress
+            stage={
+              progress.import.stage === "waiting_for_names"
+                ? words.waitingForNames(progress.sessions.reduce((n, s) => n + (s.namesToAnswer ?? 0), 0))
+                : stageWords(words.stage, progress.import.stage)
+            }
+            done={progress.import.done}
+            total={progress.import.total}
+            unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
+            startedAt={progress.import.startedAt}
+            updatedAt={progress.import.updatedAt}
+            serverNow={progress.import.serverNow}
+            state={shownState(progress.import, progress.sessions)}
+            waiting={progress.import.stage === "waiting_for_names"}
+            frozen={problem !== null} // (gone, an error, or the page stopped looking: no clock keeps running beside it)
+            // (the server's reason is a code, mapped to the page's own words by importReason; its stall words are not shown)
+            reason={importReason(progress.import)}
+            whatToDo={shownState(progress.import, progress.sessions) === "failed" ? words.failedDo : words.stalledDo}
+          />
+        ) : (
+          <p role="status" aria-live="polite">
+            {words.doneCount(
+              progress.sessions.filter((s) => isFinal(s) && !isFailed(s)).length,
+              progress.sessions.length,
+            )}
+          </p>
+        )}
         <ul class="campaigns">
           {progress.sessions.map((s) => (
             <li key={s.file}>
@@ -617,6 +688,8 @@ export default function Import({
                 {reasonLine(s.state, s.reason)
                   ? ` · ${reasonLine(s.state, s.reason)}`
                   : ""}
+                {lineCount(s) ? ` · ${lineCount(s)}` : ""}
+                {s.progress?.state === "stalled" ? ` · ${words.sessionStalled}` : ""}
               </span>
               {s.stage === "waiting_for_names" && (
                 <a
