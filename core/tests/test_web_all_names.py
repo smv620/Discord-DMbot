@@ -23,7 +23,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests import speed
 from tests.test_recap_web import BOB, NOW, Base, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 MEMBER = DiscordGuild(id=THURSDAY.id, name=THURSDAY.name, manage=False)
 
@@ -531,9 +531,11 @@ class TheRoute(Listing):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(self.client.aclose)
 
     async def test_the_list_over_http(self) -> None:
@@ -554,7 +556,9 @@ class TheRoute(Listing):
         other = await self.client.get(f"/me/campaigns/{self.g}.{'0' * 32}/all-names")
         self.assertEqual((other.status_code, other.json()), (404, {"error": "not_found"}))
         anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.get(url)).status_code, 401)
