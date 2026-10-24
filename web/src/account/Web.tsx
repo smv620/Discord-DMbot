@@ -436,7 +436,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       )}
 
       {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
-        <WebWaiting api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
+        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
       )}
 
       {nodes.length <= 1 && edges.length === 0 ? (

@@ -1104,6 +1104,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (webView(ref) !== "dm") throw new ApiError("not-found");
       const waiting = (waitingState[ref] ??= pretendWaiting());
       const ids = "ids" in answer ? answer.ids : [answer.id];
+      if (answer.kind === "which" && answer.action === "pick") {
+        const q = waiting.which.find((x) => x.id === answer.id);
+        if (!q?.candidates.some((c) => c.id === answer.entity)) throw new ApiError("gone");
+      }
       const before = waiting.claims.length + waiting.backstory.length + waiting.which.length;
       waiting.claims = waiting.claims.filter((c) => !ids.includes(c.id));
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));

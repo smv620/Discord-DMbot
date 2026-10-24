@@ -32,7 +32,9 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
-  const [sending, setSending] = useState<{ key: string; since: number } | null>(null);
+  const [sending, setSending] = useState<{ key: string; since: number; stage: string } | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
   const counter = useRef(0);
   const latest = useRef(0);
@@ -42,9 +44,11 @@ export default function WebWaiting({
   async function read(): Promise<void> {
     if (!api.webWaiting) return;
     const mine = ++latest.current;
+    const asked = campaignRef;
     try {
-      const got = await api.webWaiting(campaignRef);
-      if (mine === latest.current) {
+      const got = await api.webWaiting(asked);
+      // (another campaign's list is never drawn here: the page may have moved on while this was asked)
+      if (mine === latest.current && shown.current === asked) {
         setList(got);
         setFailed(false);
       }
@@ -57,16 +61,22 @@ export default function WebWaiting({
   }
 
   useEffect(() => {
+    shown.current = campaignRef;
     setList(null);
     setSaid(null);
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
 
-  async function send(key: string, answer: WaitingAnswer, ok: string | ((kept?: number) => string)): Promise<void> {
+  async function send(
+    key: string,
+    answer: WaitingAnswer,
+    ok: string | ((kept?: number) => string),
+    stage: string = w.savingStage,
+  ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
-    setSending({ key, since: Math.floor(Date.now() / 1000) });
+    setSending({ key, since: Math.floor(Date.now() / 1000), stage });
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer);
@@ -75,9 +85,11 @@ export default function WebWaiting({
     } catch (error) {
       setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
     } finally {
+      // The buttons wait until the list has been read again, so nobody answers an item that is already gone.
+      await read(); // (what shows is always the API's own, whatever happened)
       inFlight.current = false;
       setSending(null);
-      await read(); // (what shows is always the API's own, whatever happened)
+      headingRef.current?.focus(); // (the answered item has gone, and focus with it)
     }
   }
 
@@ -110,7 +122,9 @@ export default function WebWaiting({
 
   return (
     <section class="stack web-waiting" aria-labelledby="waiting-heading">
-      <h3 id="waiting-heading">{w.heading}</h3>
+      <h3 id="waiting-heading" tabIndex={-1} ref={headingRef}>
+        {w.heading}
+      </h3>
       <p>
         <strong>{counts.all === 0 ? w.none : w.count(counts.all)}</strong>
       </p>
@@ -125,9 +139,8 @@ export default function WebWaiting({
       </p>
       {sending && (
         <WorkProgress
-          stage={w.workingStage}
+          stage={sending.stage}
           startedAt={sending.since}
-          updatedAt={sending.since}
           serverNow={sending.since}
           state="running"
         />
@@ -145,6 +158,7 @@ export default function WebWaiting({
               <p>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
               {q.quote && <p class="muted small">“{q.quote}”</p>}
               {q.secret && <p class="small">{w.secretNote}</p>}
+              {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
               <div class="row">
                 {q.candidates.map((c) => (
                   <button
@@ -154,7 +168,7 @@ export default function WebWaiting({
                     disabled={busy}
                     onClick={() => void send(q.id, { kind: "which", action: "pick", id: q.id, entity: c.id }, w.done.pick)}
                   >
-                    {c.limited ? `${c.name} ${w.hiddenFromPlayers}` : c.name}
+                    {c.limited ? `${w.hiddenMark} ${c.name}` : c.name}
                   </button>
                 ))}
                 <button
@@ -234,11 +248,12 @@ export default function WebWaiting({
                         void send(
                           `all:${u.label}`,
                           { kind: "backstory", action: "keep_all", ids },
-                          (kept) => (left > 0 ? w.keepAllCut(kept ?? ids.length, left) : w.kept(kept ?? ids.length)),
+                          (kept) => (left > 0 && kept !== undefined ? w.keepAllCut(kept, left) : w.kept(kept)),
+                          w.keepingStage(ids.length),
                         )
                       }
                     >
-                      {u.label ? w.keepAll(u.label, ids.length) : w.keepAllEarlier(ids.length)}
+                      {w.keepAll(ids.length)}
                     </button>
                   </div>
                 )}

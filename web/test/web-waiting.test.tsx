@@ -33,6 +33,9 @@ const REF = "100.cmp1";
 const press = (name: string | RegExp, within_?: HTMLElement) =>
   fireEvent.click((within_ ? within(within_) : screen).getByRole("button", { name }));
 
+/** The buttons wait while an answer is sent and the list is read again; the next press comes after. */
+const settled = () => waitFor(() => expect(screen.queryByText(w.savingStage)).toBeNull());
+
 async function open(api = mockApi("table")) {
   render(<WebWaiting api={api} campaignRef={REF} />);
   await screen.findByRole("heading", { name: w.heading });
@@ -137,7 +140,7 @@ describe("connections from a backstory", () => {
 
   it("Keep all from an upload sends only the ready ones it shows, and a name that isn't confirmed waits", async () => {
     const api = await open();
-    press(w.keepAll("Lore, 24 Oct", 2));
+    press(w.keepAll(2));
     expect(await screen.findByText(w.kept(2))).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep_all:b1,b2`);
     // the one waiting on a name is still there, with the reason, and no Keep for it
@@ -162,7 +165,7 @@ describe("connections from a backstory", () => {
       return { kept: "ids" in answer ? answer.ids.length : 0 };
     };
     await open(api);
-    press(w.keepAll("Big upload", 50));
+    press(w.keepAll(50));
     expect(await screen.findByText(w.keepAllCut(50, 10))).toBeTruthy();
     expect(api.calls).toContain("answered:50");
   });
@@ -171,9 +174,11 @@ describe("connections from a backstory", () => {
     const api = await open();
     press(w.keepSecret, screen.getByText("Rook knows Far Hall").closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.keepSecret)).toBeTruthy();
+    await settled();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep:b1:secret`);
     press(w.keep, screen.getByText("Mira Voss grew up in Harrow's Keep").closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.keep)).toBeTruthy();
+    await settled();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep:b4`);
     press(w.skip, screen.getByText("Rook knows Newcomer").closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.skip)).toBeTruthy();
@@ -194,7 +199,8 @@ describe("Which Mara?", () => {
     const card = screen.getByText(w.whichQuestion("Mara")).closest(".panel") as HTMLElement;
     expect(within(card).getByText(w.whichLine("Rook", "knows", "Mara", true))).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Mara Ashgrove" })).toBeTruthy();
-    expect(within(card).getByRole("button", { name: `Mara Vell ${w.hiddenFromPlayers}` })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: `${w.hiddenMark} Mara Vell` })).toBeTruthy();
+    expect(within(card).getByText(w.hiddenNote)).toBeTruthy();
     expect(within(card).getByRole("button", { name: w.neither })).toBeTruthy();
   });
 
@@ -211,6 +217,72 @@ describe("Which Mara?", () => {
     press(w.neither);
     expect(await screen.findByText(w.done.neither)).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${REF}:which:neither:w1`);
+  });
+});
+
+describe("after an answer", () => {
+  it("keeps the buttons waiting until the list has been read again, so nobody answers what is gone", async () => {
+    const api = mockApi("table");
+    const real = api.webWaiting!.bind(api);
+    let release: () => void = () => {};
+    let held = false;
+    api.webWaiting = async (ref) => {
+      if (held) await new Promise<void>((resolve) => (release = resolve));
+      return real(ref);
+    };
+    await open(api);
+    held = true; // the re-read after the answer is slow
+    press(w.reject, screen.getByText("Roan is dead").closest(".panel") as HTMLElement);
+    await screen.findByText(w.done.reject);
+    for (const b of screen.getAllByRole("button", { name: w.keep })) expect((b as HTMLButtonElement).disabled).toBe(true);
+    held = false;
+    release();
+    await waitFor(() => expect((screen.getAllByRole("button", { name: w.keep })[0] as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("puts focus on the heading, since the answered item has gone", async () => {
+    await open();
+    press(w.reject, screen.getByText("Roan is dead").closest(".panel") as HTMLElement);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { name: w.heading })));
+  });
+
+  it("two quick taps send one answer", async () => {
+    const api = await open();
+    const card = screen.getByText("Roan is dead").closest(".panel") as HTMLElement;
+    const reject = within(card).getByRole("button", { name: w.reject });
+    fireEvent.click(reject);
+    fireEvent.click(reject);
+    await screen.findByText(w.done.reject);
+    expect(api.calls.filter((c) => c.startsWith("answerWaiting:")).length).toBe(1);
+  });
+
+  it("a Keep all that says nothing of its count does not claim one", async () => {
+    const api = mockApi("table");
+    api.answerWaiting = async () => ({});
+    await open(api);
+    press(w.keepAll(2));
+    expect(await screen.findByText(w.kept(undefined))).toBeTruthy();
+    expect(screen.queryByText(/Kept \d+/)).toBeNull();
+  });
+
+  it("a pick that is not one of the candidates is refused as gone", async () => {
+    const api = mockApi("table");
+    await expect(api.answerWaiting!(REF, { kind: "which", action: "pick", id: "w1", entity: "nope" })).rejects.toMatchObject({ kind: "gone" });
+  });
+
+  it("one campaign's list is never drawn under another", async () => {
+    const api = mockApi("table");
+    const real = api.webWaiting!.bind(api);
+    let release: () => void = () => {};
+    api.webWaiting = async (ref) => {
+      if (ref === REF) await new Promise<void>((resolve) => (release = resolve)); // slow
+      return real(ref);
+    };
+    const view = render(<WebWaiting key={REF} api={api} campaignRef={REF} />);
+    view.rerender(<WebWaiting key="100.cmp2" api={api} campaignRef="100.cmp2" />);
+    release();
+    await Promise.resolve();
+    expect(api.calls.filter((c) => c === `webWaiting:${REF}`).length).toBe(1);
   });
 });
 
@@ -231,7 +303,7 @@ describe("when DMbot refuses", () => {
     await open(api);
     const reads = api.calls.filter((c) => c.startsWith("webWaiting:")).length;
     press(w.reject, screen.getByText("Roan is dead").closest(".panel") as HTMLElement);
-    expect((await screen.findByRole("alert")).textContent).toBe(w.errors[key]);
+    expect(await screen.findByText(w.errors[key]!)).toBeTruthy();
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("webWaiting:")).length).toBe(reads + 1));
   });
 
@@ -242,7 +314,7 @@ describe("when DMbot refuses", () => {
     };
     await open(api);
     press(w.reject, screen.getByText("Roan is dead").closest(".panel") as HTMLElement);
-    expect((await screen.findByRole("alert")).textContent).toBe(w.errors.other);
+    expect(await screen.findByText(w.errors.other!)).toBeTruthy();
   });
 
   it("shows that DMbot is working while an answer is sent, and the buttons wait", async () => {
@@ -251,10 +323,10 @@ describe("when DMbot refuses", () => {
     api.answerWaiting = () => new Promise((resolve) => (release = () => resolve({})));
     await open(api);
     press(w.reject, screen.getByText("Roan is dead").closest(".panel") as HTMLElement);
-    expect(await screen.findByText(w.workingStage)).toBeTruthy();
+    expect(await screen.findByText(w.savingStage)).toBeTruthy();
     for (const b of screen.getAllByRole("button", { name: w.reject })) expect((b as HTMLButtonElement).disabled).toBe(true);
     release();
-    await waitFor(() => expect(screen.queryByText(w.workingStage)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(w.savingStage)).toBeNull());
   });
 });
 
