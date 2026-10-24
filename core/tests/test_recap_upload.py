@@ -83,6 +83,27 @@ class Uploading(Base):
         self.assertEqual(job.approved_hash, text_hash(job.title, job.summary))
         self.assertEqual(await self.store.due(1), [])  # the worker has nothing to write
 
+    async def accepted(self, at: int = 700) -> list[tuple[int, str]]:
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute(
+                "SELECT version, summary FROM recap_accepted WHERE guild_id = 1"
+                " AND campaign_id = %s AND session_at = %s ORDER BY version",
+                (self.one.id, at),
+            )
+            return [(r["version"], r["summary"]) for r in await cur.fetchall()]
+
+    async def test_an_uploaded_recap_is_an_accepted_version_so_plotbot_and_recall_see_it(
+        self,
+    ) -> None:
+        """#2122, "one place for both ways of approving": adding a recap approves it, so it is kept
+        as the session's accepted version, and a replacement is the next version."""
+        self.assertEqual(await self.put(), "stored")
+        self.assertEqual(await self.accepted(), [(1, TEXT)])
+        self.assertEqual(await self.put(text="Second hand.", replace_ok=True), "stored")
+        self.assertEqual(await self.accepted(), [(1, TEXT), (2, "Second hand.")])
+        self.assertEqual(await self.put(text="Second hand.", replace_ok=True), "stored")
+        self.assertEqual(len(await self.accepted()), 2)  # the same words again are not a version
+
     async def test_a_session_with_no_transcript_works_and_a_non_dm_is_refused(self) -> None:
         self.assertEqual(await self.put(at=123_456), "stored")  # (no transcript rows at all)
         outcome = await self.store.upload(

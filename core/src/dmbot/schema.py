@@ -3101,6 +3101,9 @@ RECAP_UPLOADED = (
                                     approved_at, approved_hash)
                 VALUES (g, c, at_, who, 'ready', ttl, body, body, 'draft', now_s, now_s, now_s,
                         author, who, now_s, who, now_s, digest);
+            -- an uploaded recap is approved by being added: it is an accepted version like any
+            -- other, so PlotBot's notes and recall see it (#2122, one place for both ways)
+            PERFORM dmbot_recap_keep_version(g, c, at_, who, now_s);
             RETURN 'stored';
         END IF;
         -- Going out, or a worker has it right now. A recap that waits is the DM's to replace.
@@ -3135,6 +3138,7 @@ RECAP_UPLOADED = (
             written_by = author, uploaded_by = who, uploaded_at = now_s, earlier = kept,
             checked_at = 0, dm_user_id = who, updated_at = now_s
             WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        PERFORM dmbot_recap_keep_version(g, c, at_, who, now_s);
         RETURN 'stored';
     END
     $fn$;
