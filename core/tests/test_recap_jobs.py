@@ -502,12 +502,12 @@ class Working(WorkerHarness):
         self.assertEqual(job.state, "ready")
         self.assertIn("sections JSON", self.careful.sent[0])
 
-    async def test_a_misheard_name_is_respelled_and_a_name_said_at_the_table_is_kept(self) -> None:
-        """#2027: "Care Dinval" becomes the known "Caer-Dineval" in code; "Breathing Stair" was
-        said in the lines and no list has it, so it stays and is queued for the DM; neither is
-        a reason to retry."""
+    async def test_a_name_said_at_the_table_that_no_list_has_is_kept_and_asked_about(self) -> None:
+        """#2628: names are settled before the writer starts (PlotBot's name pass), so the recap
+        no longer respells them. "Descending Stair" was said in the lines and no list has it, so
+        it stays and is queued for the DM; that is not a reason to retry."""
         text = fx.PROSE_ANSWER.replace(
-            "Nothing answered.", "Care Dinval waited by the Descending Stair. Nothing answered."
+            "Nothing answered.", "Mira waited by the Descending Stair. Nothing answered."
         )
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, text, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
@@ -516,8 +516,7 @@ class Working(WorkerHarness):
         )
         job = await self.go()
         self.assertEqual(job.state, "ready")
-        self.assertIn("Caer-Dineval waited", job.summary)
-        self.assertNotIn("Care Dinval", job.summary)
+        self.assertIn("Descending Stair", job.summary)
         self.assertEqual(job.to_confirm, ("Descending Stair",))
         # Try again starts the notice over, so the new recap's names are queued too
         await self.store.set_names_state(1, self.one.id, 100, 1, only_from=0)

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.transcript import name_pass as np
@@ -112,33 +111,3 @@ class Believing(unittest.TestCase):
             np.note([("Kethrandil", "Keirandal", 12)]),
             "Fixed 12 spellings of Kethrandil (heard as Keirandal).",
         )
-
-
-class TheRecapsRespell(unittest.TestCase):
-    """The recap's own spelling safety net takes a spelling only from the list (#2628)."""
-
-    def beat(self, who: str) -> Any:
-        from dmbot.recaps import beats as bt
-
-        return bt.Beat(1, "Someone drew a bow at dawn.", (who,), (1,), "event")
-
-    def run_it(self, text: str, who: str, names: list[str]) -> str:
-        from dmbot.recaps import draft as rd
-
-        prose, _refused = rd.respelled(
-            rd.Prose(text, ()),
-            beats=[self.beat(who)],
-            allowed_names=names,
-            secret_names=[],
-        )
-        return prose.summary
-
-    def test_a_beats_spelling_is_never_the_one_put_in(self) -> None:
-        # the beats carry a misheard spelling: it is not a target, so the list's name stays
-        # as the only thing a near miss can become
-        got = self.run_it("《Calm》 Kethrandill drew his bow.", "Kethrandyl", ["Kethrandil"])
-        self.assertEqual(got, "《Calm》 Kethrandil drew his bow.")
-
-    def test_a_list_name_is_still_put_in_for_a_near_miss(self) -> None:
-        got = self.run_it("《Calm》 Kethrandill rode on.", "Someone", ["Kethrandil"])
-        self.assertEqual(got, "《Calm》 Kethrandil rode on.")

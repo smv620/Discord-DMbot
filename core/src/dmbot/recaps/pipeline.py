@@ -908,16 +908,9 @@ class RecapWorker:
                 len(prose.music),
                 len(fixed.music),
             )
-        prose, refused = rd.respelled(
-            fixed,
-            beats=sheet,
-            allowed_names=inputs.allowed_names,
-            secret_names=inputs.secret_names,
-            previous=inputs.previous,
-            setting=inputs.setting,
-            transcript="\n".join(s.text for s in said),
-            aliases=inputs.aliases,
-        )  # near-miss names put right, in code (#2027)
+        # (No respelling here: the names were settled before the writer started, #2628 - the
+        # transcript and the names list the writer got were already right.)
+        prose, refused = fixed, ()
         transcript = "\n".join(s.text for s in said)
         self._annotate(gid, cid, job, stage, words=lambda: len(words(narration_of(prose.summary))))
 
@@ -1088,16 +1081,7 @@ class RecapWorker:
         if kept is not None:
             prose, grade, kept_event = kept
             transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
-            prose, refused = rd.respelled(
-                prose,
-                beats=sheet,
-                allowed_names=inputs.allowed_names,
-                secret_names=inputs.secret_names,
-                previous=inputs.previous,
-                setting=inputs.setting,
-                transcript=transcript,
-                aliases=inputs.aliases,
-            )
+            refused: tuple[str, ...] = ()  # (names are settled before the writer, #2628)
             if not rd.check_prose(
                 prose,
                 beats=sheet,
@@ -1592,16 +1576,7 @@ class RecapWorker:
         transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
         grade: dict[str, int] = {}
         if revised is not None:
-            revised, refused = rd.respelled(
-                rd.fix_prose(revised, length.sections),
-                beats=sheet,
-                allowed_names=inputs.allowed_names,
-                secret_names=inputs.secret_names,
-                previous=inputs.previous,
-                setting=inputs.setting,
-                transcript=transcript,
-                aliases=inputs.aliases,
-            )
+            revised, refused = rd.fix_prose(revised, length.sections), ()  # (#2628)
             if rd.check_prose(
                 revised, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
@@ -1825,20 +1800,6 @@ class RecapWorker:
                 gid, cid, job, ["answer with the title and housekeeping JSON asked for"]
             )
         transcript = "\n".join(x.text for x in self._said(inputs, set(job.speakers)))
-        # Near-miss names put right here too (#2027), and the names the DM is to confirm added.
-        fixed = [
-            rd.respelled(
-                rd.Prose(text, ()),
-                beats=sheet,
-                allowed_names=inputs.allowed_names,
-                secret_names=inputs.secret_names,
-                previous=inputs.previous,
-                transcript=transcript,
-                aliases=inputs.aliases,
-            )
-            for text in (parsed[0], *parsed[1])
-        ]
-        parsed = (fixed[0][0].summary, [f.summary for f, _ in fixed[1:]])
         finish, problems = rd.check_finish(
             parsed,
             beats=sheet,
@@ -1848,8 +1809,6 @@ class RecapWorker:
             previous=inputs.previous,
             transcript=transcript,
         )
-        if finish is not None and any(r for _, r in fixed):
-            finish, problems = None, ["a name is too like one the DM keeps secret: leave it out"]
         self._annotate(
             gid, cid, job, "title", checks=lambda: cl.kinds(problems) if finish is None else []
         )
