@@ -5,6 +5,7 @@ re-checked when applied, and read back only by the DM who made them. Invented na
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 
@@ -802,6 +803,70 @@ class TheEdits(Editing):
                 (await client.get(f"/me/campaigns/{self.cref}/web/waiting")).json()["counts"],
                 {"claims": 0, "backstory": 1, "ready": 1, "which": 0, "all": 1},
             )
+
+    async def test_two_answers_to_one_question_apply_once(self) -> None:
+        which = await self.which_question()
+        await self.queue(kind="which", action="pick", id=which, entity=self.mara_a)
+        await self.queue(kind="which", action="pick", id=which, entity=self.mara_b)
+        outcomes = await self.apply_waiting()
+        self.assertEqual([o.error for o in outcomes], ["", wa.GONE])
+        (link,) = await self.backstory.waiting(self.g, self.one.id)
+        self.assertEqual(link.object_id, self.mara_a)  # the first answer stood
+
+    async def test_a_full_queue_says_queue_full_and_keeps_the_question(self) -> None:
+        which = await self.which_question()
+        answer = await self.queue(kind="which", action="pick", id=which, entity=self.mara_a)
+        with patch("dmbot.memory.backstory_links.MAX_WAITING", 0):
+            outcomes = await self.apply_waiting()
+        self.assertEqual([o.error for o in outcomes], [wa.QUEUE_FULL])
+        self.assertEqual((await self.poll(answer))["error"], wa.QUEUE_FULL)
+        self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
+
+    async def test_the_door_leaves_out_what_the_bot_would_not_ask(self) -> None:
+        await self.which_question()
+        await self.claim()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(  # a plan claim, and one still waiting on its name
+                "UPDATE memory_claims SET how = 'plan' WHERE guild_id = %s", (self.g,)
+            )
+        got = await self.waiting_now()
+        self.assertEqual(got["claims"], [])
+        # a candidate refused leaves one: nothing to pick, so the question is not shown
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE guild_id = %s AND id = %s",
+                (self.g, self.mara_b),
+            )
+        self.assertEqual((await self.waiting_now())["which"], [])
+
+    async def test_an_audience_limited_candidate_is_marked_and_other_campaigns_are_not_shown(
+        self,
+    ) -> None:
+        await self.which_question()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET audience_limited = true"
+                " WHERE guild_id = %s AND id = %s",
+                (self.g, self.mara_a),
+            )
+        (question,) = (await self.waiting_now())["which"]
+        limited = {c["name"]: c["limited"] for c in question["candidates"]}
+        self.assertEqual(limited, {"Mara Ashgrove": True, "Mara Vell": False})
+        other = await self.campaigns.create(self.g, "Elsewhere", ALICE.id)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, other.id))
+            self.assertIsNone((await cur.fetchone())["r"])  # not this person's campaign: nothing
+
+    async def test_a_flag_on_a_which_answer_is_refused_by_the_door(self) -> None:
+        which = await self.which_question()
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, '', 'backstory-which-neither', NULL,"
+                " %s, '', true) AS r",
+                (self.g, self.one.id, which),
+            )
+            self.assertEqual((await cur.fetchone())["r"]["status"], "bad_text")
 
 
 class Refusals(Editing):

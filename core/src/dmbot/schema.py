@@ -12671,6 +12671,12 @@ for _old, _new in (
         "               AND COALESCE(tgt, '') <> '')",
     ),
     (
+        "           OR (act = 'link-words' AND COALESCE(fl, false)) THEN",
+        "           OR (act IN ('backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND COALESCE(fl, false))\n"
+        "           OR (act = 'link-words' AND COALESCE(fl, false)) THEN",
+    ),
+    (
         "           OR (act = 'backstory-keep-all' AND (clean = ''",
         "           OR (act = 'backstory-which-pick' AND clean !~ '^[0-9a-f]{32}$')\n"
         "           OR (act = 'backstory-keep-all' AND (clean = ''",
@@ -12771,6 +12777,16 @@ WEB_WAITING = (
                 JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c
                                       AND o.id = l.object_id
                                       AND o.status IN ('confirmed', 'proposed')), '[]'::jsonb),
+            -- the true sizes, since the lists above are cut at their caps
+            'totals', jsonb_build_object(
+                'claims', (SELECT count(*) FROM memory_claims k
+                           WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'
+                             AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0
+                             AND k.reason <> 'waiting for its name to be proposed'),
+                'backstory', (SELECT count(*) FROM backstory_links b
+                              WHERE b.guild_id = g AND b.campaign_id = c)),
+            -- (a question left with fewer than two live candidates is not shown: nothing can be
+            -- picked, and the bot deletes it when it next reads the queue)
             'which', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'id', w.id, 'word', w.word, 'otherId', w.other_id, 'other', o.name,
@@ -12779,7 +12795,8 @@ WEB_WAITING = (
                     'upload', w.upload, 'candidates', w.cands) ORDER BY w.created_at, w.id)
                 FROM (
                     SELECT q.*, (
-                        SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name)
+                        SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name,
+                                                           'limited', e.audience_limited)
                                          ORDER BY lower(e.name), e.id)
                         FROM memory_entities e
                         WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (q.candidates)

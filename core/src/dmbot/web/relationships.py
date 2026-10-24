@@ -440,7 +440,9 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
     `gone` (no longer waiting, or dropped for reading like an instruction: final),
     `name_first` (a new name in it must be answered first), `stopped_recording` (someone it cites
     is no longer recorded: the claim is deleted) and `cannot_write` (the rules refuse that fact
-    now, for example a plan: it stays waiting)."""
+    now, for example a plan: it stays waiting). A "Which Mara?" answer ends `gone` (answered or
+    dropped already, or the pick is not one of its candidates) or `queue_full` (too many
+    connections wait: answer some first; the question stays)."""
     if not isinstance(body, dict):
         raise RecapError("bad_action")
     action = WAITING_QUEUE.get((str(body.get("kind")), str(body.get("action"))))
@@ -568,15 +570,18 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
     ]
     which = [{**w, "how": link_words(str(w["predicate"]), str(w["detail"]))} for w in got["which"]]
     ready = sum(1 for b in backstory if b["ready"])
+    totals = got.get("totals") or {}
+    total_claims = max(int(totals.get("claims", 0)), len(claims))  # (the lists are cut at caps)
+    total_backstory = max(int(totals.get("backstory", 0)), len(backstory))
     return {
         "claims": claims,
         "backstory": backstory,
         "which": which,
         "counts": {
-            "claims": len(claims),
-            "backstory": len(backstory),
+            "claims": total_claims,
+            "backstory": total_backstory,
             "ready": ready,
             "which": len(which),
-            "all": len(claims) + len(backstory) + len(which),
+            "all": total_claims + total_backstory + len(which),
         },
     }
