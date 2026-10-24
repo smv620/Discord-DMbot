@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.web import all_names
 from dmbot.web.names import _parse
@@ -418,13 +419,17 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # Answers to the connections that wait for the DM (#2635, #2642): body `{kind, action, id, secret}`.
 # `kind` "claim" (said at the table; actions confirm, reject; `secret` is "truth but secret") or
 # "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
-# `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others).
+# `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others), or
+# "which" (a "Which Mara?" question, #2652; actions pick, with `entity` the candidate chosen, and
+# neither).
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
     ("claim", "reject"): "claim-reject",
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
+    ("which", "pick"): "backstory-which-pick",
+    ("which", "neither"): "backstory-which-neither",
 }
 
 
@@ -436,7 +441,9 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
     `gone` (no longer waiting, or dropped for reading like an instruction: final),
     `name_first` (a new name in it must be answered first), `stopped_recording` (someone it cites
     is no longer recorded: the claim is deleted) and `cannot_write` (the rules refuse that fact
-    now, for example a plan: it stays waiting)."""
+    now, for example a plan: it stays waiting). A "Which Mara?" answer ends `gone` (answered or
+    dropped already, or the pick is not one of its candidates) or `queue_full` (too many
+    connections wait: answer some first; the question stays)."""
     if not isinstance(body, dict):
         raise RecapError("bad_action")
     action = WAITING_QUEUE.get((str(body.get("kind")), str(body.get("action"))))
@@ -458,6 +465,11 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         text = " ".join(dict.fromkeys(ids))
     elif not ID_PATTERN.match(target):
         raise RecapError("not_found")
+    if action == "backstory-which-pick":
+        picked = str(body.get("entity") or "")  # one of the question's candidates (the door checks)
+        if not ID_PATTERN.match(picked):
+            raise RecapError("not_found")
+        text = picked
     return await _queue(
         db, session, ref, entity="", action=action, target=target, text=text,
         flag=secret and action in ("claim-confirm", "backstory-keep"),
@@ -524,4 +536,66 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         "error": got["error"],
         "edge": edge,
         "removed": got["state"] == "done" and edge is None,
+    }
+
+
+WAITING_COUNT_KEYS = ("claims", "backstory", "which")
+
+
+def _can_be_secret(row: dict[str, Any]) -> bool:
+    """Whether "truth but secret" is offered: not for a condition ("Roan is dead"), by the DM
+    screen's own rule (`claims.condition_of`), so both read it the same way."""
+    said = Extracted(
+        str(row["subject"]), str(row["relationship"]), str(row["object"]),
+        str(row.get("details") or ""), (), str(row["how"]),
+    )  # fmt: skip
+    return condition_of(said) is None
+
+
+def _claim_statement(row: dict[str, Any]) -> str:
+    """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
+    session's date; the words are the claim's own, as the DM screen shows them)."""
+    base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
+    details = str(row.get("details") or "").strip()
+    return f"{base} ({details})" if details else base
+
+
+async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """What waits for the signed-in DM of this campaign (#2652): the claims PlotBot found at the
+    table, the connections a backstory found (ready, or waiting on a name, with the upload each came
+    from) and the "Which Mara?" questions, with the counts the overview's "waiting for you" needs.
+    DM only (the door answers anyone else with nothing, `not_found` here). Read-only, and nothing
+    from a transcript: a name, a short quote the DM's own text, a label the DM typed."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (guild_id, campaign_id))
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("status") != "ok":
+        raise RecapError("not_found")
+    claims = [
+        {**c, "statement": _claim_statement(c), "canSecret": _can_be_secret(c)}
+        for c in got["claims"]
+    ]
+    backstory = [
+        {**b, "how": link_words(str(b["predicate"]), str(b["detail"]))} for b in got["backstory"]
+    ]
+    which = [{**w, "how": link_words(str(w["predicate"]), str(w["detail"]))} for w in got["which"]]
+    ready = sum(1 for b in backstory if b["ready"])
+    totals = got.get("totals") or {}
+    total_claims = max(int(totals.get("claims", 0)), len(claims))  # (the lists are cut at caps)
+    total_backstory = max(int(totals.get("backstory", 0)), len(backstory))
+    return {
+        "claims": claims,
+        "backstory": backstory,
+        "which": which,
+        "counts": {
+            "claims": total_claims,
+            "backstory": total_backstory,
+            "ready": ready,
+            "which": len(which),
+            "all": total_claims + total_backstory + len(which),
+        },
     }
