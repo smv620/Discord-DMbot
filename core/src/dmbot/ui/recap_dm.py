@@ -85,6 +85,10 @@ AUDIO_WHY = {
 ASK_WHICH_AUDIO = (
     "Which audio should DMbot make? Pressing one approves the text. Nothing is posted."
 )
+PLOT_OPEN = (
+    "PlotBot has points about this recap that need your answer first. Open your recap page "
+    '({link}), answer them ("Leave it as is" is always an answer), then approve.'
+)
 TOO_LATE = "I couldn't approve that now. The text changed, or the audio is already being made."
 NO_AUDIO = (
     "Voice-over and music can't be made for this campaign right now (the plan, the narration "
@@ -111,6 +115,16 @@ def reading_text(job: Any, link: str) -> str:
     if link:
         text += f"\n\nWant to change it first? Edit it here: {link}"
     return text
+
+
+def _plot_open_line(bot: Any, guild_id: int, campaign_id: str, job: Any) -> str:
+    """What the DM is told when PlotBot has points that need an answer first, with the page."""
+    page = (
+        page_link(bot.settings.site_url, guild_id, campaign_id, job.session_at)
+        if bot.settings.site_url
+        else "on the website"
+    )
+    return PLOT_OPEN.format(link=page)
 
 
 class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_TEMPLATE):
@@ -181,7 +195,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 return
             await _tell(interaction, ASK, view=confirm_view(self.campaign_id, self.session_at))
         elif self.act == "yes":
-            await self._post(interaction, bot, guild.id, campaign.id)
+            await self._post(interaction, bot, guild.id, campaign.id, job)
         else:  # drop
             if not await store.decide(guild.id, campaign.id, self.session_at, "drop"):
                 await _tell(interaction, DECIDED)
@@ -229,6 +243,32 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             for f in audio:
                 f.close()
 
+    async def _refused_for_problems(
+        self, interaction: discord.Interaction, bot: Any, campaign: Any, job: Any
+    ) -> bool:
+        """The checks every approval makes, whichever button it comes from (the Approve buttons
+        and a Yes on a draft that is not approved yet): the cues and the secret names. True: it
+        found problems, told the DM what and where to fix them, and nothing is to be approved."""
+        problems = await bot.recap_approval_problems(campaign, job)
+        if not problems:
+            return False
+        shown = problems[:MAX_SHOWN]
+        more = len(problems) - len(shown)
+        tail = f"\n…and {more} more." if more > 0 else ""
+        words = cues.allowed_words()
+        await _tell(
+            interaction,
+            f"{CUES_FIRST}\n"
+            + "\n".join(f"• {p}" for p in shown)
+            + tail
+            + "\n\nMoods go in 《 》: "
+            + ", ".join(words["moods"])
+            + ".\nPacing goes in (( )): "
+            + ", ".join(words["pacing"])
+            + ".\nEdit the text on your recap page, then press Approve again.",
+        )
+        return True
+
     async def _approve(
         self, interaction: discord.Interaction, bot: Any, campaign: Any, job: Any
     ) -> None:
@@ -236,23 +276,12 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         secret names again, so a choice taken from an old message approves nothing the text no
         longer earns. Counts only in the log, never the text."""
         expected = approval.text_hash(job.title, job.summary)  # the text the checks below read
-        problems = await bot.recap_approval_problems(campaign, job)
-        if problems:
-            shown = problems[:MAX_SHOWN]
-            more = len(problems) - len(shown)
-            tail = f"\n…and {more} more." if more > 0 else ""
-            words = cues.allowed_words()
-            await _tell(
-                interaction,
-                f"{CUES_FIRST}\n"
-                + "\n".join(f"• {p}" for p in shown)
-                + tail
-                + "\n\nMoods go in 《 》: "
-                + ", ".join(words["moods"])
-                + ".\nPacing goes in (( )): "
-                + ", ".join(words["pacing"])
-                + ".\nEdit the text on your recap page, then press Approve again.",
-            )
+        if await self._refused_for_problems(interaction, bot, campaign, job):
+            return
+        if bot.settings.plot_check_on and await bot.recaps.plot_open(
+            campaign.guild_id, campaign.id, self.session_at
+        ):  # (the store checks it again in the approval's own statement)
+            await _tell(interaction, _plot_open_line(bot, campaign.guild_id, campaign.id, job))
             return
         if self.act in ("ap", "aa", "ak") and job.approved and job.audio_choice:
             if self.act == "ap" and job.audio_choice == approval.TEXT:
@@ -288,6 +317,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                 approval.TEXT,
                 expected=expected,
                 post=posting,
+                plot_gate=bot.settings.plot_check_on,
             ):
                 await _tell(interaction, TOO_LATE)
                 return
@@ -323,15 +353,57 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             interaction.user.id,
             choice,
             expected=expected,
+            plot_gate=bot.settings.plot_check_on,
         ):
             await _tell(interaction, TOO_LATE)
             return
-        await _tell(interaction, APPROVED[choice])
+        if choice != approval.TEXT:
+            await bot.recap_audio_started(campaign, self.session_at)
+        link = (
+            page_link(bot.settings.site_url, campaign.guild_id, campaign.id, self.session_at)
+            if bot.settings.site_url
+            else ""
+        )
+        view = None
+        if link:
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(label="Review the recap", emoji="📝", url=link))
+        await _tell(interaction, APPROVED[choice], view=view)
 
-    async def _post(self, interaction: discord.Interaction, bot: Any, gid: int, cid: str) -> None:
-        """Yes was pressed: the website's own move, then the bot's own sending and checks."""
-        if not await bot.recaps.decide(gid, cid, self.session_at, "post"):
-            await _tell(interaction, DECIDED)
+    async def _post(
+        self, interaction: discord.Interaction, bot: Any, gid: int, cid: str, job: Any
+    ) -> None:
+        """Yes was pressed: the website's own move, then the bot's own sending and checks.
+        Posting a draft that is not approved counts as approving it (Supervisor, 2026-10-23,
+        #2122): it goes through the same approval as the Approve buttons, so the version is kept
+        and PlotBot's open points hold it."""
+        if not job.approved:
+            campaign = await bot.campaigns.get(gid, cid)
+            if campaign is None or await self._refused_for_problems(
+                interaction, bot, campaign, job
+            ):
+                if campaign is None:
+                    await _tell(interaction, GONE)
+                return
+            if not await bot.recaps.approve(
+                gid,
+                cid,
+                self.session_at,
+                interaction.user.id,
+                approval.TEXT,
+                expected=approval.text_hash(job.title, job.summary),
+                post=True,
+                plot_gate=bot.settings.plot_check_on,
+            ):
+                if bot.settings.plot_check_on and await bot.recaps.plot_open(
+                    gid, cid, self.session_at
+                ):
+                    await _tell(interaction, _plot_open_line(bot, gid, cid, job))
+                else:
+                    await _tell(interaction, DECIDED)
+                return
+        elif not await bot.recaps.decide(gid, cid, self.session_at, "post", require_current=True):
+            await _tell(interaction, DECIDED)  # (or the text changed since the DM approved it)
             return
         await self._sent(interaction, bot, gid, cid)
 

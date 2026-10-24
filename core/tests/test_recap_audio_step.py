@@ -457,7 +457,11 @@ class Rendering(unittest.IsolatedAsyncioTestCase):
         made = await self.render()
         speech_seconds = 2.0 * len(self.script.paragraphs)
         want = (
-            HEAD_SECONDS + speech_seconds + GAP_SECONDS * len(self.script.paragraphs) + TAIL_SECONDS
+            HEAD_SECONDS
+            + speech_seconds
+            + GAP_SECONDS
+            * (len(self.script.paragraphs) - 1)  # none after the last: the tail follows
+            + TAIL_SECONDS
         )
         self.assertAlmostEqual(made.seconds, want, places=2)
         self.assertAlmostEqual(self.mixer.voice_seconds, made.seconds, places=2)
@@ -614,7 +618,7 @@ class Choices(Base):
         )
         self.assertEqual(
             sum(x["duration_ms"] for x in sections) // 1000,
-            music_module.total_seconds(len(script.spoken)) + 6,  # the voice's head and tail
+            music_module.total_seconds(len(script.spoken)) + 4,  # the voice's head and 1.5 s tail
         )
         self.assertGreaterEqual(len(sections), 2)  # the text's moods share it
 

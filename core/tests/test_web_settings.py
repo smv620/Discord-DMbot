@@ -36,7 +36,7 @@ from tests.test_dm_screen_setup import (
     text_channel,
 )
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 
 class FakeBot:
@@ -459,9 +459,11 @@ class TheRoutes(Settings):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(self.client.aclose)
 
     async def test_post_then_poll_over_http(self) -> None:
@@ -493,7 +495,9 @@ class TheRoutes(Settings):
         )
         self.assertEqual((got.status_code, got.json()), (403, {"error": "not_allowed"}))
         anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.post(url, json={}, headers=HEADERS)).status_code, 401)
