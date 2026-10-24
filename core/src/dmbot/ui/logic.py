@@ -235,6 +235,34 @@ def backup_filename(campaign_name: str, now: int) -> str:
     return f"{slug}-{day}.dmbot.json.gz"  # compressed since #164; .dmbot.json still restores
 
 
+def backup_parts(data: object) -> int:
+    """How many transcripts files a copy came with (#2552); 0 for one made before them."""
+    manifest = data.get("parts") if isinstance(data, dict) else None
+    count = manifest.get("count") if isinstance(manifest, dict) else None
+    return count if type(count) is int and 0 < count <= 1000 else 0
+
+
+def part_filename(campaign_name: str, now: int, number: int, total: int) -> str:
+    """The name of one transcripts file of a copy (#2552): the copy's name, then which of them."""
+    base = backup_filename(campaign_name, now).removesuffix(".dmbot.json.gz")
+    return f"{base}.transcripts-{number}-of-{total}.dmbot.json.gz"
+
+
+def part_batches(sizes: list[int], limit: int, per_message: int = 10) -> list[list[int]]:
+    """Which transcripts files go in which message: in order, each message holding at most
+    `per_message` files and `limit` bytes in all (Discord's limits). A file bigger than `limit` by
+    itself is the caller's to refuse before sending anything."""
+    batches: list[list[int]] = []
+    used = 0
+    for index, size in enumerate(sizes):
+        if not batches or len(batches[-1]) >= per_message or used + size > limit:
+            batches.append([])
+            used = 0
+        batches[-1].append(index)
+        used += size
+    return batches
+
+
 WELCOME_TEXT = (
     "**🎲 DMbot helps the DM run the game.**\n"
     "It listens to people who said yes, writes down what's said, and sends the DM rules "
