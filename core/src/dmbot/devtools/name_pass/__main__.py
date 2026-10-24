@@ -14,11 +14,11 @@ PlotBot, the same narrow writes into the cleaned text) and prints what it did fo
 
 then one line of counts only. `--dry-run` writes nothing: the same fixes are counted on a copy of
 the lines. `--dry-run --yes` is the real pass with only the writes left out: the same AI call, the
-same decisions, the same counts. `--yes` alone writes. Without `--yes` the AI is not called (it costs
-a little, so that is the gate, not `--dry-run`): the tool only says how many words code found to ask
-about (a number, no words), from the same lines and the same people as the live pass. There is no
-cleaner step in the tool on purpose: a stored session's cleaned text is already what the live pass
-reads, so running the cleaner again would not change what the pass sees.
+same decisions, the same counts. `--yes` alone writes. Without `--yes` the AI is not called (it
+costs a little, so that is the gate, not `--dry-run`): the tool only says how many words code found
+to ask about (a number, no words), from the same lines and the same people as the live pass. There
+is no cleaner step in the tool on purpose: a stored session's cleaned text is already what the
+live pass reads, so running the cleaner again would not change what the pass sees.
 `--game-only` is for an imported session (the off-topic filter's lines are left out, as the
 import does). A run without `--dry-run` writes the fixes into the cleaned text, with
 the same Undo numbers as a live session (the DM sees them on the DM screen only for a live
