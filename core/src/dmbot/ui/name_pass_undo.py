@@ -29,7 +29,8 @@ NOTHING = "Nothing to put back: the lines were changed since, or this was undone
 FAILED = "Something went wrong, so nothing was changed. Try again in a moment."
 BACK = "↩️ Put the spellings back in {lines} {lines_word}."
 
-MAX_UNDOS = 20  # (a message holds 25 buttons)
+MAX_UNDOS = 20  # a live session's report; an import's report spills into more messages
+BUTTONS_PER_MESSAGE = 25  # Discord's limit
 _TEMPLATE = r"dmbot:namepass:undo:(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,12})"
 
 
@@ -107,13 +108,14 @@ def undo_view(campaign_id: str, fixed: Sequence[Fixed]) -> discord.ui.View | Non
     return view
 
 
-def undo_view_import(
+def undo_views_import(
     campaign_id: str, reports: Sequence[Sequence[Fixed]]
-) -> discord.ui.View | None:
+) -> list[discord.ui.View]:
     """The Undo buttons of one import's single report (#2649): one for each name fixed in a
     session, a number after the name when the name was fixed in more than one (the report's
-    order, not the session's own number), the
-    biggest first and at most `MAX_UNDOS`."""
+    order, not the session's own number), the biggest first. A message holds 25 buttons, so a
+    bigger import gets one more view for each further 25: every fix keeps its own Undo, since
+    Undo is what keeps the AI's fixes under the DM's control."""
     seen: dict[str, int] = {}
     for fixed in reports:
         for f in fixed:
@@ -124,12 +126,13 @@ def undo_view_import(
         for f in fixed
     ]
     items.sort(key=lambda t: (-t[0], t[1]))
-    if not items:
-        return None
-    view = discord.ui.View(timeout=None)
-    for _, label, batch in items[:MAX_UNDOS]:
-        view.add_item(UndoNamePassButton(campaign_id, batch, label))
-    return view
+    views: list[discord.ui.View] = []
+    for start in range(0, len(items), BUTTONS_PER_MESSAGE):
+        view = discord.ui.View(timeout=None)
+        for _, label, batch in items[start : start + BUTTONS_PER_MESSAGE]:
+            view.add_item(UndoNamePassButton(campaign_id, batch, label))
+        views.append(view)
+    return views
 
 
 async def _drop_button(message: Any, batch: int) -> None:

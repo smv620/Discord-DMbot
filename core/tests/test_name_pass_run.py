@@ -428,12 +428,71 @@ class ThePass(NamesTest):
             "New names (asked the DM): 0\n"
             "Left as heard (secret-name guard): 1",
         )
-        view = name_pass_undo.undo_view_import(self.campaign.id, [first.fixed, second.fixed])
-        assert view is not None
+        views = name_pass_undo.undo_views_import(self.campaign.id, [first.fixed, second.fixed])
         self.assertEqual(
-            [cast(Any, b).item.label for b in view.children],
+            [cast(Any, b).item.label for b in views[0].children],
             ["Undo Kethrandil #1", "Undo Kethrandil #2", "Undo Mirelle"],
         )
+
+    async def test_every_fix_of_a_big_import_keeps_its_undo(self) -> None:
+        """#2653: a message holds 25 buttons, so 60 fixes are three views, none lost."""
+        from dmbot.transcript import name_pass as np
+
+        reports = [
+            [np.Fixed(f"Name{n}", (("Heard", 1),), n * 100 + k) for n in range(3)]
+            for k in range(20)
+        ]
+        views = name_pass_undo.undo_views_import(self.campaign.id, reports)
+        self.assertEqual([len(v.children) for v in views], [25, 25, 10])
+        batches = {cast(Any, b).item.custom_id for v in views for b in v.children}
+        self.assertEqual(len(batches), 60)
+
+    async def test_an_import_holds_its_reports_and_posts_once_at_the_end(self) -> None:
+        """#2653: nothing is posted after the first imported session, one report after the last
+        (the quiet one left out); a live session's report still posts straight away."""
+        from dmbot.bot import DMBot
+
+        await ui.save_name(self.memory, self.campaign, "Drenwick", "npc", [], [])
+        self.ai.complete.side_effect = [
+            reply({"n": 1, "answer": "is", "name": "Kethrandil"}),
+            reply({"n": 1, "answer": "is", "name": "Drenwick"}),
+            reply({"n": 1, "answer": "is", "name": "Drenwick"}),  # the live session below
+        ]
+        second = await self.transcripts.open_session(GUILD, self.campaign.id, START + 1000)
+        await self.transcripts.end_session(GUILD, second, START + 1100)
+        text = "We rode with Drenwik."
+        await self.transcripts.add_lines(
+            GUILD, second, [Line(MS + 2_000_000 + i, PLAYER, text, text) for i in range(3)]
+        )
+        quiet = await self.transcripts.open_session(GUILD, self.campaign.id, START + 2000)
+        await self.transcripts.end_session(GUILD, quiet, START + 2100)
+        await self.transcripts.add_lines(
+            GUILD, quiet, [Line(MS + 3_000_000, PLAYER, "Nothing here.", "Nothing here.")]
+        )
+        held = self.bot._import_reports.setdefault((GUILD, self.campaign.id), [])
+        store = SimpleNamespace(pending_scans=AsyncMock(side_effect=[1, 1, 0]))
+        tell = DMBot._tell_import_news.__get__(self.bot)
+        for sid in (self.session, quiet, second):
+            self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+            await self.bot.repair_names(
+                GUILD, self.campaign.id, sid, {PLAYER}, {PLAYER}, held, game_only=True
+            )
+            await tell(GUILD, store)
+            if sid != second:
+                self.bot.post.assert_not_awaited()  # type: ignore[attr-defined]
+        self.assertEqual(len(held), 2)  # the quiet session was left out
+        self.bot.post.assert_awaited_once()  # type: ignore[attr-defined]
+        posted = self.bot.post.await_args.args  # type: ignore[attr-defined]
+        from dmbot.transcript import name_pass as np
+
+        self.assertEqual(posted[1], np.import_text(held))
+        self.assertNotIn((GUILD, self.campaign.id), self.bot._import_reports)
+        self.bot.post.reset_mock()  # type: ignore[attr-defined]
+        live = await self.transcripts.open_session(GUILD, self.campaign.id, START + 4000)
+        await self.transcripts.end_session(GUILD, live, START + 4100)
+        await self.transcripts.add_lines(GUILD, live, [Line(MS + 4_000_000, PLAYER, text, text)])
+        await self.bot.repair_names(GUILD, self.campaign.id, live, {PLAYER}, {PLAYER})
+        self.bot.post.assert_awaited_once()  # type: ignore[attr-defined]
 
     async def _entity(self) -> str:
         lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
