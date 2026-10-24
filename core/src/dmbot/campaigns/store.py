@@ -64,7 +64,9 @@ from dmbot.campaigns.parts import (
 )
 from dmbot.campaigns.parts import (
     PART_TEXT_BYTES,
+    RESTORE_BOXES,
     SESSION_TOO_BIG,
+    TOO_MANY_PARTS,
     LeftOut,
     TranscriptParts,
     decode_part,
@@ -1426,6 +1428,8 @@ class CampaignStore:
                     if len(text) > PART_TEXT_BYTES:
                         raise BackupTooBig(SESSION_TOO_BIG)
                     if pending and size + len(text) > PART_TEXT_BYTES:
+                        if len(files) >= RESTORE_BOXES:  # (stop early: a restore takes no more)
+                            raise BackupTooBig(TOO_MANY_PARTS)
                         files.append(
                             await asyncio.to_thread(
                                 encode_part, backup_id, len(files) + 1, pending, guild_id
@@ -1435,6 +1439,8 @@ class CampaignStore:
                     pending.append(text)
                     size += len(text)
                 if pending:
+                    if len(files) >= RESTORE_BOXES:
+                        raise BackupTooBig(TOO_MANY_PARTS)
                     files.append(
                         await asyncio.to_thread(
                             encode_part, backup_id, len(files) + 1, pending, guild_id
