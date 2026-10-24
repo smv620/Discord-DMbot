@@ -236,6 +236,17 @@ def max_output(model: str) -> int:
     return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
 
 
+# How much a model can read in one call, in tokens (#2590: a writer that reads a whole session).
+# Claude models: 200,000. Gemini models: 1,000,000 (Google's model pages, checked 2026-10-24).
+# A model not named gets the cautious figure.
+CLAUDE_CONTEXT = 200_000
+GEMINI_CONTEXT = 1_000_000
+
+
+def max_input(model: str) -> int:
+    return GEMINI_CONTEXT if model.startswith("gemini-") else CLAUDE_CONTEXT
+
+
 BUSY = (
     "DMbot couldn't reach the AI service, or it's busy. Nothing was added. In a minute, run "
     "/dmbot names with the file again."

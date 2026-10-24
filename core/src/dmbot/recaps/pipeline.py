@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
-from dmbot.ai import AIOutOfFunds, Reply
+from dmbot.ai import AIOutOfFunds, Reply, max_input
 from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
@@ -121,7 +121,15 @@ class Inputs:
     # The campaign's secret connections as (every name of one end, every name of the other): a
     # sentence naming both ends is refused, even when the table said both names (#2591).
     secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = ()
+    # The names of the story threads still open (quests, mysteries, hooks), for PlotBot's guide to
+    # the writer that reads the transcript (#2590). Names only.
+    threads: Sequence[str] = ()
 
+
+# A rough size of a token in characters, to decide whether a transcript fits (#2590). Low on
+# purpose: names and rare words take more tokens than plain English, so it errs towards "too long".
+CHARS_PER_TOKEN = 3
+TRANSCRIPT_SHARE = 0.6  # of the writer's input room for the transcript and the guide
 
 UNMATCHED = "Couldn't write a recap that matched the session."
 # Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
@@ -228,11 +236,18 @@ class RecapWorker:
         formatting: Client | None = None,
         story: Story | None = None,
         critics: bool = False,
+        reads: str = rd.BEATS,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
         # structured call of before writes and shapes it at once (tests and small tools).
         self._story = story
+        # What the writer reads (#2590): the beat sheet, or the cleaned transcript with PlotBot's
+        # guide. A recap that is too long for the writer's model falls back to the beats, once,
+        # remembered here for the job until it ends.
+        self._reads = reads
+        self._beats_instead: set[tuple[int, str, int]] = set()
+        self._heard: dict[tuple[int, str, int], str] = {}  # the transcript the writer was shown
         self._critics = critics  # the critics loop after the prose (#2255); off for small tools
         self._creative = creative
         self._formatting = formatting
@@ -802,6 +817,56 @@ class RecapWorker:
 
     # --- stage 2: the prose -------------------------------------------------------------
 
+    def _transcript_for(
+        self,
+        key: tuple[int, str, int],
+        inputs: Inputs,
+        play: Sequence[Said],
+        shown: Sequence[bt.Beat],
+    ) -> tuple[str, str]:
+        """(the cleaned transcript, PlotBot's guide) for a writer that reads the transcript
+        (#2590), or ("", "") when it reads the beats: the setting says so, or this recap is too
+        long for the writer's model and falls back to the beats once, with a plain log line. The
+        lines are the play's cleaned lines of the people recorded now, in the order spoken, each
+        with its speaker as the character, the DM or a number: never a player's name, the raw
+        words, the DM sidebar or a table question."""
+        if self._reads != rd.TRANSCRIPT or key in self._beats_instead:
+            return "", ""
+        rows = [(self._who(inputs, s.user_id), s.text) for s in play]
+        block = rd.transcript_block(rows)
+        guide = rd.guide_text(shown, inputs.importance, inputs.threads, inputs.allowed_names)
+        if (len(block) + len(guide)) / CHARS_PER_TOKEN > self._transcript_limit():
+            self._beats_instead.add(key)
+            log.info(
+                "Recap: the transcript is about %d tokens, over the writer model's limit of %d: "
+                "this recap reads the beats instead",
+                len(block) // CHARS_PER_TOKEN,
+                self._transcript_limit(),
+            )
+            if self._on_note is not None:
+                self._on_note("the transcript was too long for the writer's model: beats used")
+            return "", ""
+        return block, guide
+
+    def _transcript_limit(self) -> int:
+        """The most tokens of transcript and guide the writer's model takes, leaving room for the
+        instructions, the names and the answer."""
+        model = str(getattr(self._creative or self._careful, "model", ""))
+        return int(max_input(model) * TRANSCRIPT_SHARE)
+
+    @staticmethod
+    def _who(inputs: Inputs, user_id: int) -> str:
+        """How a speaker is shown to the writer: "DM", the character the player plays (one, or
+        several joined), else "Player N" by who spoke first. Never a player's name."""
+        if user_id in inputs.dm_ids:
+            return "DM"
+        for player, characters in inputs.party.items():
+            if player == user_id and characters:
+                return "/".join(characters)
+        order = [u for u in dict.fromkeys(line.user_id for line in inputs.lines)]
+        order = [u for u in order if u not in inputs.dm_ids]
+        return f"Player {order.index(user_id) + 1}" if user_id in order else "Player"
+
     async def _prose(
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting
     ) -> Job | None:
@@ -816,14 +881,22 @@ class RecapWorker:
         play, retold, _ = self._parts(job, said)
         # (the hours are the play's: the talk and the retelling are not session time)
         length = rd.length_for(rd.session_hours(play, inputs.hours))
+        shown = rd.pick_beats(sheet, length.beats, importance=inputs.importance)
+        heard = self._transcript_for(key, inputs, play, shown)
         message = rd.prose_message(
-            rd.pick_beats(sheet, length.beats, importance=inputs.importance),
+            shown,
             inputs.previous,
             [n for n in inputs.allowed_names if n not in inputs.aliases],  # (#2573)
             inputs.day,
             retold,
             ending=sheet,
+            transcript=heard[0],
+            guide=heard[1],
         )
+        if heard[0]:
+            self._heard[key] = heard[0]  # the fact check reads the same lines
+        else:
+            self._heard.pop(key, None)
         if job.problems:
             message += rd.prose_retry(
                 job.problems, self._rejected_prose.get(key), length, plain=self._two
@@ -844,6 +917,7 @@ class RecapWorker:
                     style=inputs.style,
                     notes=inputs.notes,
                     corrections=inputs.corrections,
+                    reads=rd.TRANSCRIPT if heard[0] else rd.BEATS,
                 ),
                 message,
                 more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
@@ -1274,9 +1348,10 @@ class RecapWorker:
                     gid, cid, job.session_at, calls=fresh.calls + step, spent=fresh.spent + 1
                 )
             try:
+                heard = self._heard.get((gid, cid, job.session_at), "")
                 reply = await self._careful.complete(
-                    rd.FACTS_SYSTEM,
-                    rd.facts_message(shown, prose.summary, corrections),
+                    rd.FACTS_SYSTEM_TRANSCRIPT if heard else rd.FACTS_SYSTEM,
+                    rd.facts_message(shown, prose.summary, corrections, heard),
                     max_tokens=room,
                     schema=rd.facts_schema(),
                 )

@@ -51,6 +51,7 @@ class Writer:
     creative: Client
     formatting: Client
     models: tuple[str, str]  # (creative, formatting) model names, for the cost lookup
+    reads: str = "beats"  # what it reads (#2590): the beat sheet or the cleaned transcript
 
 
 def blind_order(pick: Callable[[int], int] = secrets.randbelow) -> tuple[int, int]:
@@ -156,29 +157,37 @@ def summary_lines(
 def writers_from_env(
     get: Callable[[str], str], models: AIModels, claude_model: str, gemini_model: str,
     *, register: Callable[[AnthropicClient], None],
+    which: Sequence[str] = ("claude", "gemini"), reads: Sequence[str] = ("beats", "beats"),
 ) -> list[Writer] | None:  # fmt: skip
-    """The two writers: Claude and Gemini, each on its own client (so no fallback from one to the
-    other hides which wrote a draft). None, after a plain line, when a key is missing."""
+    """The two writers, each on its own client (so no fallback from one to the other hides which
+    wrote a draft): `which` names them, "claude" or "gemini" (the default pair is one of each; two
+    of the same kind compare what each reads, #2590), and `reads` what each reads, "beats" or
+    "transcript". None, after a plain line, when a key is missing."""
     key, gemini_key = get("ANTHROPIC_API_KEY"), get("GEMINI_API_KEY")
-    if not key or not gemini_key:
+    if not key or (not gemini_key and "gemini" in which):
         print("recap_run: --compare needs ANTHROPIC_API_KEY and GEMINI_API_KEY", file=sys.stderr)
         return None
-    claude = AnthropicClient(key, replace(models, creative=claude_model), fallback=False)
-    gemini = AnthropicClient(
-        key, replace(models, creative=gemini_model), gemini=GeminiClient(gemini_key), fallback=False
-    )
-    register(claude)
-    register(gemini)
-    return [
-        Writer(
-            f"Anthropic {claude_model}", claude.tier(AIModelTier.CREATIVE),
-            claude.tier(AIModelTier.FORMATTING), (claude_model, models.formatting),
-        ),
-        Writer(
-            f"Gemini {gemini_model}", gemini.tier(AIModelTier.CREATIVE),
-            gemini.tier(AIModelTier.FORMATTING), (gemini_model, models.formatting),
-        ),
-    ]  # fmt: skip
+    writers: list[Writer] = []
+    for kind, saw in zip(which, reads, strict=True):
+        if kind == "claude":
+            client = AnthropicClient(key, replace(models, creative=claude_model), fallback=False)
+            name = claude_model
+            label = f"Anthropic {claude_model}"
+        else:
+            client = AnthropicClient(
+                key, replace(models, creative=gemini_model),
+                gemini=GeminiClient(gemini_key), fallback=False,
+            )  # fmt: skip
+            name = gemini_model
+            label = f"Gemini {gemini_model}"
+        register(client)
+        writers.append(
+            Writer(
+                f"{label}, reads the {saw}", client.tier(AIModelTier.CREATIVE),
+                client.tier(AIModelTier.FORMATTING), (name, models.formatting), saw,
+            )
+        )  # fmt: skip
+    return writers
 
 
 RunText = Callable[..., Awaitable["Outcome"]]
@@ -213,7 +222,7 @@ async def run_compare(
     first = await run_text(
         inputs, fast, careful, consenting, session_at=session_at, models=models,
         creative=first_writer.creative, formatting=first_writer.formatting,
-        creative_models=first_writer.models, critics=True,
+        creative_models=first_writer.models, critics=True, reads=first_writer.reads,
     )  # fmt: skip
     try:
         start = start_from(first)
@@ -224,6 +233,7 @@ async def run_compare(
         inputs, fast, careful, consenting, session_at=session_at, models=models,
         creative=second_writer.creative, formatting=second_writer.formatting,
         creative_models=second_writer.models, critics=True, start=start,
+        reads=second_writer.reads,
     )  # fmt: skip
     drafts = (first, second)  # draft A, draft B
     if any(leaks(o) for o in drafts):
