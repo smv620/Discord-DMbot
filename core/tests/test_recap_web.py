@@ -43,6 +43,7 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    redo_recap,
 )
 from tests import recap_fixtures as fx
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
@@ -290,6 +291,24 @@ class TheDmsPage(Base):
         again = await read_recap(self.web, self.session, self.ref)
         self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
         self.assertEqual(again["uncheckedDraft"], [])
+
+    async def test_the_marked_sentences_are_the_ones_that_state_a_purpose(self) -> None:
+        """#2308: the page marks the draft's sentences with a purpose in them, by number."""
+        from dmbot.recaps.critics import CHECK_WAIT, Loop
+        from dmbot.recaps.motives import states_purpose
+
+        quiet = "The party rode through the rain."
+        purposeful = "Mira rode on to avenge her brother."
+        self.assertFalse(states_purpose(quiet))
+        self.assertTrue(states_purpose(purposeful))
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+            summary=f"{quiet} {purposeful} They reached the keep.",
+            critics=Loop(waits=3, since=1234).to_json(),
+        )  # fmt: skip
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["uncheckedDraft"][1], purposeful)
+        self.assertEqual(one["uncheckedSentences"], [2])
 
     async def test_the_draft_is_given_only_after_exactly_3_days(self) -> None:
         import time
@@ -768,7 +787,7 @@ class TheRoutes(Base):
         bad = await self.client.put(f"/me/recaps/{self.ref}", json={"summary": 5})
         self.assertEqual(bad.status_code, 422)
         big = await self.client.put(
-            f"/me/recaps/{self.ref}", json={"summary": "x" * 8000, "housekeeping": []}
+            f"/me/recaps/{self.ref}", json={"summary": "x" * (SUMMARY_MAX + 1), "housekeeping": []}
         )
         self.assertEqual((big.status_code, big.json()["error"]), (422, "bad_text"))
         self.assertEqual((await self.client.post(f"/me/recaps/{self.ref}/zap")).status_code, 404)
@@ -2146,3 +2165,84 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MakeAgain(Base):
+    """A DM makes or redoes a session's recap from the page (#2608), through the database's door:
+    held to a DM of the campaign, a session that still has its lines, and a recap not being
+    written; an existing recap needs the DM's yes first; the bot's own door is not the website's."""
+
+    async def lines(self, campaign: str, at: int) -> None:
+        sid = f"{at:016x}" + campaign[:16]
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, ended_at,"
+                " line_count, speakers) VALUES (%s, %s, %s, %s, %s, 1, %s)",
+                (sid, THURSDAY.id, campaign, at, at + 60, [fx.ALICE]),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard,"
+                " text) VALUES (%s, %s, 0, %s, 'raw', 'clean')",
+                (THURSDAY.id, sid, fx.ALICE),
+            )
+
+    async def test_it_asks_once_then_starts_the_recap_over(self) -> None:
+        await self.lines(self.one.id, 100)
+        with self.assertRaises(RecapError) as asked:
+            await redo_recap(self.web, self.session, self.ref)
+        self.assertEqual(asked.exception.code, "needs_confirm")
+        self.assertEqual((await self.state(self.one.id)).state, "ready")  # asking changed nothing
+        page = await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(
+            (page["state"], page["working"], page["restartedAt"] > 0), ("queued", True, True)
+        )
+        self.assertIsNone(page["previous"])  # (it was not approved: nothing is held)
+
+    async def test_an_approved_recap_is_held_and_shown_as_the_earlier_one(self) -> None:
+        await self.lines(self.one.id, 100)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET approved_hash = encode(sha256(convert_to(title || E'\\n'"
+                " || summary, 'UTF8')), 'hex') WHERE campaign_id = %s",
+                (self.one.id,),
+            )
+        page = await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(page["previous"]["title"], "The Silver Lock")
+        self.assertEqual(page["title"], "")
+
+    async def test_a_session_with_no_recap_yet_can_be_made_from_its_ref(self) -> None:
+        await self.lines(self.one.id, 300)
+        page = await redo_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 300)
+        )
+        self.assertEqual((page["sessionAt"], page["state"]), (300, "queued"))
+
+    async def test_no_lines_a_non_dm_and_a_busy_recap_are_refused(self) -> None:
+        with self.assertRaises(RecapError) as gone:  # the base session has no transcript rows
+            await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(gone.exception.code, "no_lines")
+        await self.lines(self.two.id, 100)  # Bob's campaign: Alice is no DM there
+        with self.assertRaises(RecapError) as other:
+            await redo_recap(self.web, self.session, self.other, replace=True)
+        self.assertEqual(other.exception.code, "not_allowed")
+        await self.lines(self.one.id, 100)
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
+        async with self.db.guild(THURSDAY.id) as conn:  # a worker has it right now
+            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (NOW + 600,))
+        with self.assertRaises(RecapError) as busy:
+            await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(busy.exception.code, "busy")
+
+    async def test_the_bots_own_door_is_not_the_websites(self) -> None:
+        await self.lines(self.one.id, 100)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                await conn.execute(
+                    "SELECT dmbot_recap_start_over(%s, %s, 100, %s, true)",
+                    (THURSDAY.id, self.one.id, BOB.id),
+                )
+        self.assertEqual(callers("dmbot_recap_start_over"), {"schema.py", "recaps/store.py"})
+        self.assertEqual(callers("dmbot_recap_redo"), {"schema.py", "web/recaps.py"})

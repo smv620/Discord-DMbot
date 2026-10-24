@@ -185,6 +185,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",
     "gemini_key": "a secret, used only when Gemini is chosen for the recap",
+    "recap_writer_reads": "which text the recap writer reads, a choice (off by default)",
     "ai_provider_creative": "which company's AI writes the recap, a choice (off by default)",
     "log_format": "how logs look",
     "cleaner_rank_max": "a number: the most ranking calls a session makes (0 is off)",

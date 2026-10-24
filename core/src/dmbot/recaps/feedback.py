@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from dmbot.memory.extractor import quoted
+from dmbot.word_end import at_word_end
 
 KINDS = ("style", "accuracy", "content", "story_help", "other")
 MAX_FEEDBACK_CHARS = 1000  # what the form takes
@@ -220,7 +221,7 @@ def parse(answer: str) -> list[Point] | None:
         kind, text = item.get("kind"), item.get("text")
         if not isinstance(text, str):
             continue
-        text = " ".join(text.split())[:POINT_CHARS].strip()
+        text = at_word_end(" ".join(text.split()), POINT_CHARS).strip()
         if text:
             points.append(Point(kind if kind in KINDS else "other", text))
     return points

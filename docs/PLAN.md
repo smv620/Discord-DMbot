@@ -4897,8 +4897,18 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     The Discord Approve button is held the same way (a plain line pointing to the recap page, and the store
     refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
     (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
-    checked and a restored campaign is checked afresh. The checker itself (part 2b)
-    and the chat (#2123) follow.
+    checked and a restored campaign is checked afresh.
+  - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot runs `PlotRunner` in its own loop (never inside the recap loop, so a slow AI call cannot delay a recap job) (when
+    `DMBOT_PLOT_CHECK` is on): for each ready draft whose text has no check it starts one (at most 6 a campaign an
+    hour, a check that never finished is tried 3 times) and makes one careful-tier call (`Feature.PLOT_CHECK`) with the
+    recap's numbered sentences and the earlier accepted recaps (`memory/plot_check.py`). The call only advises:
+    code keeps a finding only when its kind and level are the fixed words, the sentence number is the recap's and
+    the quote is really in the earlier recap shown (an invented source never reaches the DM); a finding the DM
+    already answered "Not a problem" (same point, same words) is not raised again; an answer written after the
+    text changed is thrown away and the new text is checked afresh. A recap with no earlier accepted recap, an
+    answer that cannot be used or a refused call makes no issue and never holds Approve. This slice reads the earlier
+    accepted recaps only; the code checks against the confirmed story memory, the pre-session note and recall, and
+    re-checking later recaps that name the same people, follow. The chat (#2123) follows.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap

@@ -22,6 +22,7 @@ from typing import Any
 from dmbot.ai import SLOW_TIER_TIMEOUT_S, Reply
 from dmbot.memory.name_documents import request_text
 from dmbot.rules.house import HOUSE_RULES_MAX, RULE_MAX
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ def norm(text: str) -> str:
 class Candidate:
     text: str
     instead_of: str | None
+    shortened: bool = False  # cut to the table's limit: the DM is told to check its end (#2607)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +110,6 @@ class Found:
     published_book: bool = False
     asked: int = 0  # how many the AI listed
     unquoted: int = 0  # dropped: the quote is not in the file
-    too_long: int = 0  # dropped: over 500 characters
     repeats: int = 0  # dropped: already a rule here, or listed twice
     over_cap: int = 0  # dropped: past 200
     unread: bool = False  # no usable answer: nothing is offered, and the DM is told
@@ -124,21 +125,25 @@ def keep(items: Sequence[object], source: str, existing: Sequence[tuple[str, str
     seen = {(norm(w), norm(i) if i else None) for w, i in existing}
     room = max(0, HOUSE_RULES_MAX - len(existing))  # a campaign holds at most 200 in all
     kept: list[Candidate] = []
-    unquoted = too_long = repeats = over = 0
+    unquoted = repeats = over = 0
     for item in items:
         if not isinstance(item, dict):
             continue
         text = " ".join(str(item.get("text") or "").split())
         instead = " ".join(str(item.get("instead_of") or "").split()) or None
-        quote = norm(str(item.get("quote") or ""))
+        # A quote is shortened from its end before it is checked (never instead of the check): its
+        # front still has to be in the file. A rule is shortened at a word end to the limit the
+        # table holds, never dropped for its length (#2601).
+        quote = at_word_end(norm(str(item.get("quote") or "")), QUOTE_MAX)
         if not text:
             continue
-        if len(quote) < MIN_QUOTE or len(quote) > QUOTE_MAX or quote not in haystack:
+        if len(quote) < MIN_QUOTE or quote not in haystack:
             unquoted += 1
             continue
-        if len(text) > RULE_MAX or (instead is not None and len(instead) > RULE_MAX):
-            too_long += 1
-            continue
+        cut = len(text) > RULE_MAX or (instead is not None and len(instead) > RULE_MAX)
+        text = at_word_end(text, RULE_MAX)
+        if instead is not None:
+            instead = at_word_end(instead, RULE_MAX) or None
         key = (norm(text), norm(instead) if instead else None)
         if key in seen:
             repeats += 1
@@ -147,8 +152,8 @@ def keep(items: Sequence[object], source: str, existing: Sequence[tuple[str, str
             over += 1
             continue
         seen.add(key)
-        kept.append(Candidate(text, instead))
-    return Found(tuple(kept), False, len(items), unquoted, too_long, repeats, over)
+        kept.append(Candidate(text, instead, cut))
+    return Found(tuple(kept), False, len(items), unquoted, repeats, over)
 
 
 def parse(raw: str) -> tuple[bool, list[object]] | None:
@@ -203,11 +208,10 @@ async def read(
             return Found(published_book=True, asked=len(listed), calls=calls)
         found = dataclasses.replace(keep(listed, text, existing), calls=calls)
         log.info(
-            "House rules from a file: %d listed, %d kept (%d unquoted, %d too long, %d repeats)",
+            "House rules from a file: %d listed, %d kept (%d unquoted, %d repeats)",
             found.asked,
             len(found.rules),
             found.unquoted,
-            found.too_long,
             found.repeats,
         )
         return found
