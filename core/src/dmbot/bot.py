@@ -351,6 +351,7 @@ from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.pack_suggestions import PackSuggestionStore
+from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
@@ -13149,6 +13150,7 @@ def register_backup_sections(
     campaigns.register_section(NotesSection())  # and its standing notes on that (#2076)
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
     campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
+    campaigns.register_section(RuleSetsSection())  # and the sets it publishes (#2552)
     campaigns.register_section(ClockSection())  # and the game clock (#965)
     campaigns.register_section(EffectsSection())  # and its timed effects (#998)
     # and its session recaps (#1382), whose audio files go with the campaign (#1383)

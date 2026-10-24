@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -74,6 +75,18 @@ class Smart(fx.Canned):
             for n, t in asked
         ]
         return Reply(json.dumps({"checks": checks}), False, 10, 10, "m")
+
+
+def ending_fails_after_the_draft(real: Any) -> Any:
+    """A `check_prose` that finds the draft clean (the closure `checked`) and every later check
+    failing on the ending: the check that fails only once the critics have had their say."""
+
+    def check(*a: Any, **k: Any) -> list[str]:
+        if sys._getframe(1).f_code.co_name == "checked":
+            return list(real(*a, **k))
+        return ["the recap must end exactly where the session stopped"]
+
+    return check
 
 
 class Criticising(WorkerHarness):
@@ -260,17 +273,12 @@ class Criticising(WorkerHarness):
     async def test_critics_stopped_by_unreadable_answers_do_not_fail_a_draft_with_a_failed_check(
         self,
     ) -> None:
+        real = rd.check_prose
         fast = self.fast_for(WITH_MOTIVE)
         careful = fx.Canned(NO_NOTES, "not json", "not json")
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
-        real = rd.check_prose
 
-        def ending_fails(*a: Any, **k: Any) -> list[str]:
-            return (
-                ["the recap must end exactly where the session stopped"]
-                if k.get("last")
-                else real(*a, **k)
-            )
+        ending_fails = ending_fails_after_the_draft(real)
 
         with (
             patch.object(rd, "check_prose", ending_fails),
@@ -283,17 +291,12 @@ class Criticising(WorkerHarness):
         self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
 
     async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
+        real = rd.check_prose
         fast = self.fast_for(WITH_MOTIVE)
         careful = fx.Canned(NO_NOTES, *(["not json"] * 90))
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
-        real = rd.check_prose
 
-        def ending_fails(*a: Any, **k: Any) -> list[str]:
-            return (
-                ["the recap must end exactly where the session stopped"]
-                if k.get("last")
-                else real(*a, **k)
-            )
+        ending_fails = ending_fails_after_the_draft(real)
 
         told = AsyncMock()
         self.worker._unchecked = told
@@ -571,22 +574,14 @@ class Criticising(WorkerHarness):
     async def test_no_agreement_fails_on_our_side_with_the_rule_named_and_gives_the_try_back(
         self,
     ) -> None:
-        real = rd.check_prose
-        ending = ["the recap must end exactly where the session stopped"]
-        with patch.object(
-            rd, "check_prose", lambda *a, **k: ending if k.get("last") else real(*a, **k)
-        ):
+        with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped("no agreement", tries=1)
         self.assertEqual(job.state, "failed")
         self.assertIn("(check: ending)", job.last_error)
         self.assertEqual(job.tries, 0)  # given back
 
     async def test_the_job_ceiling_with_a_failed_check_fails_and_keeps_the_try(self) -> None:
-        real = rd.check_prose
-        ending = ["the recap must end exactly where the session stopped"]
-        with patch.object(
-            rd, "check_prose", lambda *a, **k: ending if k.get("last") else real(*a, **k)
-        ):
+        with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped(pl.STOP_CEILING, tries=1)
         self.assertEqual((job.state, job.tries), ("failed", 1))
         self.assertIn("(check: ending)", job.last_error)
