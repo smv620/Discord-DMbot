@@ -7,7 +7,7 @@ import { transcriptsCard } from "./account-cards";
 import type { TranscriptVersion } from "../account/api";
 
 export const cleanedNote =
-  "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be wrong. Chat clearly not about the game is left out, and a short note says how long it was spoken. The \"As heard\" version (/transcript) still has every word. Only people who agreed were recorded.";
+  "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be wrong. Long chat clearly not about the game is left out, and a short note says how long it was spoken; when DMbot is unsure, it keeps the line. The DM can put left-out chat back on the website. The \"As heard\" version (/transcript) still has every word. Only people who agreed were recorded.";
 export const heardNote =
   "As heard: every word exactly as DMbot heard it, off-topic chat included, before it fixed any names, so some names may be misheard. The \"Cleaned\" version (/transcript) has the names fixed and leaves out clearly off-topic chat. Only people who agreed were recorded.";
 

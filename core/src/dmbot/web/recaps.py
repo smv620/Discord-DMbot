@@ -25,7 +25,7 @@ from dmbot.db import Conn, Database
 from dmbot.recaps import critics, cues
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
-from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
+from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.held import apply_held
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
@@ -37,7 +37,7 @@ LIST_LIMIT = 20
 
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
-    " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
+    " r.housekeeping, r.music, r.tries, r.last_error, r.next_at, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
@@ -201,6 +201,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # The recap is written and waits for its last check (#2255): a note for the DM's card
         # (the words are `error`); not a failure and nothing to do.
         "waitingForCheck": row["last_error"] == critics.CHECK_WAIT and not ready,
+        # When DMbot tries the check again (Unix seconds), while it waits; else 0 (#2596).
+        "nextTryAt": (
+            int(row["next_at"] or 0) if row["last_error"] == critics.CHECK_WAIT and not ready else 0
+        ),
         # While it waits for its check: since when (Unix seconds, 0 before the first wait), and the
         # sentences the word list marks as likely to state a reason or a plan (their numbers, from
         # 1), which no check has read: for the DM's page, where they may read it and approve it
@@ -496,7 +500,7 @@ async def edit_recap(
         raise RecapError("bad_text")
     if refusal := cue_refusal(text):  # the edit stays unsaved until the cues are right (#2083)
         raise refusal
-    if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
+    if len(bullets) > HOUSEKEEPING_HARD or any(len(b) > BULLET_HARD for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)

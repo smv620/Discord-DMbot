@@ -26,7 +26,7 @@ from dmbot.memory.extractor import quoted
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.significance import MEMORY_CHARS, MEMORY_ITEMS, RECAP, Memory
 from dmbot.recaps.split import content_words
-from dmbot.recaps.text import names_a_secret
+from dmbot.recaps.text import at_word_end, names_a_secret
 
 MAX_ROUNDS = 4  # readings of a draft: the first draft and up to three revisions
 MAX_CHANGES = 8  # PlotBot's changes for one reading
@@ -53,6 +53,10 @@ CHECK_WAIT = (
 # bot advises, the DM decides).
 WAIT_SCHEDULE_S = (900, 3600, 14400)
 WAIT_LONG_S = 43200
+# When the check failed on our side, not the day's tally (a cut or unreadable answer, the service
+# erroring): minutes, never hours (#2596; the owner's Test M recap was held 4 hours after two cut
+# answers). 2 minutes, 5, 15, then every 15 minutes.
+WAIT_SOON_S = (120, 300, 900)
 UNCHECKED_AFTER_S = 3 * 86400
 WAIT_CALLS = (
     2  # AI calls a waiting try may make: not counted against the job's own, but in the day's
@@ -83,8 +87,14 @@ def wait_budget(batches: int) -> int:
     return max(WAIT_CALLS, batches + 2, WAIT_REVISE_CALLS)
 
 
-def wait_for(waits: int) -> int:
-    """Seconds to wait before the next try, after `waits` waits."""
+def wait_for(waits: int, *, soon: bool = False) -> int:
+    """Seconds to wait before the next try, after `waits` waits. `soon`: the check failed on our
+    side (`WAIT_SOON_S`), so it is tried again within minutes."""
+    if soon and waits < len(WAIT_SOON_S):
+        return WAIT_SOON_S[waits]
+    # (after the first minutes the usual back-off follows, so a long outage does not burn the
+    # day's calls on tries that cannot work: 15 minutes, an hour, 4 hours, then 12)
+    waits -= len(WAIT_SOON_S) if soon else 0
     return WAIT_SCHEDULE_S[waits] if waits < len(WAIT_SCHEDULE_S) else WAIT_LONG_S
 
 
@@ -418,10 +428,9 @@ def plot_changes(
             out.append(Change(kind, f"{quote}: {GENERIC[kind]}", True, number))
         else:
             said = raw.get("change")
-            text = " ".join(said.split()) if isinstance(said, str) else ""
+            text = at_word_end(" ".join(said.split()), CHANGE_MAX) if isinstance(said, str) else ""
             explainable = (
                 text
-                and len(text) <= CHANGE_MAX
                 and ties
                 and all(allowed[t] for t in ties)
                 and not names_a_secret(text, secret_names, allowed_names)
