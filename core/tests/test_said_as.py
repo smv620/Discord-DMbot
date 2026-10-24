@@ -149,7 +149,7 @@ class ReachingTheNarrator(MemoryTest):
         bot = SimpleNamespace(
             lookup=cache,
             _recanted=AsyncMock(return_value=()),
-            _secret_ties=AsyncMock(return_value=()),
+            _relation_ties=AsyncMock(return_value=()),
         )
         job = SimpleNamespace()
         return await DMBot.recap_audio_inputs(bot, GUILD_A, self.c, job)  # type: ignore[arg-type]

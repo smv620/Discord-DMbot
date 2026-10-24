@@ -108,9 +108,9 @@ class TheSecretConnection(unittest.TestCase):
             allowed_names=["Mira", "The Stranger", "Lord Veil"],
             secret_names=[],
             pcs=PCS,
-            secret_ties=[(("The Stranger",), ("Mira",))],
+            identity_ties=[(("The Stranger",), ("Mira",))],
         )
-        hit = [p for p in problems if "keeps secret" in p and "link" in p]
+        hit = [p for p in problems if "same person or place" in p]
         self.assertTrue(hit, problems)
         self.assertFalse(any("Mira" in p or "Stranger" in p for p in hit))
 
@@ -157,29 +157,71 @@ class TheOtherWays(unittest.IsolatedAsyncioTestCase):
         self.assertIn("anything", got)
         self.assertTrue(got)  # (a test like `if recanted:` never reads "none")
 
-    async def test_a_gate_that_cannot_read_the_connections_lets_nothing_go(self) -> None:
-        from unittest.mock import AsyncMock
+    async def test_relations_that_cannot_be_read_never_stop_a_recap(self) -> None:
+        from unittest.mock import AsyncMock, patch
 
+        from dmbot import bot as bot_module
         from dmbot.bot import DMBot
 
-        me = SimpleNamespace(_secret_ties=AsyncMock(side_effect=RuntimeError("down")))
-        campaign = SimpleNamespace(guild_id=1, id="c")
-        got = await DMBot._ties_stated(me, campaign, "Mira ran.")  # type: ignore[arg-type]
-        self.assertIsNone(got)
-        me = SimpleNamespace(_secret_ties=AsyncMock(return_value=(TIES[0],)))
-        self.assertTrue(await DMBot._ties_stated(me, campaign, "Mira, Lord Veil's daughter."))  # type: ignore[arg-type]
-        self.assertFalse(await DMBot._ties_stated(me, campaign, "Mira ran."))  # type: ignore[arg-type]
+        me = SimpleNamespace(memory=object())
+        with patch.object(bot_module, "secret_connections", AsyncMock(side_effect=OSError("x"))):
+            self.assertEqual(await DMBot._relation_ties(me, 1, "c"), ())  # type: ignore[arg-type]
+        self.assertEqual(await DMBot._relation_ties(SimpleNamespace(memory=None), 1, "c"), ())  # type: ignore[arg-type]
 
-    async def test_audio_is_not_voiced_when_the_narration_links_two_secret_ends(self) -> None:
-        from dmbot.recaps.audio import worker
-
-        class Stop(Exception):
-            pass
-
-        job = SimpleNamespace(summary="《Calm》 Mira, the daughter of Lord Veil, rode on.")
-        inputs = SimpleNamespace(secret_ties=TIES)
-        # the check the worker runs in `_check`, on the same text and ties
-        self.assertTrue(rd.states_secret_tie(worker.strip_cues(job.summary), inputs.secret_ties))
-        self.assertFalse(
-            rd.states_secret_tie(worker.strip_cues("《Calm》 Mira rode on."), inputs.secret_ties)
+    def test_a_relation_is_a_note_for_the_dm_never_a_refusal(self) -> None:
+        text = "《Tense》 Mira and Lord Veil reached the inn. Mira slept."
+        problems = rd.check_prose(
+            rd.Prose(text, ("soft",)),
+            beats=[BEAT],
+            transcript="mira lord veil",
+            allowed_names=["Mira", "Lord Veil"],
+            secret_names=[],
+            pcs=PCS,
+            identity_ties=[],  # (relations are no longer passed to the check)
         )
+        self.assertFalse([p for p in problems if "secret" in p], problems)
+        (note,) = rd.tie_notes(rd.narration_of(text), TIES)
+        self.assertIn("Mira", note)
+        self.assertIn("Lord Veil", note)
+        self.assertIn("secret connection", note)
+        self.assertEqual(rd.tie_notes("Mira ran. Lord Veil slept.", TIES), [])  # apart: no note
+
+    def test_the_writer_is_told_the_pairs_with_no_relation_words_and_no_secret_names(self) -> None:
+        pairs = rd.apart_pairs(TIES, ["Mira", "Lord Veil"])  # (The Stranger is a secret spelling)
+        self.assertEqual(pairs, [("Lord Veil", "Mira")])
+        message = rd.prose_message([BEAT], "", ["Mira"], None, apart=pairs)
+        self.assertIn("<apart>", message)
+        self.assertIn("Lord Veil", message)
+        block = message.split("<apart>")[1].split("</apart>")[0]
+        self.assertNotIn("Stranger", block)  # (a secret spelling never goes to the writer)
+        self.assertNotIn("daughter", message)
+        self.assertEqual(rd.apart_pairs(TIES, ["Mira"]), [])  # an end with no usable name
+        self.assertNotIn("<apart>", rd.prose_message([BEAT], "", ["Mira"], None))
+
+    def test_an_identity_pair_in_one_sentence_is_still_refused(self) -> None:
+        text = "《Tense》 The Stranger, who is really Belleros, led the way."
+        problems = rd.check_prose(
+            rd.Prose(text, ("soft",)),
+            beats=[BEAT],
+            transcript="the stranger belleros",
+            allowed_names=["The Stranger", "Belleros"],
+            secret_names=[],
+            pcs=PCS,
+            identity_ties=[(("The Stranger",), ("Belleros",))],
+        )
+        self.assertTrue([p for p in problems if "same person or place" in p], problems)
+        self.assertFalse(any("Stranger" in p or "Belleros" in p for p in problems))
+
+    def test_the_note_goes_in_the_critics_notes_the_dm_page_shows(self) -> None:
+        from dmbot.recaps.pipeline import RecapWorker
+
+        job = SimpleNamespace(summary="《Tense》 Mira and Lord Veil reached the inn.", critics=None)
+        finish = rd.Finish("The Inn", ("Mira slept.",))
+        inputs = SimpleNamespace(relation_ties=TIES)
+        got = RecapWorker._tie_notes(job, finish, inputs)  # type: ignore[arg-type]
+        from dmbot.recaps import critics
+
+        (note,) = critics.loop_from_json(got["critics"]).notes
+        self.assertIn("secret connection", note)
+        none = RecapWorker._tie_notes(job, finish, SimpleNamespace(relation_ties=[]))  # type: ignore[arg-type]
+        self.assertEqual(none, {})

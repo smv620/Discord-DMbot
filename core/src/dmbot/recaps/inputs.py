@@ -93,7 +93,7 @@ def recap_name_sets(
     the party learns it. A 🤫 secret name the table said aloud is the same (#2591, owner decision
     2026-10-24): only that spelling, and only the name: its secret connections, notes and
     anything else marked secret about it stay out of the writer's input and are checked in the
-    draft (`Inputs.secret_ties`). A name the DM took back (`recanted`, spelling keys, #2410) is
+    draft (`Inputs.identity_ties`). A name the DM took back (`recanted`, spelling keys, #2410) is
     secret again. With no `said` (the session's lines can't be read) nothing is revealed:
     stricter, never looser."""
 
@@ -203,7 +203,7 @@ async def load_inputs(
     with_earlier: bool = True,
     importance: Any | None = None,
     recanted: Collection[str] = (),
-    secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+    relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> Inputs | None:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
@@ -235,7 +235,8 @@ async def load_inputs(
         dm_ids=set(campaign.dm_user_ids),
         allowed_names=allowed_now,
         secret_names=secret_now,
-        secret_ties=tuple(secret_ties),
+        identity_ties=tuple(identity_ties(names)),
+        relation_ties=tuple(relation_ties),
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
         previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
         campaign_name=campaign.name,

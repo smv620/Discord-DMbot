@@ -249,7 +249,7 @@ class TheNarration(Held):
             bot = SimpleNamespace(
                 lookup=LookupCache(self.memory),
                 _recanted=AsyncMock(return_value=()),
-                _secret_ties=AsyncMock(return_value=()),
+                _relation_ties=AsyncMock(return_value=()),
                 transcripts=SimpleNamespace(
                     sessions=AsyncMock(return_value=sessions), lines=AsyncMock(return_value=[line])
                 ),

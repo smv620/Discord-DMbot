@@ -33,9 +33,7 @@ from dmbot.recaps.audio import script as sc
 from dmbot.recaps.audio.eleven import ElevenLabs, Locator, ProviderError
 from dmbot.recaps.audio.files import FILE_NAMES, AudioFiles
 from dmbot.recaps.audio.render import Renderer, RenderError, estimate_credits, kinds_for
-from dmbot.recaps.draft import states_secret_tie
 from dmbot.recaps.store import AUDIO_LEASE_S, AUDIO_MAX_TRIES, Job, RecapStore
-from dmbot.recaps.text import strip_cues
 
 log = logging.getLogger(__name__)
 
@@ -73,9 +71,6 @@ class AudioInputs:
 
     secret_names: Collection[str]
     names: Sequence[nm.SpokenName]  # confirmed names with their "said as" spellings
-    # The campaign's secret connections as (names of one end, names of the other): a narration
-    # that puts both in one sentence is not voiced (#2591).
-    secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = ()
 
     @property
     def allowed_names(self) -> list[str]:
@@ -221,9 +216,6 @@ class AudioWorker:
             raise Stop(NO_NAMES, permanent=False)
         if not set(job.speakers) <= set(await self._consenting(gid)):
             raise Stop(STOPPED)
-        if states_secret_tie(strip_cues(job.summary), inputs.secret_ties):
-            log.warning("Recap audio: refused, it links two names with a secret connection")
-            raise Stop(SECRET)
         if self._spent(job) > self._max:
             raise Stop(OVER_CAP)
         return inputs

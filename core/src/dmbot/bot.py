@@ -320,10 +320,8 @@ from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
-from dmbot.recaps.draft import states_secret_tie
 from dmbot.recaps.inputs import (
     EVERY_NAME,
-    identity_ties,
     load_inputs,
     recap_name_sets,
     recap_recanted,
@@ -9322,28 +9320,20 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Recap: couldn't read the recanted secret names")
             return EVERY_NAME
 
-    async def _secret_ties(
+    async def _relation_ties(
         self, gid: int, cid: str
     ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
-        """The campaign's secret connections as pairs of name sets, for the draft check (#2591):
-        the 🤫 relations, and the link between each 🤫 spelling and the entry's public names. It
-        raises when they can't be read, never an empty answer: a caller that cannot say what is
-        secret must not go ahead (`_ties_stated`)."""
-        if self.memory is None or self.lookup is None:
-            raise RuntimeError("no memory to read the secret connections from")
-        found = await secret_connections(self.memory, gid, cid)
-        names = await self.lookup.get(gid, cid)
-        return (*((c.subject, c.object) for c in found), *identity_ties(names))
-
-    async def _ties_stated(self, campaign: Campaign, text: str) -> bool | None:
-        """Whether `text` states a secret connection (a sentence naming both ends of one), or None
-        when the connections can't be read: then nothing goes out (#2591)."""
+        """The campaign's 🤫 relations as pairs of name sets (#2591). The writer is told the pairs
+        (never the relation's words) and the DM gets a note on the sentence that names both. They
+        advise: if they can't be read the recap goes on without them, the DM decides."""
+        if self.memory is None:
+            return ()
         try:
-            ties = await self._secret_ties(campaign.guild_id, campaign.id)
+            found = await secret_connections(self.memory, gid, cid)
         except Exception:
             log.exception("Recap: couldn't read the secret connections")
-            return None
-        return states_secret_tie(strip_cues(text), ties)
+            return ()
+        return tuple((c.subject, c.object) for c in found)
 
     async def recap_secret_names(
         self, campaign: Campaign, session_at: int | None = None
@@ -9402,7 +9392,7 @@ class DMBot(commands.AutoShardedBot):
             notes=self.recap_notes,
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
-            secret_ties=await self._secret_ties(gid, cid),
+            relation_ties=await self._relation_ties(gid, cid),
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
@@ -9463,10 +9453,6 @@ class DMBot(commands.AutoShardedBot):
             await self.recap_allowed_names(campaign, job.session_at),
         ):
             problems.append("It names something you keep secret. Change the text first.")
-        elif (linked := await self._ties_stated(campaign, recap_post.to_the_table(job))) is None:
-            problems.append("DMbot couldn't check your secret names just now. Try again.")
-        elif linked:
-            problems.append("It links two names you keep a secret connection between. Change it.")
         if not set(job.speakers) <= set(await self.consent.agreed(campaign.guild_id)):
             problems.append(
                 "A player stopped being recorded since this was written, so it can't go ahead."
@@ -9538,15 +9524,6 @@ class DMBot(commands.AutoShardedBot):
                 None,
                 "This recap names a secret of yours, so it wasn't shared. "
                 "Edit it on your recap page, then try again.",
-            )
-        linked = await self._ties_stated(campaign, text)
-        if linked is None:
-            return None, "DMbot couldn't check your secret names just now. Try again."
-        if linked:
-            return (
-                None,
-                "This recap links two names you keep a secret connection between, so it wasn't "
-                "shared. Edit it on your recap page, then try again.",
             )
         if not set(job.speakers) <= set(await self.consent.consenting(gid)):
             return (
@@ -9685,14 +9662,8 @@ class DMBot(commands.AutoShardedBot):
             await self._recanted(gid, cid, getattr(job, "session_at", None)),
         )
         hidden = set(secret)
-        try:
-            ties = await self._secret_ties(gid, cid)
-        except Exception:
-            log.exception("Recap audio: couldn't read the secret connections")
-            return None
         return AudioInputs(
             secret_names=secret,
-            secret_ties=ties,
             # The DM's "said as" spelling (#1419); a secret name never has one, and the names are
             # read fresh all the same, so a secret one is always known to the filter.
             names=[
@@ -9966,14 +9937,6 @@ class DMBot(commands.AutoShardedBot):
         text = recap_post.to_the_table(job)
         if names_a_secret(text, secrets, await self.recap_allowed_names(campaign, job.session_at)):
             return await back("It names something you keep secret. Change the text, then post.")
-        linked = await self._ties_stated(campaign, text)
-        if linked is None:
-            return await back("DMbot couldn't check your secret names just now. Try Post again.")
-        if linked:
-            return await back(
-                "It links two names you keep a secret connection between. "
-                "Change the text, then post."
-            )
         try:  # (the progress clock's step: cosmetic, so it never stops a post, and never sits
             # between the consent read and the send, which must stay back to back)
             await self.recaps.posting_step(gid, cid, at, "post")
