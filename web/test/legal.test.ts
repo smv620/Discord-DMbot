@@ -167,12 +167,12 @@ describe("the facts #433 asks for", () => {
     const p = privacy();
     expect(p).toContain("Google (Gemini): only if switched on.");
     expect(p).toContain("It is off unless DMbot LLC turns it on.");
-    // what the writer is sent (core/src/dmbot/recaps/draft.py, pipeline.py): the list of what happened, the names, the
-    // last recap, style notes, fixes and short pieces of what the table said aloud; never sound or the full transcript
-    expect(p).toContain("a short list of what happened in the session (and who and where)");
-    expect(p).toContain("short pieces of what the table said");
-    expect(p).toContain("It never gets sound or the full transcript.");
-    expect(p).not.toContain("never gets sound or the transcript");
+    // what the writer is sent (owner decision 2026-10-23, #2590): the cleaned transcript, the list of what happened,
+    // the names, the last recap, style notes and fixes; never sound, the as-heard transcript or the DM screen
+    expect(p).toContain("the session's cleaned transcript (what was said at the table by people who agreed to be recorded, with the off-topic chat left out)");
+    expect(p).toContain("a short list of what happened (and who and where)");
+    expect(p).toContain("It never gets sound, the as-heard transcript, or anything from the DM screen.");
+    expect(p).not.toContain("full transcript"); // the earlier wording, which stopped being true with #2590
     expect(p).toContain("Google's paid terms say it doesn't use that text to train its AI.");
     expect(p).toContain("Google is a company in the United States.");
     const link = doc("privacy").querySelector('a[href="https://ai.google.dev/gemini-api/terms"]');
