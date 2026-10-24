@@ -60,8 +60,8 @@ _WAIT = "a wait or a pointer, kept out by its schema comment"
 _PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
 _PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
 NOT_IN_BACKUP: dict[str, str] = {
-    "web_backups": "a request for a copy for the website and the copy made for it, kept 15 minutes: "
-    "a copy of a copy, never content (#2554)",
+    "web_backups": "a request for a copy for the website and the copy made for it, kept 15 "
+    "minutes: a copy of a copy, never content (#2554)",
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
