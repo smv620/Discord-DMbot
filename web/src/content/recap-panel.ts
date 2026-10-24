@@ -35,3 +35,43 @@ export const panelWords = {
   tooSoon: "You asked a few minutes ago. Try again in a little while.",
   expired: "The audio link ran out. Reload the page to play it.",
 };
+
+// "Remake the voice" after editing the words (#2630). The API answers with a fixed code; the page says it
+// in plain words: what is made again, and why when it is everything. Counts and codes only.
+export const remakeWords = {
+  voiceButton: "Remake the voice",
+  allButton: "Remake the audio",
+  voice: (changed: number, total: number): string =>
+    `Only the voice is made again: ${changed} of ${total} ${total === 1 ? "paragraph" : "paragraphs"} changed. The music stays as it is.`,
+  all: {
+    paragraphs: "You added or removed a paragraph, so the music is made again too.",
+    moods: "You changed where the music changes mood or where the narrator pauses, so the music is made again too.",
+    size: "Your changes moved the story enough that the music is made again too.",
+    no_parts: "The earlier voice wasn't kept, so the voice and the music are made again.",
+  } as Record<string, string>,
+  allFallback: "The voice and the music are made again.",
+  same: "The words the narrator reads haven't changed, so there is nothing to remake.",
+  lastVoice: "The last time, only the voice was made again. The music was kept.",
+  lastAll: "The last time, the voice and the music were both made again.",
+  lookFailed: "We couldn't check what would be remade. You can still press Make the audio again.",
+  stage: {
+    audio_voice: "Speaking the paragraphs",
+    audio_music: "Making the music",
+    audio_mix: "Mixing the voice and the music",
+  } as Record<string, string>,
+  unit: { paragraphs: "paragraphs" } as Record<string, string>,
+};
+
+// "Fix a name everywhere" in the recap editor (#2630): the DM types the wrong spelling and the right one,
+// and every use in the text box is replaced. Nothing is saved until Save; the names list is not touched.
+export const fixNameWords = {
+  heading: "Fix a name everywhere",
+  wrongLabel: "Spelled wrong",
+  rightLabel: "Should be",
+  button: "Replace everywhere",
+  none: (wrong: string): string => `"${wrong}" isn't in the text.`,
+  done: (wrong: string, right: string, times: number): string =>
+    `Replaced "${wrong}" with "${right}" ${times} ${times === 1 ? "time" : "times"}. Press Save to keep it.`,
+  note: "This changes the text in the box only. Save it to keep it. The names list isn't changed.",
+};
+

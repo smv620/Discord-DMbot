@@ -49,6 +49,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "Fix a word, remake only the voice",
+    text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words and save, then approve the new text. Under the player the page says what Make the audio again will do. If you changed a few words, it says Remake the voice: only the paragraphs you changed are spoken again, and the music stays. If you added or removed a paragraph, or changed where the music changes mood, it says Remake the audio and tells you why, because the music is made again too. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are DMbot's and can't be edited. In the editor, Fix a name everywhere replaces every use of a spelling in the text box at once. Press Save to keep it.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Your story timeline",
     text: "A campaign's Story timeline lists every session in order, with the day it was played, how long it ran, its recap and the names the players learned that session. Players see only the titles of recaps you posted.",
   },
