@@ -45,8 +45,8 @@ GONE = "That isn't in your adventure any more, or DMbot no longer remembers it."
 CLASH = "That link clashes with another one just made. Look again and try once more."
 TWICE = "Two of those would link the same name twice. Pick only one of them."
 NOT_MATCHING = (
-    "A person in your adventure can only be the same as a person or group DMbot remembers, and "
-    "a place as a place."
+    "A character in your adventure can only be the same as a character or group DMbot "
+    "remembers, and a place as a place."
 )
 TAKEN_BOOK = (
     "That name in your adventure is already linked to another name DMbot remembers. Take that "

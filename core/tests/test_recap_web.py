@@ -43,6 +43,7 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    redo_recap,
 )
 from tests import recap_fixtures as fx
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
@@ -483,6 +484,28 @@ class TheDmsPage(Base):
         self.assertIsInstance(read["serverNow"], int)
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
+
+    async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
+        self,
+    ) -> None:
+        """#2639 review: the contract WebDev's page reads, pinned against the real door: the
+        shared shape, counts and codes only, and nothing once the recap is posted."""
+        read = await read_recap(self.web, self.session, self.ref)
+        got = read["progress"]
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertTrue(got["stage"].startswith("recap_"))
+        self.assertIn(got["state"], ("running", "stalled", "failed", "done"))
+        listed = await list_recaps(self.web, self.session)
+        self.assertTrue(all("progress" in r for r in listed))
+        async with self.db.guild(THURSDAY.id) as conn:  # (posted by the bot's own path elsewhere)
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted' WHERE guild_id = %s AND session_at = %s",
+                (THURSDAY.id, 100),
+            )
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["progress"])
 
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
@@ -2124,3 +2147,84 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MakeAgain(Base):
+    """A DM makes or redoes a session's recap from the page (#2608), through the database's door:
+    held to a DM of the campaign, a session that still has its lines, and a recap not being
+    written; an existing recap needs the DM's yes first; the bot's own door is not the website's."""
+
+    async def lines(self, campaign: str, at: int) -> None:
+        sid = f"{at:016x}" + campaign[:16]
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, ended_at,"
+                " line_count, speakers) VALUES (%s, %s, %s, %s, %s, 1, %s)",
+                (sid, THURSDAY.id, campaign, at, at + 60, [fx.ALICE]),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard,"
+                " text) VALUES (%s, %s, 0, %s, 'raw', 'clean')",
+                (THURSDAY.id, sid, fx.ALICE),
+            )
+
+    async def test_it_asks_once_then_starts_the_recap_over(self) -> None:
+        await self.lines(self.one.id, 100)
+        with self.assertRaises(RecapError) as asked:
+            await redo_recap(self.web, self.session, self.ref)
+        self.assertEqual(asked.exception.code, "needs_confirm")
+        self.assertEqual((await self.state(self.one.id)).state, "ready")  # asking changed nothing
+        page = await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(
+            (page["state"], page["working"], page["restartedAt"] > 0), ("queued", True, True)
+        )
+        self.assertIsNone(page["previous"])  # (it was not approved: nothing is held)
+
+    async def test_an_approved_recap_is_held_and_shown_as_the_earlier_one(self) -> None:
+        await self.lines(self.one.id, 100)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET approved_hash = encode(sha256(convert_to(title || E'\\n'"
+                " || summary, 'UTF8')), 'hex') WHERE campaign_id = %s",
+                (self.one.id,),
+            )
+        page = await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(page["previous"]["title"], "The Silver Lock")
+        self.assertEqual(page["title"], "")
+
+    async def test_a_session_with_no_recap_yet_can_be_made_from_its_ref(self) -> None:
+        await self.lines(self.one.id, 300)
+        page = await redo_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 300)
+        )
+        self.assertEqual((page["sessionAt"], page["state"]), (300, "queued"))
+
+    async def test_no_lines_a_non_dm_and_a_busy_recap_are_refused(self) -> None:
+        with self.assertRaises(RecapError) as gone:  # the base session has no transcript rows
+            await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(gone.exception.code, "no_lines")
+        await self.lines(self.two.id, 100)  # Bob's campaign: Alice is no DM there
+        with self.assertRaises(RecapError) as other:
+            await redo_recap(self.web, self.session, self.other, replace=True)
+        self.assertEqual(other.exception.code, "not_allowed")
+        await self.lines(self.one.id, 100)
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
+        async with self.db.guild(THURSDAY.id) as conn:  # a worker has it right now
+            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (NOW + 600,))
+        with self.assertRaises(RecapError) as busy:
+            await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(busy.exception.code, "busy")
+
+    async def test_the_bots_own_door_is_not_the_websites(self) -> None:
+        await self.lines(self.one.id, 100)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                await conn.execute(
+                    "SELECT dmbot_recap_start_over(%s, %s, 100, %s, true)",
+                    (THURSDAY.id, self.one.id, BOB.id),
+                )
+        self.assertEqual(callers("dmbot_recap_start_over"), {"schema.py", "recaps/store.py"})
+        self.assertEqual(callers("dmbot_recap_redo"), {"schema.py", "web/recaps.py"})

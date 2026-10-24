@@ -90,6 +90,9 @@ class NameEntry:
     # A name a DM adds starts so (#2404). Listeners use it like any other; only what players are
     # shown (lists, cards, answers) and the recap leave it out until it is said at the table.
     entry_hidden: bool = False
+    # The name is secret only because its entry is a clue only some people know (#1649), not a 🤫
+    # spelling: saying it aloud does not reveal it to the recap (#2591).
+    clue: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +144,7 @@ class CampaignLookup:
                 False,
                 a.said_as,
                 not a.secret and entities[a.entity_id].hidden_from_players,
+                not a.secret and entities[a.entity_id].audience_limited,
             )
             for a in data.aliases
             if a.entity_id in entities and not is_dm_word(a.text)
