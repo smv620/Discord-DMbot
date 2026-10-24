@@ -252,7 +252,9 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "canDrop": status == "draft",
         # Start the recap over (#2608): from a finished or failed one (not while it is being
         # written or sent). `restartedAt` is when the DM last did (Unix seconds, 0: never).
-        "canMakeAgain": state in ("ready", "failed") and status in ("draft", "posted"),
+        # (a recap waiting for its check or between tries can be started over too: the DM's way out)
+        "canMakeAgain": status in ("draft", "posted")
+        and (state in ("ready", "failed") or row["last_error"] == critics.CHECK_WAIT),
         "restartedAt": int(row.get("restarted_at") or 0),
         # The recap that was approved or posted before the DM started over, kept until the new
         # one is approved (#2608); null otherwise. `Keep the earlier one` is `/keep` below.

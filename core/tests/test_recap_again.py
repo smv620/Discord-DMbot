@@ -6,6 +6,7 @@ recap. Needs Postgres."""
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Any
 
 from dmbot.recaps.approval import text_hash
@@ -103,10 +104,43 @@ class Again(Base):
             ("queued", "", 0, 0, [], (), 0),
         )
 
-    async def test_a_recap_being_written_is_busy(self) -> None:
+    async def test_a_recap_a_worker_has_right_now_or_that_is_going_out_is_busy(self) -> None:
         await self.lines(SESSION)
         await self.store.enqueue(1, self.one.id, SESSION, dm_user_id=fx.DM)
+        await self.sql("UPDATE recap_jobs SET leased_to = %s", int(time.time()) + 600)
         self.assertEqual(await self.again(), "busy")
+        await self.sql("UPDATE recap_jobs SET leased_to = 0, state = 'ready', status = 'posting'")
+        self.assertEqual(await self.again(replace_ok=True), "busy")
+
+    async def test_a_held_recap_waiting_for_its_time_can_be_started_at_once(self) -> None:
+        """The owner's Test M: a recap that waits (next_at in the future, nobody holds it) is the
+        DM's to start over, and it does not count in the month again."""
+        await self.lines(SESSION)
+        await self.store.enqueue(1, self.one.id, SESSION, dm_user_id=fx.DM)
+        await self.store.update(
+            1, self.one.id, SESSION, state="prose", next_at=int(time.time()) + 7200,
+            last_error="waiting for one last check",
+        )  # fmt: skip
+        before = (await self.store.get(1, self.one.id, SESSION)).restarted_at  # type: ignore[union-attr]
+        self.assertEqual(await self.again(), "queued")
+        job = await self.store.get(1, self.one.id, SESSION)
+        assert job is not None
+        self.assertEqual((job.state, job.next_at, job.last_error), ("queued", 0, ""))
+        self.assertEqual(job.restarted_at, before)  # not counted again
+
+    async def test_only_a_recap_the_dm_chose_to_redo_counts_again(self) -> None:
+        await self.lines(SESSION)
+        await self.written(SESSION)
+        await self.again(replace_ok=True)
+        job = await self.store.get(1, self.one.id, SESSION)
+        assert job is not None
+        self.assertGreater(job.restarted_at, 0)  # a finished one redone by choice
+        await self.store.update(1, self.one.id, SESSION, state="failed", last_error="It broke")
+        await self.sql("UPDATE recap_jobs SET restarted_at = 5")
+        await self.again()
+        job = await self.store.get(1, self.one.id, SESSION)
+        assert job is not None
+        self.assertEqual(job.restarted_at, 5)  # a failed one redone: the same recap
 
     async def test_a_recap_that_is_made_asks_once_and_a_draft_is_replaced(self) -> None:
         await self.lines(SESSION)
