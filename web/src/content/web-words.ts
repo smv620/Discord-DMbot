@@ -53,7 +53,6 @@ export const webPage = {
     group: "Groups",
     item: "Items",
     event: "Events",
-    person: "At the table", // a real person at the table (#2618): a Player or the DM, apart from the story's kinds
   } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
