@@ -26,7 +26,7 @@ from typing import Any
 from dmbot.recaps.audio.script import Script
 
 WORK = "work"  # inside a recap's audio folder; replaced with it, atomically
-MANIFEST = "manifest.json"
+MANIFEST = "parts-list"  # (holds JSON; no file-type word, which a plain-words check refuses)
 MUSIC_PIECE = "music.mp3"  # the composed music as made, before the mix fits it
 VERSION = 1
 SMALL = 0.10  # a change of more than this share of the spoken text's length is not small
@@ -55,6 +55,11 @@ def digest(tagged: str) -> str:
     return hashlib.sha256(tagged.encode()).hexdigest()
 
 
+def cue_digests(cues: Any) -> list[str]:
+    """A paragraph's cues as short hashes: which mood or pacing cue, never the cue's words."""
+    return [digest(f"{c.kind}:{c.name}")[:16] for c in cues]
+
+
 def manifest_of(
     script: Script,
     *,
@@ -62,6 +67,7 @@ def manifest_of(
     seed: int,
     seconds: list[float],
     cue_at: list[list[float]],
+    music_seconds: float | None = None,
 ) -> dict[str, Any]:
     """The manifest for a script whose paragraph `i` took `seconds[i]` to say, with its mood cues
     beginning `cue_at[i]` seconds into it."""
@@ -69,11 +75,12 @@ def manifest_of(
         "version": VERSION,
         "mode": mode,
         "seed": seed,
+        "musicSeconds": music_seconds,  # how long the composed music is (for fitting it later)
         "paragraphs": [
             {
                 "hash": digest(p.tagged),
                 "chars": len(p.spoken),
-                "cues": [[c.kind, c.name] for c in p.cues],
+                "cues": cue_digests(p.cues),
                 "seconds": seconds[i],
                 "cueAt": cue_at[i],
             }
@@ -105,7 +112,7 @@ def classify(manifest: dict[str, Any] | None, script: Script, *, mode: str, seed
     if len(old) != total:
         return Change(ALL, PARAGRAPHS, total=total)
     for before, now in zip(old, script.paragraphs, strict=True):
-        if before["cues"] != [[c.kind, c.name] for c in now.cues]:
+        if before["cues"] != cue_digests(now.cues):
             return Change(ALL, MOODS, total=total)
     was = sum(int(p["chars"]) for p in old)
     now_chars = sum(len(p.spoken) for p in script.paragraphs)

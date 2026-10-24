@@ -4,6 +4,7 @@ fixed code for why. Progress is counts. Invented names throughout."""
 
 from __future__ import annotations
 
+import re
 import unittest
 from typing import Any
 
@@ -117,6 +118,38 @@ class Remaking(Base):
         self.assertIn("burned", sent[0])  # exactly the changed paragraph
         # and the mix was made again over the voice
         self.assertEqual(len(self.mixer.runs), 2)
+
+    def tempo_of(self, run: int) -> float:
+        graph = self.mixer.runs[run][self.mixer.runs[run].index("-filter_complex") + 1]
+        found = re.search(r"atempo=([0-9.]+),", graph)
+        return float(found.group(1)) if found else 1.0
+
+    async def test_the_kept_music_is_fitted_to_a_longer_or_shorter_voice_not_cut_or_padded(
+        self,
+    ) -> None:
+        """#2629's ending is composed for the first voice's length: a remake plays the kept piece at
+        old/new speed so the ending still lands at the end, and the closing keeps its music."""
+        await self.first()
+        folder = self.files.recap_dir(1, self.one.id, 100)
+        manifest = parts.read_manifest(folder)
+        assert manifest is not None
+        composed = float(manifest["musicSeconds"])
+        self.assertGreater(composed, 0)
+        self.assertEqual(self.tempo_of(0), 1.0)  # the first making needs no fitting
+        await self.edit(SMALL)
+        self.fake.seconds = 3.0  # the changed paragraph is longer than before
+        await self.worker().run(1, self.one.id, 100)
+        longer = self.mixer.voice_seconds
+        self.assertGreater(longer, composed - 1)
+        self.assertAlmostEqual(self.tempo_of(1), composed / longer, places=3)
+        self.assertLess(self.tempo_of(1), 1.0)  # slowed to last as long as the new voice
+        # and the fit is against the composed piece, not the last voice: a shorter one next
+        await self.edit(SMALL.replace("rain stopped", "rain eased"))
+        self.fake.seconds = 1.0
+        await self.worker().run(1, self.one.id, 100)
+        self.assertAlmostEqual(self.tempo_of(2), composed / self.mixer.voice_seconds, places=3)
+        self.assertGreater(self.tempo_of(2), 1.0)
+        self.assertEqual(self.fake.paths("/v1/music"), [])  # still no new music
 
     async def test_it_costs_only_the_changed_words(self) -> None:
         await self.first()

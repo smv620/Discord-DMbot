@@ -24,6 +24,7 @@ import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from dmbot.recaps.approval import BOTH, text_hash
 from dmbot.recaps.approval import MUSIC as MUSIC_CHOICE
@@ -281,7 +282,9 @@ class AudioWorker:
             except sc.SecretInScript:
                 raise Stop(SECRET) from None
 
-        if change.kind == parts.SAME and await self._whole(folder):
+        if change.kind == parts.SAME and not await self._whole(folder):
+            change = parts.Change(parts.ALL, parts.NO_PARTS, total=change.total)  # files are gone
+        if change.kind == parts.SAME:
             # The words the voice reads are the same (an edit to something the voice never says):
             # nothing is made again, the audio is simply the audio of the new text (#2630).
             kept = await self._store.set_audio(
@@ -417,7 +420,7 @@ class AudioWorker:
         return locator
 
 
-def _parts_there(folder: Path, manifest: dict, mode: str) -> bool:  # type: ignore[type-arg]
+def _parts_there(folder: Path, manifest: dict[str, Any], mode: str) -> bool:
     """Every saved speech, and the music when the choice has music, is on the disk."""
     count = len(manifest["paragraphs"])
     if any(not parts.speech_path(folder, i).is_file() for i in range(count)):

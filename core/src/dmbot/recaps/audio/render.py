@@ -160,6 +160,7 @@ def _keep_parts(
     seconds: list[float],
     cue_at: list[list[float]],
     piece: Path | None,
+    music_seconds: float | None,
 ) -> None:
     """Keep each paragraph's speech, the music as made, and the manifest beside the audio, so a
     small change to the words can remake only the voice (#2630)."""
@@ -168,7 +169,15 @@ def _keep_parts(
     if piece is not None:
         shutil.copyfile(piece, folder / parts.WORK / parts.MUSIC_PIECE)
     parts.save_manifest(
-        folder, parts.manifest_of(script, mode=mode, seed=seed, seconds=seconds, cue_at=cue_at)
+        folder,
+        parts.manifest_of(
+            script,
+            mode=mode,
+            seed=seed,
+            seconds=seconds,
+            cue_at=cue_at,
+            music_seconds=music_seconds,
+        ),
     )
 
 
@@ -280,11 +289,19 @@ class Renderer:
         # 2. The music: sections as long as the voice spends in each mood (or, with no voice,
         # as long as each mood's share of the words).
         music_mp3 = into / "in-music.mp3"
+        music_seconds: float | None = None  # how long the composed piece is
+        tempo = 1.0  # the factor that fits a kept piece to a new voice length
         if scoring and reuse is not None:
             piece_path = reuse.folder / parts.WORK / parts.MUSIC_PIECE
             if not await asyncio.to_thread(piece_path.is_file):
                 raise RenderError("parts")
             await asyncio.to_thread(shutil.copyfile, piece_path, music_mp3)  # the music is kept
+            # The kept piece was composed to the old voice's length, with its ending at the end.
+            # Played at the old/new speed it ends where the new voice ends (a small change is
+            # within 10%, so the pitch stays natural), instead of being cut or padded (#2629).
+            music_seconds = float(reuse.manifest.get("musicSeconds") or 0) or None
+            if music_seconds:
+                tempo = min(2.0, max(0.5, music_seconds / seconds))
         elif scoring:
             await progress("music", 0, 1)
             plan = music.composition_request(
@@ -294,6 +311,7 @@ class Renderer:
                 closing_seconds=closing or None,
             )
             total_ms = sum(s["duration_ms"] for s in plan["composition_plan"]["sections"])
+            music_seconds = total_ms / 1000
             await guard()
             piece = await self._provider.music(plan, seconds=total_ms / 1000)
             await asyncio.to_thread(music_mp3.write_bytes, piece)
@@ -313,6 +331,7 @@ class Renderer:
             with_music=scoring,
             with_ambience=bed is not None,
             ending=music.ending_of(script, seconds=math.ceil(seconds)),
+            music_tempo=tempo,
         )
         argv = mix.command(
             mixing,
@@ -329,7 +348,7 @@ class Renderer:
         if speaking:  # what a small change later reuses (#2630)
             await asyncio.to_thread(
                 _keep_parts, into, script, mode, seed, spoken_pcm, seconds_of, cue_at,
-                music_mp3 if scoring else None,
+                music_mp3 if scoring else None, music_seconds,
             )  # fmt: skip
         await asyncio.to_thread(_tidy, into)
         kept = kinds_for(mode)
