@@ -604,16 +604,14 @@ def prose_text(prose: Prose) -> str:
 
 
 GUIDE_NAMES = 12  # the names that matter most that the guide lists
-TRANSCRIPT_LINE_MAX = 600  # characters of one spoken line shown to the writer
 
 
 def transcript_block(rows: Sequence[tuple[str, str]]) -> str:
     """The cleaned transcript for the writer (#2590): (who, words) rows in the order spoken, one
     line each, quoted as data. The caller picks the rows: the cleaned lines of consented speakers,
-    never the raw ones, the DM sidebar, a table question or a gap marker."""
-    return "\n".join(
-        f"{who}: {quoted(text)[:TRANSCRIPT_LINE_MAX]}" for who, text in rows if text.strip()
-    )
+    never the raw ones, the DM sidebar, a table question or a gap marker. A line is never cut: a
+    DM's long lore line reaches the writer whole, and the size check covers the total."""
+    return "\n".join(f"{who}: {quoted(text)}" for who, text in rows if text.strip())
 
 
 def guide_text(

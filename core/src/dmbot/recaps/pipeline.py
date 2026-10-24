@@ -2024,6 +2024,7 @@ class RecapWorker:
             last_error="",
             **self._tie_notes(job, finish, inputs),
         )
+        self._forget_reads(key)
         log.info("Recap: ready after %d call(s)", job.calls)
         # No audio is queued here (#2083): the DM reads the text, fixes its cues, approves it and
         # picks what to make; the approval queues the audio.
@@ -2167,7 +2168,14 @@ class RecapWorker:
         else:
             self._rejected_finish[key] = draft
 
+    def _forget_reads(self, key: tuple[int, str, int]) -> None:
+        """What a transcript writer kept for one job: the lines it was shown (for the fact check)
+        and the fall-back to the beats. Dropped when the job ends, so nothing outlives it."""
+        self._heard.pop(key, None)
+        self._beats_instead.discard(key)
+
     def _forget(self, gid: int, cid: str, job: Job) -> None:
+        self._forget_reads((gid, cid, job.session_at))
         self._rejected_prose.pop((gid, cid, job.session_at), None)
         self._lengths.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)

@@ -91,6 +91,19 @@ class TheMessage(unittest.TestCase):
         self.assertIn("- Find the lost crown", guide)
         self.assertIn("Mira; Oskar", guide)
 
+    def test_a_long_line_reaches_the_writer_whole(self) -> None:
+        long = "A long lore line. " * 100  # about 1,800 characters
+        block = rd.transcript_block([("DM", long)])
+        self.assertIn(long.strip(), block)
+
+    def test_what_a_transcript_job_kept_is_dropped_when_it_ends(self) -> None:
+        worker = pl.RecapWorker.__new__(pl.RecapWorker)
+        key = (1, "c", 100)
+        worker._heard = {key: "lines"}  # type: ignore[attr-defined]
+        worker._beats_instead = {key}  # type: ignore[attr-defined]
+        worker._forget_reads(key)
+        self.assertEqual((worker._heard, worker._beats_instead), ({}, set()))  # type: ignore[attr-defined]
+
     def test_the_default_message_is_unchanged(self) -> None:
         message = rd.prose_message([self.BEAT], "", ["Mira"], None)
         self.assertIn("<beats>", message)
