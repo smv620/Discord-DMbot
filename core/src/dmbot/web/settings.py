@@ -120,6 +120,9 @@ class WebSettings:
     # same rule as `Settings.recap_audio_on`). The web container is never given the speech key, so
     # compose passes only whether each is set ("1" or empty), never the key itself (#2419).
     recap_audio_on: bool = False
+    # PlotBot's check of each recap (#2122): the same DMBOT_PLOT_CHECK as the bot's, and only with
+    # recaps on. Off, the plot routes say "unavailable" and Approve waits for nothing.
+    plot_check_on: bool = False
     # The bot's DMBOT_RECAP_VOICE_TAGS, to work out which paragraphs a change to the words would
     # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
     # bot does.
@@ -298,6 +301,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     return WebSettings(
         database_url=get("DATABASE_URL"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        plot_check_on=recaps_raw in ("1", "true", "on")
+        and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
         recap_audio_on=(
             recaps_raw in ("1", "true", "on")
             and get("RECAP_AUDIO_KEY_SET") == "1"

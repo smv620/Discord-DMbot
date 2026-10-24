@@ -89,7 +89,9 @@ class WebApi(DatabaseTest):
         self.discord = FakeDiscord()
         self.app = create_app(settings(), self.db, self.discord, clock=lambda: self.now)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
 
     async def asyncTearDown(self) -> None:
@@ -189,7 +191,7 @@ class WebApi(DatabaseTest):
         # fails, because the code was spent, and starts no second session.
         self.assertIsNone(first.cookies.get("__Host-dmbot_signin"))
         self.client.cookies.clear()
-        self.client.cookies.set("__Host-dmbot_signin", state, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_signin", state, domain="web-api.internal.test")
         again = await self.client.get("/auth/discord/callback", params=params)
         self.assertEqual(again.headers["location"], f"{SITE}/account?signin=failed")
         self.assertIsNone(again.cookies.get("__Host-dmbot_session"))
@@ -201,7 +203,7 @@ class WebApi(DatabaseTest):
 
     async def test_a_forged_or_expired_state_is_refused(self) -> None:
         forged = sessions.new_state(b"x" * 40, self.now)
-        self.client.cookies.set("__Host-dmbot_signin", forged, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_signin", forged, domain="web-api.internal.test")
         done = await self.client.get(
             "/auth/discord/callback", params={"state": forged, "code": "good-code"}
         )
@@ -217,7 +219,7 @@ class WebApi(DatabaseTest):
             ("", ""),
             ("n.1.@@@", "n.1.@@@"),
         ):
-            self.client.cookies.set("__Host-dmbot_signin", cookie, domain="api.dmbot.example")
+            self.client.cookies.set("__Host-dmbot_signin", cookie, domain="web-api.internal.test")
             done = await self.client.get(
                 "/auth/discord/callback", params={"state": bad, "code": "good-code"}
             )
@@ -316,7 +318,7 @@ class WebApi(DatabaseTest):
         bob_me = (await self.client.get("/me")).json()
         self.client.cookies.clear()
         for name, value in alice_cookies.items():
-            self.client.cookies.set(name, value, domain="api.dmbot.example")
+            self.client.cookies.set(name, value, domain="web-api.internal.test")
         alice_me = (await self.client.get("/me")).json()
         self.assertEqual([c["name"] for c in alice_me["campaigns"]], ["Alice's Game"])
         self.assertIsNone(alice_me["plan"])
@@ -379,7 +381,7 @@ class WebApi(DatabaseTest):
         self.client.cookies.clear()
         await self.sign_in()
         await self.client.post("/auth/logout", headers={"X-DMbot-Request": "1"})
-        self.client.cookies.set("__Host-dmbot_session", first, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", first, domain="web-api.internal.test")
         self.assertEqual((await self.client.get("/me")).status_code, 200)
 
     async def test_signing_out_always_works(self) -> None:
@@ -403,7 +405,7 @@ class WebApi(DatabaseTest):
         assert token is not None
         out = await self.client.post("/auth/logout", headers={"X-DMbot-Request": "1"})
         self.assertEqual(out.status_code, 204)
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.assertEqual((await self.client.get("/me")).status_code, 401)
 
     async def test_the_database_keeps_only_the_cookies_hash(self) -> None:

@@ -176,6 +176,7 @@ services:
       DMBOT_IMPORTS_SERVERS: ${DMBOT_IMPORTS_SERVERS:-}
       # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
+      DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the
