@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -397,10 +398,24 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
     return out
 
 
-def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[Connection]:
+# Why a connection line was dropped, as counts for the log (#2563): never a name or a word of the
+# text. `unreadable`: not a connection object; `word_not_allowed`: a relationship word that is
+# neither a built-in, a campaign one nor a catch-all with the quote's own words; `bad_names`: an
+# empty, too long or doubled name, or a quote of no words or too many; `not_in_text`: a name or
+# the quote is not in the text, or the quote does not hold both names; `name_not_found`: an end is
+# not a name DMbot will have; `same_pair`: the pair was already offered; `already_have`: the
+# campaign has it; `over_cap`: past the most one reading offers.
+Dropped = Counter[str]
+
+
+def read_connections(
+    reply: str, piece: str, own: Collection[str] = (), dropped: Dropped | None = None
+) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
-    names are checked against the merged list later (`keep_connections`)."""
+    names are checked against the merged list later (`keep_connections`). `dropped` counts why
+    each line that failed did."""
+    lost = dropped if dropped is not None else Counter()
     data = _json(reply)
     items = data.get("connections") if isinstance(data, dict) else None
     if not isinstance(items, list):
@@ -409,6 +424,7 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
     out: list[Connection] = []
     for item in items:
         if not isinstance(item, dict):
+            lost["unreadable"] += 1
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
@@ -417,14 +433,20 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
         if word == OTHER:  # the catch-all, kept with the words the text used
             label = " ".join(str(item.get("words") or "").split())
             if not label or len(label) > WORDS_CHARS or "|" in label:
+                lost["word_not_allowed"] += 1
                 continue
             # The label is the one free text of a connection: its words must be the quote's own,
             # so nothing carried in from the document or the list can ride in as a label.
             quoted = set(re.findall(r"\w+", _squash(str(quote))))
             if not set(re.findall(r"\w+", _squash(label))) <= quoted:
+                lost["word_not_allowed"] += 1
                 continue
             how = FALLBACK_PREDICATE
-        if how is None or not all(isinstance(x, str) for x in (a, b, quote)):
+        if how is None:
+            lost["word_not_allowed"] += 1
+            continue
+        if not all(isinstance(x, str) for x in (a, b, quote)):
+            lost["unreadable"] += 1
             continue
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
         words = str(quote).split()
@@ -437,6 +459,7 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
             or not words
             or len(words) > QUOTE_WORDS
         ):
+            lost["bad_names"] += 1
             continue
         said = " ".join(words)
         if (
@@ -447,6 +470,8 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
             and _has(haystack, said)
         ):
             out.append(Connection(a, how, b, said, words=label))
+        else:
+            lost["not_in_text"] += 1
     return out
 
 
@@ -457,12 +482,15 @@ def keep_connections(
     *,
     cap: int = MAX_CONNECTIONS,
     skip: Callable[[Connection], bool] | None = None,
+    dropped: Dropped | None = None,
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
     of the campaign's own mapped to its name). Each end becomes the name it stands for. The same
     pair is offered once, whichever way round or how it was said (one fact per pair and kind;
-    friends and family read the same both ways). At most `cap`."""
+    friends and family read the same both ways). At most `cap`. `dropped` counts why each one that
+    was not kept was not (`name_not_found`, `same_pair`, `already_have`, `over_cap`)."""
+    lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
     for f in names:  # every public name first: another name's spelling never takes it over
@@ -483,14 +511,17 @@ def keep_connections(
         for c in piece:
             a, b = ends.get(name_key(c.a)), ends.get(name_key(c.b))
             if a is None or b is None or name_key(a) == name_key(b):
+                lost["name_not_found"] += 1
                 continue
             ka, kb = name_key(a), name_key(b)
             if c.how in both_ways and kb < ka:
                 ka, kb = kb, ka
             if (ka, c.how, kb) in seen:  # (one catch-all for a pair, whatever its words)
+                lost["same_pair"] += 1
                 continue
             seen.add((ka, c.how, kb))
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
+                lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
             out.append(
                 Connection(
@@ -503,5 +534,6 @@ def keep_connections(
                 )
             )
             if len(out) >= cap:
+                lost["over_cap"] += 1  # (at least one: the rest are not looked at)
                 return out
     return out
