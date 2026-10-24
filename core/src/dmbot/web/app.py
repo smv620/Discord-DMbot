@@ -49,6 +49,7 @@ from dmbot.web import (
     imports,
     npc_pages,
     offers,
+    past_sessions,
     relationships,
     sessions,
     shared_recaps,
@@ -971,6 +972,18 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/past-sessions")
+    async def me_past_sessions(ref: str, signed: Signed) -> dict[str, Any]:
+        """A campaign's past sessions with what each one's recap is (#2610), for its DMs: newest
+        first, each with the `ref` that "make it again" takes. A player gets `not_allowed`."""
+        session, _token = signed
+        try:
+            return await past_sessions.read_past_sessions(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recaps/{ref}/again")
     async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
