@@ -108,12 +108,32 @@ def _words(text: str) -> list[str]:
     return name_key(text).split()
 
 
+def head(end: str) -> str:
+    """The name of an end that carries a trailing description (#2650): "Brannoc, my mentor" and
+    "Brannoc (my mentor)" are "Brannoc", as "my mentor Brannoc" is. Only a comma or a bracket
+    followed by filler counts, so "Frost, Ulfgar" is left alone. The caller tries the whole end
+    exactly first, so a name that really holds a comma still matches."""
+    for sep in (",", "("):
+        before, found, after = end.partition(sep)
+        first = name_key(after).split()[:1]
+        if found and name_key(before) and first and first[0] in FILLER:
+            return before.strip()
+    return end
+
+
 def stripped(end: str) -> list[str]:
     """The words of an end without the filler in front of it ("my brother Ulric" -> ulric)."""
     words = _words(end)
     while len(words) > 1 and words[0] in FILLER:
         words = words[1:]
     return words
+
+
+def bare(end: str) -> str:
+    """The name an end asks about, without its title or description, as a person would say the
+    question: "Sister Mara" and "Mara, my cousin" are "Mara" (#2650)."""
+    words = stripped(head(end))
+    return " ".join(w.capitalize() for w in words) or end
 
 
 class Ends:
@@ -126,6 +146,10 @@ class Ends:
         self._words = {n: set(_words(n)) for n in dict.fromkeys(names)}
 
     def match(self, end: str) -> Matched:
+        exact = self._exact.get(name_key(end))
+        if exact is not None:
+            return Matched(exact, key=name_key(end))
+        end = head(end)
         exact = self._exact.get(name_key(end))
         if exact is not None:
             return Matched(exact, key=name_key(end))

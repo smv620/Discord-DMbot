@@ -3583,6 +3583,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # Every name the caller may see and which pairs are connected, for the Story graph's count line,
     # its "Not connected yet" tray and its other groups (#2632).
     ("dmbot_web_graph_overview", "dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)"),
+    # What waits for the DM: claims, a backstory's connections and "Which Mara?" questions (#2652).
+    ("dmbot_web_waiting", "dmbot_web_waiting(BIGINT, TEXT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -10587,7 +10589,8 @@ WEB_LINK_ACTIONS = r"""
             RETURN jsonb_build_object('status', 'needs_confirm');
         END IF;
         IF is_link AND act <> 'link-add' THEN
-            -- the connection itself: it must be a confirmed one of this campaign, between two
+            -- an edit to a connection (words, secret, remove, pin): it must be a confirmed one
+            -- of this campaign, between two
             -- confirmed names; the entry the action is filed under is its first name
             SELECT r.subject_id INTO subject FROM memory_relations r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.id = tgt AND r.status = 'confirmed'
@@ -11760,6 +11763,128 @@ _pin_door = _pin_door.replace(
 LINK_PIN_ACTION = (
     LINK_PIN_ACTION
     + _pin_door
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+)
+
+WAITING_ACTIONS = (
+    "claim-confirm", "claim-reject", "backstory-keep", "backstory-skip", "backstory-keep-all",
+)  # fmt: skip
+_WAITING_LIST = ", ".join(f"'{a}'" for a in WAITING_ACTIONS)
+_WAITING_NEED_TARGET = ", ".join(f"'{a}'" for a in WAITING_ACTIONS[:4])  # keep-all has none
+_KEEP_ALL_IDS = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"  # Keep all names the ids the page showed
+
+LINK_DECIDE_ACTIONS = (
+    """
+    -- The website's answers to the connections that wait for the DM (#2635, #2642), through the
+    -- queue of the other name actions. PlotBot's waiting connections are of two kinds, and neither
+    -- is a proposed row of `memory_relations`:
+    --   'claim-confirm' / 'claim-reject': `target_id` is a waiting `memory_claims` row (said at the
+    --       table); `flag` on a confirm is "truth but secret". The bot makes the same call as the
+    --       DM screen's ✅ and ❌ (`ClaimStore.confirm` / `reject`), so consent, the plan and
+    --       instruction checks, the DM's own word and Undo are the same.
+    --   'backstory-keep' / 'backstory-skip': `target_id` is a waiting `backstory_links` row (from
+    --       the DM's own backstory); `flag` on a keep is "keep as secret". 'backstory-keep-all'
+    --       keeps every one that is ready (no target). The bot keeps them as the one-by-one cards
+    --       do (the DM's word, unrevealed), and answers how many in `result_id`.
+    -- `entity_id` is empty for these: they belong to no one name. A backstory link gets an id of
+    -- its own, so the page and the queue can point at one. No existing row changes (the column has
+    -- a default, filled for old rows by the table rewrite).
+    ALTER TABLE backstory_links
+        ADD COLUMN id TEXT NOT NULL DEFAULT replace(gen_random_uuid()::TEXT, '-', '')
+            CHECK (id ~ '^[0-9a-f]{32}$');
+    CREATE UNIQUE INDEX backstory_links_id ON backstory_links (guild_id, campaign_id, id);
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',
+         """
+    + _WAITING_LIST
+    + """));
+    -- Keep all carries the ids of the connections the page showed (at most 50 of 32 letters, space
+    -- apart), so a link that turned ready while the DM was looking is not kept unseen.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check CHECK (char_length(text) <=
+        CASE WHEN action IN ('merge-many', 'backstory-keep-all') THEN 1700 ELSE 100 END);
+"""
+)
+# Built from the door as it stands now (with `link-pin`, 0193), not from an older text: a door
+# built from before would drop the actions added since (the lesson of #2456).
+_decide_door = _pin_door
+_waiting_check = """        IF act LIKE 'claim-%' OR act LIKE 'backstory-%' THEN
+            -- a waiting connection: it must still be waiting in this campaign (the bot checks
+            -- again when it applies it, and both of its ends are confirmed names then)
+            subject := '';
+            IF act LIKE 'claim-%' AND NOT EXISTS (
+                   SELECT 1 FROM memory_claims m WHERE m.guild_id = g AND m.campaign_id = c
+                   AND m.id = tgt AND m.status = 'proposed') THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            ELSIF act IN ('backstory-keep', 'backstory-skip') AND NOT EXISTS (
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c
+                   AND b.id = tgt) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c
+                   AND b.id = ANY (string_to_array(clean, ' '))) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+        ELSIF is_link AND act <> 'link-add' THEN"""
+for _old, _new in (
+    (
+        "                'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        f"                'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        f"                {_WAITING_LIST})",
+    ),
+    (
+        "'link-secret', 'link-remove', 'link-pin')\n               AND clean <> '')",
+        f"'link-secret', 'link-remove', 'link-pin',\n"
+        f"                       {_WAITING_NEED_TARGET})\n               AND clean <> '')",
+    ),
+    (
+        "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        f"                       {_WAITING_NEED_TARGET})",
+    ),
+    (
+        "OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', "
+        "'link-pin')",
+        "OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', "
+        f"'link-pin',\n                       {_WAITING_NEED_TARGET})",
+    ),
+    (
+        "('secret', 'hide', 'link-add', 'link-secret', 'link-pin') AND fl IS NULL",
+        "('secret', 'hide', 'link-add', 'link-secret', 'link-pin', 'claim-confirm',\n"
+        "                       'backstory-keep') AND fl IS NULL",
+    ),
+    ("        IF is_link AND act <> 'link-add' THEN", _waiting_check),
+    (
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+        "char_length(clean) > (CASE WHEN act IN ('merge-many', 'backstory-keep-all')"
+        " THEN 1700 ELSE 100 END)",
+    ),
+    (
+        "OR (act = 'merge-many' AND (clean = '' OR clean !~",
+        "OR (act = 'backstory-keep-all' AND (clean = '' OR clean !~ " + _KEEP_ALL_IDS + "))\n"
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~",
+    ),
+):
+    assert _decide_door.count(_old) == 1, (_old, _decide_door.count(_old))
+    _decide_door = _decide_door.replace(_old, _new)
+LINK_DECIDE_ACTIONS = (
+    LINK_DECIDE_ACTIONS
+    + _decide_door
     + """
     -- (a redefined function loses its pinned search path)
     DO $do$
@@ -13070,6 +13195,54 @@ GRAPH_OVERVIEW = (
     """
 )
 
+BACKSTORY_LINK_UPLOAD = """
+    -- Which upload a waiting backstory connection came from (#2650): its name and date as the DM
+    -- saw them ("Tavin's backstory, 24 Oct"), so Keep all can mean "from this backstory" and the
+    -- DM screen can say "3 connections from Tavin's backstory are ready to check". `told` is set
+    -- once the DM screen has said a connection is ready, so it is said once. Both columns have
+    -- defaults: no existing row changes, and an old connection has no label.
+    ALTER TABLE backstory_links
+        ADD COLUMN upload TEXT NOT NULL DEFAULT '' CHECK (char_length(upload) <= 120),
+        ADD COLUMN told BOOLEAN NOT NULL DEFAULT false;
+"""
+
+BACKSTORY_WHICH = """
+    -- A backstory connection whose one end fits two names equally ("Mara" when the campaign has
+    -- Mara Ashgrove and Mara Voss) waits here for the DM to pick (#2650), instead of being left
+    -- out. It holds the end that is a name (`other_id`, and which side of the connection it is),
+    -- the end as written (`word`: the DM's own text, a name), the candidate entry ids and the
+    -- same short quote and flags a waiting connection holds. Picking one moves it to
+    -- `backstory_links` (ready as soon as both names are answered); "Neither" deletes it. Never
+    -- the text itself. Same lifetime as `backstory_links`: deleted with the campaign or its name,
+    -- left out of backups (a wait, not content). Its foreign keys follow a campaign that moves
+    -- to another server (ON UPDATE CASCADE).
+    CREATE TABLE backstory_which (
+        guild_id         BIGINT NOT NULL,
+        campaign_id      TEXT NOT NULL,
+        id               TEXT NOT NULL DEFAULT replace(gen_random_uuid()::TEXT, '-', '')
+            CHECK (id ~ '^[0-9a-f]{32}$'),
+        other_id         TEXT NOT NULL,
+        other_is_subject BOOLEAN NOT NULL,
+        predicate        TEXT NOT NULL CHECK (char_length(predicate) BETWEEN 1 AND 80),
+        word             TEXT NOT NULL CHECK (char_length(word) BETWEEN 1 AND 80),
+        candidates       TEXT[] NOT NULL CHECK (cardinality(candidates) BETWEEN 2 AND 10),
+        quote            TEXT NOT NULL CHECK (char_length(quote) <= 400),
+        secret           BOOLEAN NOT NULL DEFAULT false,
+        detail           TEXT NOT NULL DEFAULT '',
+        truth            BOOLEAN NOT NULL DEFAULT false,
+        upload           TEXT NOT NULL DEFAULT '' CHECK (char_length(upload) <= 120),
+        created_at       BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, other_id)
+            REFERENCES memory_entities (guild_id, campaign_id, id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE UNIQUE INDEX backstory_which_once ON backstory_which
+        (guild_id, campaign_id, other_id, other_is_subject, predicate, word);
+    """ + _isolate("backstory_which")
+
 
 def _approve_with_versions() -> str:
     """`dmbot_recap_approve` (RECAP_APPROVAL) as it was, plus a call to `dmbot_recap_keep_version`
@@ -13618,6 +13791,190 @@ PLOT_CHAT = (
     """
 )
 
+WEB_WAITING_ACTIONS_LIST = ", ".join(
+    f"'{a}'" for a in (*WAITING_ACTIONS, "backstory-which-pick", "backstory-which-neither")
+)
+_which_door = LINK_DECIDE_ACTIONS[
+    LINK_DECIDE_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(") :
+]
+_which_door = _which_door[: _which_door.index("    -- (a redefined function loses")]
+for _old, _new in (
+    (
+        "'backstory-skip', 'backstory-keep-all')\n        THEN",
+        "'backstory-skip', 'backstory-keep-all',\n"
+        "                'backstory-which-pick', 'backstory-which-neither')\n        THEN",
+    ),
+    (
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip')\n"
+        "               AND clean <> '')",
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip',\n"
+        "                       'backstory-which-neither')\n               AND clean <> '')",
+    ),
+    (
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip')\n"
+        "               AND (tgt IS NULL",
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip',\n"
+        "                       'backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND (tgt IS NULL",
+    ),
+    (
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip')\n"
+        "               AND COALESCE(tgt, '') <> '')",
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip',\n"
+        "                       'backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND COALESCE(tgt, '') <> '')",
+    ),
+    (
+        "           OR (act = 'link-words' AND COALESCE(fl, false)) THEN",
+        "           OR (act IN ('backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND COALESCE(fl, false))\n"
+        "           OR (act = 'link-words' AND COALESCE(fl, false)) THEN",
+    ),
+    (
+        "           OR (act = 'backstory-keep-all' AND (clean = ''",
+        "           OR (act = 'backstory-which-pick' AND clean !~ '^[0-9a-f]{32}$')\n"
+        "           OR (act = 'backstory-keep-all' AND (clean = ''",
+    ),
+    (
+        "            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (",
+        "            ELSIF act IN ('backstory-which-pick', 'backstory-which-neither')\n"
+        "                   AND NOT EXISTS (\n"
+        "                   SELECT 1 FROM backstory_which w WHERE w.guild_id = g\n"
+        "                   AND w.campaign_id = c AND w.id = tgt\n"
+        "                   AND (act = 'backstory-which-neither'\n"
+        "                        OR clean = ANY (w.candidates))) THEN\n"
+        "                RETURN jsonb_build_object('status', 'not_found');\n"
+        "            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (",
+    ),
+):
+    assert _which_door.count(_old) == 1, (_old, _which_door.count(_old))
+    _which_door = _which_door.replace(_old, _new)
+
+WEB_WAITING = (
+    f"""
+    -- The website's answer to a "Which Mara?" question (#2652): two more actions in the queue of
+    -- the other name actions. 'backstory-which-pick': `target_id` is the waiting question
+    -- (`backstory_which`), `text` the entry the DM picked (one of its candidates); and
+    -- 'backstory-which-neither': the question is dropped. The bot applies them with
+    -- `BackstoryLinks.pick_which`, the call the Discord card makes. No row changes.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',
+         {WEB_WAITING_ACTIONS_LIST}));
+    """
+    + _which_door
+    + r"""
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+
+    -- What waits for the DM, for the website (#2652, Supervisor's answer on #2642): the claims
+    -- PlotBot found at the table, the connections a backstory found, and the "Which one?"
+    -- questions, with the counts. DM only (anyone else gets NULL, as from the other doors). Counts
+    -- and the DM's own words (a name, a short quote), never a transcript. A connection to a name
+    -- that was refused or merged away is left out: the bot cleans the queue when it next reads it.
+    CREATE OR REPLACE FUNCTION dmbot_web_waiting(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        out := jsonb_build_object(
+            'status', 'ok',
+            'claims', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', m.id, 'subject', m.subject, 'relationship', m.relationship,
+                    'object', m.object, 'details', m.details, 'how', m.how,
+                    'at', m.session_started_at)
+                    ORDER BY m.created_at, m.id)
+                FROM (SELECT * FROM memory_claims k
+                      WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'
+                        AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0
+                        AND k.reason <> 'waiting for its name to be proposed'
+                      ORDER BY k.created_at, k.id LIMIT 200) m), '[]'::jsonb),
+            'backstory', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', l.id, 'subjectId', l.subject_id, 'subject', s.name,
+                    'objectId', l.object_id, 'object', o.name, 'predicate', l.predicate,
+                    'detail', l.detail, 'quote', l.quote,
+                    'secret', l.secret OR s.audience_limited OR o.audience_limited,
+                    'truth', l.truth, 'upload', l.upload,
+                    'ready', s.status = 'confirmed' AND o.status = 'confirmed',
+                    'waitingOn', to_jsonb(ARRAY(
+                        SELECT x.name
+                        FROM (VALUES (s.name, s.status), (o.name, o.status)) x(name, status)
+                        WHERE x.status <> 'confirmed')))
+                    ORDER BY l.created_at, l.id)
+                FROM (SELECT * FROM backstory_links b
+                      WHERE b.guild_id = g AND b.campaign_id = c
+                      ORDER BY b.created_at, b.id LIMIT 300) l
+                JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c
+                                      AND s.id = l.subject_id
+                                      AND s.status IN ('confirmed', 'proposed')
+                JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c
+                                      AND o.id = l.object_id
+                                      AND o.status IN ('confirmed', 'proposed')), '[]'::jsonb),
+            -- the true sizes, since the lists above are cut at their caps
+            'totals', jsonb_build_object(
+                'claims', (SELECT count(*) FROM memory_claims k
+                           WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'
+                             AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0
+                             AND k.reason <> 'waiting for its name to be proposed'),
+                'backstory', (SELECT count(*) FROM backstory_links b
+                              WHERE b.guild_id = g AND b.campaign_id = c)),
+            -- (a question left with fewer than two live candidates is not shown: nothing can be
+            -- picked, and the bot deletes it when it next reads the queue)
+            'which', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', w.id, 'word', w.word, 'otherId', w.other_id, 'other', o.name,
+                    'otherIsSubject', w.other_is_subject, 'predicate', w.predicate,
+                    'detail', w.detail, 'quote', w.quote, 'secret', w.secret OR o.audience_limited,
+                    'upload', w.upload, 'candidates', w.cands) ORDER BY w.created_at, w.id)
+                FROM (
+                    SELECT q.*, (
+                        SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name,
+                                                           'limited', e.audience_limited)
+                                         ORDER BY lower(e.name), e.id)
+                        FROM memory_entities e
+                        WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (q.candidates)
+                          AND e.id <> q.other_id AND e.status IN ('confirmed', 'proposed')) AS cands
+                    FROM backstory_which q
+                    WHERE q.guild_id = g AND q.campaign_id = c) w
+                JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c
+                                      AND o.id = w.other_id
+                                      AND o.status IN ('confirmed', 'proposed')
+                WHERE jsonb_array_length(COALESCE(w.cands, '[]'::jsonb)) >= 2), '[]'::jsonb));
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_waiting(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_waiting(BIGINT, TEXT) FROM PUBLIC;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -13874,7 +14231,11 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0228_graph_overview",
         GRAPH_OVERVIEW,
     ),  # every name on the Story graph, not only the centre's web (#2632)
+    ("0229_link_decide", LINK_DECIDE_ACTIONS),  # Confirm / Not right from the website (#2635)
     ("0230_audio_remake", RECAP_AUDIO_REMAKE),  # what the audio did and how far (#2630)
+    ("0231_link_upload", BACKSTORY_LINK_UPLOAD),  # where a waiting connection came from (#2650)
+    ("0232_link_which", BACKSTORY_WHICH),  # "Which Mara?" waits for the DM's pick (#2650)
+    ("0233_web_waiting", WEB_WAITING),  # the website reads and answers what waits (#2652)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -13886,6 +14247,7 @@ ISOLATED_TABLES = (
     "plot_checks",
     "plot_issues",
     "plot_fine",
+    "backstory_which",
     "transcript_erasures",
     "secret_exposures",
     "web_delete_notices",

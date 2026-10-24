@@ -1449,6 +1449,35 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/waiting")
+    async def me_campaign_web_waiting_list(ref: str, signed: Signed) -> dict[str, Any]:
+        """What waits for the DM (#2652): claims, a backstory's connections (with the upload each
+        came from) and "Which Mara?" questions, with the counts. DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_waiting(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/waiting", status_code=202)
+    async def me_campaign_web_waiting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """Answer a connection that waits for the DM, or Keep all from a backstory (#2635,
+        #2642): `{kind: "claim" | "backstory" | "which", action, id, secret}` (a "which" pick
+        also carries `entity`, #2652). Queued for the bot, which
+        makes the very calls the DM screen's buttons make; the answer is polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_waiting(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/answers/{answer}")
     async def me_campaign_web_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
         """Where one of the signed-in DM's own connection edits stands, with the edge as it now
