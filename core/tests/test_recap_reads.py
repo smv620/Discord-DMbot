@@ -99,10 +99,10 @@ class TheMessage(unittest.TestCase):
     def test_what_a_transcript_job_kept_is_dropped_when_it_ends(self) -> None:
         worker = pl.RecapWorker.__new__(pl.RecapWorker)
         key = (1, "c", 100)
-        worker._heard = {key: "lines"}  # type: ignore[attr-defined]
-        worker._beats_instead = {key}  # type: ignore[attr-defined]
+        worker._heard = {key: "lines"}
+        worker._beats_instead = {key}
         worker._forget_reads(key)
-        self.assertEqual((worker._heard, worker._beats_instead), ({}, set()))  # type: ignore[attr-defined]
+        self.assertEqual((worker._heard, worker._beats_instead), ({}, set()))
 
     def test_the_default_message_is_unchanged(self) -> None:
         message = rd.prose_message([self.BEAT], "", ["Mira"], None)
@@ -163,8 +163,8 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         sizes = {"m-writer": 1_000_000, "m-careful": 10_000}
         with patch.object(pl, "max_input", lambda model: sizes[model]):
             worker = pl.RecapWorker.__new__(pl.RecapWorker)
-            worker._creative = SimpleNamespace(model="m-writer")  # type: ignore[attr-defined]
-            worker._careful = SimpleNamespace(model="m-careful")  # type: ignore[attr-defined]
+            worker._creative = SimpleNamespace(model="m-writer")
+            worker._careful = SimpleNamespace(model="m-careful")
             self.assertEqual(worker._transcript_limit(), int(10_000 * pl.TRANSCRIPT_SHARE))
 
     async def test_a_name_outside_the_names_list_is_still_refused(self) -> None:

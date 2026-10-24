@@ -11,6 +11,7 @@ from dmbot.memory.models import spelling_key
 from dmbot.recaps import draft as rd
 from dmbot.recaps.beats import Beat
 from dmbot.recaps.inputs import EVERY_NAME, recap_name_sets, said_in
+from dmbot.recaps.text import narration_of
 
 
 def entry(text: str, *, secret: bool = False, person: bool = False, hidden: bool = False) -> Any:
@@ -180,7 +181,7 @@ class TheOtherWays(unittest.IsolatedAsyncioTestCase):
             identity_ties=[],  # (relations are no longer passed to the check)
         )
         self.assertFalse([p for p in problems if "secret" in p], problems)
-        (note,) = rd.tie_notes(rd.narration_of(text), TIES)
+        (note,) = rd.tie_notes(narration_of(text), TIES)
         self.assertIn("Mira", note)
         self.assertIn("Lord Veil", note)
         self.assertIn("secret connection", note)

@@ -135,7 +135,7 @@ def identity_ties(names: Any) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
     for n in names.names:
         if n.confirmed and not n.person:
             by_entity.setdefault(n.entity_id, []).append(n)
-    ties = []
+    ties: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
     for entries in by_entity.values():
         public = tuple(dict.fromkeys(n.text for n in entries if not n.secret))
         for n in entries:

@@ -252,4 +252,5 @@ class TheReads(unittest.IsolatedAsyncioTestCase):
             assert writers is not None
             self.assertEqual([w.reads for w in writers], list(reads))
             self.assertEqual(len(made), 2)  # a client each, so nothing is shared
+        assert writers is not None
         self.assertEqual([w.label.split()[0] for w in writers], ["Gemini", "Gemini"])
