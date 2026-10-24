@@ -3462,6 +3462,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     # How many hand-over emails a person sent today, for the limit of five (#2532).
     ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
+    ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
+    ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
+    ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
     # PlotBot's check of a recap: read and answered by a DM (#2122).
     ("dmbot_plot_read", "dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT)"),
     ("dmbot_plot_answer", "dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)"),
@@ -12285,6 +12288,134 @@ HANDOVER_EMAIL = """
     REVOKE ALL ON FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT) FROM PUBLIC;
 """
 
+HANDOVER_CLAIM = """
+    -- Opening a hand-over link on the website (#2532, slice B). The link names the server and the
+    -- offer and carries a secret whose SHA-256 the offer holds, so the door can read the one offer
+    -- in the one server (every server table is scoped by server) and nothing else. It answers only
+    -- for a signed-in person, and only for an offer that is still open, by email, unexpired, not
+    -- yet claimed by someone else, and whose campaign still belongs to the person who offered it.
+    -- Anything else is NULL, the same whatever the reason, so a link says nothing about why it
+    -- ended. With p_claim the offer becomes this person's (their id and name are written once; the
+    -- link then works for no one else), unless they are the owner. The rest of the answer (plan,
+    -- slot, ownership) is the campaign store's own accept, with the person's session as always.
+    -- The caller connects scoped to the server `g` (the door refuses any other).
+    CREATE FUNCTION dmbot_handover_open(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_claim BOOLEAN) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        r RECORD;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        IF p_claim THEN  -- two claims at once: one waits for the other, then sees it taken
+            PERFORM 1 FROM campaign_handover_offers WHERE guild_id = g AND id = o FOR UPDATE;
+        END IF;
+        SELECT f.campaign_id, f.from_user_id, f.from_name, f.to_user_id, f.created_at,
+               c.name AS campaign_name
+            INTO r
+            FROM campaign_handover_offers f
+            JOIN campaigns c ON c.guild_id = f.guild_id AND c.id = f.campaign_id
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me)
+              AND c.owner_user_id = f.from_user_id;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF p_claim AND r.from_user_id <> me AND r.to_user_id = 0 THEN
+            UPDATE campaign_handover_offers
+                SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80)
+                WHERE guild_id = g AND id = o;
+        END IF;
+        RETURN jsonb_build_object(
+            'campaign_id', r.campaign_id, 'campaign_name', r.campaign_name,
+            'from_user_id', r.from_user_id, 'from_name', r.from_name,
+            'expires_at', r.created_at + 604800);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+
+    -- Gives a claim back (#2532): an accept that fails after the link was claimed (no room any
+    -- more, the campaign changed hands) must not leave the link dead for the person it was for.
+    -- Only the person who holds the claim, only on an offer still open and still unanswered.
+    CREATE FUNCTION dmbot_handover_release(g BIGINT, o BIGINT, p_hash TEXT) RETURNS VOID
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN;
+        END IF;
+        UPDATE campaign_handover_offers SET to_user_id = 0, to_name = ''
+            WHERE guild_id = g AND id = o AND via_email AND token_hash = p_hash
+              AND status = 'open' AND to_user_id = me;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- "No thanks" from whoever holds the link, wherever they are (#2532): the website's role can
+    -- write an answer only in the servers of its session, and the person who was emailed is often
+    -- not in the campaign's server. Same checks as dmbot_handover_open; the offer is declined
+    -- under their id and name, and the bot is told (as for every answer made on the website) so
+    -- the owner hears. NULL, the same as any ended link; the owner cannot decline their own.
+    CREATE FUNCTION dmbot_handover_decline(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;
+        END IF;
+        UPDATE campaign_handover_offers f
+            SET status = 'declined', decided_at = dmbot_now(), to_user_id = me,
+                to_name = left(coalesce(p_name, ''), 80)
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN
+            PERFORM pg_notify('dmbot_handover_decided', g::text || ':' || o::text);
+        END IF;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
 RECAP_STORY_ROOM = """
     -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
     -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
@@ -13858,6 +13989,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0210_plot_issues", PLOT_ISSUES),  # PlotBot's check of a recap and its issues (#2122)
     ("0211_plot_chat", PLOT_CHAT),  # the DM's talk with PlotBot about an issue (#2123)
     ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
+    ("0213_handover_claim", HANDOVER_CLAIM),  # opening a hand-over link on the website (#2532)
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)

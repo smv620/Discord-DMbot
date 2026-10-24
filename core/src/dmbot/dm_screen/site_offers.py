@@ -235,7 +235,7 @@ class SiteOffers:
         changes whose plan the table uses). Best effort."""
         if self._post is None or campaign.dm_screen_channel_id is None:
             return
-        names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
+        names = {"name": _who(offer), "campaign": md(campaign.name)}
         try:
             await self._post(campaign.dm_screen_channel_id, SCREEN_ACCEPTED.format(**names))
         except Exception as exc:
@@ -375,6 +375,12 @@ class SiteOffers:
             await _tell_owner(guild, offer, campaign)
 
 
+def _who(offer: HandoverOffer) -> str:
+    """Who answered, for the owner: the name they signed in with (an offer sent by email has no
+    one else's name), or "The person you emailed"."""
+    return md(offer.to_name) if offer.to_name else "The person you emailed"
+
+
 async def _tell_decision(
     guild: discord.Guild, offer: HandoverOffer, campaign: Campaign, *, tell_owner: bool = True
 ) -> None:
@@ -383,7 +389,7 @@ async def _tell_decision(
     sent: edited to say what happened (its buttons go); if it can't be edited, a new
     message only for a take-back (they chose an accept or a no thanks themselves, so the
     site told them)."""
-    owner, person = md(offer.from_name), md(offer.to_name)
+    owner, person = md(offer.from_name), _who(offer)
     name = md(campaign.name)
     if offer.status == "accepted":
         to_owner: str | None = TOLD_ACCEPTED.format(name=person, campaign=name)
@@ -400,8 +406,8 @@ async def _tell_decision(
         with contextlib.suppress(discord.HTTPException):
             member = await _member(guild, offer.from_user_id)
             await member.send(to_owner, allowed_mentions=NO_PINGS)
-    if offer.delivered_at is None:  # never sent to them: nothing of theirs to change
-        return
+    if offer.via_email or offer.delivered_at is None:
+        return  # an email offer has no Discord message; or it was never sent: nothing to change
     with contextlib.suppress(discord.HTTPException):
         member = await _member(guild, offer.to_user_id)
         if offer.message_id is not None:  # the offer message: its buttons go
