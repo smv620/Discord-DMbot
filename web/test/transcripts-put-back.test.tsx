@@ -55,6 +55,7 @@ describe("opening what was said", () => {
     expect(screen.getByText(/<b>no<\/b> I missed it/)).toBeTruthy();
     expect(document.querySelector(".left-out b")).toBeNull();
     expect(screen.queryByRole("button", { name: w.putBack })).toBeNull();
+    expect(screen.getByText(w.onlyDm)).toBeTruthy(); // a player is told why there is no button
     expect(calls(api, "transcriptStretch")).toEqual([`transcriptStretch:${REF}:2:1:62000:76000`]);
   });
 
@@ -93,10 +94,17 @@ describe("Put it back and Leave it out again (DMs)", () => {
     expect(await screen.findByText(new RegExp(w.putBackDone))).toBeTruthy();
     expect(calls(api, "transcriptPutBack")).toEqual([`transcriptPutBack:${REF}:2:1:62000:76000`]);
     expect(screen.getByText(w.putBackLine(3))).toBeTruthy();
-    fireEvent.click(await within(box).findByRole("button", { name: w.leaveOut }));
+    fireEvent.click(await within(box).findByRole("button", { name: w.leaveOutFor(3) }));
     expect(await screen.findByText(new RegExp(w.leftOutDone))).toBeTruthy();
     expect(calls(api, "transcriptLeaveOut")).toHaveLength(1);
     expect(screen.getByText(w.left(3, 14))).toBeTruthy();
+  });
+
+  it("says what Put it back does before it is pressed, and the page can be reloaded with a button", async () => {
+    await show(as("owner"));
+    expect(await screen.findByText(w.explainPutBack)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: w.putBackFor(3) }));
+    expect(await screen.findByRole("button", { name: w.reloadButton })).toBeTruthy();
   });
 
   it("does not promise more than the API did: no 'names and story' sentence until that works", async () => {

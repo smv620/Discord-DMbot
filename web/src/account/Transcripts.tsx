@@ -445,8 +445,8 @@ function LeftOut({
 
   return (
     <div class="stack left-out">
-      <p class="small">
-        {back ? offTopic.putBackLine(skip.lines) : offTopic.left(skip.lines, skip.seconds)}{" "}
+      <p class="small">{back ? offTopic.putBackLine(skip.lines) : offTopic.left(skip.lines, skip.seconds)}</p>
+      <p>
         <button type="button" class="button secondary" aria-expanded={open} aria-label={offTopic.showFor(skip.lines)} onClick={() => void toggle()}>
           {open ? offTopic.hide : offTopic.show}
         </button>
@@ -463,10 +463,12 @@ function LeftOut({
               ))}
             </ul>
           )}
+          {!isDm && heard !== null && <p class="small muted">{offTopic.onlyDm}</p>}
           {isDm && api.transcriptPutBack && api.transcriptLeaveOut && (
-            <div class="row">
+            <div class="stack">
+              <p class="small">{offTopic.explainPutBack}</p>
               {back ? (
-                <button type="button" class="button secondary" disabled={busy} onClick={() => void change(false)}>
+                <button type="button" class="button secondary" disabled={busy} aria-label={offTopic.leaveOutFor(skip.lines)} onClick={() => void change(false)}>
                   {busy ? offTopic.working : offTopic.leaveOut}
                 </button>
               ) : (
@@ -479,9 +481,14 @@ function LeftOut({
         </div>
       )}
       {note && (
-        <p role="status" class="small">
-          {note} {offTopic.reload}
-        </p>
+        <div role="status" class="small">
+          <p>
+            {note} {offTopic.reload}
+          </p>
+          <button type="button" class="button secondary" onClick={() => window.location.reload()}>
+            {offTopic.reloadButton}
+          </button>
+        </div>
       )}
       {problem && (
         <p class="note bad" role="alert">
