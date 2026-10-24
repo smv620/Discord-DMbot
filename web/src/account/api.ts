@@ -996,6 +996,33 @@ export interface WebGraph {
   view?: WebView;
 }
 
+/** One group of linked names, as the overview lists it (#2632): the name to put in the middle to see it. */
+export interface WebGroup {
+  center: string;
+  centerName: string;
+  size: number;
+}
+
+/** Every name the person may see, with the ones that have no connection yet and the groups of linked
+ * names (#2632). The graph alone draws one centre's web, so a young campaign looked almost empty. */
+export interface WebOverview {
+  counts: {
+    names: number;
+    /** Connections the person may see (a DM's include the secret ones). */
+    connections: number;
+    connectedNames: number;
+    notConnected: number;
+  };
+  /** The names with no connection yet, by kind then name. A list, not drawn. */
+  tray: WebNode[];
+  /** Groups of two or more linked names, the largest first. */
+  groups: WebGroup[];
+  /** The API stopped at its cap of names. */
+  truncated: boolean;
+  canEdit: boolean;
+  view?: WebView;
+}
+
 export interface WebQuery {
   /** null: the API picks the most connected name. */
   center: string | null;
@@ -1344,6 +1371,9 @@ export interface AccountApi {
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
   webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
+  /** The Story graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
+   * older than that: then the page is the graph alone. */
+  webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
     /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
   webPeek?(ref: string): Promise<void>;
   /** A DM shows a name or a connection to the players (#2405). */
@@ -2146,6 +2176,15 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
       )) as { names: number };
+    },
+    webOverview: async (ref, q) => {
+      const params = new URLSearchParams();
+      if (q.view) params.set("view", q.view);
+      const tail = params.toString();
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
+      )) as WebOverview;
     },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});

@@ -19,7 +19,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, callers
 from tests.test_web_all_names import MEMBER, Listing
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 BOB_USER = DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email)
 
@@ -392,11 +392,11 @@ class TheRoute(Web):
             clock=lambda: NOW,
         )  # fmt: skip
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API,
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test",
             headers={"X-DMbot-Request": "1"},
         )  # fmt: skip
         token = await self.token_of(who)
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         return client
 
     async def token_of(self, who: Any) -> str:

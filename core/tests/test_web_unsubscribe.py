@@ -13,7 +13,7 @@ from dmbot.web.app import create_app
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import API, SITE, FakeDiscord, settings
+from tests.test_web_api import SITE, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 SECRET = b"u" * 40
@@ -51,7 +51,7 @@ class UnsubscribeRoute(DatabaseTest):
 
     async def post(self, content: bytes | dict[str, str]) -> httpx.Response:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as client:
             if isinstance(content, dict):
                 return await client.post("/email/unsubscribe", json=content, headers=HEADERS)
