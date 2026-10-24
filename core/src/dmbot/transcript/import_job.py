@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from dmbot.db import Database
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.transcript.cleaner import clean
+from dmbot.transcript.store import Settled, TranscriptStore
 from dmbot.transcript.topic_ai import Completes, classify
 from dmbot.transcript.topics import GAME, WINDOW_LINES
 
@@ -148,6 +149,18 @@ class ImportStore:
                 (session_id,),
             )
             return [Row(int(r["id"]), int(r["user_id"]), r["heard"]) for r in await cur.fetchall()]
+
+    async def settle(self, guild_id: int, campaign_id: str, session_id: str) -> Settled:
+        """The filter leans to keeping here too (#2567): once the lines are labelled, what the AI
+        was not sure about is kept, as at the end of a live session (`settle_topics`), with the
+        campaign's DMs, before the name scan reads the lines."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            dms = {int(r["user_id"]) for r in await cur.fetchall()}
+        return await TranscriptStore(self._db).settle_topics(guild_id, session_id, dms)
 
     async def ready_for_scan(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
         """For each campaign, its earliest cleaned import not yet scanned (or whose claim never
@@ -415,6 +428,16 @@ class ImportJob:
                 [(r.id, t, topic) for r, t, topic in zip(chunk, texts, topics, strict=True)],
             )
             await asyncio.sleep(0)  # the live table's work goes first between chunks
+        try:
+            done = await self.store.settle(guild_id, campaign_id, session_id)
+            log.info(  # counts only
+                "Import off-topic filter: kept %d, turned back %d, left out %d",
+                done.kept,
+                done.turned_back,
+                done.left_out,
+            )
+        except Exception:  # never costs the import its cleaning
+            log.exception("Import: couldn't settle the off-topic labels")
         await self.store.finish(guild_id, session_id, ok=True, reason=PARTLY if partly else "")
         log.info("Import: cleaned a session of %d lines", len(rows))  # counts only
 
