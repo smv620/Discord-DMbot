@@ -276,6 +276,57 @@ class WorkerHarness(Base):
         return story
 
 
+class WaitingForNames(WorkerHarness):
+    """#2628 review: a recap held for the name pass says so, never waits in silence, and goes
+    on when the pass is done or after 30 minutes."""
+
+    async def start(self, ready: list[bool]) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        )
+
+        async def names_ready(gid: int, cid: str, job: Job) -> bool:
+            return ready[0]
+
+        self.worker._names_ready = names_ready
+
+    async def test_it_waits_with_a_note_that_moves_and_then_goes_on(self) -> None:
+        ready = [False]
+        await self.start(ready)
+        job = await self.go()
+        self.assertEqual((job.state, job.calls, job.last_error), ("queued", 0, pl.CHECKING_NAMES))
+        self.assertEqual(job.next_at, int(self.clock.now) + pl.NAMES_RETRY_S)
+        self.assertEqual(self.fast.sent, [])  # no AI call while it waits
+        first = job.updated_at
+        self.clock.now += pl.NAMES_RETRY_S + 1
+        job = await self.go()
+        self.assertEqual(job.last_error, pl.CHECKING_NAMES)
+        self.assertGreater(job.updated_at, first)  # each look moves the time the page shows
+        ready[0] = True
+        self.clock.now += pl.NAMES_RETRY_S + 1
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("ready", ""))  # the note went with the wait
+
+    async def test_it_goes_on_without_the_pass_after_thirty_minutes(self) -> None:
+        await self.start([False])
+        job = await self.go()
+        self.assertEqual(job.last_error, pl.CHECKING_NAMES)
+        self.clock.now += pl.NAMES_WAIT_S + 1
+        job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+
+    async def test_a_check_that_cannot_be_read_never_holds_it_back(self) -> None:
+        await self.start([False])
+
+        async def broken(gid: int, cid: str, job: Job) -> bool:
+            raise RuntimeError("the database blinked")
+
+        self.worker._names_ready = broken
+        with self.assertLogs("dmbot.recaps.pipeline", "ERROR"):
+            job = await self.go()
+        self.assertEqual(job.state, "ready")
+
+
 class Working(WorkerHarness):
     """The worker with canned answers (see `WorkerHarness`)."""
 
@@ -502,12 +553,12 @@ class Working(WorkerHarness):
         self.assertEqual(job.state, "ready")
         self.assertIn("sections JSON", self.careful.sent[0])
 
-    async def test_a_misheard_name_is_respelled_and_a_name_said_at_the_table_is_kept(self) -> None:
-        """#2027: "Care Dinval" becomes the known "Caer-Dineval" in code; "Breathing Stair" was
-        said in the lines and no list has it, so it stays and is queued for the DM; neither is
-        a reason to retry."""
+    async def test_a_name_said_at_the_table_that_no_list_has_is_kept_and_asked_about(self) -> None:
+        """#2628: names are settled before the writer starts (PlotBot's name pass), so the recap
+        no longer respells them. "Descending Stair" was said in the lines and no list has it, so
+        it stays and is queued for the DM; that is not a reason to retry."""
         text = fx.PROSE_ANSWER.replace(
-            "Nothing answered.", "Care Dinval waited by the Descending Stair. Nothing answered."
+            "Nothing answered.", "Mira waited by the Descending Stair. Nothing answered."
         )
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, text, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
@@ -516,8 +567,7 @@ class Working(WorkerHarness):
         )
         job = await self.go()
         self.assertEqual(job.state, "ready")
-        self.assertIn("Caer-Dineval waited", job.summary)
-        self.assertNotIn("Care Dinval", job.summary)
+        self.assertIn("Descending Stair", job.summary)
         self.assertEqual(job.to_confirm, ("Descending Stair",))
         # Try again starts the notice over, so the new recap's names are queued too
         await self.store.set_names_state(1, self.one.id, 100, 1, only_from=0)
@@ -543,6 +593,26 @@ class Working(WorkerHarness):
         for sent in self.careful.sent:
             self.assertNotIn("Oskar", sent)
             self.assertNotIn("<previous_draft>", sent)
+
+    async def test_a_name_close_to_a_secret_one_never_reaches_a_ready_recap(self) -> None:
+        """#2591, kept after #2628 stopped the recap respelling names: the writer says "Silas
+        Vain" and the DM keeps "Silas Vane" secret. The draft is refused, nothing is kept, and the
+        retry is not told the spelling."""
+        text = fx.PROSE_ANSWER.replace("Nothing answered.", "Silas Vain waited. Nothing answered.")
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, text),
+            fx.Canned(text, text),
+            secret=["Silas Vane"],
+            names=["Mira", "Greywater Keep"],
+            heard="Silas Vain waited by the door.",
+        )
+        job = await self.go()
+        self.assertNotEqual(job.state, "ready")
+        self.assertNotIn("Silas Vain", job.summary)
+        self.assertNotIn("Silas Vane", job.summary)
+        for sent in self.careful.sent:
+            self.assertNotIn("Silas Vain", sent)  # a rejected draft that near-names a secret
+            self.assertNotIn("Silas Vane", sent)  # is never sent back, and no spelling is put in
 
     async def test_too_few_beats_left_after_the_cuts_fails_plainly(self) -> None:
         await self.setUpWorker(

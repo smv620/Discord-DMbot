@@ -28,7 +28,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -300,7 +300,7 @@ from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
-from dmbot.memory.scan import MAX_SUGGESTIONS, find_new_names, group_alike
+from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
@@ -372,7 +372,16 @@ from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
-from dmbot.transcript import fix_notes, left_out, lookback, rank_options, refix, speaker_ai
+from dmbot.transcript import (
+    fix_notes,
+    left_out,
+    lookback,
+    name_pass_run,
+    rank_options,
+    refix,
+    speaker_ai,
+)
+from dmbot.transcript import name_pass as name_pass_logic
 from dmbot.transcript import pronounced as pronounced_aloud
 from dmbot.transcript import questions as name_questions
 from dmbot.transcript import speaker_question as speaker_q
@@ -436,7 +445,7 @@ from dmbot.transcription.base import (
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import guide as guide_screen
-from dmbot.ui import image_fix, looked_at, recap_audio, rule_card
+from dmbot.ui import image_fix, looked_at, name_pass_undo, recap_audio, rule_card
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -1169,6 +1178,7 @@ class DMBot(commands.AutoShardedBot):
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._audio_seen: dict[tuple[int, str, int], tuple[int, int]] = {}
+        self._name_pass_asks: dict[str, list[tuple[str, int]]] = {}  # unsure words (#2628)
         self.audio_waits = recap_audio.AudioWaits()  # the live "Making the audio" lines (#2621)
         self._import_queued: dict[str, list[int]] = {}
         # campaign -> how many of its import's sessions had their name check given up (told once;
@@ -1360,6 +1370,12 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client and settings.story_extractor_on
             else None
         )
+        # PlotBot's name pass on a finished transcript (#2628): which list name a word means.
+        self.name_pass_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
+            if self.ai_client
+            else None
+        )
         # The cinematic recap (#1382): the first draft on the fast tier, one more try on the
         # careful one. Built only with the switch on, so off means no client to call.
         self.recap_ai = (
@@ -1401,6 +1417,7 @@ class DMBot(commands.AutoShardedBot):
                 notify=self.recap_told,
                 unchecked=self.recap_unchecked,
                 allowance=self.recap_text_allowance,
+                names_ready=self.recap_names_ready,
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
@@ -1636,6 +1653,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
         self.add_dynamic_items(SeenButton)  # 👍 Got it: the mark of every summary variant
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
         self.add_dynamic_items(
             recap_audio.ListenButton, recap_audio.KeepAudioButton, recap_audio.MakeAudioAgainButton
         )  # the audio's end, said once (#2621)
@@ -10836,6 +10854,101 @@ class DMBot(commands.AutoShardedBot):
             )
             log.info("Say it this way: %d offered", kept)
 
+    async def recap_names_ready(self, gid: int, cid: str, job: Job) -> bool:
+        """Whether PlotBot's name pass on the recap's transcript is done (#2628)."""
+        if self.transcripts is None:
+            return True
+        return await self.transcripts.names_repaired(gid, cid, job.session_at)
+
+    async def repair_names(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str,
+        users: Collection[int] = (),
+        agreed: Collection[int] | None = None,
+    ) -> int:
+        """PlotBot's name pass (#2628): once per session, when its transcript is complete and before
+        its recap, a word the cleaner left as heard that PlotBot is sure means a name on the list
+        is written as the list has it, in the cleaned text only, with Undo on the DM screen.
+        Returns how many lines were fixed. It never raises, and the session is marked done whatever
+        happened (a pass that could not run must not hold the recap back); the DM can still fix a
+        spelling by hand."""
+        fixed = 0
+        try:
+            fixed = await self._repair_names(gid, cid, session_id, users, agreed)
+        except Exception:
+            log.exception("The name pass failed")
+        finally:
+            if self.transcripts is not None:
+                try:
+                    await self.transcripts.mark_names_repaired(gid, session_id, int(time.time()))
+                except Exception:
+                    log.exception("The name pass couldn't be marked done")
+        return fixed
+
+    async def _repair_names(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str,
+        users: Collection[int],
+        agreed: Collection[int] | None,
+    ) -> int:
+        if (
+            self.transcripts is None
+            or self.memory is None
+            or self.lookup is None
+            or self.name_pass_ai is None
+        ):
+            return 0
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return 0
+        lookup = await self.lookup.get(gid, cid)
+        people: set[str] = set()
+        for uid in users:
+            name = self.name_of(gid, uid)
+            if not name.startswith("<@"):
+                people.add(name_key(name))
+                people.update(name_key(word) for word in name.split())
+        ai = self.name_pass_ai
+
+        async def ask(system: str, question: str) -> str:
+            reply = await ai.complete(
+                system, question, max_tokens=2000, schema=name_pass_logic.SCHEMA
+            )
+            return str(reply.text)
+
+        now = int(time.time())
+        report = await name_pass_run.run(
+            self.transcripts, lookup, ask, gid, cid, session_id,
+            people=people, agreed=agreed, now=now,
+            forget_before=now - int(self.memory.keep_days * 86400),
+        )  # fmt: skip
+        # The words PlotBot was not sure of, and the ones it says are new names, are name questions
+        # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
+        # are answered (#2169). The report counts only what will really be offered: a word the
+        # campaign knows already, or a person at the table, is not (the same rule the scan uses).
+        skip = set(await self.memory.known_keys(gid, cid)) | people
+        report = replace(
+            report,
+            unsure=tuple(c for c in report.unsure if name_key(c.heard) not in skip),
+            new=tuple(c for c in report.new if name_key(c.heard) not in skip),
+        )
+        if report.unsure or report.new:
+            self._name_pass_asks[session_id] = [
+                (c.heard, c.times) for c in (*report.unsure, *report.new)
+            ]
+        if not report.quiet and campaign.dm_screen_channel_id is not None:
+            await self.post(
+                campaign.dm_screen_channel_id,
+                name_pass_logic.report_text(report),
+                name_pass_undo.undo_view(cid, report.fixed),
+            )
+        log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
+        return sum(f.times for f in report.fixed)
+
     async def _propose_new_names(
         self,
         gid: int,
@@ -10878,6 +10991,12 @@ class DMBot(commands.AutoShardedBot):
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
         found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+        # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
+        asked = self._name_pass_asks.pop(session_id, []) if session_id is not None else []
+        have = {name_key(f.name) for f in found}
+        for name, times in asked:
+            if name_key(name) not in skip and name_key(name) not in have:
+                found.append(Suggestion(name, times))
         added: list[str] = []
         for suggestion in found:
             try:
@@ -10950,7 +11069,21 @@ class DMBot(commands.AutoShardedBot):
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
         check. Only lines from people who still agree; never anything DMbot already has
-        an answer for (including names the DM said aren't names)."""
+        an answer for (including names the DM said aren't names). Whatever happens, the session's
+        name pass is marked done at the end (#2628): an early return, or a failure, must not leave
+        the recap waiting for a pass that will never run."""
+        session_id = table.transcript_session_id
+        gid = table.guild_id
+        try:
+            await self._suggest_names(table)
+        finally:
+            if session_id is not None and self.transcripts is not None:
+                try:
+                    await self.transcripts.mark_names_repaired(gid, session_id, int(time.time()))
+                except Exception:
+                    log.exception("The name pass couldn't be marked done")
+
+    async def _suggest_names(self, table: Table) -> None:
         if self.memory is None or table.campaign_id is None or not table.heard:
             return
         gid, cid = table.guild_id, table.campaign_id
@@ -10965,6 +11098,20 @@ class DMBot(commands.AutoShardedBot):
             users |= table.dm_user_ids
             if table.transcript_session_id is not None:
                 await self.save_transcript(table)  # so every line is stored to point at
+                # PlotBot's name pass (#2628), before the scan and the recap, so the names they
+                # use are the list's: a repaired spelling is read again from the stored lines.
+                fixed = await self.repair_names(
+                    gid, cid, table.transcript_session_id, users, agreed
+                )
+                if fixed and self.transcripts is not None:
+                    try:
+                        lines = [
+                            x.text
+                            for x in await self.transcripts.lines(gid, table.transcript_session_id)
+                            if x.user_id in agreed and not x.sidebar and not x.typed
+                        ] or lines
+                    except Exception:
+                        log.exception("Name pass: couldn't read the repaired lines")
             added = await self._propose_new_names(
                 gid, cid, lines, users, table.transcript_session_id, agreed=agreed
             )
@@ -11225,8 +11372,16 @@ class DMBot(commands.AutoShardedBot):
         agreed = await self.consent.consenting(gid)
         lines = [(uid, text) for uid, text in rows if uid in agreed]
         if not lines:
+            await self.repair_names(
+                gid, ready.campaign_id, ready.session_id, (), agreed
+            )  # (marks it)
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
+        # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
+        # the lines are read again when it fixed something.
+        if await self.repair_names(gid, ready.campaign_id, ready.session_id, users, agreed):
+            rows = await self.import_job.store.scan_lines(gid, ready.session_id)
+            lines = [(uid, text) for uid, text in rows if uid in agreed] or lines
         # What an imported session says is what was said at the table: held-back names it says
         # are shown, as after a live session (#2404).
         try:

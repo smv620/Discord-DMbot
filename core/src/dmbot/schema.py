@@ -12131,6 +12131,20 @@ WEB_DELETE_NOTICES = (
     """
 )
 
+NAME_PASS = """
+    -- PlotBot's name pass on a finished session's cleaned transcript (#2628): when it was done
+    -- (Unix seconds), 0 when it has not been. The recap of a session waits for it (a bounded wait,
+    -- in code). Every session that exists now is marked done, so nothing old is asked again and no
+    -- old recap waits. A time only, no words.
+    ALTER TABLE transcript_sessions ADD COLUMN names_repaired_at BIGINT NOT NULL DEFAULT 0;
+    -- Migrations run with no server set, so row-level security hides every row: open the table to
+    -- this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON transcript_sessions
+        FOR ALL USING (true) WITH CHECK (true);
+    UPDATE transcript_sessions SET names_repaired_at = GREATEST(COALESCE(ended_at, started_at), 1);
+    DROP POLICY migrate_backfill ON transcript_sessions;
+"""
+
 IMPORT_STEPS = """
     -- How far each imported session's cleaning has got and when anything about it last moved
     -- (#2564), so the website can show "420 of 900 lines" and say "stalled" when nothing has moved
@@ -12702,6 +12716,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
     ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
+    ("0227_name_pass", NAME_PASS),  # PlotBot repairs names in a finished transcript (#2628)
     (
         "0228_graph_overview",
         GRAPH_OVERVIEW,
