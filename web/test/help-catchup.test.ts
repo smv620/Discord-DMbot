@@ -87,10 +87,11 @@ describe("the recap steps (shown only while recaps are on, by the page)", () => 
     expect(all).toContain("Each campaign gets up to 10 recaps a month.");
   });
 
-  it("have no narration sentence while narration is off", async () => {
+  it("say what narration is, since it is on (#2617), and nothing of an add-on while it has no price", async () => {
     live.recaps = true;
     const all = recaps(await help());
-    expect(all).not.toMatch(/narrat|add-on/i);
+    expect(all).toMatch(/narrator's voice and music/i);
+    expect(all).not.toMatch(/add-on/i);
   });
 
   it("add the narration add-on sentence, with the price from its constant, when narration is on", async () => {

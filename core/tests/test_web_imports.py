@@ -25,7 +25,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 
 MIRA, TOMAS, NOBODY = 7001, 7002, 7003
 CRAIG = """Craig Recording of Tuesday
@@ -1011,9 +1011,11 @@ class TheRoutes(WithImports):
                 self.web, cast(Any, who), [THURSDAY], now=NOW, days=30
             )
             client = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+                transport=httpx.ASGITransport(app=app),
+                base_url="https://web-api.internal.test",
+                headers=HEADERS,
             )
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             self.clients.append(client)
         self.dm, self.bob = self.clients
 
@@ -1040,9 +1042,11 @@ class TheRoutes(WithImports):
         )  # fmt: skip
         token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=on), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=on),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             body = {"files": files(("a.txt", CRAIG))}
             got = await client.post(f"/me/campaigns/{self.ref_c}/imports/preview", json=body)
             self.assertEqual(got.json()["recapsPossible"], True, got.text)
@@ -1067,9 +1071,11 @@ class TheRoutes(WithImports):
         )  # fmt: skip
         token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=off), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=off),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             base = f"/me/campaigns/{self.ref_c}/imports"
             for method, path in (
                 ("POST", "/preview"), ("GET", "/members"), ("POST", "/check"), ("POST", ""),
@@ -1089,9 +1095,11 @@ class TheRoutes(WithImports):
                 self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30
             )
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+                transport=httpx.ASGITransport(app=app),
+                base_url="https://web-api.internal.test",
+                headers=HEADERS,
             ) as client:
-                client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
                 got = await client.post(
                     f"/me/campaigns/{self.ref_c}/imports/preview",
                     json={"files": files(("a.txt", CRAIG))},
