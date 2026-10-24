@@ -1018,12 +1018,15 @@ export interface WebBelief {
 }
 
 /** One connection between two names, for the edge panel. `direction` says who does it to whom, from
- * the edge's `a` and `b`: "ab" (a does it to b), "ba", or "both". */
+ * the edge's `a` and `b`: "a-b" (a does it to b), "b-a", or "both". */
 export interface WebLink {
   id: string;
   words: string;
   secret: boolean;
-  direction: "ab" | "ba" | "both";
+  direction: "a-b" | "b-a" | "both";
+  /** How it reads from the second name when that differs ("has as a member"); null or missing
+   * when it reads the same either way or has no fixed reading back (#2666). */
+  back?: string | null;
   /** False: not revealed to the players yet (#2405). */
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */

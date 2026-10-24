@@ -25,6 +25,8 @@ import dataclasses
 import logging
 import time
 from collections.abc import (
+    Awaitable,
+    Callable,
     Collection,
     Sequence,
 )
@@ -108,18 +110,23 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot, HintPeople, Table
+    from dmbot.campaigns import web_backup
     from dmbot.campaigns.store import CampaignStore
+    from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
     from dmbot.consent import ConsentStore
     from dmbot.dm_screen.peek_notices import PeekNotices
     from dmbot.dm_screen.web_settings import SettingStore
     from dmbot.mail import Mailer
+    from dmbot.memory.exposures import ExposureStore
     from dmbot.memory.importance import ImportanceCache
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
     from dmbot.recaps.audio.worker import AudioWorker
     from dmbot.recaps.pipeline import RecapWorker
+    from dmbot.recaps.plot import PlotRunner
+    from dmbot.recaps.plot_talk_run import TalkRunner
     from dmbot.recaps.store import RecapStore
     from dmbot.recaps.style import NoteStore, StyleStore
     from dmbot.timebot.store import ClockStore
@@ -193,6 +200,7 @@ class RecapFeatures:
         # What these methods read of the bot, declared the way `DMBot.__init__` sets it, so the
         # checker reads the moved code as it read it in `bot.py`. Each is `DMBot`'s own: a change
         # there is a change here until the Cog pass gives this class a real bot to hold.
+        _audio_seen: dict[tuple[int, str, int], tuple[int, int]]
         _clip_sweep_rounds: int
         _group_locks: dict[str, asyncio.Lock]
         _group_made: dict[str, list[int]]
@@ -202,11 +210,13 @@ class RecapFeatures:
         _short_asks: dict[str, int]
         _voice_next: int
         _voice_tasks: dict[int, asyncio.Task[None]]
+        audio_waits: recap_audio.AudioWaits
         audio_worker: AudioWorker | None
         campaigns: CampaignStore
         clocks: ClockStore | None
         consent: ConsentStore
         decision_lines: DecisionLines
+        exposures: ExposureStore | None
         extractor_ai: TierClient | None
         heard_questions: WaitingQuestionStore | None
         import_job: ImportJob | None
@@ -219,6 +229,8 @@ class RecapFeatures:
         name_answers: name_answers.AnswerStore | None
         peek_notices: PeekNotices | None
         pipeline: TranscriptionPipeline
+        plot_runner: PlotRunner | None
+        plot_talk: TalkRunner | None
         recap_audio_files: AudioFiles
         recap_feedback_ai: TierClient | None
         recap_feedback_limit: recap_feedback.FeedbackLimit
@@ -231,6 +243,8 @@ class RecapFeatures:
         settings: Settings
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
+        web_backups: web_backup.WebBackups | None
+        web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
 
         @property
@@ -248,6 +262,8 @@ class RecapFeatures:
             | None
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
+        async def run_web_backups(self) -> None: ...
+        async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
         async def _dm_message(
@@ -2350,15 +2366,24 @@ class RecapFeatures:
                 log.warning("Plot checks failed for a server: %s", type(exc).__name__)
 
     async def run_plot_talk(self) -> None:
-        """One round of answers to the DM's messages about plot issues (#2123)."""
+        """One round of answers to the DM's messages about plot issues, and of the changes the DM
+        saved from them (#2123)."""
         if self.plot_talk is None:
             return
         for guild in list(self.guilds):
             try:
                 with log_context(guild_id=guild.id):
-                    await self.plot_talk.round(guild.id)
+                    await self._plot_talk_step(self.plot_talk.apply_round, guild.id)  # first: a
+                    await self._plot_talk_step(self.plot_talk.round, guild.id)  # Save never waits
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Plot talk failed for a server: %s", type(exc).__name__)
+
+    async def _plot_talk_step(self, step: Callable[[int], Awaitable[int]], guild_id: int) -> None:
+        """One part of a talk round, on its own: if it fails (say the AI is down), the rest run."""
+        try:
+            await step(guild_id)
+        except Exception as exc:  # the type only: a database error can quote a row
+            log.warning("A plot talk step failed: %s", type(exc).__name__)
 
     async def _plot_talk_loop(self) -> None:
         """Every few seconds (a DM is waiting for the answer), in its own task so a slow check

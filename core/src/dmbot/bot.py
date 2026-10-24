@@ -109,6 +109,7 @@ from dmbot.dm_screen import (
     ensure_dm_screen,
     house_sync,
     import_button,
+    links_ready,
     pack_suggestion,
     pack_update,
     peek_view,
@@ -551,6 +552,7 @@ HINTS_FAIL_LOG_S = 60.0
 # looked at this far apart when the bot starts (Discord's rate limits).
 RULES_ARCHIVE_DELAY_S = 3.0
 RULES_ARCHIVE_PACE_S = 2.0
+LINKS_READY_SETTLE_S = 5.0  # a burst of name answers is one look at the waiting connections
 RULES_ARCHIVE_RETRY_S = 10.0  # when a pass was cut short by the caps
 NPCS_PASSES = 60  # (a pass a minute at most: an hour of an unfinished or busy list)
 RULES_ARCHIVE_PASSES = 60  # (200 rules at 25 a pass is far fewer)
@@ -1191,6 +1193,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._npcs_reorder: set[str] = set()  # a rebuild cut short: continue it in order
         self._npcs_last: dict[str, float] = {}  # when a campaign's last pass began (monotonic)
         self._npcs_guilds: dict[str, int] = {}
+        # Waiting backstory connections that may have become ready (#2650): the campaigns to look
+        # at, so a burst of name answers is one look a few seconds on.
+        self._links_ready_pending: set[str] = set()
+        self._links_guilds: dict[str, int] = {}  # campaign -> its server, once found
         self._npcs_recall: RecallService | None = None
         self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
         self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
@@ -1701,6 +1707,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             BackstoryButton
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
+        self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -10013,6 +10020,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         continue
                     await self.post(campaign.dm_screen_channel_id, peek_notice(peek.name))
 
+    def _waiting_answers(self, guild_id: int) -> web_actions.Waiting | None:
+        """What the website's answers to waiting connections need (#2635): the claims, the
+        backstory's queue, and who may be recorded now (read when the answer is applied)."""
+        if self.memory is None or self.backstory_links is None:
+            return None
+        return web_actions.Waiting(
+            ClaimStore(self.memory),
+            self.backstory_links,
+            lambda: self.consent.consenting(guild_id),
+        )
+
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -10033,7 +10051,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                             web_actions.Outcome(error=web_actions.NOT_ALLOWED)
                             if campaign is None
                             else await web_actions.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, action
+                                self.memory,
+                                guild.id,
+                                campaign.dm_user_ids,
+                                action,
+                                self._waiting_answers(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -10913,12 +10935,64 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         if event is not None and (event.names_changed or event.kinds_changed):
                             # (entries, names, facts, and the labels of kinds show on the list)
                             self._npcs_changed(event.campaign_id)
+                        if event is not None and event.names_changed:
+                            self._links_ready_changed(event.campaign_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning("Lost campaign memory updates for the NPC lists (%s)", exc)
             failures += 1
             await asyncio.sleep(min(5.0 * failures, 60.0))
+
+    def _links_ready_changed(self, campaign_id: str) -> None:
+        """A campaign's names changed: look soon at whether waiting backstory connections became
+        ready (#2650). Quick and never raises; a burst of answers is one look."""
+        if self.backstory_links is None or campaign_id in self._links_ready_pending:
+            return
+        self._links_ready_pending.add(campaign_id)
+        if self._track(self._links_ready_look(campaign_id), "links-ready") is None:
+            self._links_ready_pending.discard(campaign_id)
+
+    async def _links_ready_look(self, campaign_id: str) -> None:
+        """Say once, on the DM screen, how many waiting connections are ready to check (counts
+        and the upload's name only). The wait lets a burst of answers (Add all) settle first."""
+        try:
+            await asyncio.sleep(LINKS_READY_SETTLE_S)
+        finally:
+            self._links_ready_pending.discard(campaign_id)
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None:
+            return
+        found = None
+        known = self._links_guilds.get(campaign_id)
+        if known is not None:  # the server it was last found in: most looks are one lookup
+            campaign = await self.campaigns.get(known, campaign_id)
+            if campaign is not None:
+                found = (known, campaign)
+            else:  # moved to another server (or gone): forget it and look everywhere
+                self._links_guilds.pop(campaign_id, None)
+        if found is None:
+            for guild in list(self.guilds):
+                campaign = await self.campaigns.get(guild.id, campaign_id)
+                if campaign is not None:
+                    self._links_guilds[campaign_id] = guild.id
+                    found = (guild.id, campaign)
+                    break
+        if found is None:
+            return
+        guild_id, campaign = found
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            # (nothing is marked told while there is nowhere to say it)
+            if not campaign.dm_screen_channel_id or not await store.count(guild_id, campaign_id):
+                return  # most campaigns have none waiting: the common case costs one count
+            onto = await memory.ontology(guild_id, campaign_id)
+            symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
+            taken = await store.take_ready_notices(guild_id, campaign_id, symmetric=symmetric)
+            text = links_ready.notice(taken.counts)
+            if text and not await self.post(
+                campaign.dm_screen_channel_id, text, links_ready.view(campaign_id)
+            ):
+                await store.untell(guild_id, campaign_id, taken.ids)  # said next time instead
 
     async def _rebuild_npcs(self) -> None:
         """At bot start: every campaign's NPC list is brought up to date once, in order, a few

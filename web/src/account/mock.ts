@@ -535,7 +535,7 @@ function startWeb(big: boolean, lonely = false): WebState {
   const connect = (a: number, b: number, secret = false): void => {
     if (a === b || a >= nodes.length || b >= nodes.length) return;
     const id = `l${links.length + 1}`;
-    links.push({ id, a: nodes[a]!.id, b: nodes[b]!.id, words: words[links.length % words.length]!, secret, direction: links.length % 5 === 0 ? "both" : "ab" });
+    links.push({ id, a: nodes[a]!.id, b: nodes[b]!.id, words: words[links.length % words.length]!, secret, direction: links.length % 5 === 0 ? "both" : "a-b" });
   };
   for (let i = 0; i < nodes.length; i += 1) {
     connect(i, (i + 1) % nodes.length);
@@ -575,7 +575,7 @@ function startWeb(big: boolean, lonely = false): WebState {
       { id: "pair-ford", name: "Tolle Ford", kind: "place", secret: false },
     ];
     nodes.push(...extra);
-    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "ab" });
+    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
   return { nodes, links, nextLink: links.length + 1 };
 }
@@ -1153,7 +1153,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (change.action === "add") {
         if (change.words.trim() === "") throw new ApiError("bad-name");
         if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
-        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "ab" });
+        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
         return edgeOf(change.a, change.b);
       }
       const link = state.links.find((l) => l.id === change.id);
