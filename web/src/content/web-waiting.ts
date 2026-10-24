@@ -25,6 +25,7 @@ export const waitingWords = {
   fromEarlier: "From an earlier upload",
   keep: "Keep",
   keepSecret: "Keep as secret",
+  keepIsSecret: "Keep (secret)",
   skip: "Skip",
   keepAll: (n: number): string => `Keep all (${n})`,
   keepAllCut: (done: number, left: number): string =>
@@ -42,6 +43,8 @@ export const waitingWords = {
     otherIsSubject ? `${other} ${how} ${word}` : `${word} ${how} ${other}`,
   neither: "Neither",
   hiddenMark: "🤫",
+  hiddenWord: "Hidden from players:",
+  saidAt: (day: string): string => `Said in the session of ${day}.`,
   hiddenNote: "🤫 means players can't see that name.",
 
   savingStage: "Saving your answer",
@@ -53,7 +56,7 @@ export const waitingWords = {
     keep: "Kept.",
     keepSecret: "Kept as a secret.",
     skip: "Skipped.",
-    pick: "Picked. It now shows under From your backstory, ready to keep.",
+    pick: "Picked. It now shows under From your backstory.",
     neither: "Neither. No connection was made.",
   },
   kept: (n?: number): string =>
@@ -63,7 +66,8 @@ export const waitingWords = {
     gone: "That one isn't waiting any more. The list now shows what is.",
     "name-first": "Answer the new name in Check new names first, then try this again.",
     "stopped-recording": "Someone who said it has stopped being recorded, so DMbot dropped it. Nothing to do.",
-    "cannot-write": "DMbot can't add that. It clashes with one of your rules. It stays here: skip it, or change the rule and try again.",
+    "cannot-write": "DMbot can't add that right now. A name in it may have changed. It stays here: press Not right, or try again later.",
+    "bad-target": "DMbot can't do that to this one. The list now shows what is there.",
     "queue-full": "Too many connections are waiting. Answer some of them first, then try again.",
     "still-waiting": "DMbot is still working on your last answer. Look again in a moment. It won't be counted twice.",
     "not-found": "That one isn't there any more. The list now shows what is.",

@@ -597,7 +597,7 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 function pretendWaiting(): Waiting {
   return {
     claims: [
-      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true },
+      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
       { id: "c2", statement: "Roan is dead", canSecret: false },
     ],
     backstory: [

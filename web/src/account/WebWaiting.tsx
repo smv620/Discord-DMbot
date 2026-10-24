@@ -11,6 +11,10 @@ import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer } from "./api";
 import WorkProgress from "./WorkProgress";
 
+/** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
+const sessionDay = (seconds: number): string =>
+  new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
 type Said = { ok: boolean; text: string; n: number } | null;
@@ -32,7 +36,7 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
-  const [sending, setSending] = useState<{ key: string; since: number; stage: string } | null>(null);
+  const [sending, setSending] = useState<{ since: number; stage: string } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
@@ -69,14 +73,13 @@ export default function WebWaiting({
   }, [api, campaignRef]);
 
   async function send(
-    key: string,
     answer: WaitingAnswer,
     ok: string | ((kept?: number) => string),
     stage: string = w.savingStage,
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
-    setSending({ key, since: Math.floor(Date.now() / 1000), stage });
+    setSending({ since: Math.floor(Date.now() / 1000), stage });
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer);
@@ -155,7 +158,7 @@ export default function WebWaiting({
               <p>
                 <strong>{w.whichQuestion(q.word)}</strong>
               </p>
-              <p>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
+              <p id={`wq-${q.id}`}>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
               {q.quote && <p class="muted small">“{q.quote}”</p>}
               {q.secret && <p class="small">{w.secretNote}</p>}
               {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
@@ -166,16 +169,26 @@ export default function WebWaiting({
                     type="button"
                     class="button"
                     disabled={busy}
-                    onClick={() => void send(q.id, { kind: "which", action: "pick", id: q.id, entity: c.id }, w.done.pick)}
+                    aria-describedby={`wq-${q.id}`}
+                    onClick={() => void send({ kind: "which", action: "pick", id: q.id, entity: c.id }, w.done.pick)}
                   >
-                    {c.limited ? `${w.hiddenMark} ${c.name}` : c.name}
+                    {c.limited ? (
+                      <>
+                        <span aria-hidden="true">{w.hiddenMark} </span>
+                        <span class="visually-hidden">{w.hiddenWord} </span>
+                        {c.name}
+                      </>
+                    ) : (
+                      c.name
+                    )}
                   </button>
                 ))}
                 <button
                   type="button"
                   class="button secondary"
                   disabled={busy}
-                  onClick={() => void send(q.id, { kind: "which", action: "neither", id: q.id }, w.done.neither)}
+                  aria-describedby={`wq-${q.id}`}
+                  onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.neither)}
                 >
                   {w.neither}
                 </button>
@@ -191,13 +204,15 @@ export default function WebWaiting({
           <p class="small">{w.claimsNote}</p>
           {list.claims.map((c) => (
             <div key={c.id} class="panel">
-              <p>{c.statement}</p>
+              <p id={`wc-${c.id}`}>{c.statement}</p>
+              {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
               <div class="row">
                 <button
                   type="button"
                   class="button"
                   disabled={busy}
-                  onClick={() => void send(c.id, { kind: "claim", action: "confirm", id: c.id }, w.done.confirm)}
+                  aria-describedby={`wc-${c.id}`}
+                  onClick={() => void send({ kind: "claim", action: "confirm", id: c.id }, w.done.confirm)}
                 >
                   {w.confirm}
                 </button>
@@ -206,8 +221,9 @@ export default function WebWaiting({
                     type="button"
                     class="button secondary"
                     disabled={busy}
+                    aria-describedby={`wc-${c.id}`}
                     onClick={() =>
-                      void send(c.id, { kind: "claim", action: "confirm", id: c.id, secret: true }, w.done.confirmSecret)
+                      void send({ kind: "claim", action: "confirm", id: c.id, secret: true }, w.done.confirmSecret)
                     }
                   >
                     {w.confirmSecret}
@@ -217,7 +233,8 @@ export default function WebWaiting({
                   type="button"
                   class="button secondary"
                   disabled={busy}
-                  onClick={() => void send(c.id, { kind: "claim", action: "reject", id: c.id }, w.done.reject)}
+                  aria-describedby={`wc-${c.id}`}
+                  onClick={() => void send({ kind: "claim", action: "reject", id: c.id }, w.done.reject)}
                 >
                   {w.reject}
                 </button>
@@ -245,9 +262,7 @@ export default function WebWaiting({
                       class="button"
                       disabled={busy}
                       onClick={() =>
-                        void send(
-                          `all:${u.label}`,
-                          { kind: "backstory", action: "keep_all", ids },
+                        void send({ kind: "backstory", action: "keep_all", ids },
                           (kept) => (left > 0 && kept !== undefined ? w.keepAllCut(kept, left) : w.kept(kept)),
                           w.keepingStage(ids.length),
                         )
@@ -259,7 +274,7 @@ export default function WebWaiting({
                 )}
                 {u.items.map((b) => (
                   <div key={b.id} class="panel">
-                    <p>{`${b.subject} ${b.how} ${b.object}`}</p>
+                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
                     {b.ready ? (
@@ -268,17 +283,19 @@ export default function WebWaiting({
                           type="button"
                           class="button"
                           disabled={busy}
-                          onClick={() => void send(b.id, { kind: "backstory", action: "keep", id: b.id }, w.done.keep)}
+                          aria-describedby={`wb-${b.id}`}
+                          onClick={() => void send({ kind: "backstory", action: "keep", id: b.id }, w.done.keep)}
                         >
-                          {w.keep}
+                          {b.secret ? w.keepIsSecret : w.keep}
                         </button>
                         {!b.secret && (
                           <button
                             type="button"
                             class="button secondary"
                             disabled={busy}
+                            aria-describedby={`wb-${b.id}`}
                             onClick={() =>
-                              void send(b.id, { kind: "backstory", action: "keep", id: b.id, secret: true }, w.done.keepSecret)
+                              void send({ kind: "backstory", action: "keep", id: b.id, secret: true }, w.done.keepSecret)
                             }
                           >
                             {w.keepSecret}
@@ -288,7 +305,8 @@ export default function WebWaiting({
                           type="button"
                           class="button secondary"
                           disabled={busy}
-                          onClick={() => void send(b.id, { kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
+                          aria-describedby={`wb-${b.id}`}
+                          onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
                         >
                           {w.skip}
                         </button>
@@ -301,7 +319,8 @@ export default function WebWaiting({
                             type="button"
                             class="button secondary"
                             disabled={busy}
-                            onClick={() => void send(b.id, { kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
+                            aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
                           >
                             {w.skip}
                           </button>

@@ -7,7 +7,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, httpApi, type AccountApi } from "../src/account/api";
+import { ApiError, httpApi, type AccountApi, type ApiErrorKind } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import WebWaiting from "../src/account/WebWaiting";
@@ -190,6 +190,7 @@ describe("connections from a backstory", () => {
     const secret = screen.getByText("Rook grew up with Mira Voss").closest(".panel") as HTMLElement;
     expect(within(secret).getByText(w.secretNote)).toBeTruthy();
     expect(within(secret).queryByRole("button", { name: w.keepSecret })).toBeNull();
+    expect(within(secret).getByRole("button", { name: w.keepIsSecret })).toBeTruthy(); // (as on Discord)
   });
 });
 
@@ -199,7 +200,7 @@ describe("Which Mara?", () => {
     const card = screen.getByText(w.whichQuestion("Mara")).closest(".panel") as HTMLElement;
     expect(within(card).getByText(w.whichLine("Rook", "knows", "Mara", true))).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Mara Ashgrove" })).toBeTruthy();
-    expect(within(card).getByRole("button", { name: `${w.hiddenMark} Mara Vell` })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: `${w.hiddenWord} Mara Vell` })).toBeTruthy();
     expect(within(card).getByText(w.hiddenNote)).toBeTruthy();
     expect(within(card).getByRole("button", { name: w.neither })).toBeTruthy();
   });
@@ -283,6 +284,58 @@ describe("after an answer", () => {
     release();
     await Promise.resolve();
     expect(api.calls.filter((c) => c === `webWaiting:${REF}`).length).toBe(1);
+  });
+});
+
+describe("skipping a connection that waits on a name", () => {
+  it("dismisses it: skipping writes no fact", async () => {
+    const api = await open();
+    press(w.skip, screen.getByText("Rook knows Newcomer").closest(".panel") as HTMLElement);
+    expect(await screen.findByText(w.done.skip)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Rook knows Newcomer")).toBeNull());
+    expect(api.calls).toContain(`answerWaiting:${REF}:backstory:skip:b3`);
+  });
+
+  it("but Keep on it is refused as gone, as core does, and the card stays", async () => {
+    const api = mockApi("table");
+    await expect(api.answerWaiting!(REF, { kind: "backstory", action: "keep", id: "b3" })).rejects.toMatchObject({ kind: "gone" });
+    await expect(api.webWaiting!(REF).then((l) => l.backstory.some((b) => b.id === "b3"))).resolves.toBe(true);
+  });
+});
+
+describe("what the card does after a refusal", () => {
+  /** A pretend API whose first answer is refused and whose list afterwards is as given. */
+  function refusing(kind: ApiErrorKind, dropsIt: boolean) {
+    const api = mockApi("table");
+    const real = api.webWaiting!.bind(api);
+    let refused = false;
+    api.answerWaiting = async () => {
+      refused = true;
+      throw new ApiError(kind);
+    };
+    api.webWaiting = async (ref) => {
+      const got = await real(ref);
+      if (refused && dropsIt) return { ...got, claims: got.claims.filter((c) => c.id !== "c2"), counts: { ...got.counts, claims: 1, all: got.counts.all - 1 } };
+      return got;
+    };
+    return api;
+  }
+  const card = () => screen.queryByText("Roan is dead");
+
+  it.each(["gone", "stopped-recording"] as const)("%s is final: the card goes away", async (kind) => {
+    await open(refusing(kind, true));
+    press(w.reject, card()!.closest(".panel") as HTMLElement);
+    await screen.findByText(w.errors[kind]!);
+    await waitFor(() => expect(card()).toBeNull());
+  });
+
+  it.each(["name-first", "cannot-write"] as const)("%s keeps the card, with its buttons working again", async (kind) => {
+    await open(refusing(kind, false));
+    press(w.reject, card()!.closest(".panel") as HTMLElement);
+    await screen.findByText(w.errors[kind]!);
+    await settled();
+    expect(card()).toBeTruthy();
+    for (const b of screen.getAllByRole("button", { name: w.reject })) expect((b as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
