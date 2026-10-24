@@ -7,12 +7,14 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { IMPORT_LIVE, importPage } from "../content/import-words";
 import { sessionDay } from "../content/recaps";
-import { problem, text, versionNote } from "../content/transcripts";
+import { PUT_BACK_READS_AGAIN, offTopic, problem, text, versionNote } from "../content/transcripts";
 import {
   ApiError,
   type AccountApi,
+  type StretchLine,
   type TranscriptCampaign,
   type TranscriptSessionItem,
+  type TranscriptSkip,
   type TranscriptVersion,
   type TranscriptView,
 } from "./api";
@@ -349,6 +351,147 @@ function Download({
   );
 }
 
+/** Whether the signed-in person is one of the campaign's DMs, from their own campaigns list (it fails closed: a
+ * missing answer or role is no DM). Only DMs are offered Put it back; the API refuses anyone else too. */
+function useIsDm(api: AccountApi, campaignRef: string): boolean {
+  const [dm, setDm] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void api
+      .me()
+      .then((me) => {
+        const found = me?.campaigns.find((c) => c.ref === campaignRef);
+        if (live) setDm(found?.role === "owner" || found?.role === "co-dm");
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [api, campaignRef]);
+  return dm;
+}
+
+/** One stretch of off-topic chat the cleaned transcript left out (#2568). Anyone who may read the transcript
+ * can open what was said, as text only; a DM can put it back (it joins the cleaned transcript and its downloads)
+ * and leave it out again. The words are never HTML, and nothing is promised beyond what the API did. */
+function LeftOut({
+  api,
+  campaignRef,
+  number,
+  skip,
+  isDm,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  number: number;
+  skip: TranscriptSkip;
+  isDm: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [heard, setHeard] = useState<StretchLine[] | null>(null);
+  const [back, setBack] = useState(skip.putBack);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [problem, setProblem] = useState("");
+  const working = useRef(false);
+  if (!api.transcriptStretch) return null;
+
+  const fail = (error: unknown) => {
+    const kind = error instanceof ApiError ? error.kind : "server";
+    setProblem(offTopic.problem[kind] ?? offTopic.problem["server"] ?? "");
+  };
+  const toggle = async () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (heard !== null || working.current) return;
+    working.current = true;
+    setProblem("");
+    try {
+      setHeard(await api.transcriptStretch!(campaignRef, number, skip));
+    } catch (error) {
+      fail(error);
+      setOpen(false);
+    } finally {
+      working.current = false;
+    }
+  };
+  const change = async (putBack: boolean) => {
+    const call = putBack ? api.transcriptPutBack : api.transcriptLeaveOut;
+    if (working.current || !call) return;
+    working.current = true;
+    setBusy(true);
+    setProblem("");
+    setNote("");
+    try {
+      const changed = await call(campaignRef, number, skip);
+      setBack(putBack);
+      setNote(
+        changed === 0
+          ? offTopic.nothingChanged
+          : putBack
+            ? offTopic.putBackDone + (PUT_BACK_READS_AGAIN ? offTopic.readsAgain : "")
+            : offTopic.leftOutDone,
+      );
+    } catch (error) {
+      fail(error);
+    } finally {
+      working.current = false;
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div class="stack left-out">
+      <p class="small">
+        {back ? offTopic.putBackLine(skip.lines) : offTopic.left(skip.lines, skip.seconds)}{" "}
+        <button type="button" class="button secondary" aria-expanded={open} aria-label={offTopic.showFor(skip.lines)} onClick={() => void toggle()}>
+          {open ? offTopic.hide : offTopic.show}
+        </button>
+      </p>
+      {open && (
+        <div class="panel stack" aria-busy={heard === null}>
+          <p class="small muted">{heard === null ? offTopic.loading : offTopic.heading}</p>
+          {heard !== null && (
+            <ul class="transcript-lines">
+              {heard.map((l, i) => (
+                <li key={i}>
+                  {offTopic.who(l.when, l.who)}: {l.text}
+                </li>
+              ))}
+            </ul>
+          )}
+          {isDm && api.transcriptPutBack && api.transcriptLeaveOut && (
+            <div class="row">
+              {back ? (
+                <button type="button" class="button secondary" disabled={busy} onClick={() => void change(false)}>
+                  {busy ? offTopic.working : offTopic.leaveOut}
+                </button>
+              ) : (
+                <button type="button" class="button" disabled={busy} aria-label={offTopic.putBackFor(skip.lines)} onClick={() => void change(true)}>
+                  {busy ? offTopic.working : offTopic.putBack}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {note && (
+        <p role="status" class="small">
+          {note} {offTopic.reload}
+        </p>
+      )}
+      {problem && (
+        <p class="note bad" role="alert">
+          {problem}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The moment asked for in the address, `#t=<milliseconds since the session began>` (#2402), or
  * null. Anything that is not a plain whole number is no moment. */
 export function momentFromHash(hash: string): number | null {
@@ -392,16 +535,24 @@ function Lines({
   view: TranscriptView;
 }) {
   const [extra, setExtra] = useState<string[]>([]);
+  // The left-out stretches of the pages loaded after the first, with the marker's place among all the lines.
+  const [extraSkips, setExtraSkips] = useState<{ skip: TranscriptSkip; index: number }[]>([]);
   const [next, setNext] = useState<number | null>(view.next ?? null);
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
   const busy = useRef(false);
   const lines = [...view.lines, ...extra];
+  const skipAt = new Map<number, TranscriptSkip>([
+    ...(view.skips ?? []).map((s): [number, TranscriptSkip] => [s.line, s]),
+    ...extraSkips.map((e): [number, TranscriptSkip] => [e.index, e.skip]),
+  ]);
+  const isDm = useIsDm(api, campaignRef);
   async function more() {
     if (busy.current || next === null || !api.transcript) return;
     busy.current = true;
     setState("busy");
     try {
       const page = await api.transcript(campaignRef, view.number, view.version, next);
+      setExtraSkips((before) => [...before, ...(page.skips ?? []).map((skip) => ({ skip, index: lines.length + skip.line }))]);
       setExtra((before) => [...before, ...page.lines]);
       setNext(page.next ?? null);
       setState("idle");
@@ -442,6 +593,7 @@ function Lines({
     );
   return (
     <>
+      {view.filter && <p class="small muted">{offTopic.filter(view.filter.kept, view.filter.leftOut, view.filter.putBack)}</p>}
       <ul class="transcript-lines" aria-label={text.sessionTitle(view.number)}>
         {lines.map((line, i) => (
           <li
@@ -449,6 +601,7 @@ function Lines({
             {...(i === marked ? { ref: markedRef, class: "moment", tabIndex: -1, "aria-current": "location" as const } : {})}
           >
             {line}
+            {skipAt.has(i) && <LeftOut api={api} campaignRef={campaignRef} number={view.number} skip={skipAt.get(i)!} isDm={isDm} />}
           </li>
         ))}
       </ul>
