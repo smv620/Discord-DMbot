@@ -18,7 +18,7 @@ import {
 } from "../content/recaps";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { campaignPage as campaignWords } from "../content/campaign-page";
-import { panelWords, remakeWords } from "../content/recap-panel";
+import { panelWords, remakeSentence, remakeWords } from "../content/recap-panel";
 import { stageWords } from "../content/work-progress";
 import { RECAP_AUDIO_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import {
@@ -38,6 +38,7 @@ import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapFixName from "./RecapFixName";
+import { audioIsStale, useRemake } from "./useRemake";
 import WorkProgress from "./WorkProgress";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
@@ -272,10 +273,13 @@ function AudioPanel({
   api,
   recap,
   onRecap,
+  remake,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
+  /** What making it again would do (#2630); null when not asked or not known. */
+  remake: RecapRemake | null;
 }) {
   const audio = recap.audio;
   const [links, setLinks] = useState<RecapAudioLinks>({});
@@ -290,26 +294,7 @@ function AudioPanel({
   );
   const playable = audio?.state === "ready" && audio.current;
 
-  // What making the audio again would do now (#2630): only the voice, or everything and why. Asked when
-  // the DM could press the button; an API without the route leaves the old button and words.
-  const [remake, setRemake] = useState<RecapRemake | null>(null);
   const remakeOn = RECAP_REMAKE_LIVE && RECAP_AUDIO_LIVE;
-  const canAsk = !!audio?.canAskAgain;
-  useEffect(() => {
-    // The last answer stays while a new one is fetched, so the button's name doesn't flicker.
-    if (!remakeOn || !canAsk || !api.recapAudioRemake) {
-      setRemake(null);
-      return;
-    }
-    let live = true;
-    api.recapAudioRemake(recap.ref).then(
-      (found) => live && setRemake(found),
-      () => live && setRemake(null), // (a failed look leaves the old button and words)
-    );
-    return () => {
-      live = false;
-    };
-  }, [api, recap.ref, remakeOn, canAsk, recap.summary, audio?.current, audio?.state]);
 
   // The links last 15 minutes; one fresh read when a player cannot load its file.
   const load = async (): Promise<void> => {
@@ -383,16 +368,8 @@ function AudioPanel({
     }
   };
 
-  const remakeLine =
-    !remake || remake.how === "new"
-      ? null
-      : remake.how === "voice"
-        ? remakeWords.voice(remake.changed, remake.total)
-        : remake.how === "same"
-          ? remakeWords.same
-          : Object.hasOwn(remakeWords.all, remake.why)
-            ? (remakeWords.all[remake.why] as string)
-            : remakeWords.allFallback;
+  // (an edited draft's line is beside Approve's audio choice instead, so it is said once)
+  const remakeLine = recap.status === "draft" && audioIsStale(recap) ? null : remakeSentence(remake);
   const lastLine =
     !remakeOn || audio.state !== "ready" || !audio.current
       ? null
@@ -716,6 +693,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     }
   };
 
+  const remake = useRemake(api, recap);
   const heading = recap.title || text.untitled;
   const decided = recap.status !== "draft";
   return (
@@ -920,6 +898,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           recap={recap}
           onRecap={setRecap}
           pageFocus={() => headingRef.current}
+          remake={remake}
         />}
       {!editing && (
         <RecapShareControls
@@ -929,7 +908,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           onShare={(share) => setRecap({ ...recap, share, shared: share.on })}
         />
       )}
-      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}

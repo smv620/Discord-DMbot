@@ -47,10 +47,10 @@ export const remakeWords = {
     paragraphs: "You added or removed a paragraph, so the voice and the music will both be made again.",
     moods: "You moved or changed a music or pause tag, so the voice and the music will both be made again.",
     size: "You changed a lot of the text, so the voice and the music will both be made again to fit.",
-    no_parts: "The old voice is no longer stored, so the voice and the music will both be made again.",
+    no_parts: "The parts needed weren't kept, so the voice and the music will both be made again.",
   } as Record<string, string>,
   allFallback: "The voice and the music will both be made again.",
-  same: "The words the narrator reads haven't changed, so pressing the button makes nothing new.",
+  same: "The narrator's words are the same, so the audio is kept and marked as up to date.",
   lastVoice: "Last remake: voice only. The music was kept.",
   lastAll: "Last remake: voice and music.",
   asked: "Started. The step, how far it has got and when it last moved show here.",
@@ -59,8 +59,17 @@ export const remakeWords = {
     audio_music: "Making the music",
     audio_mix: "Mixing the voice and the music",
   } as Record<string, string>,
-  unit: { paragraphs: "paragraphs" } as Record<string, string>,
+  // (the API counts "parts"; the DM sees paragraphs)
+  unit: { parts: "paragraphs", paragraphs: "paragraphs" } as Record<string, string>,
 };
+
+/** The sentence for the API's answer, or null when there is nothing to say (a first making). */
+export function remakeSentence(remake: { how: string; why: string; changed: number; total: number } | null): string | null {
+  if (!remake || remake.how === "new") return null;
+  if (remake.how === "voice") return remakeWords.voice(remake.changed, remake.total);
+  if (remake.how === "same") return remakeWords.same;
+  return Object.hasOwn(remakeWords.all, remake.why) ? (remakeWords.all[remake.why] as string) : remakeWords.allFallback;
+}
 
 // "Fix a name everywhere" in the recap editor (#2630): the DM types the wrong spelling and the right one,
 // and every use in the text box is replaced. Nothing is saved until Save; the names list is not touched.

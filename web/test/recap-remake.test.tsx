@@ -151,6 +151,38 @@ describe("what would be made again", () => {
   });
 });
 
+describe("beside Approve, for an edited draft", () => {
+  // Approving an edited draft with an audio choice queues the new audio at once, so the audio part has
+  // no button to press: the line has to be where the choice is made.
+  const editedDraft: RecapAudioState = { state: "ready", error: "", current: false, canAskAgain: false };
+
+  it("says what the new audio will be beside the audio choice", async () => {
+    live.on = true;
+    const api = withAudio(editedDraft, { how: "voice", why: "", changed: 2, total: 9 });
+    render(<Recaps api={api} path={path} />);
+    await screen.findByRole("heading", { name: "Approve" }).catch(() => null);
+    expect(await screen.findByText(w.voice(2, 9))).toBeTruthy();
+    expect(api.calls).toContain(`recapAudioRemake:${draft.ref}`);
+    // and no button to press in the audio part: that is Approve's job here
+    expect(screen.queryByRole("button", { name: w.voiceButton })).toBeNull();
+  });
+
+  it("says why everything is made again", async () => {
+    live.on = true;
+    render(<Recaps api={withAudio(editedDraft, { how: "all", why: "paragraphs", changed: 3, total: 3 })} path={path} />);
+    expect(await screen.findByText(w.all.paragraphs)).toBeTruthy();
+  });
+
+  it("says nothing while it is off", async () => {
+    live.on = false;
+    const api = withAudio(editedDraft, { how: "voice", why: "", changed: 2, total: 9 });
+    render(<Recaps api={api} path={path} />);
+    await screen.findByText(/The party crossed the Brynwater/);
+    expect(screen.queryByText(w.voice(2, 9))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("recapAudioRemake"))).toBe(false);
+  });
+});
+
 describe("while it is made, and after", () => {
   it("shows the stage, the paragraphs done and the clock", async () => {
     live.on = true;
@@ -164,7 +196,7 @@ describe("while it is made, and after", () => {
           stage: "audio_voice",
           done: 2,
           total: 3,
-          unit: "paragraphs",
+          unit: "parts", // (what core sends; the DM sees paragraphs)
           startedAt: 1000,
           updatedAt: 1040,
           serverNow: 1060,
@@ -173,7 +205,7 @@ describe("while it is made, and after", () => {
       }),
     );
     expect(await screen.findByText("Speaking the paragraphs")).toBeTruthy();
-    expect(screen.getByText(/2 of 3 paragraphs/)).toBeTruthy();
+    expect(screen.getByText(/2 of 3 paragraphs/)).toBeTruthy(); // ("parts" from the API, "paragraphs" for the DM)
   });
 
   it("a stage the page doesn't know is said in the general words", async () => {
@@ -255,6 +287,17 @@ describe("Fix a name everywhere", () => {
       times: 3,
     });
     expect(replaceName("a.b a.b", "a.b", "x$&y")).toEqual({ text: "x$&y x$&y", times: 2 });
+    // the fixed opening and closing lines are DMbot's: a name in them is left alone
+    expect(
+      replaceName(
+        "Previously, on Mira's Crossing…\n\nMira crossed.\n\nAnd so we continue, the epic tale of Mira's Crossing.",
+        "Mira",
+        "Mara",
+      ),
+    ).toEqual({
+      text: "Previously, on Mira's Crossing…\n\nMara crossed.\n\nAnd so we continue, the epic tale of Mira's Crossing.",
+      times: 1,
+    });
     expect(replaceName("nothing", "", "x")).toEqual({ text: "nothing", times: 0 });
     // the same spelling (capitals aside) changes nothing
     expect(replaceName("Mira", "Mira", "Mira")).toEqual({ text: "Mira", times: 0 });

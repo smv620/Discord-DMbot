@@ -9,8 +9,29 @@ import { fixNameWords as words } from "../content/recap-panel";
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Replaces every whole-word use of `wrong` in `text`; returns the new text and how many were replaced. */
+// The recap's fixed opening ("Previously, on <campaign>…") and closing ("And so we continue, …") are DMbot's:
+// the API refuses a save that changes them (fixed_lines), so a name that is part of the campaign's name
+// is not replaced there. They are the first and last paragraphs, found by how they begin.
+const FIXED_FIRST = /^\s*Previously/;
+const FIXED_LAST = /^\s*And so we continue/;
+
+/** Replaces every whole-word use of `wrong` in `text`, apart from the fixed first and last paragraphs;
+ * returns the new text and how many were replaced. */
 export function replaceName(text: string, wrong: string, right: string): { text: string; times: number } {
+  const parts = text.split(/(\n\s*\n)/); // paragraphs at the even places, their gaps at the odd
+  const last = parts.length - 1 - ((parts.length - 1) % 2);
+  let times = 0;
+  const out = parts.map((part, i) => {
+    if (i % 2 === 1) return part;
+    if ((i === 0 && FIXED_FIRST.test(part)) || (i === last && i !== 0 && FIXED_LAST.test(part))) return part;
+    const found = replaceInParagraph(part, wrong, right);
+    times += found.times;
+    return found.text;
+  });
+  return { text: out.join(""), times };
+}
+
+function replaceInParagraph(text: string, wrong: string, right: string): { text: string; times: number } {
   const needle = wrong.trim();
   if (needle === "" || needle === right.trim()) return { text, times: 0 };
   // Cues (《mood》 and ((pause))) are not the story: a name inside one is left alone, or the music's mood
@@ -20,7 +41,7 @@ export function replaceName(text: string, wrong: string, right: string): { text:
     const parts = text.split(/(《[^》]*》|\(\([^)]*\)\))/);
     const out = parts.map((part, i) => {
       if (i % 2 === 1) return part; // (the odd parts are the cues the split kept)
-      const found = replaceName(part, wrong, right);
+      const found = replaceInParagraph(part, wrong, right);
       times += found.times;
       return found.text;
     });
