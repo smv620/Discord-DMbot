@@ -490,13 +490,22 @@ class RecapStore:
         error: str = "",
         text_hash: str | None = None,
         unchanged: tuple[str, str] | None = None,
+        how: str | None = None,
+        why: str = "",
     ) -> bool:
         """Record where the audio has got to. Only while the recap is draft, posting or posted (a
         posted one is narrated again for the page when its text changed, #2183), and, with
         `unchanged` (title, summary), only if the text is still what the audio was made from.
         False if nothing was written."""
-        sets = ["audio = %s", "audio_error = %s", _AUDIO_CLOCK_OFF]
+        # (the live progress ends with the making, whatever came of it, #2630)
+        sets = [
+            "audio = %s", "audio_error = %s", "audio_stage = ''", "audio_done = 0",
+            "audio_total = 0", _AUDIO_CLOCK_OFF,
+        ]  # fmt: skip
         values: list[Any] = [audio, error[:200]]
+        if how is not None:
+            sets += ["audio_how = %s", "audio_why = %s"]
+            values += [how, why]
         for column, value in (
             ("audio_tries", tries),
             ("audio_next_at", next_at),
@@ -522,6 +531,19 @@ class RecapStore:
                 (*values, int(self._now()), *args),
             )
             return bool(cur.rowcount)
+
+    async def set_audio_progress(
+        self, guild_id: int, campaign_id: str, session_at: int, *, stage: str, done: int, total: int
+    ) -> None:
+        """Where the audio under way has got to (#2630): a stage code and counts. Only while it is
+        being made (`queued`); it also says when anything last moved."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET audio_stage = %s, audio_done = %s, audio_total = %s,"
+                " audio_moved_at = %s WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                " AND audio = 'queued'",
+                (stage, done, total, int(self._now()), guild_id, campaign_id, session_at),
+            )
 
     async def audio_to_tell(self, guild_id: int, *, limit: int = 10) -> list[tuple[str, int, str]]:
         """(campaign, session, 'ready' or 'failed') of recaps whose audio has finished and whose

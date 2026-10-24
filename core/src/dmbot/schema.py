@@ -10829,6 +10829,26 @@ RECAP_AUDIO_TOLD = """
         FOR EACH ROW EXECUTE FUNCTION dmbot_recap_audio_told_clock();
 """
 
+RECAP_AUDIO_REMAKE = """
+    -- What the last making of a recap's audio did, and how far the one under way has got (#2630).
+    -- `audio_how`: 'new' (made from nothing), 'voice' (only the changed paragraphs were spoken
+    -- again, the music kept), 'all' (everything made again, `audio_why` says why: no_parts,
+    -- paragraphs, moods or size) or 'same' (the spoken words had not changed). `audio_stage`,
+    -- `audio_done` of `audio_total` and `audio_moved_at` are the live progress while the audio is
+    -- queued: voice parts made, then music and mix. Codes and counts only; every column has a
+    -- constant default, so no row changes.
+    ALTER TABLE recap_jobs
+        ADD COLUMN audio_how TEXT NOT NULL DEFAULT ''
+            CHECK (audio_how IN ('', 'new', 'voice', 'all', 'same')),
+        ADD COLUMN audio_why TEXT NOT NULL DEFAULT ''
+            CHECK (audio_why IN ('', 'no_parts', 'paragraphs', 'moods', 'size')),
+        ADD COLUMN audio_stage TEXT NOT NULL DEFAULT ''
+            CHECK (audio_stage IN ('', 'voice', 'music', 'mix')),
+        ADD COLUMN audio_done INT NOT NULL DEFAULT 0 CHECK (audio_done >= 0),
+        ADD COLUMN audio_total INT NOT NULL DEFAULT 0 CHECK (audio_total >= 0),
+        ADD COLUMN audio_moved_at BIGINT NOT NULL DEFAULT 0;
+"""
+
 BELIEFS = (
     f"""
     -- Assertions, perspectives and evidence (#2409; docs/STORY_MEMORY.md, section 9). A connection
@@ -12605,6 +12625,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
     ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
+    ("0230_audio_remake", RECAP_AUDIO_REMAKE),  # what the audio did and how far (#2630)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
