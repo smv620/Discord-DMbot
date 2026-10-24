@@ -6,11 +6,10 @@ from __future__ import annotations
 
 import unittest
 
-from dmbot.memory import claims
 from dmbot.memory.claims import Extracted, Names, effect_note, judge
 from dmbot.memory.models import NPC, PLAYER_CHARACTER
 from dmbot.memory.ontology import Ontology
-from dmbot.memory.voice import EFFECT, INNER_STATE, OWN, PARTY, voice
+from dmbot.memory.voice import EFFECT, INNER_STATE, OWN, PARTY, PARTY_REASON, voice
 
 ONTO = Ontology.build()
 MIA, DMID, BOB = 7, 8, 9  # Mia plays Cerric; 8 is the DM; Bob is another player
@@ -91,14 +90,10 @@ class TheClaims(unittest.TestCase):
         self.assertEqual(effect_note(claim, ONTO, NAMES, [MIA], {DMID}), "")  # their own: no note
 
     def test_another_player_saying_it_is_not_offered_as_true(self) -> None:
-        self.assertEqual(
-            self.judge(says("Cerric", "is an enemy of", "Grish"), [BOB]), claims.PARTY_REASON
-        )
+        self.assertEqual(self.judge(says("Cerric", "is an enemy of", "Grish"), [BOB]), PARTY_REASON)
 
     def test_a_player_saying_an_npcs_feeling_is_not_offered_as_true(self) -> None:
-        self.assertEqual(
-            self.judge(says("Grish", "is an ally of", "Cerric"), [MIA]), claims.PARTY_REASON
-        )
+        self.assertEqual(self.judge(says("Grish", "is an ally of", "Cerric"), [MIA]), PARTY_REASON)
         self.assertEqual(self.judge(says("Grish", "is an ally of", "Cerric"), [DMID]), "")
 
     def test_what_is_not_an_inner_state_is_judged_as_before(self) -> None:
