@@ -18,7 +18,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.backup import MemorySection
-from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, MemoryRuleError
+from dmbot.memory.models import CONFIRMED, NAME_MAX, PROPOSED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SessionStore
@@ -2646,6 +2646,155 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=belleros.id)
         self.assertIn(("Bellaros", CONFIRMED), {(a.text, a.status) for a in aliases})
 
+    # ---- ✏️ Change the words (#2570) ----
+
+    async def change_words(self, name: str, heard: str, words: str) -> tuple[Any, str]:
+        entity_id = await self.suggest(name)
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, entity_id, heard, words)
+        return it, entity_id
+
+    async def test_every_new_name_card_has_the_change_the_words_button(self) -> None:
+        await self.suggest("Harrow")
+        view, _ = await self.review()
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertIn("✏️ Change the words", labels)
+        self.assertTrue(all(len(label or "") <= 80 for label in labels))
+
+    async def test_a_place_widened_to_its_whole_name_keeps_the_card_going(self) -> None:
+        it, entity_id = await self.change_words("Harrow", "Harrow's keep", "Harrow's Keep")
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual((entity.name, entity.status), ("Harrow's Keep", PROPOSED))
+        self.assertIn("Saved as **Harrow's Keep**", it.response.edited[-1][0])
+        keys = {
+            a.key: a
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
+        }
+        # the single word is not kept as a way to say the longer name, nor marked "not a name"
+        self.assertNotIn("harrow", {k for k, a in keys.items() if a.status != REJECTED})
+        self.assertNotEqual(entity.status, REJECTED)
+
+    async def test_a_misheard_longer_form_becomes_a_way_it_is_said(self) -> None:
+        _, entity_id = await self.change_words("Harrow", "Harrow's car", "Harrow's Caer")
+        aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
+        found = {a.key: a for a in aliases}
+        self.assertIn("harrows car", found)
+        self.assertEqual(
+            (found["harrows car"].kind, found["harrows car"].status), ("old", CONFIRMED)
+        )
+
+    async def test_an_empty_or_too_long_name_is_refused(self) -> None:
+        it, entity_id = await self.change_words("Harrow", "", "   ")
+        self.assertIn("The name was empty", it.response.sent[0][0])
+        it = self.it()
+        view, _ = await self.review()
+        await view.apply_words(it, entity_id, "", "x" * (NAME_MAX + 1))
+        self.assertIn("is too long", it.response.sent[0][0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+    async def test_a_name_that_is_already_known_is_refused(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Harrow's Keep", "place", [], [])
+        it, entity_id = await self.change_words("Harrow", "", "Harrow's Keep")
+        self.assertIn("already knows", it.response.sent[0][0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+    async def test_the_new_name_and_how_it_was_heard_are_one_change_with_one_undo(self) -> None:
+        entity_id = await self.suggest("Harrow")
+        written = await self.memory.rename_entity(
+            GUILD, self.campaign.id, entity_id, "Harrow's Caer", source="dm",
+            keep_old=False, also_known_as="Harrow's car",
+        )  # fmt: skip
+        assert written.batch is not None
+        await self.memory.undo(GUILD, self.campaign.id, written.batch)
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+        keys = {
+            a.key
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=entity_id)
+            if a.status != REJECTED
+        }
+        self.assertEqual(keys, {"harrow"})
+
+    async def test_a_plain_typo_fix_keeps_the_old_spelling_but_a_widened_name_does_not(
+        self,
+    ) -> None:
+        typo = await self.suggest("Brenoch")
+        await self.memory.rename_entity(GUILD, self.campaign.id, typo, "Brannoch", source="dm")
+        keys = {
+            a.key
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=typo)
+            if a.status != REJECTED
+        }
+        self.assertIn("brenoch", keys)  # still matched, so the cleaner fixes it
+        wide = await self.suggest("Harrow")
+        await self.memory.rename_entity(
+            GUILD, self.campaign.id, wide, "Harrow's Keep", source="dm", keep_old=False
+        )
+        keys = {
+            a.key
+            for a in await self.memory.aliases(GUILD, self.campaign.id, entity_id=wide)
+            if a.status != REJECTED
+        }
+        self.assertNotIn("harrow", keys)
+
+    async def test_a_name_that_is_another_entrys_secret_name_is_refused(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "The Stranger", "npc", [], ["Harrow's Keep"])
+        it, entity_id = await self.change_words("Harrow", "", "Harrow's Keep")
+        self.assertIn("Pick another spelling", it.response.sent[0][0])
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+    async def test_a_server_manager_who_is_not_a_dm_cannot_change_a_name(self) -> None:
+        entity_id = await self.suggest("Harrow")
+        view, _ = await self.review()
+        it = self.it(MANAGER)
+        await view.apply_words(it, entity_id, "", "Harrow's Keep")
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+        it = self.it(MANAGER)
+        await view._change_words(it)
+        self.assertIn("Only the DM", it.response.sent[0][0])
+
+    async def test_a_card_that_moved_on_answers_gone(self) -> None:
+        await self.suggest("Harrow")
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, "f" * 32, "", "Harrow's Keep")
+        self.assertIn("just changed or removed", it.response.sent[0][0])
+
+    async def test_a_person_followed_by_a_verb_is_not_widened_by_the_scan(self) -> None:
+        from dmbot.memory.scan import find_new_names
+
+        lines = ["Kira falls back from the door", "Then Kira falls again in the hall"]
+        self.assertEqual([s.name for s in find_new_names(lines)], ["Kira"])
+
+    async def test_a_longer_name_the_dm_refused_does_not_bring_the_short_word_back(self) -> None:
+        from dmbot.memory.scan import find_new_names
+
+        lines = ["We ride to Harrow's keep at dawn", "Back at Harrow's keep the gate is shut"]
+        self.assertEqual(find_new_names(lines, skip_keys=["Harrow's Keep"]), [])
+
+    async def test_the_scan_offers_the_longer_place_name(self) -> None:
+        from dmbot.memory.scan import find_new_names
+
+        lines = ["We ride to Harrow's keep at dawn", "Back at Harrow's keep the gate is shut"]
+        self.assertEqual([s.name for s in find_new_names(lines)], ["Harrow's Keep"])
+
+    async def test_the_cards_quotes_give_the_longer_names_to_pick_from(self) -> None:
+        from dmbot.memory.name_longer import longer_names
+
+        quotes = ["Session 3: …to **Harrow**'s keep and", "…the foothills of **Harrow**'s keep"]
+        self.assertEqual(longer_names(quotes, "Harrow"), ["Harrow's keep"])
+
     async def spelled(self, name: str) -> str:
         written = await self.memory.add_entity(
             GUILD, self.campaign.id, type="concept", name=name, source="scan",
@@ -2768,6 +2917,7 @@ class Review(NamesTest):
                 "🔗 Another known name…",
                 "🚫 Not a name",
                 "⏳ Later",
+                "✏️ Change the words",
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))

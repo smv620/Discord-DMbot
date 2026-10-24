@@ -25,7 +25,7 @@ from dmbot.db import Conn, Database
 from dmbot.recaps import critics, cues
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
-from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
+from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.held import apply_held
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
@@ -500,7 +500,7 @@ async def edit_recap(
         raise RecapError("bad_text")
     if refusal := cue_refusal(text):  # the edit stays unsaved until the cues are right (#2083)
         raise refusal
-    if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
+    if len(bullets) > HOUSEKEEPING_HARD or any(len(b) > BULLET_HARD for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
