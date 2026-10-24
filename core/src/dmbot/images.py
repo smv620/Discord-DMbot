@@ -27,6 +27,7 @@ import yarl
 from dmbot import fetch as fetching
 from dmbot.ai import AIError, AIOutOfFunds, Image
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ def clean(value: object, limit: int, *, lines: bool = False) -> str:
         value = re.sub(r"\n{3,}", "\n\n", value)
     else:
         value = " ".join(value.split())
-    return value[:limit].rstrip()
+    return at_word_end(value, limit).rstrip()
 
 
 def _json(raw: str) -> dict[str, Any] | None:

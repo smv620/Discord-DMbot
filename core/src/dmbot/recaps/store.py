@@ -29,6 +29,7 @@ from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
+from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.transcript.respell import respell
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
@@ -62,7 +63,7 @@ COLUMNS = (
 )
 
 
-_LIMITS = {"title": 120, "summary": 6000, "original": 6000}  # the table's own limits
+_LIMITS = {"title": 120, "summary": STORY_COLUMN_MAX, "original": STORY_COLUMN_MAX}  # the table's
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +92,7 @@ class Job:
     calls: int
     window_count: int  # parts the transcript is read in, and how many are done
     window_done: int
-    spent: int  # calls ever made for this session, never reset: the day's tally
+    spent: int  # calls ever made for this session, never reset (their dates are in `spent_log`)
     last_error: str
     problems: tuple[str, ...]
     beats: Any  # the stored beat sheet (dmbot.recaps.beats.from_json reads it)
@@ -215,6 +216,8 @@ _AUDIO_CLOCK_OFF = (
     " posting_step = CASE WHEN posting_step = 'audio'"
     " THEN NULLIF(posting_step, posting_step) ELSE posting_step END"
 )
+
+LOG_KEPT_S = 2 * 86400  # how long a call's date is kept (the daily tally needs only the last day)
 
 # The columns a stage may write: a fixed list, so a value never decides a column name.
 _WRITABLE = frozenset(
@@ -403,7 +406,8 @@ class RecapStore:
     ) -> None:
         if not fields or not set(fields) <= _WRITABLE:
             raise ValueError(sorted(set(fields) - _WRITABLE))
-        sets = ", ".join(f"{name} = %s" for name in fields)
+        now = int(self._now())
+        parts: list[str] = []
         # A save of the critics' loop is made from what the worker read some time ago. A DM who
         # approved the unchecked draft meanwhile (#2305) must not lose that to it, nor have the
         # revised words they did not read put over theirs: once approved, a save of the loop (not
@@ -417,6 +421,21 @@ class RecapStore:
             guard += " AND COALESCE((critics->>'approved_at')::bigint, 0) = %s"
         values: list[Any] = []
         for name, value in fields.items():
+            if name == "spent":
+                # Each call is dated, so the day's tally counts the last 24 hours of calls and a
+                # waiting recap's lifetime spend does not stay in "today" (#2308). The new total
+                # minus the old is the calls just made; stamps older than two days are dropped.
+                parts.append(
+                    "spent = %s, spent_log = ARRAY(SELECT t FROM unnest("
+                    # a job from before the calls were dated: its earlier calls are dated by the
+                    # last time it was updated, so gaining one stamp does not lose them
+                    "CASE WHEN cardinality(spent_log) = 0 AND spent > 0"
+                    " THEN array_fill(updated_at, ARRAY[spent]) ELSE spent_log END) AS t"
+                    " WHERE t >= %s) || array_fill(%s::bigint, ARRAY[GREATEST(%s - spent, 0)])"
+                )
+                values += [value, now - LOG_KEPT_S, now, value]
+                continue
+            parts.append(f"{name} = %s")
             if name in _LISTS:
                 values.append(list(value))
             elif name in ("beats", "grade"):
@@ -427,11 +446,11 @@ class RecapStore:
                 values.append(value)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                f"UPDATE recap_jobs SET {sets}, updated_at = %s WHERE guild_id = %s"
+                f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
                 (
                     *values,
-                    int(self._now()),
+                    now,
                     guild_id,
                     campaign_id,
                     session_at,
@@ -841,12 +860,15 @@ class RecapStore:
         return None if row is None else _job(row)
 
     async def calls_since(self, guild_id: int, campaign_id: str, since: int) -> int:
-        """AI calls the campaign's recaps made since then, for the daily cap."""
+        """AI calls the campaign's recaps made since then, for the daily cap: the calls dated
+        since then, not a waiting job's whole lifetime (#2308). A job from before the calls were
+        dated is counted by its total while it was updated since then."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT COALESCE(sum(spent), 0) AS n FROM recap_jobs WHERE guild_id = %s"
-                " AND campaign_id = %s AND updated_at >= %s",
-                (guild_id, campaign_id, since),
+                "SELECT COALESCE(sum(CASE WHEN cardinality(spent_log) = 0 THEN spent"
+                " ELSE (SELECT count(*) FROM unnest(spent_log) AS t WHERE t >= %s) END), 0) AS n"
+                " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s AND updated_at >= %s",
+                (since, guild_id, campaign_id, since),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
@@ -881,7 +903,8 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET state = 'queued', attempt = 0, errors = 0, restarts = 0,"
-                " next_at = 0, calls = 0, spent = 0, window_count = 0, window_done = 0,"
+                " next_at = 0, calls = 0, spent = 0, window_count = 0,"
+                " window_done = 0,"
                 " last_error = '', problems = '{}', beats = '[]', split = NULL, critics = NULL,"
                 " tries = 0, approved_by = 0, approved_at = 0, approved_hash = '',"
                 " audio_choice = ''"
@@ -1252,7 +1275,7 @@ class RecapSection:
             day = row["game_day"]
             if day is not None and (type(day) is not int or day <= 0):
                 raise CampaignError(DAMAGED)
-            for key, limit in (("title", 120), ("summary", 6000)):
+            for key, limit in (("title", 120), ("summary", STORY_COLUMN_MAX)):
                 if not isinstance(row[key], str) or not 1 <= len(row[key]) <= limit:
                     raise CampaignError(DAMAGED)
             for key in ("housekeeping", "music"):

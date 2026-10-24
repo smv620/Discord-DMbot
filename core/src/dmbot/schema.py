@@ -11903,6 +11903,14 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+RECAP_CALL_LOG = """
+    -- When each AI call of a recap job was made (UTC seconds), kept for two days, so the campaign's
+    -- daily tally counts only the last 24 hours of calls and not a waiting recap's whole lifetime
+    -- (#2308). A job from before this has none: it is counted as it was (its `spent`, while it was
+    -- updated in the last day). The column has a default and is added, not updated: no row changes.
+    ALTER TABLE recap_jobs ADD COLUMN spent_log BIGINT[] NOT NULL DEFAULT '{}';
+"""
+
 TIMELINE_STABLE = """
     -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
     -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
@@ -12314,6 +12322,21 @@ _MOVE_BLIND = (
 )
 assert _MOVE_BLIND.count("move_to_guild_id IS NULL") == 3, "0214 must change all three doors"
 HANDOVER_MOVE += _MOVE_BLIND
+
+
+RECAP_STORY_ROOM = """
+    -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
+    -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
+    -- only a guard (`fit_summary` shortens past it and logs). The number is
+    -- `recaps.fixed_lines.STORY_COLUMN_MAX`; a test keeps the two equal. The constraint is
+    -- replaced, no row is rewritten, so no row-level security is touched.
+    ALTER TABLE recap_jobs
+        DROP CONSTRAINT recap_jobs_summary_check,
+        DROP CONSTRAINT recap_jobs_original_check,
+        ADD CONSTRAINT recap_jobs_summary_check CHECK (char_length(summary) <= 30000),
+        ADD CONSTRAINT recap_jobs_original_check CHECK (char_length(original) <= 30000);
+"""
+
 
 WEB_OWNED_CAMPAIGNS = """
     -- The website's two doors for a campaign's owner, in any server (#2554, docs/PLAN.md,
@@ -13674,6 +13697,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
     ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
+    (
+        "0205_recap_call_log",
+        RECAP_CALL_LOG,
+    ),  # when each recap call was made, for the day's tally (#2308)
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
@@ -13687,6 +13714,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
     ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
+    ("0221_recap_story_room", RECAP_STORY_ROOM),  # the recap story column holds 30,000 (#2601)
     ("0222_npc_or_pc", NPC_OR_PC),  # every character is an NPC or a PC: a god is an NPC (#2562)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
     ("0224_recap_again", RECAP_AGAIN),  # a DM makes or redoes any session's recap (#2608)

@@ -515,7 +515,7 @@ async def _offer(bot: Any, campaign: Campaign, pending: Pending, send: Send) -> 
     return True
 
 
-def _found_summary(found: house_ai.Found, source: str) -> str:
+def _found_summary(found: house_ai.Found, source: str, first: int = 1) -> str:
     count = len(found.rules)
     many = f"{count} new house rule" + ("" if count == 1 else "s")
     skipped = found.repeats
@@ -525,7 +525,15 @@ def _found_summary(found: house_ai.Found, source: str) -> str:
         if found.over_cap
         else ""
     )
-    return f"**I found {many} in {source}**{extra}.{full}"
+    cut = [str(first + i) for i, c in enumerate(found.rules) if c.shortened]
+    check = (
+        f" **Shortened: check the end** of {'rule' if len(cut) == 1 else 'rules'} "
+        f"{', '.join(cut)}: {'it was' if len(cut) == 1 else 'they were'} longer than "
+        f"{house.RULE_MAX} characters."
+        if cut
+        else ""
+    )
+    return f"**I found {many} in {source}**{extra}.{full}{check}"
 
 
 async def _compare_found(
@@ -600,7 +608,7 @@ async def _compare_found(
         campaign.id,
         house_file_sync.items_of(house_file.Diff(added=added)),
         fingerprint,
-        _found_summary(found, source),
+        _found_summary(found, source, first),
         from_link,
         file_name=file_name,
         found_text=_found_file(campaign, mine, added),

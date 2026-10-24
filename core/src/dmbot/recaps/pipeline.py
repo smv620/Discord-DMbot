@@ -479,7 +479,8 @@ class RecapWorker:
         failure never fails a recap that is already written: it only waits, and after
         `CRITIC_ERRORS_MAX` of them a draft not yet read waits for its check (`_hold`). `free`: a
         call of a recap that waits for its check, which has its own small budget
-        (`cr.WAIT_CALLS` a try): counted in the day's tally (`spent`) but not against the job's
+        (`cr.wait_budget` a try: a bound the loop is built to meet, checked by a test): counted in
+        the day's tally (`spent`, dated) but not against the job's
         own calls, so waiting can never fail the job."""
         # Counted from the stored job, not the one handed in: a try can make several calls (the
         # writer, then the formatter and its re-run, #2074), and each one must count.

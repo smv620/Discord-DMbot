@@ -292,6 +292,24 @@ class TheDmsPage(Base):
         self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
         self.assertEqual(again["uncheckedDraft"], [])
 
+    async def test_the_marked_sentences_are_the_ones_that_state_a_purpose(self) -> None:
+        """#2308: the page marks the draft's sentences with a purpose in them, by number."""
+        from dmbot.recaps.critics import CHECK_WAIT, Loop
+        from dmbot.recaps.motives import states_purpose
+
+        quiet = "The party rode through the rain."
+        purposeful = "Mira rode on to avenge her brother."
+        self.assertFalse(states_purpose(quiet))
+        self.assertTrue(states_purpose(purposeful))
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+            summary=f"{quiet} {purposeful} They reached the keep.",
+            critics=Loop(waits=3, since=1234).to_json(),
+        )  # fmt: skip
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["uncheckedDraft"][1], purposeful)
+        self.assertEqual(one["uncheckedSentences"], [2])
+
     async def test_the_draft_is_given_only_after_exactly_3_days(self) -> None:
         import time
 
@@ -769,7 +787,7 @@ class TheRoutes(Base):
         bad = await self.client.put(f"/me/recaps/{self.ref}", json={"summary": 5})
         self.assertEqual(bad.status_code, 422)
         big = await self.client.put(
-            f"/me/recaps/{self.ref}", json={"summary": "x" * 8000, "housekeeping": []}
+            f"/me/recaps/{self.ref}", json={"summary": "x" * (SUMMARY_MAX + 1), "housekeeping": []}
         )
         self.assertEqual((big.status_code, big.json()["error"]), (422, "bad_text"))
         self.assertEqual((await self.client.post(f"/me/recaps/{self.ref}/zap")).status_code, 404)
