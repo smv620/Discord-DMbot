@@ -765,6 +765,31 @@ export interface TranscriptView {
   next?: number | null;
   /** Set when this session's transcript was deleted: no lines, nothing to save (#1548). */
   transcriptsDeletedAt?: number | null;
+  /** Where each "[… of off-topic chat skipped]" line is in THIS page's `lines`, and which stretch it stands
+   * for (#2568; core #2567). Only the cleaned reading has them; no words are in them. */
+  skips?: TranscriptSkip[];
+  /** Lines kept, left out, and put back by a DM and still in force (cleaned reading). */
+  filter?: { kept: number; leftOut: number; putBack: number };
+}
+
+/** One stretch of off-topic chat left out of the cleaned transcript. `line` is its marker's index in the
+ * page's `lines`; `speaker`, `fromMs` and `toMs` name the stretch to the API (never a Discord id). */
+export interface TranscriptSkip {
+  line: number;
+  speaker: number;
+  fromMs: number;
+  toMs: number;
+  seconds: number;
+  lines: number;
+  /** True when a DM put it back. */
+  putBack: boolean;
+}
+
+/** One line of a left-out stretch, as heard (rendered as text only). */
+export interface StretchLine {
+  when: string;
+  who: string;
+  text: string;
 }
 
 /** A campaign with house rules or a followed set in one of the person's servers (#1521). `ref` is
@@ -1345,6 +1370,11 @@ export interface AccountApi {
     offset?: number,
   ): Promise<TranscriptView>;
   /** The same text as a file to save, as Discord's download button gives it. */
+  /** The as-heard words of one left-out stretch (anyone who may read the transcript; #2568). */
+  transcriptStretch?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<StretchLine[]>;
+  /** A DM puts a stretch back into the cleaned transcript, or leaves it out again; answers how many lines changed. */
+  transcriptPutBack?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<number>;
+  transcriptLeaveOut?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<number>;
   transcriptFile?(
     campaignRef: string,
     number: number,
@@ -1821,6 +1851,29 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    transcriptStretch: async (campaignRef, number, skip) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/stretch?speaker=${skip.speaker}&fromMs=${skip.fromMs}&toMs=${skip.toMs}`,
+        )) as { lines: StretchLine[] }
+      ).lines,
+    transcriptPutBack: async (campaignRef, number, skip) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/put-back`, {
+          speaker: skip.speaker,
+          fromMs: skip.fromMs,
+          toMs: skip.toMs,
+        })) as { changed: number }
+      ).changed,
+    transcriptLeaveOut: async (campaignRef, number, skip) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/leave-out`, {
+          speaker: skip.speaker,
+          fromMs: skip.fromMs,
+          toMs: skip.toMs,
+        })) as { changed: number }
+      ).changed,
     setCampaignSetting: async (campaignRef, choice) =>
       (
         (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {

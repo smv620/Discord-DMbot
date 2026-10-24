@@ -581,6 +581,7 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
     address: "dm@example.com",
     source: scenario === "table" ? "payment" : "signin",
@@ -1278,7 +1279,38 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           next: null,
           transcriptsDeletedAt: 1_792_500_000,
         };
-      return mockTranscript(number, version);
+      return mockTranscript(number, version, putBackNow);
+    },
+    async transcriptStretch(campaignRef, number, skip) {
+      calls.push(`transcriptStretch:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (number !== 2 || skip.speaker !== MOCK_SKIP.speaker) throw new ApiError("not-found");
+      // (a line with markup in it: it must be shown as text, never as HTML)
+      return [
+        { when: "0:01:02", who: "Mia", text: "did you see the match" },
+        { when: "0:01:05", who: "Ash", text: "<b>no</b> I missed it" },
+        { when: "0:01:09", who: "Mia", text: "unreal" },
+      ];
+    },
+    // (a campaign address ending `.player` is a player's: the API refuses them both, as it refuses anyone who isn't a DM)
+    async transcriptPutBack(campaignRef, number, skip) {
+      calls.push(`transcriptPutBack:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const was = putBackNow;
+      putBackNow = true;
+      return was ? 0 : 3;
+    },
+    async transcriptLeaveOut(campaignRef, number, skip) {
+      calls.push(`transcriptLeaveOut:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const was = putBackNow;
+      putBackNow = false;
+      return was ? 3 : 0;
     },
     async transcriptFile(campaignRef, number, version) {
       calls.push(`transcriptFile:${campaignRef}:${number}:${version}`);
@@ -1926,8 +1958,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
 }
 
 /** A pretend transcript in the shape the API gives: the file's header lines and its lines. */
-function mockTranscript(number: number, version: TranscriptVersion) {
+/** Session 2's cleaned reading has one left-out stretch (#2568): its marker is the third line. */
+const MOCK_SKIP = { line: 2, speaker: 1, fromMs: 62_000, toMs: 76_000, seconds: 14, lines: 3 };
+
+function mockTranscript(number: number, version: TranscriptVersion, putBack = false) {
   const heard = version === "heard";
+  const skipped = number === 2 && !heard;
   return {
     number,
     version,
@@ -1945,7 +1981,10 @@ function mockTranscript(number: number, version: TranscriptVersion) {
         ? "[0:00:40] (Speaker 2): Kazeth draws his sword."
         : "[0:00:40] (Speaker 2): Ka'zeth draws his sword.",
       ...(heard ? ["[0:01:02] (Speaker 1) {non-game_content}: did you see the match"] : []),
+      ...(skipped && !putBack ? ["[0:01:02] (Speaker 1) [14s of off-topic chat skipped]"] : []),
+      ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
+    ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
   };
 }
 
