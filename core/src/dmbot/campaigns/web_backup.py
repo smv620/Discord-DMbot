@@ -25,6 +25,7 @@ from typing import Any, Protocol
 from dmbot.campaigns.models import Campaign
 from dmbot.campaigns.store import BackupTooBig, encode_backup
 from dmbot.db import Database
+from dmbot.plan_rules import Action
 from dmbot.ui.logic import backup_filename
 
 log = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ class Host(Protocol):
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None: ...
 
     async def plan_allows(
-        self, action: str, guild_id: int, campaign: Campaign, *, fail_open: bool = True
+        self, action: Action, guild_id: int, campaign: Campaign, *, fail_open: bool = True
     ) -> bool: ...
 
     async def export_campaign(self, guild_id: int, campaign_id: str) -> Any: ...

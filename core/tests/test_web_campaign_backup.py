@@ -27,7 +27,7 @@ class Backing(Base):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.lost = await self.campaigns.create(LOST, "Lost World", ALICE.id)
-        self.store = WebBackups(self.db)
+        self.backups = WebBackups(self.db)
 
     async def signed(self, user: Any, *guilds: Any) -> Any:
         token = await sessions.sign_in(self.web, user, list(guilds), now=NOW, days=30)
@@ -61,9 +61,9 @@ class Backing(Base):
         )
 
     async def build_next(self, guild: int, host: Any = None) -> str:
-        item = await self.store.claim_next(guild)
+        item = await self.backups.claim_next(guild)
         assert item is not None
-        return await web_backup.build(host or self.host(), guild, item, self.store)
+        return await web_backup.build(host or self.host(), guild, item, self.backups)
 
     # ---- who may ask ----
 
@@ -122,6 +122,7 @@ class Backing(Base):
                 "SELECT has_table_privilege('dmbot_web', 'web_backups', 'SELECT') AS can"
             )
             row = await cur.fetchone()
+        assert row is not None
         self.assertFalse(row["can"])
 
     async def db_sql(self, guild: int, statement: str, *args: Any) -> None:
@@ -248,7 +249,7 @@ class Backing(Base):
     async def test_a_deleted_campaign_takes_its_requests_with_it(self) -> None:
         await campaign_backup.request(self.web, self.session, self.cref(THURSDAY.id, self.one))
         await self.campaigns.delete(THURSDAY.id, self.one.id)
-        self.assertIsNone(await self.store.claim_next(THURSDAY.id))
+        self.assertIsNone(await self.backups.claim_next(THURSDAY.id))
 
 
 class TheRoute(Backing):
