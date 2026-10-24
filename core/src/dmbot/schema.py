@@ -12418,8 +12418,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
-    ("0222_npc_or_pc", NPC_OR_PC),  # every character is an NPC or a PC: a god is an NPC (#2562)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
+    ("0222_npc_or_pc", NPC_OR_PC),  # every character is an NPC or a PC: a god is an NPC (#2562)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -322,7 +322,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         not_this=(
             ("taking orders from a ruler without belonging to a group", "serves"),
-            ("bound by a sworn oath to a character or group", "sworn_to"),
+            ("bound by a sworn oath to a person or group", "sworn_to"),
             ("related by blood or marriage", "kin_of"),
         ),
         examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
@@ -498,7 +498,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         not_this=(
             ("the thing is only in that place", "located_in"),
-            ("a character is bound to a master", "serves"),
+            ("a person is bound to a master", "serves"),
             ("who has an item in hand right now", "carries"),
         ),
         examples=("Cerric owns the Sun Blade.", "The Order owns the Silver Tower."),
@@ -570,7 +570,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "sworn_to",
         "is sworn to",
-        "Bound by a sworn oath, vow or pact to a character, a group or an idea: a paladin's oath, "
+        "Bound by a sworn oath, vow or pact to a person, a group or an idea: a paladin's oath, "
         "a warlock's pact, a knight's fealty.",
         _BEINGS,
         (*_BEINGS, "faction", "concept"),
@@ -651,8 +651,8 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         covers=("a link in the story's own words that no named relationship fits",),
         not_this=(
             ("one thing is inside another", "located_in"),
-            ("a character who belongs to a group", "member_of"),
-            ("a character who has heard of another", "knows"),
+            ("a person who belongs to a group", "member_of"),
+            ("a person who has heard of another", "knows"),
         ),
         examples=(
             "Aldric is blood-bound to Cerric (the table's words; no relationship is named so).",

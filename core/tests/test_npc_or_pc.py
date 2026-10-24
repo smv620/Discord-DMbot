@@ -105,7 +105,18 @@ class NoPersonWordForACharacter(unittest.TestCase):
     )
     # Exact strings that are not words for the reader: the kind key, the plain-English rows that
     # speak of a real person at the table, a Discord profile.
-    ALLOWED = ("A real person at the table", "the person running the game", "person's profile")
+    # (The relationship definitions are hashed: changing a word of one needs a new version of the
+    # definition, so their "person" stays until that is done on purpose.)
+    ALLOWED = (
+        "A real person at the table",
+        "the person running the game",
+        "person's profile",
+        "to a person or group",
+        "a person is bound to a master",
+        "pact to a person, a group",
+        "a person who belongs to a group",
+        "a person who has heard of another",
+    )
 
     def test_the_words_a_dm_reads_do_not_call_a_character_a_person(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1] / "src" / "dmbot"
