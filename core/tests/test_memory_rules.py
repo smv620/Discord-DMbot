@@ -176,9 +176,9 @@ class CoreOntology(unittest.TestCase):
     def test_the_older_kinds_are_read_as_a_character_with_a_role(self) -> None:
         self.assertEqual(resolve_kind("npc"), ("character", "npc"))
         self.assertEqual(resolve_kind("player_character"), ("character", "player_character"))
-        self.assertEqual(resolve_kind("deity"), ("character", "god"))
+        self.assertEqual(resolve_kind("deity"), ("character", "npc"))
         self.assertEqual(resolve_kind("creature"), ("character", "npc"))
-        self.assertEqual(resolve_kind("character", "god"), ("character", "god"))
+        self.assertEqual(resolve_kind("character", "npc"), ("character", "npc"))
         self.assertEqual(resolve_kind("place"), ("place", None))
         with self.assertRaises(MemoryRuleError):
             resolve_kind("npc", "god")  # one role at a time

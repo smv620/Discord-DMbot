@@ -19,7 +19,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
 from tests.test_web_api import ALICE as ALICE_USER
-from tests.test_web_api import API, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import QUILLON, SITE, THURSDAY, FakeDiscord, settings
 
 CAROL = SimpleNamespace(id=3003, name="Carol", email="carol@example.com")  # in the server, no DM
 DAVE = SimpleNamespace(id=4004, name="Dave", email="dave@example.com")  # not in the server at all
@@ -143,7 +143,9 @@ class TheCampaignRoute(Base):
             payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
         self.addAsyncCleanup(self.client.aclose)
         self.ref = f"{THURSDAY.id}.{self.one.id}"
@@ -152,7 +154,7 @@ class TheCampaignRoute(Base):
         token = await sessions.sign_in(
             self.web, user, guilds if guilds is not None else [THURSDAY], now=NOW, days=30
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
 
     async def test_a_dm_gets_the_campaign(self) -> None:
         await self.sign_in(ALICE_USER)
