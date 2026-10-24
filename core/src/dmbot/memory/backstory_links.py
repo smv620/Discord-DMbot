@@ -22,6 +22,7 @@ from dmbot.db import Database
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 QUOTE_MAX = 400
+UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
 
 
@@ -34,6 +35,7 @@ class NewLink:
     secret: bool = False
     detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # the DM said this upload is 100% truth (#2447): pinned when kept
+    upload: str = ""  # the upload's name and date, as the DM saw them (#2650)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,8 @@ class Waiting:
     detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # pin it as 100% truth when kept (#2447)
     id: str = ""  # the waiting row's own id, for the website's queue (#2635)
+    upload: str = ""  # the upload it came from ("" for one queued before #2650)
+    told: bool = False  # the DM screen has said it is ready (#2650)
 
 
 class BackstoryLinks:
@@ -80,10 +84,12 @@ class BackstoryLinks:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
-                    " object_id, quote, secret, detail, truth, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " object_id, quote, secret, detail, truth, created_at, upload)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
-                     link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now),
+                     link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
+                     link.upload[:UPLOAD_MAX]),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
@@ -117,7 +123,7 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at"
+                " created_at, upload, told"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -170,6 +176,7 @@ class BackstoryLinks:
                         a, predicate, b, str(r["quote"]), bool(r["secret"]) or hidden,
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
+                        str(r["upload"]), bool(r["told"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -178,12 +185,58 @@ class BackstoryLinks:
             for a, predicate, b, r in move:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
-                    " predicate, object_id, quote, secret, detail, truth, created_at, id)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
+                    " told)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
-                     r["detail"], r["truth"], r["created_at"], r["id"]),
+                     r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"]),
                 )  # fmt: skip
         return out
+
+    async def counts(self, guild_id: int, campaign_id: str) -> list[tuple[str, str, bool, int]]:
+        """(relationship, upload, ready, how many) for what waits, read-only (nothing is cleaned
+        or moved), for the no-AI check `devtools.backstory_links` (#2650). A connection to a
+        name that was merged away counts as not ready here: the real queue follows the merge when
+        it is next read."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT l.predicate, l.upload, (s.status = 'confirmed' AND o.status = 'confirmed')"
+                " AS ready, count(*) AS n FROM backstory_links l"
+                " JOIN memory_entities s ON s.guild_id = l.guild_id AND s.campaign_id ="
+                " l.campaign_id AND s.id = l.subject_id"
+                " JOIN memory_entities o ON o.guild_id = l.guild_id AND o.campaign_id ="
+                " l.campaign_id AND o.id = l.object_id"
+                " WHERE l.guild_id = %s AND l.campaign_id = %s"
+                " GROUP BY l.predicate, l.upload, ready ORDER BY l.upload, l.predicate, ready",
+                (guild_id, campaign_id),
+            )
+            return [
+                (str(r["predicate"]), str(r["upload"]), bool(r["ready"]), int(r["n"]))
+                for r in await cur.fetchall()
+            ]
+
+    async def take_ready_notices(
+        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+    ) -> dict[str, int]:
+        """The connections that became ready since the DM screen last said so (#2650), as a count
+        for each upload ("" for an old one), marked told as they are taken: said once, even if two
+        rounds overlap. Counts only: the DM screen never shows the connections themselves."""
+        waiting = await self.waiting(guild_id, campaign_id, symmetric=symmetric)
+        fresh = [w for w in waiting if w.ready and not w.told and w.id]
+        if not fresh:
+            return {}
+        counts: dict[str, int] = {}
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
+            cur = await conn.execute(
+                "UPDATE backstory_links SET told = true WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = ANY(%s) AND NOT told RETURNING upload",
+                (guild_id, campaign_id, [w.id for w in fresh]),
+            )
+            for row in await cur.fetchall():
+                counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
+        return counts
 
     async def remove(self, guild_id: int, campaign_id: str, link: Waiting) -> None:
         async with self._db.guild(guild_id) as conn:

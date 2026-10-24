@@ -110,6 +110,7 @@ from dmbot.dm_screen import (
     ensure_dm_screen,
     house_sync,
     import_button,
+    links_ready,
     pack_suggestion,
     pack_update,
     peek_view,
@@ -552,6 +553,7 @@ VOICE_TRANSCRIBE_S = 65.0  # a spoken note is up to two minutes: far longer than
 # looked at this far apart when the bot starts (Discord's rate limits).
 RULES_ARCHIVE_DELAY_S = 3.0
 RULES_ARCHIVE_PACE_S = 2.0
+LINKS_READY_SETTLE_S = 5.0  # a burst of name answers is one look at the waiting connections
 RULES_ARCHIVE_RETRY_S = 10.0  # when a pass was cut short by the caps
 NPCS_PASSES = 60  # (a pass a minute at most: an hour of an unfinished or busy list)
 RULES_ARCHIVE_PASSES = 60  # (200 rules at 25 a pass is far fewer)
@@ -1196,6 +1198,9 @@ class DMBot(commands.AutoShardedBot):
         self._npcs_reorder: set[str] = set()  # a rebuild cut short: continue it in order
         self._npcs_last: dict[str, float] = {}  # when a campaign's last pass began (monotonic)
         self._npcs_guilds: dict[str, int] = {}
+        # Waiting backstory connections that may have become ready (#2650): the campaigns to look
+        # at, so a burst of name answers is one look a few seconds on.
+        self._links_ready_pending: set[str] = set()
         self._npcs_recall: RecallService | None = None
         self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
         self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
@@ -1672,6 +1677,7 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(
             BackstoryButton
         )  # 📜 Upload campaign lore, from the Main Menu (#2380)
+        self.add_dynamic_items(links_ready.ReadyButton)  # connections became ready (#2650)
         # the Shared story switch (#1692), named one by one so the registration test sees them
         self.add_dynamic_items(StoryButton, StoryChoiceButton, StoryYesButton, StoryNoButton)
         # giving DMbot an adventure (#1698), named one by one so the registration test sees them
@@ -12613,12 +12619,50 @@ class DMBot(commands.AutoShardedBot):
                         if event is not None and (event.names_changed or event.kinds_changed):
                             # (entries, names, facts, and the labels of kinds show on the list)
                             self._npcs_changed(event.campaign_id)
+                        if event is not None and event.names_changed:
+                            self._links_ready_changed(event.campaign_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 log.warning("Lost campaign memory updates for the NPC lists (%s)", exc)
             failures += 1
             await asyncio.sleep(min(5.0 * failures, 60.0))
+
+    def _links_ready_changed(self, campaign_id: str) -> None:
+        """A campaign's names changed: look soon at whether waiting backstory connections became
+        ready (#2650). Quick and never raises; a burst of answers is one look."""
+        if self.backstory_links is None or campaign_id in self._links_ready_pending:
+            return
+        self._links_ready_pending.add(campaign_id)
+        if self._track(self._links_ready_look(campaign_id), "links-ready") is None:
+            self._links_ready_pending.discard(campaign_id)
+
+    async def _links_ready_look(self, campaign_id: str) -> None:
+        """Say once, on the DM screen, how many waiting connections are ready to check (counts
+        and the upload's name only). The wait lets a burst of answers (Add all) settle first."""
+        try:
+            await asyncio.sleep(LINKS_READY_SETTLE_S)
+        finally:
+            self._links_ready_pending.discard(campaign_id)
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None:
+            return
+        for guild in list(self.guilds):
+            campaign = await self.campaigns.get(guild.id, campaign_id)
+            if campaign is None:
+                continue
+            with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                if not await store.count(guild.id, campaign_id):
+                    return  # (most campaigns have none waiting: the common case costs one count)
+                onto = await memory.ontology(guild.id, campaign_id)
+                symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
+                counts = await store.take_ready_notices(guild.id, campaign_id, symmetric=symmetric)
+                text = links_ready.notice(counts)
+                if text and campaign.dm_screen_channel_id:
+                    await self.post(
+                        campaign.dm_screen_channel_id, text, links_ready.view(campaign_id)
+                    )
+            return
 
     async def _rebuild_npcs(self) -> None:
         """At bot start: every campaign's NPC list is brought up to date once, in order, a few

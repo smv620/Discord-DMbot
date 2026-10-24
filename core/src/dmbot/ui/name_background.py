@@ -26,7 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import lore_context, lore_read
-from dmbot.memory.backstory_links import NewLink, Waiting
+from dmbot.memory.backstory_links import UPLOAD_MAX, NewLink, Waiting
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -417,6 +417,7 @@ class BackgroundOffer(_Menu):
                 dropped=read.stats.dropped,
                 questions=questions,
                 keys=keys,
+                upload=upload_label(self.upload.label, time.time()),
             )
             ready = await count_ready(bot, campaign, keys)
             cut = read.cut
@@ -639,6 +640,13 @@ async def own_kinds(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
     return dict(sorted(own.items())[: bg.MAX_OWN_KINDS])
 
 
+def upload_label(label: str, now: float) -> str:
+    """The upload as the DM will see it on a card and in the DM-screen notice: its name and the
+    day, "Tavin's backstory, 24 Oct" (#2650). Cut to what the queue keeps."""
+    day = time.gmtime(now)
+    return logic.shorten(f"{label}, {day.tm_mday} {time.strftime('%b', day)}", UPLOAD_MAX)
+
+
 async def queue_links(
     bot: Any,
     memory: MemoryStore,
@@ -651,6 +659,7 @@ async def queue_links(
     dropped: bg.Dropped | None = None,
     questions: list[str] | None = None,
     keys: set[tuple[str, str, str]] | None = None,
+    upload: str = "",
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -688,7 +697,7 @@ async def queue_links(
         questions=questions,
     )  # fmt: skip
     rows = [
-        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth)
+        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
@@ -825,11 +834,27 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         return [w for w in waiting if w.ready]
 
+    def _this_upload(self, ready: list[Waiting]) -> list[Waiting]:
+        """What Keep all keeps (#2650): the ready connections from the same upload as the card on
+        screen, so a second backstory is never kept unseen. One queued before uploads had names
+        has no upload, and Keep all then means every ready one, as before."""
+        if not ready or not ready[0].upload:
+            return list(ready)
+        return [w for w in ready if w.upload == ready[0].upload]
+
     def _set(self, ready: list[Waiting]) -> None:
+        mine = self._this_upload(ready)
+        several = len(mine) < len(ready) or bool(ready and ready[0].upload)
         self.all_button.label = (
-            f"✅ Keep all {len(ready)} ready" if len(ready) > 1 else "✅ Keep all"
+            (
+                f"✅ Keep all {len(mine)} from this backstory"
+                if several
+                else f"✅ Keep all {len(mine)} ready"
+            )
+            if len(mine) > 1
+            else "✅ Keep all"
         )
-        self.all_button.disabled = len(ready) < 2
+        self.all_button.disabled = len(mine) < 2
         self.shown = list(ready)
         self.left = len(ready)
         self.total = max(self.total, self.kept + self.left_out + self.left)
@@ -970,6 +995,8 @@ class ConnectionOffer(_Menu):
             seen = {(w.subject_id, w.predicate, w.object_id) for w in self.shown}
             # only what this message has listed: one that turned ready meanwhile is still unseen
             todo = [w for w in ready if (w.subject_id, w.predicate, w.object_id) in seen]
+            if self.current is not None and self.current.upload:  # (from this backstory only)
+                todo = [w for w in todo if w.upload == self.current.upload]
             self.all_done = await keep.keep_all(memory, store, campaign.guild_id, campaign.id, todo)
             changed(interaction, campaign)
             self.kept += len(self.all_done.kept)

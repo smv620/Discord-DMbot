@@ -12587,6 +12587,17 @@ GRAPH_OVERVIEW = (
     """
 )
 
+BACKSTORY_LINK_UPLOAD = """
+    -- Which upload a waiting backstory connection came from (#2650): its name and date as the DM
+    -- saw them ("Tavin's backstory, 24 Oct"), so Keep all can mean "from this backstory" and the
+    -- DM screen can say "3 connections from Tavin's backstory are ready to check". `told` is set
+    -- once the DM screen has said a connection is ready, so it is said once. Both columns have
+    -- defaults: no existing row changes, and an old connection has no label.
+    ALTER TABLE backstory_links
+        ADD COLUMN upload TEXT NOT NULL DEFAULT '' CHECK (char_length(upload) <= 120),
+        ADD COLUMN told BOOLEAN NOT NULL DEFAULT false;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -12830,6 +12841,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         GRAPH_OVERVIEW,
     ),  # every name on the Story graph, not only the centre's web (#2632)
     ("0229_link_decide", LINK_DECIDE_ACTIONS),  # Confirm / Not right from the website (#2635)
+    ("0231_link_upload", BACKSTORY_LINK_UPLOAD),  # where a waiting connection came from (#2650)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

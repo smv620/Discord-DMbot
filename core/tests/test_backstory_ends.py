@@ -6,21 +6,25 @@ names and text throughout."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
+import time
 import unittest
 from collections import Counter
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 from dmbot.ai import AIError, Reply
+from dmbot.bot import DMBot
+from dmbot.dm_screen import links_ready
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import lore_read as lr
-from dmbot.memory.backstory_links import BackstoryLinks
-from dmbot.memory.end_match import Ends, stripped
-from dmbot.memory.models import CONFIRMED
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+from dmbot.memory.end_match import Ends, head, stripped
+from dmbot.memory.models import CONFIRMED, NewName
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests import lore_fake
@@ -60,6 +64,23 @@ class Matching(unittest.TestCase):
         ):
             got = r.match(end)
             self.assertEqual((got.name, got.ambiguous), (want, ()), end)
+
+    def test_a_trailing_description_resolves_like_a_leading_one(self) -> None:
+        """#2650: "Brannoc, my mentor" is "my mentor Brannoc"; a comma that is not followed by a
+        description is not cut, and a description alone never finds a name."""
+        r = reader()
+        for end, want in (
+            ("Brannoc, my mentor", "Brannoc"),
+            ("Brannoc (my mentor)", "Brannoc"),
+            ("Ulric, his brother", "Ulric Stonehand"),
+            ("old Brannoc, the smith", "Brannoc"),
+        ):
+            got = r.match(end)
+            self.assertEqual((got.name, got.ambiguous), (want, ()), end)
+        self.assertEqual(r.match("Mara, my sister").ambiguous, ("Mara Ashgrove", "Mara Vell"))
+        self.assertIsNone(r.match(", my mentor").name)
+        self.assertEqual(head("Ulfgar, Lord of Frost"), "Ulfgar")
+        self.assertEqual(head("Frost, Ulfgar"), "Frost, Ulfgar")  # not a description
 
     def test_a_word_that_fits_two_names_is_a_question_not_a_guess(self) -> None:
         got = reader().match("Sister Mara")
@@ -343,9 +364,9 @@ class WhenKept(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        self.assertEqual(self.button(view, "✅ Keep all 2 ready").disabled, False)
+        self.assertEqual(self.button(view, "✅ Keep all 2 from this backstory").disabled, False)
         press = self.it()
-        await self.button(view, "✅ Keep all 2 ready").callback(press)
+        await self.button(view, "✅ Keep all 2 from this backstory").callback(press)
         kept = await self.relations()
         self.assertEqual(len(kept), 2)
         self.assertTrue(all(r.status == CONFIRMED and r.source == "dm" for r in kept))
@@ -387,7 +408,7 @@ class WhenKept(NamesTest):
         await self.confirm_all()
         _, view = await self.offer()
         stranger = self.it(999)
-        await self.button(view, "✅ Keep all 2 ready").callback(stranger)
+        await self.button(view, "✅ Keep all 2 from this backstory").callback(stranger)
         self.assertEqual(await self.relations(), [])
         self.assertEqual(len(await self.waiting()), 2)
 
@@ -409,3 +430,87 @@ class WhenKept(NamesTest):
         self.assertEqual(len(done.kept), 2)
         secrets = [r.secret for r in await self.relations()]
         self.assertEqual(sorted(secrets), [False, True])
+
+    async def test_the_reading_labels_what_it_queues_with_the_upload(self) -> None:
+        await self.read()
+        labels = {w.upload for w in await self.waiting()}
+        self.assertEqual(len(labels), 1)
+        (label,) = labels
+        self.assertTrue(label.startswith("your background, "), label)
+
+    async def test_ready_connections_are_said_once(self) -> None:
+        await self.read()
+        first = await self.store.take_ready_notices(GUILD, self.campaign.id)
+        self.assertEqual(first, {})  # the names are not answered yet
+        await self.confirm_all()
+        said = await self.store.take_ready_notices(GUILD, self.campaign.id)
+        self.assertEqual(sum(said.values()), 2)
+        self.assertEqual(await self.store.take_ready_notices(GUILD, self.campaign.id), {})
+
+    async def test_the_bot_posts_the_notice_once_with_the_button(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
+        self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=GUILD)])
+        with (
+            patch.object(DMBot, "guilds", guilds),
+            patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
+        ):
+            await self.bot._links_ready_look(self.campaign.id)
+            await self.bot._links_ready_look(self.campaign.id)
+        self.bot.post.assert_awaited_once()
+        channel, text, view = self.bot.post.await_args.args
+        self.assertEqual(channel, 555)
+        self.assertIn("2 connections from your background", text)
+        self.assertEqual(view.children[0].item.label, links_ready.LABEL)
+
+    async def test_nothing_waiting_posts_nothing(self) -> None:
+        campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
+        self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        with (
+            patch.object(DMBot, "guilds", PropertyMock(return_value=[SimpleNamespace(id=GUILD)])),
+            patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
+        ):
+            await self.bot._links_ready_look(self.campaign.id)
+        self.bot.post.assert_not_awaited()
+
+    async def test_keep_all_keeps_only_the_upload_on_screen(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Edda", "npc", "confirmed"), NewName("Holt", "npc", "confirmed")],
+            source="dm",
+        )
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.store._clock = lambda: time.time() + 100  # later than the reading: shown second
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [
+                NewLink(
+                    ids["Edda"], "kin_of", ids["Holt"], "Edda and Holt", upload="Other file, 2 Jan"
+                )
+            ],
+        )
+        _, view = await self.offer()
+        mine = next(b for b in view.children if b.label.startswith("✅ Keep all"))
+        self.assertEqual(mine.label, "✅ Keep all 2 from this backstory")
+        await mine.callback(self.it())
+        left = await self.waiting()
+        self.assertEqual([w.upload for w in left], ["Other file, 2 Jan"])  # never kept unseen
+        self.assertEqual(len(await self.relations()), 2)
+
+    async def test_the_counts_for_the_check_are_read_only(self) -> None:
+        await self.read()
+        before = await self.store.counts(GUILD, self.campaign.id)
+        self.assertEqual(sum(n for *_, n in before), 2)
+        self.assertTrue(all(not ready for _, _, ready, _ in before))
+        await self.confirm_all()
+        after = await self.store.counts(GUILD, self.campaign.id)
+        self.assertTrue(all(ready for _, _, ready, _ in after))
+        self.assertEqual(len(await self.waiting()), 2)  # nothing was cleaned or moved
