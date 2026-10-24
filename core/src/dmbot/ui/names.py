@@ -1123,8 +1123,9 @@ async def _review(
 class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
     """The name card's ✏️ Change the words (#2570): the name filled in, to extend or fix."""
 
+    # (a modal has no body text, and the placeholder hides once the name is filled in)
     name: discord.ui.TextInput[ChangeWordsForm] = discord.ui.TextInput(
-        label="Name",
+        label="Whole name, as it should read",
         placeholder="Add the words around it, or fix the spelling.",
         max_length=NAME_MAX,
     )
@@ -1157,7 +1158,7 @@ class WordsPicker(_Menu):
             self.add_item(
                 _Button(
                     partial(self._picked, words),
-                    label=logic.shorten(words, REVIEW_LABEL_MAX * 3),
+                    label=logic.shorten(f"{i + 1}. {words}", REVIEW_LABEL_MAX),
                     style=discord.ButtonStyle.primary,
                     row=i,
                 )
@@ -1672,8 +1673,9 @@ class SuggestionReview(_Menu):
             return
         await _replace(
             interaction,
-            f"**What is the whole name?** DMbot found **{_md(entity.name)}**. Pick the words "
-            "around it that fit, or type it yourself.",
+            f"**What is the whole name?** DMbot heard **{_md(entity.name)}**. Tap the full name, "
+            "or type it yourself. You can still change it before it is saved. Back changes "
+            "nothing.\n" + "\n".join(f"{n}. {_md(c)}" for n, c in enumerate(candidates, 1)),
             WordsPicker(self, entity, candidates),
         )
 
@@ -1694,10 +1696,14 @@ class SuggestionReview(_Menu):
             return
         new = " ".join(words.split())
         if not new:
-            await _tell(interaction, "Type the name first.")
+            await _tell(interaction, "The name was empty. Press ✏️ Change the words and type it.")
             return
         if len(new) > NAME_MAX:
-            await _tell(interaction, f"Names can be {NAME_MAX} letters at most.")
+            await _tell(
+                interaction,
+                f"**{_md(logic.shorten(new, 60))}** is too long (the limit is {NAME_MAX} letters). "
+                "Shorten it and try again.",
+            )
             return
         if name_key(new) != name_key(entity.name):
             clash = await known_as(memory, campaign, new)
@@ -1709,26 +1715,21 @@ class SuggestionReview(_Menu):
         # "Harrow" said alone into "Harrow's Keep".
         bare = name_key(re.sub(r"['\u2019]s\b", "", new))  # "Harrow's Keep" holds "Harrow"
         part = f" {old} " in f" {bare} " and name_key(new) != old
-        try:
+        try:  # one change, so one Undo: the new name and how it was heard
             await memory.rename_entity(
-                campaign.guild_id, campaign.id, entity.id, new, source=DM, keep_old=not part
+                campaign.guild_id,
+                campaign.id,
+                entity.id,
+                new,
+                source=DM,
+                keep_old=not part,
+                also_known_as=" ".join(heard.split()),
             )
-            said = " ".join(heard.split())
-            if said and name_key(said) not in (name_key(new), old):
-                await memory.add_alias(
-                    campaign.guild_id,
-                    campaign.id,
-                    entity.id,
-                    said,
-                    kind="old",
-                    source=DM,
-                    status=CONFIRMED,
-                )
         except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't change it. {exc}")
+            await _tell(interaction, f"Couldn't change it. {exc} Nothing was changed.")
             return
         changed(interaction, campaign)
-        await self._next(interaction, campaign, memory, note=f"✏️ Now **{_md(new)}**. What is it?")
+        await self._next(interaction, campaign, memory, note=f"✏️ Saved as **{_md(new)}**.")
 
     async def _no(self, interaction: discord.Interaction) -> None:
         current = await self._current(interaction)

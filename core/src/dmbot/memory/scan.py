@@ -204,7 +204,9 @@ def find_new_names(
             # same word is followed by the same place word often enough, the longer name is what is
             # offered (#2570). Still only a suggestion; "Harrow" said alone elsewhere is not lost.
             longer = widened(lines, name, min_times)
-            if longer and name_key(longer) not in skip and len(longer) <= NAME_MAX:
+            if longer and len(longer) <= NAME_MAX:
+                if name_key(longer) in skip:
+                    continue  # the DM already answered for the longer name: not its first word
                 name = longer
             found.append(Suggestion(name, times))
     found.sort(key=lambda s: (-s.times, s.name))

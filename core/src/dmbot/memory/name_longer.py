@@ -183,8 +183,14 @@ def widened(lines: Iterable[str], name: str, min_times: int) -> str:
     )
     forms: Counter[str] = Counter()
     for line in lines:
+        if own.casefold() not in line.casefold():
+            continue  # (most lines never say it)
         for match in pattern.finditer(_plain(line)):
             poss = (match.group("poss") or "").replace("’", "'")
+            # A place word after a bare name is a place only when it is written as one ("Harrow
+            # Keep"): "Kira falls" or "Ana holds" are a person doing something.
+            if not poss and not match.group("place")[:1].isupper():
+                continue
             forms[f"{own}{poss} {match.group('place').capitalize()}"] += 1
     if not forms:
         return ""
