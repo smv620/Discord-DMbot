@@ -26,7 +26,7 @@ from typing import Protocol
 
 from dmbot.ai import Reply
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, GOD, NPC, name_key
+from dmbot.memory.models import CONFIRMED, NPC, name_key
 from dmbot.transcript.models import NARRATING
 
 MAX_NAMES = 40  # names offered in one question
@@ -94,7 +94,7 @@ def _allowed(lookup: CampaignLookup) -> dict[str, str]:
         key = name_key(entity.name)
         if (
             entity.type != "character"
-            or entity.role not in (NPC, GOD)
+            or entity.role != NPC
             or entity.status != CONFIRMED
             or entity.merged_into is not None
             or not key

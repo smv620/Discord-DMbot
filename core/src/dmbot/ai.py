@@ -1,7 +1,7 @@
-"""DMbot's AI text calls (Anthropic's Messages API). The first use is turning a document
-into a names list (`dmbot.memory.name_documents`). The key comes only from the server's
-settings, is never logged and never shown (CLAUDE.md, API keys). Bring-your-own keys
-per server come later (#50).
+"""DMbot's AI text calls (Anthropic's Messages API; Gemini for the recap writer only). The first
+use is turning a document into a names list (`dmbot.memory.name_documents`). The key comes only
+from the server's settings, is never logged and never shown (CLAUDE.md, API keys). Bring-your-own
+keys per server come later (#50).
 
 **Tiers, not models (#1006, owner decision 2026-10-10).** Every call names a tier: FAST
 (Haiku: simple jobs), CAREFUL (Sonnet: house-rule changes) or DEEP (Opus: PlotBot, later).
@@ -10,6 +10,14 @@ The settings say which model each tier uses (`AI_MODEL_FAST`, `AI_MODEL_CAREFUL`
 model is refused (not found, or no permission) the call goes to the next tier down, once logged
 for that model. Running out of money never falls back. Each call logs one line: tier, model,
 tokens, never content.
+
+**Gemini for the creative tier (#2575, owner decision 2026-10-23).** `AI_PROVIDER_CREATIVE=gemini`
+sends the CREATIVE tier (the recap writer) to Google's Gemini API through `GeminiClient`, with
+`GEMINI_API_KEY`. Every other tier stays on Anthropic. It is off unless set; with no key the
+writer uses the Anthropic model as before. The key must be on a billing-enabled (paid) Google
+account: the free tier's terms let Google use what is sent to improve its products, which DMbot
+must never allow. A Gemini model that is refused falls to the next tier down (Anthropic), once
+logged; running out of money never falls back. Plain HTTPS with aiohttp, no SDK.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ import base64
 import enum
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -32,6 +41,7 @@ from dmbot.alerts import Problem, raise_alert
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.anthropic.com/v1/messages"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 API_VERSION = "2023-06-01"
 
 
@@ -49,13 +59,19 @@ class AIModelTier(enum.Enum):
 REQUEST_TIMEOUT_S = 120  # one request on the fast tier
 # The middle and strongest models write more slowly: a long answer (Find names on a big
 # document) needs longer. The session's own limit is the longest of them.
-SLOW_TIER_TIMEOUT_S = 240
+# A background call may now write up to OUTPUT_FLOOR tokens (#2596). The middle and strongest models
+# write about 40 to 80 tokens a second, so 16,000 tokens can take over four minutes: the slow tiers
+# wait 8 minutes, the fast ones 3. A live table answer keeps the short wait it always had
+# (`LIVE_TIMEOUT_S`), whatever its tier.
+SLOW_TIER_TIMEOUT_S = 480
+FAST_TIER_TIMEOUT_S = 180
+LIVE_TIMEOUT_S = REQUEST_TIMEOUT_S
 TIER_TIMEOUT_S = {
-    AIModelTier.FAST: REQUEST_TIMEOUT_S,
+    AIModelTier.FAST: FAST_TIER_TIMEOUT_S,
     AIModelTier.CAREFUL: SLOW_TIER_TIMEOUT_S,
     AIModelTier.DEEP: SLOW_TIER_TIMEOUT_S,
     AIModelTier.CREATIVE: SLOW_TIER_TIMEOUT_S,
-    AIModelTier.FORMATTING: REQUEST_TIMEOUT_S,
+    AIModelTier.FORMATTING: FAST_TIER_TIMEOUT_S,
 }
 
 NEXT_DOWN = {
@@ -108,7 +124,33 @@ class Feature(enum.StrEnum):
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
     IMAGE = "image"  # an image posted in the table chat, described once (#2450)
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
+    PLOT_CHECK = "plot_check"  # a recap against the earlier accepted ones, for the DM (#2122)
+    # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
+    NAME_PASS = "name_pass"
 
+
+# How much a background call may write at least (#2596, the owner 2026-10-24: "the cutoffs are
+# causing all kinds of problems"). Every call used to set its own hand-sized limit, estimated from
+# the answer it expected, and an answer longer than the estimate was cut off: a structured answer
+# could not be read, a step failed, and once the DM was told "found no new names" (#2454). The
+# service charges for the tokens actually written, never for the limit, so a generous limit costs
+# nothing and a tight one only guards against a runaway answer, which has not been the problem.
+# A caller's own number is still its estimate (and is logged against what was written, to tune
+# later); none goes below this floor, up to what the model can write.
+OUTPUT_FLOOR = 16_000
+# The jobs a person waits for at the table keep short answers, short by design ("Quick, short and
+# on topic"): they get their own number times this, so a normal answer is never cut, and the
+# short wait above.
+LIVE_FEATURES = frozenset(
+    {
+        Feature.SIDEBAR.value,
+        Feature.SIDEBAR_RETRY.value,
+        Feature.FIGHTBOT.value,
+        Feature.AUDIO_CHECK.value,
+        Feature.TIME_SUGGEST.value,
+    }
+)
+LIVE_MULTIPLE = 4
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
 FEATURE_TIERS = {
@@ -143,6 +185,11 @@ FEATURE_TIERS = {
     # layout has to be detailed enough to draw (#2450).
     Feature.IMAGE: AIModelTier.FAST,
     Feature.IMAGE_MAP: AIModelTier.CAREFUL,
+    # Advice for the DM only: code checks every finding against the earlier recaps (#2122).
+    Feature.PLOT_CHECK: AIModelTier.CAREFUL,
+    # Written into the transcript the whole server reads, but only a sure answer naming one of the
+    # offered list names, and the DM can Undo (#2628).
+    Feature.NAME_PASS: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
@@ -223,8 +270,38 @@ MAX_OUTPUT_TOKENS: dict[str, int] = {
 DEFAULT_MAX_OUTPUT = 16_000
 
 
+# What a Gemini model may write in one answer: its documented ceiling is lower than the Claude
+# models', and asking for more is refused. Override with GEMINI_MAX_OUTPUT (owner-set, #2599).
+GEMINI_MAX_OUTPUT = 8192
+
+
 def max_output(model: str) -> int:
+    if model.startswith("gemini"):
+        try:
+            return int(os.environ.get("GEMINI_MAX_OUTPUT", "") or GEMINI_MAX_OUTPUT)
+        except ValueError:
+            return GEMINI_MAX_OUTPUT
     return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
+
+
+# How much a model can read in one call, in tokens (#2590: a writer that reads a whole session).
+# Claude models: 200,000. Gemini models: 1,000,000 (Google's model pages, checked 2026-10-24).
+# A model not named gets the cautious figure.
+CLAUDE_CONTEXT = 200_000
+GEMINI_CONTEXT = 1_000_000
+
+
+def max_input(model: str) -> int:
+    return GEMINI_CONTEXT if model.startswith("gemini-") else CLAUDE_CONTEXT
+
+
+def answer_room(estimate: int, model: str, *, live: bool = False) -> int:
+    """The output limit a call is sent with (#2596). A background call: its own estimate, but not
+    below `OUTPUT_FLOOR` (as far as the model can write). A live table answer: its estimate times
+    `LIVE_MULTIPLE`. Never below what the caller asked for, whatever the model's own limit."""
+    if live:
+        return estimate * LIVE_MULTIPLE
+    return max(estimate, min(OUTPUT_FLOOR, max_output(model)))
 
 
 BUSY = (
@@ -268,6 +345,43 @@ _FUNDS_WORDS = re.compile(
     r"|reached your (monthly )?(spend|spending) limit",
     re.IGNORECASE,
 )
+
+
+# Gemini says it with a 429 `RESOURCE_EXHAUSTED` (or 403) whose message names prepaid credits, a
+# spend cap or billing not being on. Google's ordinary quota message ("You exceeded your current
+# quota, please check your plan and billing details") is a rate or daily limit, not money, so it
+# is only "busy" and the call is tried again later.
+_GEMINI_FUNDS_WORDS = re.compile(
+    r"prepayment credits? (are|is) depleted|spend(ing)? cap|billing (account )?(is )?(not "
+    r"(enabled|active)|disabled|inactive)|enable billing",
+    re.IGNORECASE,
+)
+
+
+def is_gemini_out_of_funds(status: int, body_text: str) -> bool:
+    """Is this Gemini error response the account being out of money or at its spend cap?"""
+    if status not in (400, 402, 403, 429):
+        return False
+    try:
+        error = json.loads(body_text).get("error", {})
+        message = str(error.get("message", ""))
+    except (ValueError, AttributeError):
+        return False
+    return bool(_GEMINI_FUNDS_WORDS.search(message))
+
+
+def is_gemini_key_refused(status: int, body_text: str) -> bool:
+    """Is this the key being wrong? Gemini answers a bad key with a 400 `API_KEY_INVALID` (not a
+    401), and a key without access with a 403 `PERMISSION_DENIED` that is not about the model."""
+    if status == 401:
+        return True
+    try:
+        error = json.loads(body_text).get("error", {})
+        message = str(error.get("message", ""))
+        details = json.dumps(error.get("details", ""))
+    except (ValueError, AttributeError):
+        return False
+    return status in (400, 403) and ("API_KEY_INVALID" in details or "API key not valid" in message)
 
 
 def is_out_of_funds(status: int, body_text: str) -> bool:
@@ -379,6 +493,164 @@ class TierClient:
         )
 
 
+class GeminiClient:
+    """Google's Gemini `generateContent` over plain HTTPS, for the creative tier only (#2575).
+
+    It answers the same call `AnthropicClient._request` does and raises the same errors, so the
+    caller cannot tell which wrote the draft: `_ModelRefused` for a model that is not there (the
+    chain then falls to the next tier down, Anthropic), `AIOutOfFunds` for money (never falls
+    back), and `AIError` in plain words for the rest. The key goes in a header, is never logged
+    and never shown. One request per call, with the tier's timeout. The key must belong to a
+    billing-enabled account: the free tier's terms allow Google to use the data sent."""
+
+    def __init__(
+        self,
+        api_key: str,
+        session: aiohttp.ClientSession | None = None,
+        watch: Watcher | None = None,
+    ) -> None:
+        self._key = api_key
+        self._session = session
+        self._watch = watch
+
+    def __repr__(self) -> str:  # never the key
+        return "GeminiClient()"
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=SLOW_TIER_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
+            )
+        return self._session
+
+    async def close(self) -> None:
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+
+    async def request(
+        self,
+        system: str,
+        text: str,
+        max_tokens: int,
+        tier: AIModelTier,
+        model: str,
+        *,
+        asked: AIModelTier,
+        can_refuse: bool,
+        feature: str | None = None,
+        schema: dict[str, Any] | None = None,
+        images: Sequence[Image] = (),
+    ) -> Reply:
+        parts: list[dict[str, Any]] = [
+            {
+                "inlineData": {
+                    "mimeType": image.media_type,
+                    "data": base64.b64encode(image.data).decode("ascii"),
+                }
+            }
+            for image in images
+        ]
+        parts.append({"text": text})
+        config: dict[str, Any] = {"maxOutputTokens": max_tokens}
+        if schema is not None:
+            config["responseMimeType"] = "application/json"
+            config["responseJsonSchema"] = schema
+        body: dict[str, Any] = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": config,
+        }
+        headers = {"x-goog-api-key": self._key, "content-type": "application/json"}
+        url = GEMINI_URL.format(model=model)
+        try:
+            async with (
+                asyncio.timeout(TIER_TIMEOUT_S[tier]),
+                self._get_session().post(url, json=body, headers=headers) as resp,
+            ):
+                if resp.status != 200:
+                    reason = (await resp.text())[:2000]
+                    if is_gemini_out_of_funds(resp.status, reason):
+                        # Only Gemini's own alert: `Watcher.out_of_funds` tells the admins the
+                        # Anthropic account is out, which it is not.
+                        log.error("Gemini says the account is out of funds or at its limit")
+                        raise_alert(Problem.GEMINI_OUT_OF_FUNDS)
+                        raise AIOutOfFunds(OUT_OF_FUNDS)
+                    if is_gemini_key_refused(resp.status, reason):
+                        log.error("Gemini refused the key (HTTP %s)", resp.status)
+                        raise_alert(Problem.GEMINI_KEY_REFUSED)
+                        raise AIError(
+                            "The AI service didn't accept DMbot's key. Nothing was added. Ask "
+                            "whoever runs DMbot to check its Gemini key."
+                        )
+                    if can_refuse and _model_unavailable(resp.status, reason):
+                        raise _ModelRefused(resp.status)
+                    if resp.status == 429 or resp.status >= 500:
+                        log.warning("Gemini is busy (HTTP %s)", resp.status)
+                        raise AIError(BUSY)
+                    log.error("Gemini request failed (HTTP %s): %s", resp.status, reason[:500])
+                    raise AIError(FAILED)
+                data = await resp.json()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:  # ValueError: bad JSON
+            log.warning("Gemini request failed: %s", type(exc).__name__)
+            raise AIError(BUSY) from exc
+        if not isinstance(data, dict):
+            log.error("Gemini's answer wasn't in the expected shape")
+            raise AIError(FAILED)
+        usage = data.get("usageMetadata")
+        if not isinstance(usage, dict):
+            usage = {}
+
+        def count(name: str) -> int:
+            value = usage.get(name)
+            return value if type(value) is int else 0
+
+        candidates = data.get("candidates")
+        first = candidates[0] if isinstance(candidates, list) and candidates else {}
+        first = first if isinstance(first, dict) else {}
+        raw_finish = first.get("finishReason")
+        finish = raw_finish if isinstance(raw_finish, str) else ""
+        content = first.get("content")
+        raw_parts = content.get("parts") if isinstance(content, dict) else None
+        answer = "".join(
+            str(p.get("text", ""))
+            for p in (raw_parts if isinstance(raw_parts, list) else [])
+            if isinstance(p, dict)
+            and not p.get("thought")  # (a thinking summary is not the answer)
+        )
+        # The thinking a model does is charged as output, so it is counted with it.
+        output = count("candidatesTokenCount") + count("thoughtsTokenCount")
+        blocked = (
+            bool(data.get("promptFeedback", {}).get("blockReason"))
+            if isinstance(data.get("promptFeedback"), dict)
+            else False
+        )
+        refused = blocked or finish in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII")
+        log.info(
+            "AI call: tier=%s model=%s in=%s out=%s cache_read=%s cache_write=0 stop=%s%s%s",
+            tier.value,
+            model,
+            count("promptTokenCount"),
+            output,
+            count("cachedContentTokenCount"),
+            finish or None,
+            f" asked={asked.value}" if asked is not tier else "",
+            f" feature={feature}" if feature else "",
+        )
+        reply = Reply(
+            answer,
+            cut=finish == "MAX_TOKENS",
+            input_tokens=count("promptTokenCount"),
+            output_tokens=output,
+            model=model,
+            cache_read_tokens=count("cachedContentTokenCount"),
+            refused=refused,
+            stop=finish.lower(),
+        )
+        if self._watch is not None:
+            self._watch.record(reply.input_tokens, reply.output_tokens, feature)
+        return reply
+
+
 class AnthropicClient:
     def __init__(
         self,
@@ -387,8 +659,15 @@ class AnthropicClient:
         session: aiohttp.ClientSession | None = None,
         watch: Watcher | None = None,
         clock: Callable[[], float] = time.monotonic,
+        gemini: GeminiClient | None = None,
+        fallback: bool = True,
     ) -> None:
+        """`gemini`: when given, the CREATIVE tier is sent to it instead (#2575); every other tier
+        stays here. Its model name is `models.creative`. `fallback=False`: a refused model is an
+        error and never falls to a lower tier (a comparison tool must not swap writers silently)."""
+        self._fallback = fallback
         self._key = api_key
+        self._gemini = gemini
         self.models = models
         self._session = session
         self._watch = watch
@@ -420,6 +699,8 @@ class AnthropicClient:
             if all(model != known for _, known in steps):
                 steps.append((step, model))
             step = NEXT_DOWN.get(step)
+        if not self._fallback:
+            return steps[:1]
         now = self._clock()
         usable = [
             (t, m)
@@ -441,6 +722,8 @@ class AnthropicClient:
     async def close(self) -> None:
         if self._session is not None and not self._session.closed:
             await self._session.close()
+        if self._gemini is not None:
+            await self._gemini.close()
 
     async def complete(
         self,
@@ -461,22 +744,42 @@ class AnthropicClient:
         plain words (AIOutOfFunds never falls back)."""
         chain = self._chain(tier)
         unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
+        live = feature in LIVE_FEATURES
         for position, (step, model) in enumerate(chain):
             lower = chain[position + 1] if position + 1 < len(chain) else None
+            room = answer_room(max_tokens, model, live=live)
             try:
-                reply = await self._request(
-                    system,
-                    text,
-                    max_tokens,
-                    step,
-                    model,
-                    asked=tier,
-                    can_refuse=lower is not None,
-                    feature=feature,
-                    cache_system=cache_system,
-                    schema=schema,
-                    images=images,
-                )
+                if self._gemini is not None and step is AIModelTier.CREATIVE:
+                    # The room for Gemini's own model (`model` is the creative step's, a Gemini
+                    # name here): never below the generous floor (#2596, its thinking counts
+                    # against this limit) and never past what Gemini takes, or it refuses (#2575).
+                    reply = await self._gemini.request(
+                        system,
+                        text,
+                        min(room, max_output(model)),
+                        step,
+                        model,
+                        asked=tier,
+                        can_refuse=lower is not None,
+                        feature=feature,
+                        schema=schema,
+                        images=images,
+                    )
+                else:
+                    reply = await self._request(
+                        system,
+                        text,
+                        room,
+                        step,
+                        model,
+                        asked=tier,
+                        can_refuse=lower is not None,
+                        feature=feature,
+                        cache_system=cache_system,
+                        schema=schema,
+                        images=images,
+                        live=live,
+                    )
             except _ModelRefused as refused:
                 if lower is None:
                     raise AIError(FAILED) from None
@@ -484,6 +787,16 @@ class AnthropicClient:
                 log.debug("Model %s was refused (HTTP %s)", model, refused.status)
                 continue
             self._refused.pop(model, None)  # it works (again)
+            if reply.output_tokens > max_tokens:
+                # Data for bringing the limits down later with real numbers (#2596): counts only.
+                log.info(
+                    "AI answer longer than the caller's estimate: feature=%s estimate=%d wrote=%d "
+                    "room=%d",
+                    feature or "-",
+                    max_tokens,
+                    reply.output_tokens,
+                    room,
+                )
             # A lower tier answering proves the key is fine, so the model above it really
             # isn't available to it. Said once for each model.
             for gone_tier, gone in unavailable:
@@ -517,7 +830,9 @@ class AnthropicClient:
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        live: bool = False,
     ) -> Reply:
+        # `live`: a table answer keeps the short wait (`LIVE_TIMEOUT_S`).
         # `images`: each goes in as an image block before the text, base64 (#2450).
         # `schema`: structured outputs (#2039). The Messages API takes `output_config.format`
         # with `type: json_schema`; no beta header, and every model in the tier chain supports
@@ -558,7 +873,7 @@ class AnthropicClient:
         }
         try:
             async with (
-                asyncio.timeout(TIER_TIMEOUT_S[tier]),
+                asyncio.timeout(LIVE_TIMEOUT_S if live else TIER_TIMEOUT_S[tier]),
                 self._get_session().post(API_URL, json=body, headers=headers) as resp,
             ):
                 if resp.status != 200:

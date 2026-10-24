@@ -1927,7 +1927,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       node and connection. **After each session** (and each imported session) a held-back name that a
       recorded person said or typed at the table, by its name or another of its names as whole words, is shown
       to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
-      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). The DM
+      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). **A secret name said at the table is no longer secret** (owner, 2026-10-24, #2591): once a recorded
+      person says or types it at the table (consented lines only, never the sidebar, the DM screen or DMbot),
+      the party knows the name, so the recap of that session may use it and the knowledge map review reveals it
+      with ↩️ Recant for the DM. Only the name is revealed: its secret connections, and anything else the DM
+      keeps secret about it, stay secret until the table states them. The DM
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
@@ -2516,6 +2520,13 @@ plays). There is no third kind of character and no "person" in the story.
    for the DM, never guessed; a PC has a player (`plays`), and one with no player yet is asked about.
    Existing `god` and creature characters become NPCs with their description kept (nothing is deleted).
 4. *(Supervisor, build):* #2562 (core: the words, the roles, the rule) and the website's words with it.
+   *(Built, 2026-10-24, #2562.)* The rule lives in `memory/voice.py` and runs where a claim is judged
+   (`memory/claims.py`). It covers the relationships that carry a character's own attitude, loyalty or
+   vow: `ally_of`, `enemy_of`, `serves`, `sworn_to` (a list in code until the ontology's definitions,
+   which are hashed and versioned, gain a flag). A PC's own: only from its player's lines. The DM
+   saying it of a PC: offered to the DM with the note "told by the DM as something that happened to
+   them". A player saying it of someone else's character: not offered as true (The party's belief).
+   An NPC's: only from the DM. A group's attitude and every other relationship are unchanged.
 
 **Players and the DM in the names (owner, 2026-10-14).** DMbot also learns the names the table uses for
 the **real people** at it, so "Mike, what do you do?" followed by "I run at it with my sword" tells it
@@ -4443,6 +4454,15 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
   same applies to the section count when the fix-up changes the sections: the length is checked again
   after it, and steered once if it left the range.
+  **Length is a target in the prompt, never a check** (owner, 2026-10-24, #2597; replaces the 50% under
+  and 20% / 35% over margins and the steered length retries above): the target is still worked out as
+  above and put in the writer's instructions, but whatever length comes back is used as it is. No
+  draft is failed, retried, rewritten or cut for being longer or shorter than the target, and a
+  sentence the fact check cuts never fails the recap for leaving it short. Why: going back and forth
+  over a draft that is a little long or short costs more than it gains. Only an empty or unreadable
+  answer is retried. The same holds for every AI write-up in DMbot (house-rule notes, support replies,
+  the DM sidebar's answers): limits are in the instructions, and only a platform's hard limit (Discord's
+  2,000 characters a message) splits an answer into parts, never cuts it.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
@@ -4455,17 +4475,35 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     draft and lists every sentence that states something the beats do not support (wrong place,
     wrong person, invented event or detail, contradiction), as a fixed-shape answer. A flagged draft
     is revised once with the list; a sentence still flagged after that is cut in code, and the
-    recap stands only if it still meets the minimum length. The grader's style scores never
+    recap stands (its length is never a reason to fail, #2597). The grader's style scores never
     outrank this check.
   - **Coverage:** the fact check also names the beats the draft leaves out that change the story
     (a new place, a new person met, a decision, a reveal). Those are given to the revision; the
-    length band, not coverage, decides when it stops.
+    revision is the one try, whatever the length (#2597).
   - Knowing the adventure's map (where a town lies, which way the party travels) needs the Shared
     story reader (docs/STORY_MEMORY.md); until a DM shares the adventure, the recap states no
     direction at all.
   **Two models, and style kept apart from content** (owner, 2026-10-20; details Supervisor's).
   - **A creative model writes, a small model formats.** The recap is written as plain text by the
-    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). The formatting model
+    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). *(Owner, 2026-10-23, #2575:)* **Gemini as
+    an option for the writer only**, off by default (`AI_PROVIDER_CREATIVE`), to compare on real recaps
+    with `recap_run --compare` (two drafts read blind). Every check after the writer is the same whichever
+    wrote it. It needs a **paid-tier** Gemini key (the free tier's terms allow using the data), the privacy
+    page naming Google as a processor when it writes, and its cost in docs/costs.md (#2574). Which writer
+    is the default is the owner's call after the comparison.
+    - **The Gemini writer reads the cleaned transcript** (owner, 2026-10-23, #2590): the whole
+      cleaned transcript of the session (never the raw one, never sound, never DM-screen content,
+      which the cleaned transcript doesn't hold), with PlotBot's guide to what matters (the beats,
+      the open threads and what the campaign's memory marks as important), so it picks out what is
+      important itself instead of writing from the beat sheet alone. What the writer reads is its
+      own setting (`RECAP_WRITER_READS`: `beats` or `transcript`), apart from who writes, so
+      `recap_run --compare` can test one change at a time. The checks after the writer read the
+      same input: the fact check counts a detail as supported when the transcript says it, and the
+      names, secrets, presence and coverage checks are unchanged. A secret name said at the table is
+      no longer secret (see "Revealed names"), so the writer may use it; a name never said aloud
+      stays on the secret list and the secret check still refuses a draft that uses it. The privacy
+      page says Google gets the cleaned transcript (#2589).
+    The formatting model
     (`AI_MODEL_FORMATTING`, default Haiku 5.5, `claude-haiku-5-5`) then puts that text into the
     recap's fixed shape with the structured-output schema: sections, moods, cues and music prompts.
     - **The formatter changes no word of the story.** Code compares the narration's words before and
@@ -4838,6 +4876,39 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     campaign applies, and it is counted in docs/costs.md.
   - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
     check leans on the earlier accepted recaps. It grows more useful as memory fills.
+  - *Built, part 1 (CloudDev, 2026-10-23, #2122): the accepted versions.* When the DM approves a recap's text
+    (the website's Approve), the approval (the website's door `dmbot_recap_approve` and the Discord button, both through
+    `dmbot_recap_keep_version`, migration 0209) also writes that text to
+    `recap_accepted` as the session's next version: session, version, hash, title, text, who and when. The same text
+    approved again adds nothing, a changed text is the next version, and an old version is never overwritten (a session
+    keeps version 1 and the 19 newest, so its backup always restores; at the limit the oldest after
+    version 1 is dropped to make room, a stored version is never rewritten, and numbers only go up; Supervisor, 2026-10-23). It is
+    per campaign and server (row-level security), travels in the campaign's backup (`AcceptedSection`) and goes with
+    the campaign. `AcceptedStore.newest` gives the newest version of each session, for PlotBot, the pre-session note,
+    recall and the later plot checks to read (wired as each is built).
+  - *Built, part 2a (CloudDev, 2026-10-23, #2122): the issues and the Approve gate.* Migration 0210 adds
+    `plot_checks`, `plot_issues` and `plot_fine` (per campaign and server, row-level security) and two website
+    doors: `dmbot_plot_read` (state checking, ready or unavailable; the issues with their level, sentence and
+    quoted source; the approved versions) and `dmbot_plot_answer` (fix, changed, fine or leave, with the DM's
+    note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
+    `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` (checked inside the approval door, under its lock) while an issue has
+    no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
+    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
+    The Discord Approve button is held the same way (a plain line pointing to the recap page, and the store
+    refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
+    (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
+    checked and a restored campaign is checked afresh.
+  - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot runs `PlotRunner` in its own loop (never inside the recap loop, so a slow AI call cannot delay a recap job) (when
+    `DMBOT_PLOT_CHECK` is on): for each ready draft whose text has no check it starts one (at most 6 a campaign an
+    hour, a check that never finished is tried 3 times) and makes one careful-tier call (`Feature.PLOT_CHECK`) with the
+    recap's numbered sentences and the earlier accepted recaps (`memory/plot_check.py`). The call only advises:
+    code keeps a finding only when its kind and level are the fixed words, the sentence number is the recap's and
+    the quote is really in the earlier recap shown (an invented source never reaches the DM); a finding the DM
+    already answered "Not a problem" (same point, same words) is not raised again; an answer written after the
+    text changed is thrown away and the new text is checked afresh. A recap with no earlier accepted recap, an
+    answer that cannot be used or a refused call makes no issue and never holds Approve. This slice reads the earlier
+    accepted recaps only; the code checks against the confirmed story memory, the pre-session note and recall, and
+    re-checking later recaps that name the same people, follow. The chat (#2123) follows.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap
@@ -5311,7 +5382,13 @@ Supervisor's details marked).**
      fails, nothing is removed and the offer opens again with a plain reason. As after loading a backup,
      the old server's channels (DM screen, voice, chat) don't carry over; the new owner picks them with
      `/dmbot start`. Rulesets the campaign follows keep being followed; a ruleset it published moves with
-     it and the new owner becomes its publisher.
+     it and the new owner becomes its publisher. *(Supervisor, 2026-10-23, #2550:)* **for now** a campaign
+     that **shares** a rule set (`status = 'shared'`) can't move to another server: the hand-over page says
+     so before anyone accepts, and it can still be handed over on its own server. Moving a shared set with
+     its followers is #2551. **How the move is done (#2550):** the campaign's rows are moved, not copied: a
+     single change of its `guild_id`, carried into every row by `ON UPDATE CASCADE` (CLAUDE.md, Code
+     standards), with the busy checks (a session, a recap job or import at work) and the new owner's paid
+     slot checked in the same step, so nothing can be lost or left behind.
 - **One DMbot account, several Discord accounts.**
   1. **The key is the DMbot account** (the account number; today's DMbot ID). Everything a person has
      belongs to the account: the plan and hours, the campaigns they own, the campaigns they DM or
@@ -5520,3 +5597,26 @@ fails on our side (a cut-off answer, a check, the service) gives back the DM's T
 for no speakers, funds or stopped recording does not. The failing check's fixed name is in `last_error`
 (`(check: length)`) and the log. dev1 starts a session over with
 `python -m dmbot.devtools.recap_requeue GUILD CAMPAIGN SESSION_AT`.
+
+### A DM makes, redoes or adds the recap of any past session (owner, 2026-10-24, #2608, #2609, #2610)
+- **Make or redo** (#2608): a campaign's DM can make the recap of any past session, whether recaps were
+  off, it was interrupted, it failed or was held, or the DM just wants a new one. This is `/dmbot recap`
+  with a session picker, **🔁 Make the recap again** on a failed or held recap's line, and the website's
+  recap list. It is `recap_requeue`'s start-over, moved into core:
+  - the old job's draft, beats, critics' state, tries and hold go, and every step runs again;
+  - the transcript, the names and the story memory are never touched;
+  - a recap already approved or posted stays until the new one is approved, after one question.
+
+  The "last time" bridge is the recap of the session before it. It counts against the month's recaps,
+  except a redo of one that failed on our side. A session whose lines retention deleted can't be
+  written; the DM is pointed to upload instead. One job runs at a time per campaign, each showing its
+  progress.
+- **Upload one someone wrote** (#2609): the DM pastes it, uploads a `.txt` or `.md` file, or gives a
+  Google Doc link, up to 50,000 characters.
+  - **What it becomes:** that session's recap, labelled "Written by <name>, uploaded by <DM>", also for a
+    session DMbot never recorded. It never goes through the AI writer. It can be posted (with narration
+    within the plan), it is the next recap's bridge, and PlotBot may read it.
+  - **The DM decides:** unknown names go to Names to check, and a secret name or identity tie gives the
+    DM a note, never a block. Nothing enters the story memory without the DM's confirmation.
+  - **Right to use:** confirmed once per campaign and recorded. It stays in that campaign and its backup.
+  - **Replacing:** an earlier recap is kept as a version, never overwritten.

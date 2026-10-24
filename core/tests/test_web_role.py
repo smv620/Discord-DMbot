@@ -23,7 +23,7 @@ from dmbot.web.discord import DiscordGuild, DiscordUser
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest, create_role_sql
-from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_feedback import FakeDiscussions
 
 WEB_PASSWORD = "dmbot_web"
@@ -469,7 +469,7 @@ class WebRole(DatabaseTest):
         discussions = FakeDiscussions()
         app = create_app(settings(), self.web, FakeDiscord(), discussions=discussions)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             sent = await client.post(
                 "/feedback",
@@ -498,7 +498,9 @@ class WebRole(DatabaseTest):
             settings(), self.web, FakeDiscord(), payments=provider, clock=lambda: self.now
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as client:
             start = await client.get("/auth/discord/start")
             state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
