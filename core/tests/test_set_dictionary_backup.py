@@ -1,5 +1,6 @@
-"""The sets a campaign publishes and its pronunciation dictionary, in backups (#2552). A restored
-publisher keeps its sets and their versions under new ids, never a share code. Needs Postgres."""
+"""The sets a campaign publishes, in backups (#2552); the pronunciation dictionary is not (#2604).
+A restored publisher keeps its sets and their versions under new ids, never a share code.
+Needs Postgres."""
 
 from __future__ import annotations
 
@@ -7,7 +8,6 @@ import json
 from typing import Any
 
 from dmbot.campaigns import CampaignError, CampaignStore
-from dmbot.recaps.dictionary_backup import DictionarySection
 from dmbot.recaps.store import RecapStore
 from dmbot.rules.house import HouseRulesSection, HouseRuleStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
@@ -24,7 +24,6 @@ class SetsInBackups(DatabaseTest):
         self.campaigns = CampaignStore(self.db, clock=lambda: 1_700_000_000)
         self.campaigns.register_section(HouseRulesSection())
         self.campaigns.register_section(RuleSetsSection())
-        self.campaigns.register_section(DictionarySection())
         self.houses = HouseRuleStore(self.db)
         self.sets = RuleSetStore(self.db, clock=lambda: 1_700_000_000)
         self.recaps = RecapStore(self.db)
@@ -72,7 +71,6 @@ class SetsInBackups(DatabaseTest):
     async def test_an_old_backup_without_the_section_loads_with_none(self) -> None:
         backup = await self.campaigns.export(GUILD_A, self.pub)
         del backup["sections"]["rule_sets"]
-        del backup["sections"]["recap_dictionaries"]
         restored = await self.campaigns.import_backup(GUILD_B, backup, DM_B)
         self.assertEqual(await self.rows(GUILD_B, restored.id, "rule_sets"), [])
 
@@ -96,14 +94,18 @@ class SetsInBackups(DatabaseTest):
                 await self.campaigns.import_backup(GUILD_B, broken, DM_B)
         self.assertEqual(len(await self.campaigns.list_campaigns(GUILD_B)), 0)
 
-    async def test_the_pronunciation_dictionary_round_trips(self) -> None:
+    async def test_the_pronunciation_dictionary_stays_out_of_a_backup(self) -> None:
+        # (#2604) it is an object on one shared account at the voice company: a file could point a
+        # campaign at another's, and a name change deletes it
         await self.recaps.save_dictionary(GUILD_A, self.pub, "dict-1", "v-1", "a" * 64)
         backup = await self.campaigns.export(GUILD_A, self.pub)
+        self.assertNotIn("recap_dictionaries", backup["sections"])
+        self.assertNotIn("dict-1", json.dumps(backup))
+        hand_made = json.loads(json.dumps(backup))
+        hand_made["sections"]["recap_dictionaries"] = [
+            {"dictionary_id": "someone-elses", "version_id": "v", "rules_hash": "a" * 64, "at": 1}
+        ]
+        with self.assertRaises(CampaignError):  # a file that carries one is not read
+            await self.campaigns.import_backup(GUILD_B, hand_made, DM_B)
         restored = await self.campaigns.import_backup(GUILD_B, backup, DM_B)
-        self.assertEqual(
-            await self.recaps.dictionary(GUILD_B, restored.id), ("dict-1", "v-1", "a" * 64)
-        )
-        broken = json.loads(json.dumps(backup))
-        broken["sections"]["recap_dictionaries"][0]["rules_hash"] = "short"
-        with self.assertRaises(CampaignError):
-            await self.campaigns.import_backup(GUILD_B, broken, DM_B)
+        self.assertIsNone(await self.recaps.dictionary(GUILD_B, restored.id))
