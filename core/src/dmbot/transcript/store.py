@@ -21,6 +21,7 @@ from dmbot.db import Database, row_int
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
+from dmbot.transcript.topics import GAME, OFF_TOPIC, Spoken, lean_to_keeping
 
 RECENT_SESSIONS = 25  # Discord's limit for a menu
 MAX_RESPELLED = 5000  # lines one run of a fixed spelling rewrites; Finish does the rest
@@ -49,6 +50,17 @@ class PastRespell:
     sessions: int
     remaining: int  # more lines that would change: the next run does them
     run: int  # this run's number within the fix, 0 when it wrote nothing
+
+
+@dataclass(frozen=True, slots=True)
+class Settled:
+    """How the off-topic filter's end-of-session pass treated a session's spoken lines (#2567):
+    counts only, for the logs, so the filter can be tuned on real sessions."""
+
+    kept: int  # lines the filter kept in the first place (game or table talk)
+    turned_back: int  # lines the filter had left out and the pass kept after all
+    left_out: int  # lines still left out
+    put_back: int  # lines a DM had put back (never changed by the pass)
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,6 +376,96 @@ class TranscriptStore:
                 " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)"
                 " AND sidebar IS NULL AND typed = %s",
                 (topic, session_id, user_id, sorted(started), typed),
+            )
+            return cur.rowcount
+
+    async def settle_topics(
+        self, guild_id: int, session_id: str, dm_ids: Collection[int]
+    ) -> Settled:
+        """The filter leans to keeping (#2567): once the session is over, a short stretch the AI
+        called off-topic between game talk, and the DM's lines in any stretch that is not long,
+        become game talk again (`topics.lean_to_keeping`). Marked `leaned`, so a count and an Undo
+        can tell them apart, and never a line a DM decided. Speech only; what was heard never
+        changes. Safe to run twice."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, user_id, started_ms, duration_ms, topic, leaned,"
+                " topic_by IS NOT NULL AS decided"
+                " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL AND NOT typed"
+                " ORDER BY started_ms, id",
+                (session_id,),
+            )
+            rows = await cur.fetchall()
+            # A line this pass already turned back counts as the filter's off-topic call again, so
+            # the same lines give the same answer however many times it runs.
+            spoken = [
+                Spoken(
+                    int(r["user_id"]),
+                    int(r["started_ms"]),
+                    int(r["duration_ms"]) / 1000,
+                    "",
+                    OFF_TOPIC if r["leaned"] and not r["decided"] else r["topic"],
+                    decided=bool(r["decided"]),
+                )
+                for r in rows
+            ]
+            leaned = lean_to_keeping(spoken, dm_ids)
+            back = [
+                int(r["id"])
+                for r, was, new in zip(rows, spoken, leaned, strict=True)
+                if was.topic == OFF_TOPIC and new.topic == GAME and r["topic"] == OFF_TOPIC
+            ]
+            if back:
+                await conn.execute(
+                    "UPDATE transcript_lines SET topic = 'game', leaned = TRUE"
+                    " WHERE session_id = %s AND id = ANY(%s) AND topic_by IS NULL",
+                    (session_id, back),
+                )
+        left = sum(1 for x in leaned if x.topic == OFF_TOPIC)
+        put = sum(1 for r in rows if r["decided"] and r["topic"] != OFF_TOPIC)
+        turned = sum(
+            1
+            for was, new in zip(spoken, leaned, strict=True)
+            if was.topic == OFF_TOPIC != new.topic
+        )
+        return Settled(len(rows) - left - put - turned, turned, left, put)
+
+    async def unread_put_back(
+        self, guild_id: int, campaign_id: str, limit: int = 500
+    ) -> list[Line]:
+        """Lines a DM put back after their session that the names and story-memory readers have not
+        read yet (#2567), oldest first: the queue a late line waits in. Only speech of a speaker
+        who is still recorded is the caller's check to make (consent is asked again when the
+        words are sent). Read them, then `mark_read`."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT l.id, l.user_id, l.started_ms, l.heard, l.text, l.duration_ms"
+                " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND l.reread"
+                " ORDER BY l.started_ms, l.id LIMIT %s",
+                (guild_id, campaign_id, limit),
+            )
+            return [
+                Line(
+                    int(r["started_ms"]),
+                    int(r["user_id"]),
+                    r["heard"],
+                    r["text"] or r["heard"],
+                    int(r["duration_ms"]),
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def mark_read(
+        self, guild_id: int, campaign_id: str, user_id: int, started: Collection[int]
+    ) -> int:
+        """The readers have read these put-back lines of one person (#2567). How many."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_lines l SET reread = FALSE FROM transcript_sessions s"
+                " WHERE s.id = l.session_id AND s.guild_id = %s AND s.campaign_id = %s"
+                " AND l.user_id = %s AND l.started_ms = ANY(%s) AND l.reread",
+                (guild_id, campaign_id, user_id, sorted(started)),
             )
             return cur.rowcount
 
