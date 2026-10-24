@@ -6,6 +6,7 @@
  * Keep this free of page markup: the bot and the web API's /me will reuse the wording.
  */
 import facts from "./plans.json";
+import { RECAP_AUDIO_PRICE_CENTS } from "./recap-audio-price";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE, allowanceSentence } from "./recap-words";
 
 export type PlanId = "try-it" | "table" | "two-tables" | "guild" | "pro";
@@ -78,7 +79,9 @@ function campaignsLine(p: PlanFacts): string {
 /** The plans question's answer while the audio add-on is live: "everything" stays true. Lives here,
  * not in recap-audio.ts, which imports this file (a cycle would crash the page once it is on). */
 export const plansAnswer = (featureList: string, tryItName: string): string =>
-  `Every plan has the same DMbot. Plans differ only in hours and campaigns (the free ${tryItName} has no backups or downloads): it ${featureList}. Narrated recaps with music are an extra: Guild and Pro include them, and you can add them to the other paid plans.`;
+  `Every plan has the same DMbot. Plans differ only in hours and campaigns (the free ${tryItName} has no backups or downloads): it ${featureList}. Narrated recaps with music are an extra: Guild and Pro include them${
+    RECAP_AUDIO_PRICE_CENTS === null ? "." : ", and you can add them to the other paid plans."
+  }`;
 
 const tryItName = data.plans["try-it"].name;
 

@@ -7,9 +7,9 @@
 // built yet (#1383), and the site must not sell what does not exist. Turning it on also needs the
 // price below, set by the owner (#1385).
 import { formatPrice } from "./pricing";
+import { RECAP_AUDIO_PRICE_CENTS } from "./recap-audio-price";
 
-/** The add-on's price in cents, from the owner. null = not set: no price is shown anywhere. */
-export const RECAP_AUDIO_PRICE_CENTS: number | null = null;
+export { RECAP_AUDIO_PRICE_CENTS };
 
 /** "$4.99 a month", or null while the owner has not set a price. */
 export const priceText = (cents: number | null): string | null =>
@@ -24,8 +24,12 @@ export const pricingRow = {
   lead: "Extras are not part of any plan. Guild and Pro include this one.",
   name: "Narrated recaps with music",
   priceLine: price(),
+  // Without a price nothing offers the add-on to the other plans: a card that offers something and says
+  // nothing of the cost is not honest (#1390).
   included:
-    "Comes with Guild and Pro. Add it to Table or Two Tables by the month.",
+    RECAP_AUDIO_PRICE_CENTS === null
+      ? "Comes with Guild and Pro."
+      : "Comes with Guild and Pro. Add it to Table or Two Tables by the month.",
   line: "After a session, DMbot reads your recap aloud in a narrator's voice, with music behind it. You decide what your table hears.",
 };
 
