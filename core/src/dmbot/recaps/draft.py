@@ -117,7 +117,9 @@ exactly where the beat sheet ends.
 sentence is set at that moment and goes no further: end on it, as a cliffhanger, and tell nothing \
 that happens after it.
 4. Narration only, in the story world: no quotation marks and no quotes, no table talk, no dice, \
-no rules, no player names. Use character names.
+no rules, no player names. Use character names. Where the <names> list gives a "familiar:" name \
+for a character, call them by it, as the table does. Use the full name only once, to mark a \
+moment that matters.
 5. Say only what the beats say happened. Never invent an event, a place, a person or a name. \
 Use only the names in the <names> list, spelled as there: any other name makes the recap fail.
 6. The beats are facts, not wording. Never repeat 6 words in a row from a beat: say it in your \
@@ -521,8 +523,10 @@ def prose_message(
     day: int | None,
     retold: str = "",
     ending: Sequence[Beat] | None = None,
+    familiar: Mapping[str, str] | None = None,
 ) -> str:
-    """`beats`: the ones the writer is shown (at most a few for a short session). `ending`: the
+    """`familiar`: {full name: the name the table uses} (#2627), shown beside the full name.
+    `beats`: the ones the writer is shown (at most a few for a short session). `ending`: the
     session's real last beats, the pair the ending check looks for (`check_prose`); the shown beats
     are a pick, so their last two are not the session's last two (the second-to-last of a pick is
     any beat of the middle), and a writer told to end there ends on the wrong beat."""
@@ -543,9 +547,16 @@ def prose_message(
             f"{quoted(' '.join(retold.split())[:PREVIOUS_MAX])}\n</last_time_recap>"
         )
     if names:
-        parts.append("<names>\n" + "; ".join(sorted(names)[:200]) + "\n</names>")
+        shown = [_with_familiar(n, familiar) for n in sorted(names)[:200]]
+        parts.append("<names>\n" + "; ".join(shown) + "\n</names>")
     parts.append(f"Game day: {day}." if day else "The game day is not known: do not mention a day.")
     return "\n".join(parts)
+
+
+def _with_familiar(name: str, familiar: Mapping[str, str] | None) -> str:
+    """A name as the writer's list shows it: with the name the table uses, when there is one."""
+    short = (familiar or {}).get(name)
+    return f"[familiar: {short}; full: {name}]" if short else name
 
 
 def prose_retry(

@@ -123,6 +123,9 @@ class Inputs:
     aliases: Mapping[str, str] = field(default_factory=dict)
     pcs: Sequence[str] = ()
     party: Mapping[int, Sequence[str]] = field(default_factory=dict)
+    # The name the table uses for a character with a longer name (#2627): full name -> familiar
+    # name, told to the writer beside the full one. Never a secret name; never a check.
+    familiar: Mapping[str, str] = field(default_factory=dict)
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -851,6 +854,7 @@ class RecapWorker:
             inputs.day,
             retold,
             ending=sheet,
+            familiar=inputs.familiar,
         )
         if job.problems:
             message += rd.prose_retry(
@@ -1566,6 +1570,7 @@ class RecapWorker:
             inputs.day,
             retold,
             ending=sheet,
+            familiar=inputs.familiar,
         ) + rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
         attempt = 1  # the careful writer's room, as for a retry
         kept = self._written.pop(key, None)  # the writer's text, if only the formatter failed
