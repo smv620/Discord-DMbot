@@ -4,6 +4,7 @@ token counts, errors and fallbacks mapped to the ones Anthropic's give, and off 
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from typing import Any
 from unittest import mock
@@ -106,7 +107,24 @@ class TheGeminiClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["headers"]["x-goog-api-key"], "g-secret-key")
         self.assertEqual(sent["json"]["systemInstruction"]["parts"][0]["text"], "sys")
         self.assertEqual(sent["json"]["contents"][0]["parts"], [{"text": "hi"}])
-        self.assertEqual(sent["json"]["generationConfig"], {"maxOutputTokens": 8000})
+        self.assertEqual(sent["json"]["generationConfig"], {"maxOutputTokens": 8192})  # the floor
+
+    async def test_a_small_estimate_gets_the_floor_and_a_big_one_is_capped_at_geminis_own_limit(
+        self,
+    ) -> None:
+        client, gem, _, _ = rig(FakeResponse(200, ANSWER))
+        await client.complete("s", "t", tier=AIModelTier.CREATIVE, max_tokens=2000)
+        await client.complete("s", "t", tier=AIModelTier.CREATIVE, max_tokens=30_000)
+        sent = [call["json"]["generationConfig"]["maxOutputTokens"] for call in gem.sent]
+        self.assertEqual(sent, [8192, 8192])  # (2000 -> the floor; 30,000 -> Gemini's most)
+
+    async def test_the_owners_gemini_limit_is_what_the_floor_and_the_cap_follow(self) -> None:
+        client, gem, _, _ = rig(FakeResponse(200, ANSWER))
+        with mock.patch.dict(os.environ, {"GEMINI_MAX_OUTPUT": "16000"}):
+            await client.complete("s", "t", tier=AIModelTier.CREATIVE, max_tokens=2000)
+            await client.complete("s", "t", tier=AIModelTier.CREATIVE, max_tokens=30_000)
+        sent = [call["json"]["generationConfig"]["maxOutputTokens"] for call in gem.sent]
+        self.assertEqual(sent, [16000, 16000])
 
     async def test_a_schema_asks_for_json(self) -> None:
         client, gem, _, _ = rig(FakeResponse(200, ANSWER))
