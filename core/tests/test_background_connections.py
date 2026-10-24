@@ -120,7 +120,7 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(lost["same_pair"], 2)  # the second copy of the two that were kept
         lost = Counter()
         bg.keep_connections([links], found, {}, cap=1, dropped=lost)
-        self.assertEqual(lost["over_cap"], 1)
+        self.assertEqual(lost["over_cap"], len(links) - 1)  # every one past the cap is counted
 
     def test_the_ends_must_be_names_dmbot_will_have(self) -> None:
         found = bg.read_answer(reply(), TEXT)

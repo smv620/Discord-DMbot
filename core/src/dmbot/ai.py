@@ -125,6 +125,7 @@ class Feature(enum.StrEnum):
     IMAGE = "image"  # an image posted in the table chat, described once (#2450)
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
     PLOT_CHECK = "plot_check"  # a recap against the earlier accepted ones, for the DM (#2122)
+    PLOT_TALK = "plot_talk"  # the DM talks an issue of that check through with PlotBot (#2123)
     # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
     NAME_PASS = "name_pass"
 
@@ -187,6 +188,8 @@ FEATURE_TIERS = {
     Feature.IMAGE_MAP: AIModelTier.CAREFUL,
     # Advice for the DM only: code checks every finding against the earlier recaps (#2122).
     Feature.PLOT_CHECK: AIModelTier.CAREFUL,
+    # Short advice and proposals the DM saves or declines; code checks every quotation (#2123).
+    Feature.PLOT_TALK: AIModelTier.CAREFUL,
     # Written into the transcript the whole server reads, but only a sure answer naming one of the
     # offered list names, and the DM can Undo (#2628).
     Feature.NAME_PASS: AIModelTier.CAREFUL,

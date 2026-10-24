@@ -48,6 +48,10 @@ So in the Resend dashboard (https://resend.com/domains):
 | `getdmbot.com` | **On** (DKIM and SPF records in Cloudflare) | **Off** (Cloudflare Email Routing has the MX) |
 | `reply.getdmbot.com` | Not needed (nothing is sent from it) | **On** (its MX on the name `reply` in Cloudflare) |
 
+That webhook reaches DMbot through the Cloudflare tunnel's route `^/mail/inbound$`. The tunnel passes
+only the paths listed in docs/DEPLOY.md ("The routes the tunnel has today"), so a mail path that isn't
+on that list gets an empty 404 from Cloudflare and never reaches DMbot.
+
 ### The whole flow
 ```
                          ┌──────────────── Resend (sending) ────────────────┐
