@@ -33,7 +33,7 @@ class TheBeatRoom(WorkerHarness):
             await conn.execute("UPDATE recap_jobs SET tries = 1")
         job = await self.go()
         self.assertEqual(job.state, "failed")
-        self.assertIn(pl.TOO_LONG, job.last_error)
+        self.assertIn(pl.CUT_OFF, job.last_error)
         self.assertIn("(check: cut off)", job.last_error)
         self.assertEqual(job.tries, 0)  # our failure, not the DM's try
 

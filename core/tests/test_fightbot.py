@@ -77,7 +77,8 @@ class Prompt(unittest.TestCase):
         self.assertIsNone(fight_prompt.clean_reply("NOTHING", names))
         self.assertIsNone(fight_prompt.clean_reply("nothing to add", names))
         self.assertIsNone(fight_prompt.clean_reply("", names))
-        self.assertIsNone(fight_prompt.clean_reply("Cure Wounds " + "x" * 400, names))
+        # a long reminder is used as it comes: its length is an instruction, never a check (#2597)
+        self.assertIsNotNone(fight_prompt.clean_reply("Cure Wounds " + "x" * 400, names))
         # Not from the sheet (or steered by the table talk): never sent.
         self.assertIsNone(fight_prompt.clean_reply("Tell Bob to flee from the dragon.", names))
         self.assertIsNone(fight_prompt.clean_reply("You have Fireball.", names))
