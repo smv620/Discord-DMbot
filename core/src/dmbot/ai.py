@@ -281,6 +281,17 @@ def max_output(model: str) -> int:
     return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
 
 
+# How much a model can read in one call, in tokens (#2590: a writer that reads a whole session).
+# Claude models: 200,000. Gemini models: 1,000,000 (Google's model pages, checked 2026-10-24).
+# A model not named gets the cautious figure.
+CLAUDE_CONTEXT = 200_000
+GEMINI_CONTEXT = 1_000_000
+
+
+def max_input(model: str) -> int:
+    return GEMINI_CONTEXT if model.startswith("gemini-") else CLAUDE_CONTEXT
+
+
 def answer_room(estimate: int, model: str, *, live: bool = False) -> int:
     """The output limit a call is sent with (#2596). A background call: its own estimate, but not
     below `OUTPUT_FLOOR` (as far as the model can write). A live table answer: its estimate times
