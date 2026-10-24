@@ -322,6 +322,9 @@ class Report:
     unsure: tuple[Candidate, ...] = ()
     new: tuple[Candidate, ...] = ()  # PlotBot says a new name: offered to the DM as any new name
     guarded: int = 0
+    cut: bool = (
+        False  # the model's answer stopped at its limit: the words it did not reach are unsure
+    )
 
     @property
     def quiet(self) -> bool:
@@ -356,11 +359,41 @@ def report_text(report: Report) -> str:
     return "\n".join(lines)
 
 
+def import_text(reports: Sequence[Report]) -> str:
+    """One report for a whole import (#2649), not one for each session: the names fixed across
+    its sessions (each name once, with its spellings summed), then the other counts added up. Only
+    the sessions that had something are in `reports`."""
+    by_name: dict[str, list[Fixed]] = {}
+    for report in reports:
+        for fixed in report.fixed:
+            by_name.setdefault(fixed.name, []).append(fixed)
+    lines = [f"**Names fixed in your imported sessions** ({len(reports)} had something)"]
+    ordered = sorted(
+        by_name.items(), key=lambda kv: (-sum(f.times for f in kv[1]), kv[0].casefold())
+    )
+    for name, fixes in ordered[:MAX_NAMES_SHOWN]:
+        total = sum(f.times for f in fixes)
+        where = f" in {len(fixes)} sessions" if len(fixes) > 1 else ""
+        lines.append(f"{name}: corrected {times(total)}{where}")
+        forms = group_forms(pair for f in fixes for pair in f.forms)
+        for form, n in forms[:MAX_FORMS_SHOWN]:
+            lines.append(f"  ({n}) {form}")
+        if len(forms) > MAX_FORMS_SHOWN:
+            lines.append(f"  …and {len(forms) - MAX_FORMS_SHOWN} more spellings")
+    if len(ordered) > MAX_NAMES_SHOWN:
+        lines.append(f"…and {len(ordered) - MAX_NAMES_SHOWN} more names")
+    lines.append(f"Not sure (asked the DM): {sum(len(r.unsure) for r in reports)}")
+    lines.append(f"New names (asked the DM): {sum(len(r.new) for r in reports)}")
+    lines.append(f"Left as heard (secret-name guard): {sum(r.guarded for r in reports)}")
+    return "\n".join(lines)
+
+
 def counts_line(report: Report) -> str:
     """The numbers only, safe for logs and the testing logs: no spelling in it."""
     return (
         f"{len(report.fixed)} names, {sum(f.times for f in report.fixed)} fixes, "
         f"{len(report.unsure)} unsure, {len(report.new)} new, {report.guarded} guarded"
+        + (", answer cut off" if report.cut else "")
     )
 
 

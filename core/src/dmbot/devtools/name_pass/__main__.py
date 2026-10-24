@@ -14,7 +14,9 @@ PlotBot, the same narrow writes into the cleaned text) and prints what it did fo
 
 then one line of counts only. `--dry-run` writes nothing: the same fixes are counted on a copy of
 the lines. Without `--yes` it does not call the AI: it only says how many words code found to ask
-about (a number, no words). A run without `--dry-run` writes the fixes into the cleaned text, with
+about (a number, no words), from the same lines and the same people as the live pass.
+`--game-only` is for an imported session (the off-topic filter's lines are left out, as the
+import does). A run without `--dry-run` writes the fixes into the cleaned text, with
 the same Undo numbers as a live session (the DM sees them on the DM screen only for a live
 session; here, the numbers are not shown).
 
@@ -32,6 +34,7 @@ import os
 import sys
 import time
 from collections.abc import Sequence
+from typing import Any
 
 from dmbot.transcript import name_pass as np
 
@@ -42,6 +45,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--session", required=True, help="the stored session's ID")
     parser.add_argument("--dry-run", action="store_true", help="write nothing")
     parser.add_argument("--yes", action="store_true", help="call the AI (it costs a little)")
+    parser.add_argument(
+        "--game-only", action="store_true", help="an imported session: skip off-topic lines"
+    )
     return parser.parse_args(argv)
 
 
@@ -54,6 +60,7 @@ def output(report: np.Report, *, dry_run: bool) -> list[str]:
 async def main_async(args: argparse.Namespace) -> int:
     from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
     from dmbot.config import ConfigError, parse_ai_models
+    from dmbot.consent import ConsentStore
     from dmbot.db import Database
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
@@ -73,9 +80,17 @@ async def main_async(args: argparse.Namespace) -> int:
             return 2
         memory = MemoryStore(db)
         lookup = await LookupCache(memory).get(args.guild, session.campaign_id)
+        # What the live pass is given: the people who still agree, and the names of the people at
+        # the table (their words are not story names), so the numbers are the live pass's.
+        agreed = await ConsentStore(db).consenting(args.guild)
+        people = set(lookup.people_by_key)
+        for key in list(people):
+            people.update(key.split())
         if not args.yes:
-            texts = [x.text for x in await transcripts.lines(args.guild, args.session)]
-            found = np.survey(texts, lookup)
+            texts = await name_pass_run.pass_lines(
+                transcripts, args.guild, args.session, agreed, args.game_only
+            )
+            found = np.survey(texts, lookup, people)
             print(
                 f"{len(found.items)} words to ask the AI about (one call), {found.new} new names, "
                 f"{found.guarded} kept as heard. Nothing was run. Add --yes to call the AI."
@@ -93,16 +108,16 @@ async def main_async(args: argparse.Namespace) -> int:
         ai = AnthropicClient(key, models)
         client = ai.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
 
-        async def ask(system: str, question: str) -> str:
-            reply = await client.complete(system, question, max_tokens=2000, schema=np.SCHEMA)
-            return str(reply.text)
+        async def ask(system: str, question: str) -> Any:
+            return await client.complete(system, question, max_tokens=2000, schema=np.SCHEMA)
 
         try:
             now = int(time.time())
             report = await name_pass_run.run(
                 transcripts, lookup, ask, args.guild, session.campaign_id, args.session,
-                now=now, forget_before=now - int(memory.keep_days * 86400),
-                dry_run=args.dry_run,
+                people=people, agreed=agreed, now=now,
+                forget_before=now - int(memory.keep_days * 86400),
+                dry_run=args.dry_run, game_only=args.game_only,
             )  # fmt: skip
         finally:
             await ai.close()

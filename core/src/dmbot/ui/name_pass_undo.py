@@ -107,6 +107,30 @@ def undo_view(campaign_id: str, fixed: Sequence[Fixed]) -> discord.ui.View | Non
     return view
 
 
+def undo_view_import(
+    campaign_id: str, reports: Sequence[Sequence[Fixed]]
+) -> discord.ui.View | None:
+    """The Undo buttons of one import's single report (#2649): one for each name fixed in a
+    session, the session's number after the name when the name was fixed in more than one, the
+    biggest first and at most `MAX_UNDOS`."""
+    seen: dict[str, int] = {}
+    for fixed in reports:
+        for f in fixed:
+            seen[f.name] = seen.get(f.name, 0) + 1
+    items = [
+        (f.times, f"{f.name} #{n}" if seen[f.name] > 1 else f.name, f.batch)
+        for n, fixed in enumerate(reports, 1)
+        for f in fixed
+    ]
+    items.sort(key=lambda t: (-t[0], t[1]))
+    if not items:
+        return None
+    view = discord.ui.View(timeout=None)
+    for _, label, batch in items[:MAX_UNDOS]:
+        view.add_item(UndoNamePassButton(campaign_id, batch, label))
+    return view
+
+
 async def _drop_button(message: Any, batch: int) -> None:
     """Take the pressed Undo off the report (the others stay); a message that cannot be edited
     keeps it, and pressing again is harmless."""

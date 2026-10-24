@@ -342,6 +342,100 @@ class ThePass(NamesTest):
             (args.guild, args.session, args.dry_run, args.yes), (1, "abc", True, False)
         )
 
+    async def test_a_line_with_two_spellings_of_one_name_gets_both_fixed_and_undone(self) -> None:
+        """#2649: the second spelling shares the first's batch, so a line already changed for it
+        must still be a candidate; Undo puts the later change back first."""
+        both = "Keirandal and Keirandel rode out."
+        await self.transcripts.add_lines(
+            GUILD, self.session, [Line(MS + 60_000, PLAYER, both, both)]
+        )
+        before = await self.texts()
+        real = await self.run_tool(dry_run=False)
+        self.assertEqual((await self.texts())[-1], "Kethrandil and Kethrandil rode out.")
+        self.assertEqual(real.fixed[0].times, 5)
+        from dmbot.transcript import name_pass as np
+
+        batch = np.batch_of(self.session, real_entity := (await self._entity()))
+        self.assertTrue(real_entity)
+        await self.transcripts.undo_respell(GUILD, self.campaign.id, batch)
+        self.assertEqual(await self.texts(), before)
+
+    async def test_an_imported_sessions_off_topic_lines_are_not_read(self) -> None:
+        """#2649: with game_only the pass reads what the filter kept as game talk, as the import's
+        name scan does; a live session reads every spoken line."""
+        from dmbot.transcript import name_pass_run
+
+        off = "Keirandal pass the chips."
+        await self.transcripts.add_lines(
+            GUILD,
+            self.session,
+            [Line(MS + 70_000, PLAYER, off, off, topic="off_topic")],
+        )
+        live = await name_pass_run.pass_lines(self.transcripts, GUILD, self.session, {PLAYER})
+        imported = await name_pass_run.pass_lines(
+            self.transcripts, GUILD, self.session, {PLAYER}, True
+        )
+        self.assertIn(off, live)
+        self.assertNotIn(off, imported)
+        self.assertEqual(len(live), len(imported) + 1)
+        self.assertEqual(
+            await name_pass_run.pass_lines(self.transcripts, GUILD, self.session, {999}), []
+        )  # (a person who stopped agreeing is not read)
+
+    async def test_a_cut_answer_is_logged_by_count_and_marked_on_the_report(self) -> None:
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+
+        async def ask(_system: str, _question: str) -> Any:
+            return SimpleNamespace(text="{", cut=True)
+
+        with self.assertLogs("dmbot.transcript.name_pass_run", "WARNING") as logged:
+            report = await name_pass_run.run(
+                self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+                people=(), agreed={PLAYER}, now=START, forget_before=0,
+            )  # fmt: skip
+        self.assertTrue(report.cut)
+        self.assertEqual(report.fixed, ())
+        self.assertIn("cut off", logged.output[0])
+        self.assertNotIn("Keirandal", logged.output[0])  # counts only
+        from dmbot.transcript import name_pass as np
+
+        self.assertTrue(np.counts_line(report).endswith(", answer cut off"))
+
+    async def test_an_import_posts_one_report_for_all_its_sessions(self) -> None:
+        from dmbot.transcript import name_pass as np
+
+        first = np.Report((np.Fixed("Kethrandil", (("Keirandal", 3),), 11),), guarded=1)
+        second = np.Report(
+            (np.Fixed("Kethrandil", (("Keirandel", 1), ("Keirandal", 2)), 22),
+             np.Fixed("Mirelle", (("Mirel", 1),), 33)),
+        )  # fmt: skip
+        text = np.import_text([first, second])
+        self.assertEqual(
+            text,
+            "**Names fixed in your imported sessions** (2 had something)\n"
+            "Kethrandil: corrected 6 times in 2 sessions\n"
+            "  (5) Keirandal\n"
+            "  (1) Keirandel\n"
+            "Mirelle: corrected 1 time\n"
+            "  (1) Mirel\n"
+            "Not sure (asked the DM): 0\n"
+            "New names (asked the DM): 0\n"
+            "Left as heard (secret-name guard): 1",
+        )
+        view = name_pass_undo.undo_view_import(self.campaign.id, [first.fixed, second.fixed])
+        assert view is not None
+        self.assertEqual(
+            [b.item.label for b in view.children],
+            ["Undo Kethrandil #1", "Undo Kethrandil #2", "Undo Mirelle"],
+        )
+
+    async def _entity(self) -> str:
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        return next(n.entity_id for n in lookup.names if n.text == "Kethrandil")
+
 
 class Backfill(DatabaseTest):
     """Migration 0227 runs with no server set, so its backfill must open the table it updates
