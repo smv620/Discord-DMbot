@@ -5,6 +5,7 @@ Invented names throughout."""
 
 from __future__ import annotations
 
+import time
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -332,11 +333,13 @@ class TheSpeed(Listing):
         async with self.db.guild(self.g) as conn:  # (a campaign nobody has analyzed yet)
             await conn.execute("SELECT 1")
         await self.memory._add_names(self.g, self.one.id, names, source=DM_SOURCE)
+        busy = speed.slowdown()  # how slow this machine is right now (#2490)
+        started = time.monotonic()
         page = await self.page()
-        took = await speed.fastest_async(self.page, runs=3)  # (the best of a few: see #2671)
+        took = time.monotonic() - started
         self.assertEqual(page["total"], 3003)
         # (the bad plan took 21 s; the limit follows how busy the machine was, 5 s on a quiet one)
-        limit = speed.allowed(5.0)
+        limit = speed.allowed(5.0, busy)
         self.assertLess(took, limit, f"the list took {took:.1f} s (limit {limit:.1f} s)")
 
     async def test_a_big_list_refreshes_the_statistics_and_a_small_one_does_not(self) -> None:
