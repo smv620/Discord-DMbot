@@ -26,7 +26,7 @@ from dmbot.memory.extractor import quoted
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.significance import MEMORY_CHARS, MEMORY_ITEMS, RECAP, Memory
 from dmbot.recaps.split import content_words
-from dmbot.recaps.text import names_a_secret
+from dmbot.recaps.text import at_word_end, names_a_secret
 
 MAX_ROUNDS = 4  # readings of a draft: the first draft and up to three revisions
 MAX_CHANGES = 8  # PlotBot's changes for one reading
@@ -49,17 +49,26 @@ CHECK_WAIT = (
 )  # on a recap whose draft could not be read yet (the service, or the day's tally): it waits
 # How long a recap that cannot be checked waits between tries: 15 minutes, 1 hour, 4 hours, then
 # every 12 hours. It never fails for waiting. After 3 days the DM is told once that DMbot could
-# not finish checking it, and that it keeps trying (reading and approving an unchecked draft on the
-# recap page is #2305; the bot advises, the DM decides).
+# not finish checking it, and can read it and approve it as it is on the recap page (#2305; the
+# bot advises, the DM decides).
 WAIT_SCHEDULE_S = (900, 3600, 14400)
 WAIT_LONG_S = 43200
+# When the check failed on our side, not the day's tally (a cut or unreadable answer, the service
+# erroring): minutes, never hours (#2596; the owner's Test M recap was held 4 hours after two cut
+# answers). 2 minutes, 5, 15, then every 15 minutes.
+WAIT_SOON_S = (120, 300, 900)
 UNCHECKED_AFTER_S = 3 * 86400
 WAIT_CALLS = (
     2  # AI calls a waiting try may make: not counted against the job's own, but in the day's
 )
 UNCHECKED_TOLD = (
-    "📜 Your recap is written, but DMbot hasn't been able to finish checking it for 3 days. It "
-    "keeps trying, and you'll be told when it's ready."
+    "📜 Your recap is written but DMbot couldn't finish checking it. You can read it and "
+    "approve it yourself on the recap page."
+)
+# Added to the recap's notes when the DM approves a draft that was never checked (#2305): the
+# sentences DMbot could not check stay marked, and this says why nothing else is.
+APPROVED_UNCHECKED = (
+    "Check: DMbot could not finish checking this recap. The DM approved it as it is."
 )
 
 
@@ -78,8 +87,14 @@ def wait_budget(batches: int) -> int:
     return max(WAIT_CALLS, batches + 2, WAIT_REVISE_CALLS)
 
 
-def wait_for(waits: int) -> int:
-    """Seconds to wait before the next try, after `waits` waits."""
+def wait_for(waits: int, *, soon: bool = False) -> int:
+    """Seconds to wait before the next try, after `waits` waits. `soon`: the check failed on our
+    side (`WAIT_SOON_S`), so it is tried again within minutes."""
+    if soon and waits < len(WAIT_SOON_S):
+        return WAIT_SOON_S[waits]
+    # (after the first minutes the usual back-off follows, so a long outage does not burn the
+    # day's calls on tries that cannot work: 15 minutes, an hour, 4 hours, then 12)
+    waits -= len(WAIT_SOON_S) if soon else 0
     return WAIT_SCHEDULE_S[waits] if waits < len(WAIT_SCHEDULE_S) else WAIT_LONG_S
 
 
@@ -265,6 +280,11 @@ class Loop:
     waits: int = 0
     since: int = 0
     told: bool = False
+    # The DM read a draft that waited UNCHECKED_AFTER_S for its check and approved it as it is
+    # (#2305): who (their Discord id) and when (Unix seconds); 0 for neither. Set by the website's
+    # door together with `done`, so the worker goes on to the title step and the recap is ready.
+    approved_by: int = 0
+    approved_at: int = 0
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -278,6 +298,8 @@ class Loop:
             "waits": self.waits,
             "since": self.since,
             "told": self.told,
+            "approved_by": self.approved_by,
+            "approved_at": self.approved_at,
         }
 
 
@@ -305,6 +327,8 @@ def loop_from_json(raw: object) -> Loop:
         raw["waits"] if type(raw.get("waits")) is int and raw["waits"] >= 0 else 0,
         raw["since"] if type(raw.get("since")) is int and raw["since"] >= 0 else 0,
         raw.get("told") is True,
+        raw["approved_by"] if type(raw.get("approved_by")) is int and raw["approved_by"] > 0 else 0,
+        raw["approved_at"] if type(raw.get("approved_at")) is int and raw["approved_at"] > 0 else 0,
     )
 
 
@@ -404,10 +428,9 @@ def plot_changes(
             out.append(Change(kind, f"{quote}: {GENERIC[kind]}", True, number))
         else:
             said = raw.get("change")
-            text = " ".join(said.split()) if isinstance(said, str) else ""
+            text = at_word_end(" ".join(said.split()), CHANGE_MAX) if isinstance(said, str) else ""
             explainable = (
                 text
-                and len(text) <= CHANGE_MAX
                 and ties
                 and all(allowed[t] for t in ties)
                 and not names_a_secret(text, secret_names, allowed_names)

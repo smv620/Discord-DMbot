@@ -349,12 +349,12 @@ class AtTheTableTyped(AtTheTable):
         await self.hear(keep)
         await self.hear(gone)
         await self.bot.on_raw_message_delete(
-            SimpleNamespace(guild_id=GUILD_A, message_id=12, channel_id=VOICE)  # type: ignore[arg-type]
+            SimpleNamespace(cached_message=None, guild_id=GUILD_A, message_id=12, channel_id=VOICE)  # type: ignore[arg-type]
         )
         lines = self.live.unsaved.take(lambda _u: True)
         self.assertEqual([x.heard for x in lines], ["stays"])
         await self.bot.on_raw_message_delete(
-            SimpleNamespace(guild_id=None, message_id=1, channel_id=1)  # type: ignore[arg-type]
+            SimpleNamespace(cached_message=None, guild_id=None, message_id=1, channel_id=1)  # type: ignore[arg-type]
         )  # a private message: nothing to do
 
     async def test_the_chat_channel_hears_about_it_once(self) -> None:
@@ -482,7 +482,10 @@ class AtTheTableTyped(AtTheTable):
             cast(
                 Any,
                 SimpleNamespace(
-                    guild_id=GUILD_A, message_ids={msgs[0].id, msgs[2].id}, channel_id=VOICE
+                    cached_messages=[],
+                    guild_id=GUILD_A,
+                    message_ids={msgs[0].id, msgs[2].id},
+                    channel_id=VOICE,
                 ),
             )
         )

@@ -33,7 +33,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.settings import load_web_settings
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, TEST_URL, DatabaseTest
 from tests.test_web_admin import ADMIN, HASH, PASSWORD
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_email_signin import LINK_SECRET, SMTP
 from tests.test_web_feedback import FakeHumanCheck
 from tests.test_web_role import ensure_web_role, web_url
@@ -149,9 +149,11 @@ class SupportRoute(SupportBase):
     async def client(self, user_id: int = ALICE.id) -> httpx.AsyncClient:
         token = await sessions.sign_in_by_email(self.web, user_id, now=self.now, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         return client
 
@@ -320,7 +322,7 @@ class SupportRoute(SupportBase):
 
     async def test_signed_out_is_refused(self) -> None:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as anonymous:
             answer = await self.send(anonymous)
         self.assertEqual(answer.status_code, 401)
@@ -591,7 +593,9 @@ class SupportRoute(SupportBase):
     async def test_signed_out_gets_401_for_a_conversation(self) -> None:
         await self.add_row(ALICE.id, self.now, "q")
         anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.get(f"/support/mine/{self.now}")).status_code, 401)
@@ -642,7 +646,9 @@ class SupportRoute(SupportBase):
     async def test_the_list_needs_a_sign_in_but_not_a_paid_plan(self) -> None:
         await self.add_row(ALICE.id, self.now)
         anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.get("/support/mine")).status_code, 401)
@@ -968,7 +974,9 @@ class SupportAdmin(SupportBase):
             clock=lambda: self.now,
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(self.client.aclose)
 

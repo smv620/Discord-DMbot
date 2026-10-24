@@ -357,7 +357,18 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
         ):
             await _tell(interaction, TOO_LATE)
             return
-        await _tell(interaction, APPROVED[choice])
+        if choice != approval.TEXT:
+            await bot.recap_audio_started(campaign, self.session_at)
+        link = (
+            page_link(bot.settings.site_url, campaign.guild_id, campaign.id, self.session_at)
+            if bot.settings.site_url
+            else ""
+        )
+        view = None
+        if link:
+            view = discord.ui.View(timeout=None)
+            view.add_item(discord.ui.Button(label="Review the recap", emoji="📝", url=link))
+        await _tell(interaction, APPROVED[choice], view=view)
 
     async def _post(
         self, interaction: discord.Interaction, bot: Any, gid: int, cid: str, job: Any

@@ -9,10 +9,12 @@ since a secret name couldn't be kept out.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from typing import Any
 
 from dmbot.memory.extractor import readable
 from dmbot.memory.models import name_key
+from dmbot.recaps import familiar as fam
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
@@ -68,6 +70,66 @@ def recap_name_sets(names: Any, said: str | None) -> tuple[list[str], list[str]]
     return sorted(allowed), sorted(secret)
 
 
+def recap_people(
+    names: Any, allowed: Collection[str]
+) -> tuple[dict[str, str], list[str], dict[int, tuple[str, ...]]]:
+    """(another spelling -> the story-memory name, every player character, each player's player
+    characters) for a recap (#2573). Only the names the recap may use (`allowed`, so never a secret
+    or a not-yet-shown one) and never a table person's name. A DM's correction ("this heard word
+    means that name") counts as another spelling when it points at exactly one name."""
+    ok = set(allowed)
+    entities = getattr(names, "entities", {})  # (a stand-in in a test may have none)
+    real = {
+        name_key(e.name) for e in entities.values()
+    }  # a spelling that is a real name is not an alias
+    aliases: dict[str, str] = {}
+    for entry in names.names:
+        entity = entities.get(entry.entity_id)
+        if (
+            entity is not None
+            and entry.confirmed
+            and not entry.secret
+            and not entry.person
+            and entity.name in ok
+            and entry.text != entity.name
+            and name_key(entry.text) not in real
+        ):
+            aliases[entry.text] = entity.name
+    for heard, entity_ids in getattr(names, "fixes", {}).items():
+        only = {i for i in entity_ids if i in entities}
+        if len(only) == 1:
+            entity = entities[next(iter(only))]
+            if entity.name in ok and heard != name_key(entity.name) and heard not in real:
+                aliases.setdefault(heard, entity.name)
+    pcs: list[str] = []
+    party: dict[int, list[str]] = {}
+    for entity in sorted(entities.values(), key=lambda e: e.name):
+        if entity.played_by and entity.role == "player_character" and entity.name in ok:
+            try:
+                player = int(entity.played_by)
+            except (TypeError, ValueError):
+                continue  # a bad value costs the presence list, never the recap
+            pcs.append(entity.name)
+            party.setdefault(player, []).append(entity.name)
+    return aliases, pcs, {u: tuple(v) for u, v in party.items()}
+
+
+def familiar_for(
+    names: Any, allowed: Collection[str], lines: Any, previous: str, aliases: dict[str, str]
+) -> dict[str, str]:
+    """{full name: the name the table uses} for the characters the recap may name (#2627), from
+    what the table said in the session (never the DM sidebar) and the earlier recap. A character
+    is a player character or an NPC on the names list; places and things have no familiar name."""
+    entities = getattr(names, "entities", {})
+    ok = set(allowed)
+    characters = sorted({e.name for e in entities.values() if e.type == "character"} & ok)
+    spoken = [line.text for line in lines if not getattr(line, "sidebar", "")]
+    secret = recap_name_sets(names, said_in(lines))[1]
+    return fam.familiar_names(
+        characters, [*spoken, previous], aliases=aliases, secret_names=secret, allowed_names=ok
+    )
+
+
 async def load_inputs(
     *,
     campaigns: Any,
@@ -105,16 +167,24 @@ async def load_inputs(
     stored = await clocks.get(guild_id, campaign_id) if clocks is not None else None
     # How connected each name is in The truth (#2411): ranks the beats, gives the writer nothing.
     scores = await importance.get(guild_id, campaign_id) if importance is not None else {}
+    allowed_now, _ = recap_name_sets(names, said_in(lines))
+    aliases, pcs, party = recap_people(names, allowed_now)
+    previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
+    familiar = familiar_for(names, allowed_now, lines, previous, aliases)
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),
         allowed_names=recap_name_sets(names, said_in(lines))[0],
         secret_names=recap_name_sets(names, said_in(lines))[1],
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
-        previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
+        previous=previous,
         campaign_name=campaign.name,
         earlier=earlier,
         importance=dict(scores),
+        aliases=aliases,
+        pcs=pcs,
+        party=party,
+        familiar=familiar,
         # Which of the ten closing lines: by this session's place in the campaign (#2253).
         ending=fixed_lines.ending_for(sum(1 for s in sessions if s.started_at < session_at)),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
