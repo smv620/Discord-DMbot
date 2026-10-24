@@ -11728,15 +11728,24 @@ class DMBot(commands.AutoShardedBot):
                 log.warning("Plot checks failed for a server: %s", type(exc).__name__)
 
     async def run_plot_talk(self) -> None:
-        """One round of answers to the DM's messages about plot issues (#2123)."""
+        """One round of answers to the DM's messages about plot issues, and of the changes the DM
+        saved from them (#2123)."""
         if self.plot_talk is None:
             return
         for guild in list(self.guilds):
             try:
                 with log_context(guild_id=guild.id):
-                    await self.plot_talk.round(guild.id)
+                    await self._plot_talk_step(self.plot_talk.apply_round, guild.id)  # first: a
+                    await self._plot_talk_step(self.plot_talk.round, guild.id)  # Save never waits
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("Plot talk failed for a server: %s", type(exc).__name__)
+
+    async def _plot_talk_step(self, step: Callable[[int], Awaitable[int]], guild_id: int) -> None:
+        """One part of a talk round, on its own: if it fails (say the AI is down), the rest run."""
+        try:
+            await step(guild_id)
+        except Exception as exc:  # the type only: a database error can quote a row
+            log.warning("A plot talk step failed: %s", type(exc).__name__)
 
     async def _plot_talk_loop(self) -> None:
         """Every few seconds (a DM is waiting for the answer), in its own task so a slow check
