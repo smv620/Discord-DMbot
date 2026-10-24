@@ -282,6 +282,14 @@ import {
       music, only when you choose a voice or music for a recap. It gets only the recap's text and
       short descriptions of the music, never anyone's voice.
     </li>
+    <li>
+      <strong>Voyage AI</strong>: helps DMbot find the story notes that are most like what you ask
+      about, for example to remind the DM of a character from an earlier session. It gets the
+      campaign's own text: story notes, names, DM notes and the lines of a session's transcript,
+      for as long as DMbot keeps them. It gets text only, never sound. DMbot keeps what Voyage AI
+      sends back (a list of numbers that stands for the meaning of the text) with the campaign,
+      and deletes it when that text, or the campaign, is deleted.
+    </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
     <li>
@@ -294,7 +302,7 @@ import {
     </li>
   </ul>
   <p>
-    Deepgram, Anthropic, ElevenLabs, OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
+    Deepgram, Anthropic, ElevenLabs, Voyage AI, OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
     United States, so if you are in the EU or the UK, your information goes there when you use
     DMbot. {paymentProvider} is the seller of record and handles withdrawal rights, invoices and
     tax.

@@ -155,10 +155,17 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("names Voyage AI as a processor, with what it gets and what is deleted (#2664)", () => {
+    const voyage = privacy().slice(privacy().indexOf("Voyage AI:"));
+    expect(voyage.slice(0, 900)).toContain("the campaign's own text");
+    expect(voyage.slice(0, 900)).toContain("never sound");
+    expect(voyage.slice(0, 900)).toContain("deletes it when that text, or the campaign, is deleted");
+  });
+
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, Voyage AI, OVH US, Cloudflare, GitHub and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
   });
