@@ -44,7 +44,8 @@ MAX_ISSUES = 12  # kept from one check: a DM will not answer more
 REASON_MAX = 300
 QUOTE_MIN = 12  # characters: a shorter quote proves nothing
 QUOTE_MAX = 240
-TOKENS = 1500
+TOKENS = 1500  # the estimate; the client sends at least `ai.OUTPUT_FLOOR` (#2596), and a cut answer
+# marks the check failed (`RecapPlot.run`), never "nothing found"
 
 
 @dataclass(frozen=True, slots=True)

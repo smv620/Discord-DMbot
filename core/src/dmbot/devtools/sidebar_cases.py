@@ -117,15 +117,8 @@ CASES: tuple[Case, ...] = (
                 "some situations and interacts with many other rules in many ways.",
                 "SRD 5.2.1 p. 182",
             ),
-            reply(
-                "A grappled creature's speed is 0 and it has disadvantage on attacks against "
-                "anyone but the grappler. The condition ends if the grappler is incapacitated "
-                "or the creature is moved out of reach. It also affects carrying capacity too.",
-                "SRD 5.2.1 p. 182",
-            ),
         ),
-        ("speed is 0", "speed becomes 0"),
-        calls=2,
+        ("speed is 0", "speed becomes 0"),  # a long answer is used whole, in one call (#2597)
     ),
     Case(
         "is there a rule for a critical hit on a spell attack",

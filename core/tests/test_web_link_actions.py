@@ -17,7 +17,7 @@ from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import Web
 
 
@@ -90,6 +90,65 @@ class TheEdits(Editing):
         self.assertEqual(edge["label"], "is a member of")  # never the secret one
         log = await self.log_since(before)
         self.assertTrue(log and all(r["source"] == "dm" for r in log))
+
+    async def stored(self, a: str, b: str) -> list[Any]:
+        data = await self.memory.relations(self.g, self.one.id, entity_id=a)
+        return [
+            r for r in data if r.predicate == "kin_of" and {r.subject_id, r.object_id} == {a, b}
+        ]
+
+    async def test_family_words_keep_their_role_and_the_reverse_wording_swaps_the_names(
+        self,
+    ) -> None:
+        """#2457: "is the niece of" stores Mira -> Rook; "has a niece" typed on Rook's card stores
+        Far Hall -> Rook; the first name is the niece whatever the ids sort like."""
+        first = await self.add_link(self.mira, self.rook, "is the niece of")
+        await self.apply_all()
+        [row] = await self.stored(self.mira, self.rook)
+        self.assertEqual((row.subject_id, row.detail), (self.mira, "niece"))
+        edge = self.edge_of(await self.poll(first), self.mira, self.rook)
+        link = next(x for x in edge["links"] if x["words"] == "is the niece of")
+        self.assertEqual(link["back"], "has a niece")
+        self.assertEqual(link["direction"], "a-b" if edge["a"] == self.mira else "b-a")
+        second = await self.add_link(self.rook, self.hall, "has a niece")
+        await self.apply_all()
+        [row] = await self.stored(self.rook, self.hall)
+        self.assertEqual((row.subject_id, row.object_id), (self.hall, self.rook))
+        edge = self.edge_of(await self.poll(second), self.rook, self.hall)
+        link = next(x for x in edge["links"] if x["words"] == "is the niece of")
+        self.assertEqual(link["direction"], "a-b" if edge["a"] == self.hall else "b-a")
+
+    async def test_typing_the_role_over_an_old_row_that_says_the_word_gives_it_a_direction(
+        self,
+    ) -> None:
+        """#2509: the website's door. An older plain "niece" row, then "is the niece of" (the name
+        the link is filed under is the niece) and "has a niece" (the other end is)."""
+        old = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "kin_of", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", detail="niece",
+        )  # fmt: skip
+        link = old.value[0]
+        self.assertFalse(link.directional)
+        answer = await self.edit(link.id, action="words", words="is the niece of")
+        await self.apply_all()
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        [row] = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+            if r.predicate == "kin_of" and r.status == "confirmed"
+        ]
+        self.assertTrue(row.directional)
+        self.assertEqual((row.subject_id, row.object_id), (link.subject_id, link.object_id))
+        # now the other end is the niece: "has a niece" said over the connection
+        answer = await self.edit(row.id, action="words", words="has a niece")
+        await self.apply_all()
+        [again] = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, entity_id=self.mira)
+            if r.predicate == "kin_of" and r.status == "confirmed"
+        ]
+        self.assertTrue(again.directional)
+        self.assertEqual((again.subject_id, again.object_id), (row.object_id, row.subject_id))
 
     async def test_changing_the_words_replaces_the_connection_and_undo_takes_it_back(self) -> None:
         link = self.links["mira-keep"]
@@ -391,6 +450,86 @@ class Refusals(Editing):
         )
 
 
+class TheReveal(Editing):
+    """The DM's 👁️ Reveal to players (#2405): the same calls as Discord's, so the change log and
+    Undo agree, and only a DM of this campaign can ask."""
+
+    async def hidden_link(self) -> str:
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "ally_of", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", unrevealed=True,
+        )  # fmt: skip
+        return made.value[0].id
+
+    async def reveal(self, kind: str, target: str, who: Any = None) -> str:
+        return await relationships.queue_reveal(
+            self.web, who or self.session, self.cref, {"kind": kind, "id": target}
+        )
+
+    async def refused_reveal(self, kind: str, target: str, who: Any = None) -> str:
+        with self.assertRaises(RecapError) as caught:
+            await self.reveal(kind, target, who)
+        return caught.exception.code
+
+    async def test_a_dm_reveals_a_connection_and_undo_hides_it_again(self) -> None:
+        link = await self.hidden_link()
+        before = await self.memory.version(self.g, self.one.id)
+        answer = await self.reveal("link", link)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        shown = await self.memory.relation(self.g, self.one.id, link)
+        assert shown is not None
+        self.assertFalse(shown.unrevealed)
+        log = await self.log_since(before)
+        self.assertTrue(log and all(r["source"] == "dm" for r in log))
+        await self.memory.undo(self.g, self.one.id, log[-1]["batch"], source=DM_SOURCE)
+        hidden = await self.memory.relation(self.g, self.one.id, link)
+        assert hidden is not None
+        self.assertTrue(hidden.unrevealed)  # ONE Undo, as on the Discord card
+
+    async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
+        name = await self.add("Hidden Tower", "place")
+        await self.memory.set_hidden_from_players(self.g, self.one.id, name, True, source=DM_SOURCE)
+        before = await self.memory.version(self.g, self.one.id)
+        answer = await self.reveal("name", name)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        from dmbot.web import all_names
+
+        done = await all_names.read_action(self.web, self.session, self.cref, answer)
+        self.assertEqual(done["state"], "done")
+        shown = await self.memory.entity(self.g, self.one.id, name)
+        assert shown is not None
+        self.assertFalse(shown.hidden_from_players)
+        log = await self.log_since(before)
+        await self.memory.undo(self.g, self.one.id, log[-1]["batch"], source=DM_SOURCE)
+        again = await self.memory.entity(self.g, self.one.id, name)
+        assert again is not None
+        self.assertTrue(again.hidden_from_players)
+
+    async def test_a_player_is_refused_and_nothing_is_queued(self) -> None:
+        link = await self.hidden_link()
+        name = await self.add("Hidden Tower", "place")
+        self.assertEqual(await self.refused_reveal("link", link, self.player), "not_allowed")
+        self.assertEqual(await self.refused_reveal("name", name, self.player), "not_allowed")
+        self.assertEqual(await self.apply_all(), [])  # (so nothing reached the bot)
+
+    async def test_another_campaigns_id_is_not_found_not_forbidden(self) -> None:
+        elsewhere = await self.memory.add_entity(
+            self.g, self.two.id, type="npc", name="Brynwater", source=DM_SOURCE, status="confirmed"
+        )
+        self.assertEqual(await self.refused_reveal("name", elsewhere.value.id), "not_found")
+        self.assertEqual(await self.apply_all(), [])
+        # (applied: not found)
+        self.assertEqual(await self.refused_reveal("link", "f" * 32), "not_found")
+
+    async def test_the_body_is_checked(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await relationships.queue_reveal(self.web, self.session, self.cref, "nope")
+        self.assertEqual(caught.exception.code, "bad_action")
+        self.assertEqual(await self.refused_reveal("planet", self.mira), "not_found")
+        self.assertEqual(await self.refused_reveal("name", "not an id"), "not_found")
+
+
 class TheRoutes(Editing):
     async def test_the_routes_queue_and_answer(self) -> None:
         from dmbot.web import sessions
@@ -407,9 +546,11 @@ class TheRoutes(Editing):
             days=30,
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             posted = await client.post(
                 f"/me/campaigns/{self.cref}/web/links",
                 json={"a": self.mira, "b": self.hall, "words": "knows", "secret": False},
@@ -426,5 +567,18 @@ class TheRoutes(Editing):
                 json={"action": "remove"},
             )
             self.assertEqual((edit.status_code, edit.json()["error"]), (400, "needs_confirm"))
+            name = await self.add("Hidden Tower", "place")
+            await self.memory.set_hidden_from_players(
+                self.g, self.one.id, name, True, source=DM_SOURCE
+            )
+            revealed = await client.post(
+                f"/me/campaigns/{self.cref}/web/reveal", json={"kind": "name", "id": name}
+            )
+            self.assertEqual(revealed.status_code, 202)
+            self.assertTrue(revealed.json()["answer"])
+            nope = await client.post(
+                f"/me/campaigns/{self.cref}/web/reveal", json={"kind": "name", "id": "g" * 32}
+            )
+            self.assertEqual((nope.status_code, nope.json()["error"]), (404, "not_found"))
             junk = await client.post(f"/me/campaigns/{self.cref}/web/links", content=b"not json")
             self.assertEqual((junk.status_code, junk.json()["error"]), (400, "bad_action"))

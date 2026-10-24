@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -21,6 +22,7 @@ from dmbot.db import Database, row_int
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
+from dmbot.transcript.topics import GAME, OFF_TOPIC, Spoken, lean_to_keeping
 
 RECENT_SESSIONS = 25  # Discord's limit for a menu
 MAX_RESPELLED = 5000  # lines one run of a fixed spelling rewrites; Finish does the rest
@@ -30,11 +32,14 @@ MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 # The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
 # ended sessions, speech only, saying the name's longest word, not already done by this fix.
-def _candidates() -> str:
+def _candidates(one_session: bool = False) -> str:
+    # `one_session` (the name pass, #2628): only the session whose id is the next parameter after
+    # the campaign's, whatever its end (it is being finished now), instead of every ended session.
     return (
         " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
-        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
-        " AND l.sidebar IS NULL AND NOT l.typed"
+        " WHERE s.guild_id = %s AND s.campaign_id = %s"
+        + (" AND s.id = %s" if one_session else " AND s.ended_at IS NOT NULL")
+        + " AND l.sidebar IS NULL AND NOT l.typed"
         " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
         " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
         "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
@@ -49,6 +54,20 @@ class PastRespell:
     sessions: int
     remaining: int  # more lines that would change: the next run does them
     run: int  # this run's number within the fix, 0 when it wrote nothing
+    # The spellings it replaced and how many times each (the name pass's report, #2628): words
+    # from a transcript, for the campaign's DM only; never logged.
+    forms: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Settled:
+    """How the off-topic filter's end-of-session pass treated a session's spoken lines (#2567):
+    counts only, for the logs, so the filter can be tuned on real sessions."""
+
+    kept: int  # lines the filter kept in the first place (game or table talk)
+    turned_back: int  # lines the filter had left out and the pass kept after all
+    left_out: int  # lines still left out
+    put_back: int  # lines a DM had put back (never changed by the pass)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,19 +284,50 @@ class TranscriptStore:
         return ids
 
     async def relabel_line(
-        self, guild_id: int, session_id: str, user_id: int, started_ms: int, text: str
+        self,
+        guild_id: int,
+        session_id: str,
+        user_id: int,
+        started_ms: int,
+        text: str,
+        *,
+        image: bool = False,
     ) -> int:
         """A saved line's cleaned words changed (an Undo, #296). What was heard never
         changes; `text` goes back to NULL when it's the same as heard. How many lines
-        changed (0: it wasn't saved)."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
+        changed (0: it wasn't saved). `image`: the line is a described picture (#2450), which is
+        a typed line, so it is kept apart from the person's speech."""
+        # (two fixed statements, so no part of a query is ever built from input)
+        if image:
+            query = (
                 "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
                 " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
-                " AND sidebar IS NULL AND NOT typed",
-                (text, session_id, user_id, started_ms),
+                " AND sidebar IS NULL AND typed AND image"
             )
+        else:
+            query = (
+                "UPDATE transcript_lines SET text = NULLIF(%s, heard)"
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL AND NOT typed"
+            )
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(query, (text, session_id, user_id, started_ms))
             return cur.rowcount
+
+    async def image_line(
+        self, guild_id: int, session_id: str, user_id: int, started_ms: int
+    ) -> tuple[str, str] | None:
+        """(what the AI first read, the line as it reads now) for a described picture of this
+        person's, or None (not theirs, not a picture, or not saved yet)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT heard, coalesce(text, heard) AS text FROM transcript_lines"
+                " WHERE session_id = %s AND user_id = %s AND started_ms = %s"
+                " AND sidebar IS NULL AND typed AND image ORDER BY id LIMIT 1",
+                (session_id, user_id, started_ms),
+            )
+            r = await cur.fetchone()
+        return None if r is None else (str(r["heard"]), str(r["text"]))
 
     async def set_topic(
         self,
@@ -333,6 +383,96 @@ class TranscriptStore:
                 " WHERE session_id = %s AND user_id = %s AND started_ms = ANY(%s)"
                 " AND sidebar IS NULL AND typed = %s",
                 (topic, session_id, user_id, sorted(started), typed),
+            )
+            return cur.rowcount
+
+    async def settle_topics(
+        self, guild_id: int, session_id: str, dm_ids: Collection[int]
+    ) -> Settled:
+        """The filter leans to keeping (#2567): once the session is over, a short stretch the AI
+        called off-topic between game talk, and the DM's lines in any stretch that is not long,
+        become game talk again (`topics.lean_to_keeping`). Marked `leaned`, so a count and an Undo
+        can tell them apart, and never a line a DM decided. Speech only; what was heard never
+        changes. Safe to run twice."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, user_id, started_ms, duration_ms, topic, leaned,"
+                " topic_by IS NOT NULL AS decided"
+                " FROM transcript_lines WHERE session_id = %s AND sidebar IS NULL AND NOT typed"
+                " ORDER BY started_ms, id",
+                (session_id,),
+            )
+            rows = await cur.fetchall()
+            # A line this pass already turned back counts as the filter's off-topic call again, so
+            # the same lines give the same answer however many times it runs.
+            spoken = [
+                Spoken(
+                    int(r["user_id"]),
+                    int(r["started_ms"]),
+                    int(r["duration_ms"]) / 1000,
+                    "",
+                    OFF_TOPIC if r["leaned"] and not r["decided"] else r["topic"],
+                    decided=bool(r["decided"]),
+                )
+                for r in rows
+            ]
+            leaned = lean_to_keeping(spoken, dm_ids)
+            back = [
+                int(r["id"])
+                for r, was, new in zip(rows, spoken, leaned, strict=True)
+                if was.topic == OFF_TOPIC and new.topic == GAME and r["topic"] == OFF_TOPIC
+            ]
+            if back:
+                await conn.execute(
+                    "UPDATE transcript_lines SET topic = 'game', leaned = TRUE"
+                    " WHERE session_id = %s AND id = ANY(%s) AND topic_by IS NULL",
+                    (session_id, back),
+                )
+        left = sum(1 for x in leaned if x.topic == OFF_TOPIC)
+        put = sum(1 for r in rows if r["decided"] and r["topic"] != OFF_TOPIC)
+        turned = sum(
+            1
+            for was, new in zip(spoken, leaned, strict=True)
+            if was.topic == OFF_TOPIC != new.topic
+        )
+        return Settled(len(rows) - left - put - turned, turned, left, put)
+
+    async def unread_put_back(
+        self, guild_id: int, campaign_id: str, limit: int = 500
+    ) -> list[Line]:
+        """Lines a DM put back after their session that the names and story-memory readers have not
+        read yet (#2567), oldest first: the queue a late line waits in. Only speech of a speaker
+        who is still recorded is the caller's check to make (consent is asked again when the
+        words are sent). Read them, then `mark_read`."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT l.id, l.user_id, l.started_ms, l.heard, l.text, l.duration_ms"
+                " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
+                " WHERE s.guild_id = %s AND s.campaign_id = %s AND l.reread"
+                " ORDER BY l.started_ms, l.id LIMIT %s",
+                (guild_id, campaign_id, limit),
+            )
+            return [
+                Line(
+                    int(r["started_ms"]),
+                    int(r["user_id"]),
+                    r["heard"],
+                    r["text"] or r["heard"],
+                    int(r["duration_ms"]),
+                )
+                for r in await cur.fetchall()
+            ]
+
+    async def mark_read(
+        self, guild_id: int, campaign_id: str, user_id: int, started: Collection[int]
+    ) -> int:
+        """The readers have read these put-back lines of one person (#2567). How many."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_lines l SET reread = FALSE FROM transcript_sessions s"
+                " WHERE s.id = l.session_id AND s.guild_id = %s AND s.campaign_id = %s"
+                " AND l.user_id = %s AND l.started_ms = ANY(%s) AND l.reread",
+                (guild_id, campaign_id, user_id, sorted(started)),
             )
             return cur.rowcount
 
@@ -523,6 +663,7 @@ class TranscriptStore:
         *,
         now: int,
         forget_before: int,
+        session_id: str | None = None,
     ) -> PastRespell:
         """Write `new` where this campaign's past cleaned lines say `old` as a whole name, in
         ONE transaction (so a failure changes nothing), at most `MAX_RESPELLED` lines in session
@@ -532,7 +673,8 @@ class TranscriptStore:
         still writing) and only lines of speech (not the DM sidebar, not typed lines). A match
         inside a longer name in `longer` is left alone, and so is a line the change would make say
         a name in `hidden`. The places are kept under `batch` and the run for `undo_respell`;
-        places older than `forget_before` are dropped."""
+        places older than `forget_before` are dropped. `session_id`: only that session, ended or
+        not (the name pass of a session being finished, #2628)."""
         # The longest run of letters and digits: an apostrophe or dash in the name may be written
         # with a look-alike (a curly one), so a prefilter on a whole word would miss it.
         longest = max(re.findall(r"\w+", old), key=len, default="")
@@ -541,7 +683,11 @@ class TranscriptStore:
         updates: list[tuple[int, str]] = []
         rows: list[tuple[Any, ...]] = []
         sessions: set[str] = set()
+        forms: Counter[str] = Counter()
         remaining = 0
+        scope: tuple[Any, ...] = (
+            (guild_id, campaign_id) if session_id is None else (guild_id, campaign_id, session_id)
+        )
         async with self._db.guild(guild_id) as conn:
             # Two presses of Finish at once take turns, so no two runs share a number.
             await conn.execute(
@@ -566,10 +712,10 @@ class TranscriptStore:
                 cur = await conn.execute(
                     "SELECT l.id, l.session_id, l.user_id, l.started_ms, s.started_at,"
                     " coalesce(l.text, l.heard) AS cleaned"
-                    + _candidates()
+                    + _candidates(session_id is not None)
                     + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
                     " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
-                    (guild_id, campaign_id, longest, campaign_id, batch, *after, PAGE),
+                    (*scope, longest, campaign_id, batch, *after, PAGE),
                 )
                 page = await cur.fetchall()
                 if not page:
@@ -583,6 +729,7 @@ class TranscriptStore:
                     if found is None:
                         continue
                     updates.append((int(row["id"]), found.text))
+                    forms.update(found.was)
                     rows.append(
                         (
                             guild_id,
@@ -604,9 +751,9 @@ class TranscriptStore:
             # never change (inside a longer name), so it is "up to" this many.
             cur = await conn.execute(
                 "SELECT count(*) AS n"
-                + _candidates()
+                + _candidates(session_id is not None)
                 + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
-                (guild_id, campaign_id, longest, campaign_id, batch, *after),
+                (*scope, longest, campaign_id, batch, *after),
             )
             remaining = int((await cur.fetchone() or {"n": 0})["n"])
             if updates:
@@ -622,7 +769,36 @@ class TranscriptStore:
                         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         rows,
                     )
-        return PastRespell(len(updates), len(sessions), remaining, run if updates else 0)
+        return PastRespell(
+            len(updates),
+            len(sessions),
+            remaining,
+            run if updates else 0,
+            tuple(forms.most_common()),
+        )
+
+    # ---- PlotBot's name pass on a finished session (#2628) ------------------------------------
+
+    async def mark_names_repaired(self, guild_id: int, session_id: str, at: int) -> None:
+        """The session's name pass is done (or was not needed), so its recap may start."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET names_repaired_at = %s WHERE id = %s"
+                " AND names_repaired_at = 0",
+                (max(at, 1), session_id),
+            )
+
+    async def names_repaired(self, guild_id: int, campaign_id: str, started_at: int) -> bool:
+        """Whether the name pass of the campaign's session that began at `started_at` is done.
+        A session with no transcript (nothing to repair) counts as done."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT min(names_repaired_at) AS at FROM transcript_sessions"
+                " WHERE guild_id = %s AND campaign_id = %s AND started_at = %s",
+                (guild_id, campaign_id, started_at),
+            )
+            row = await cur.fetchone()
+        return row is None or row["at"] is None or int(row["at"]) > 0
 
     async def respell_spellings(
         self, guild_id: int, campaign_id: str, batch: int
@@ -637,6 +813,16 @@ class TranscriptStore:
             )
             row = await cur.fetchone()
         return None if row is None else (str(row["old_text"]), str(row["new_text"]))
+
+    async def respelled_olds(self, guild_id: int, campaign_id: str, batch: int) -> list[str]:
+        """The spellings a batch replaced, each once (for the keep-as-heard rule an Undo saves)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT old_text FROM transcript_respells WHERE guild_id = %s"
+                " AND campaign_id = %s AND batch = %s ORDER BY old_text",
+                (guild_id, campaign_id, batch),
+            )
+            return [str(r["old_text"]) for r in await cur.fetchall()]
 
     async def undo_respell(
         self, guild_id: int, campaign_id: str, batch: int, run: int | None = None
@@ -712,6 +898,15 @@ class TranscriptStore:
                 " (SELECT session_id FROM transcript_lines WHERE guild_id = %s AND user_id = %s)"
                 " ORDER BY id FOR UPDATE",
                 (guild_id, guild_id, user_id),
+            )
+            # The time of the erase is kept (ids and a time, no words), so a copy made before it
+            # is restored without these lines (#2605). Written even when nothing is left to
+            # delete: a copy may still hold lines this server no longer does.
+            await conn.execute(
+                "INSERT INTO transcript_erasures (guild_id, user_id, erased_at)"
+                " VALUES (%s, %s, extract(epoch FROM now())::BIGINT)"
+                " ON CONFLICT (guild_id, user_id) DO UPDATE SET erased_at = EXCLUDED.erased_at",
+                (guild_id, user_id),
             )
             await conn.execute(  # the name kept for the website's transcripts first (#2337)
                 "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"

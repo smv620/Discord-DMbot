@@ -389,6 +389,8 @@ class Relation:
     definition_version: int = 1
     # Kept from the players until the table has said it (#2404); a backstory connection starts so.
     unrevealed: bool = False
+    # A family connection whose detail is a role that reads one way, written by a DM (#2457).
+    directional: bool = False
 
 
 @dataclass(frozen=True, slots=True)
