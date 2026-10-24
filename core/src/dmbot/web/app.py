@@ -728,7 +728,8 @@ def create_app(
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
         "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
-        "busy": (409, "busy"),  # PlotBot is still answering the last message (#2123)
+        # PlotBot is still answering the last message (#2123); a recap being written or sent (#2608)
+        "busy": (409, "busy"),
         "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
         "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
@@ -756,7 +757,6 @@ def create_app(
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "needs_confirm": (409, "needs_confirm"),  # it has a recap: ask once, send `replace` (#2608)
-        "busy": (409, "busy"),  # being written or sent now (#2608)
         # Adding a recap written by someone at the table (#2609)
         "needs_rights": (409, "needs_rights"),  # the campaign's first: ask once, send `rights`
         "not_a_google_doc": (422, "not_a_google_doc"),
