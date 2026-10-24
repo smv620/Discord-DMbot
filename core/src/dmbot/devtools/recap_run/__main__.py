@@ -188,6 +188,7 @@ async def run_text(
     critics: bool = False,
     story: pl.Story | None = None,
     start: tuple[str, dict[str, Any]] | None = None,
+    reads: str = "beats",
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
@@ -231,6 +232,7 @@ async def run_text(
         formatting=formatting_c,
         critics=critics,
         story=story,  # PlotBot's story memory, when a test or tool connects it (#2254)
+        reads=reads,  # what the writer reads (#2590)
     )
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
@@ -590,6 +592,16 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "on (the free tier lets Google use what is sent)",
     )  # fmt: skip
     parser.add_argument(
+        "--writers", metavar="A,B", default="claude,gemini",
+        help="with --compare: who writes each draft, claude or gemini (default claude,gemini; "
+        "gemini,gemini compares what Gemini reads)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--reads", metavar="WHAT", default="beats",
+        help="what the writer reads (#2590): beats (default) or transcript (the cleaned transcript "
+        "with PlotBot's guide). With --compare, one word for both or two (A,B) in --writers order",
+    )  # fmt: skip
+    parser.add_argument(
         "--claude-model", metavar="NAME",
         help="with --compare: the Claude writer (default: the creative model on file)",
     )  # fmt: skip
@@ -628,6 +640,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             )
     elif args.gemini_model or args.claude_model or args.paid_gemini_key:
         parser.error("--gemini-model, --claude-model and --paid-gemini-key go with --compare")
+    elif args.writers != "claude,gemini":
+        parser.error("--writers goes with --compare")
+    args.reads_each = parse_reads(args.reads, parser.error)
     if args.out and not (args.transcript or args.compare):
         parser.error("--out goes with --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
@@ -913,8 +928,9 @@ async def _session(
         if args.compare:
             return await _compare(args, inputs, fast, careful, models, prices, agreed, at)
         out = await run_text(
-            inputs, fast, careful, agreed, session_at=at, models=models, **_WRITERS
-        )
+            inputs, fast, careful, agreed, session_at=at, models=models,
+            reads=args.reads_each[0], **_WRITERS,
+        )  # fmt: skip
         lines = report(out, prices)
         if lines == [REFUSED]:
             print(REFUSED)
@@ -940,6 +956,16 @@ async def _session(
         await db.close()
 
 
+def parse_reads(raw: str, fail: Callable[[str], Any]) -> tuple[str, str]:
+    """`--reads` (#2590): "beats", "transcript", or two of them for the two sides."""
+    words = [w.strip() for w in raw.split(",")]
+    if len(words) == 1:
+        words *= 2
+    if len(words) != 2 or any(w not in ("beats", "transcript") for w in words):
+        fail("--reads is beats or transcript (with --compare, one for each side: beats,transcript)")
+    return words[0], words[1]
+
+
 async def _compare(
     args: argparse.Namespace,
     inputs: pl.Inputs,
@@ -956,12 +982,21 @@ async def _compare(
 
     all_models = parse_ai_models(lambda name: os.environ.get(name, ""))[0]
     claude_model = args.claude_model or DEFAULT_MODELS.creative
+    which = [w.strip() for w in args.writers.split(",")]
+    if len(which) != 2 or any(w not in ("claude", "gemini") for w in which):
+        print(
+            "recap_run: --writers is two of claude, gemini (for example claude,gemini)",
+            file=sys.stderr,
+        )
+        return 2
     writers = cmp.writers_from_env(
         lambda name: os.environ.get(name, ""),
         all_models,
         claude_model,
         args.gemini_model,
         register=_OPEN_CLIENTS.append,
+        which=which,
+        reads=args.reads_each,
     )
     if writers is None:
         return 2
@@ -1051,7 +1086,9 @@ async def _transcript(
         rv.clear_old(folder)  # nothing of an earlier run is left to be mixed into this one
     if args.compare:
         return await _compare(args, inputs, fast, careful, models, prices, None, 1)
-    out = await run_text(inputs, fast, careful, session_at=1, models=models, **_WRITERS)
+    out = await run_text(
+        inputs, fast, careful, session_at=1, models=models, reads=args.reads_each[0], **_WRITERS
+    )
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)

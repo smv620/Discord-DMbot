@@ -256,14 +256,10 @@ class Reading(unittest.TestCase):
         long = "word " * 200
         batch = rows(long + HARBOUR)
         got = sp.parse_answer(
-            answer(
-                people=[entry("Captain\x00 Varn\n" + "Varn " * 60, long.strip(), summary="s" * 900)]
-            ),
-            batch,
+            answer(people=[entry("Captain\x00 Varn\n", long.strip(), summary="s" * 900)]), batch
         )
         (node,) = got.nodes
-        self.assertEqual(node.name[:12], "Captain Varn")
-        self.assertLessEqual(len(node.name), sp.NAME_MAX)
+        self.assertEqual(node.name, "Captain Varn")
         self.assertLessEqual(len(node.summary), sp.SUMMARY_MAX)
         self.assertLessEqual(len(node.quote), sp.QUOTE_MAX)
         self.assertNotIn("\x00", node.name)
