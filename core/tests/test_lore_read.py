@@ -144,7 +144,7 @@ class ThePlainList(unittest.TestCase):
 
     def test_the_room_follows_the_text_up_to_what_one_answer_can_hold(self) -> None:
         self.assertEqual(lr.read_room("x" * 10), lr.ROOM_MIN)
-        self.assertGreater(lr.read_room("x" * 60_000), lr.read_room("x" * 20_000))
+        self.assertGreater(lr.read_room("x" * 200_000), lr.read_room("x" * 150_000))
         self.assertEqual(lr.read_room("x" * 5_000_000), lr.ROOM_CAP)
         self.assertEqual(
             lr.read_room("x" * 5_000_000, "some-model"), min(lr.ROOM_CAP, max_output("some-model"))
@@ -181,7 +181,7 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(done.cut)
 
     async def test_a_list_cut_at_the_cap_is_continued_and_merged(self) -> None:
-        text = TEXT + " " + "x" * 200_000  # a room that starts at the cap
+        text = TEXT + " " + "x" * 400_000  # a room that starts at the cap
         part1 = "NAMES\n" + "\n".join(LIST.splitlines()[1:3]) + "\n- Ashen Ha"
         part2 = (
             "NAMES\n"
@@ -205,7 +205,7 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
     async def test_a_list_still_cut_after_every_round_is_reported_cut_with_what_it_has(
         self,
     ) -> None:
-        text = TEXT + " " + "x" * 200_000
+        text = TEXT + " " + "x" * 400_000
         fake = ai([Reply(LIST + "\n- Mir", True)] * (1 + lr.CONTINUE_ROUNDS))
         done = await read(fake, text=text)
         self.assertTrue(done.cut)
@@ -214,7 +214,7 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(reads), 1 + lr.CONTINUE_ROUNDS)
 
     async def test_a_continuation_without_its_heading_carries_on_in_the_open_section(self) -> None:
-        text = TEXT + " " + "x" * 200_000
+        text = TEXT + " " + "x" * 400_000
         links = LIST.splitlines()[8:11]
         part1 = (
             "NAMES\n"
@@ -232,7 +232,7 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
     async def test_an_ai_error_in_a_follow_up_keeps_the_list_so_far_and_reports_it_cut(
         self,
     ) -> None:
-        text = TEXT + " " + "x" * 200_000
+        text = TEXT + " " + "x" * 400_000
         calls = [Reply(LIST + "\n- Mi", True)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
@@ -248,7 +248,7 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({n.name for n in done.names}, {r["name"] for r in NAME_ROWS})
 
     async def test_no_follow_up_starts_once_the_pass_one_budget_is_spent(self) -> None:
-        text = TEXT + " " + "x" * 200_000
+        text = TEXT + " " + "x" * 400_000
         fake = ai([Reply(LIST + "\n- Mi", True)] * 5)
         with mock.patch.object(lr, "PASS1_BUDGET_S", -1.0):
             done = await read(fake, text=text)
