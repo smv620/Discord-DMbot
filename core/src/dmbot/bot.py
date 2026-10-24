@@ -1176,7 +1176,7 @@ class DMBot(commands.AutoShardedBot):
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
         # Each imported session's name-pass report, kept until the import's last session is
         # scanned and then posted as one (#2649).
-        self._import_reports: dict[str, list[name_pass_logic.Report]] = {}
+        self._import_reports: dict[tuple[int, str], list[name_pass_logic.Report]] = {}
         self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
         # campaign -> the sessions of its import whose recap was queued at once (told in one line)
@@ -11305,10 +11305,11 @@ class DMBot(commands.AutoShardedBot):
         name check was given up, in one 📝 line when the import's last session has been scanned
         (the given-up note stands alone only when no names were found), and the recaps that were
         asked for and could not be written."""
-        for cid in list(self._import_reports):
+        for key in [k for k in self._import_reports if k[0] == gid]:
+            cid = key[1]
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: one report at the end
-            reports = self._import_reports.pop(cid, [])
+            reports = self._import_reports.pop(key, [])
             campaign = await self.campaigns.get(gid, cid)
             if reports and campaign is not None and campaign.dm_screen_channel_id is not None:
                 await self.post(
@@ -11385,13 +11386,14 @@ class DMBot(commands.AutoShardedBot):
         if not lines:
             await self.repair_names(
                 gid, ready.campaign_id, ready.session_id, (), agreed,
-                self._import_reports.setdefault(ready.campaign_id, []), True,
+                self._import_reports.setdefault((gid, ready.campaign_id), []),
+                game_only=True,
             )  # (marks it)  # fmt: skip
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
-        held = self._import_reports.setdefault(ready.campaign_id, [])
+        held = self._import_reports.setdefault((gid, ready.campaign_id), [])
         if await self.repair_names(
             gid, ready.campaign_id, ready.session_id, users, agreed, held, game_only=True
         ):

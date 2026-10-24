@@ -328,9 +328,12 @@ class Report:
 
     @property
     def quiet(self) -> bool:
-        return not (self.fixed or self.unsure or self.new or self.guarded)
+        return not (self.fixed or self.unsure or self.new or self.guarded or self.cut)
 
 
+# PlotBot's answer stopped at its limit (#2649): every word it did not reach is "not sure", which
+# is safe, and the DM is told why so many are.
+CUT_LINE = "PlotBot's answer stopped early, so more words than usual are marked not sure."
 MAX_FORMS_SHOWN = 6  # spellings listed under one name
 MAX_NAMES_SHOWN = 12
 
@@ -356,6 +359,8 @@ def report_text(report: Report) -> str:
         lines.append(f"  ({c.times}) {c.heard} → {options}?")
     lines.append(f"New names (asked the DM): {len(report.new)}")
     lines.append(f"Left as heard (secret-name guard): {report.guarded}")
+    if report.cut:
+        lines.append(CUT_LINE)
     return "\n".join(lines)
 
 
@@ -385,6 +390,8 @@ def import_text(reports: Sequence[Report]) -> str:
     lines.append(f"Not sure (asked the DM): {sum(len(r.unsure) for r in reports)}")
     lines.append(f"New names (asked the DM): {sum(len(r.new) for r in reports)}")
     lines.append(f"Left as heard (secret-name guard): {sum(r.guarded for r in reports)}")
+    if any(r.cut for r in reports):
+        lines.append(CUT_LINE)
     return "\n".join(lines)
 
 

@@ -403,6 +403,9 @@ class ThePass(NamesTest):
         from dmbot.transcript import name_pass as np
 
         self.assertTrue(np.counts_line(report).endswith(", answer cut off"))
+        self.assertIn(np.CUT_LINE, np.report_text(report))  # the DM is told why so many are unsure
+        self.assertFalse(report.quiet)
+        self.assertIn(np.CUT_LINE, np.import_text([report]))
 
     async def test_an_import_posts_one_report_for_all_its_sessions(self) -> None:
         from dmbot.transcript import name_pass as np

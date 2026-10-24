@@ -111,7 +111,8 @@ def undo_view_import(
     campaign_id: str, reports: Sequence[Sequence[Fixed]]
 ) -> discord.ui.View | None:
     """The Undo buttons of one import's single report (#2649): one for each name fixed in a
-    session, the session's number after the name when the name was fixed in more than one, the
+    session, a number after the name when the name was fixed in more than one (the report's
+    order, not the session's own number), the
     biggest first and at most `MAX_UNDOS`."""
     seen: dict[str, int] = {}
     for fixed in reports:
