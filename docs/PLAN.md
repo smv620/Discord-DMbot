@@ -1927,7 +1927,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       node and connection. **After each session** (and each imported session) a held-back name that a
       recorded person said or typed at the table, by its name or another of its names as whole words, is shown
       to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
-      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). The DM
+      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). **A secret name said at the table is no longer secret** (owner, 2026-10-24, #2591): once a recorded
+      person says or types it at the table (consented lines only, never the sidebar, the DM screen or DMbot),
+      the party knows the name, so the recap of that session may use it and the knowledge map review reveals it
+      with ↩️ Recant for the DM. Only the name is revealed: its secret connections, and anything else the DM
+      keeps secret about it, stay secret until the table states them. The DM
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
@@ -4479,9 +4483,10 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
       own setting (`RECAP_WRITER_READS`: `beats` or `transcript`), apart from who writes, so
       `recap_run --compare` can test one change at a time. The checks after the writer read the
       same input: the fact check counts a detail as supported when the transcript says it, and the
-      names, secrets, presence and coverage checks are unchanged. A secret name said aloud at the
-      table is in the transcript, so the writer is told never to use it, and the secret check still
-      refuses a draft that does. The privacy page says Google gets the cleaned transcript (#2589).
+      names, secrets, presence and coverage checks are unchanged. A secret name said at the table is
+      no longer secret (see "Revealed names"), so the writer may use it; a name never said aloud
+      stays on the secret list and the secret check still refuses a draft that uses it. The privacy
+      page says Google gets the cleaned transcript (#2589).
     The formatting model
     (`AI_MODEL_FORMATTING`, default Haiku 5.5, `claude-haiku-5-5`) then puts that text into the
     recap's fixed shape with the structured-output schema: sections, moods, cues and music prompts.
