@@ -12,9 +12,10 @@ from __future__ import annotations
 import re
 from collections.abc import Collection
 
+from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.recaps.text import is_known_name, names_a_secret, proper_nouns
 
-MAX_CHARS = 50_000  # what the database column holds (migration 0225)
+MAX_CHARS = STORY_COLUMN_MAX  # what the database column holds (migration 0225)
 TITLE_MAX = 120
 AUTHOR_MAX = 80
 MAX_NAMES = 20  # names offered to the DM's name check from one recap

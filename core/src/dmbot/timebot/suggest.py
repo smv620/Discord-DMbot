@@ -20,6 +20,8 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from dmbot.word_end import at_word_end
+
 MIN_MINUTES = 10
 MAX_MINUTES = 24 * 60
 MIN_GAP_S = 60.0  # at most one candidate a minute
@@ -97,7 +99,7 @@ def _clean_why(raw: object) -> str:
     if not isinstance(raw, str):
         return ""
     words = re.sub(r"[^\w\s,.'-]", "", raw).split()[:WHY_WORDS]
-    return " ".join(words)[:WHY_MAX]
+    return at_word_end(" ".join(words), WHY_MAX)
 
 
 def read_answer(text: str) -> Suggestion | None:
