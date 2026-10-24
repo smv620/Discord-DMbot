@@ -271,8 +271,9 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
-    answer's id."""
+    secret}`, `{action: "pin", pinned}`, `{action: "remove", confirm: true}`, or, on a connection
+    PlotBot proposed, `{action: "confirm"}` or `{action: "reject"}` (#2635). Returns the answer's
+    id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -296,6 +297,11 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-pin", target=link_id,
             text="", flag=bool(body["pinned"]),
+        )  # fmt: skip
+    if action in ("confirm", "reject"):  # the DM's Confirm / Not right on a proposed connection
+        return await _queue(
+            db, session, ref, entity=None, action=f"link-{action}", target=link_id,
+            text="", flag=False,
         )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:

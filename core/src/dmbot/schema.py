@@ -11456,6 +11456,66 @@ LINK_PIN_ACTION = (
         (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 """
 )
+
+LINK_DECIDE_ACTIONS = """
+    -- The website's Confirm and Not right on a connection PlotBot proposed (#2635): 'link-confirm'
+    -- and 'link-reject', `target_id` the proposed connection, no words, `flag` false. The bot
+    -- applies them with the call the connection card's edits use, so the change log and Undo
+    -- agree. No row changes: a wider list of actions and the door that checks it.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',
+         'link-confirm', 'link-reject'));
+"""
+# Built from the door as it stands now (with `link-pin`, 0193), not from an older text: a door
+# built from before would drop the actions added since (the lesson of #2456).
+_decide_door = _pin_door
+for _old, _new, _times in (
+    (
+        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        "                'link-confirm', 'link-reject')",
+        3,
+    ),
+    (
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin')",
+        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin',\n"
+        "                'link-confirm', 'link-reject')",
+        1,
+    ),
+    (
+        "r.id = tgt AND r.status = 'confirmed'",
+        "r.id = tgt\n              AND r.status = CASE WHEN act IN ('link-confirm', 'link-reject')"
+        " THEN 'proposed' ELSE 'confirmed' END",
+        1,
+    ),
+    (
+        "(act = 'link-words' AND COALESCE(fl, false))",
+        "(act IN ('link-words', 'link-confirm', 'link-reject') AND COALESCE(fl, false))",
+        1,
+    ),
+):
+    assert _decide_door.count(_old) == _times, (_old, _decide_door.count(_old))
+    _decide_door = _decide_door.replace(_old, _new)
+LINK_DECIDE_ACTIONS = (
+    LINK_DECIDE_ACTIONS
+    + _decide_door
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+)
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -12605,6 +12665,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
     ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
+    ("0229_link_decide", LINK_DECIDE_ACTIONS),  # Confirm / Not right from the website (#2635)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

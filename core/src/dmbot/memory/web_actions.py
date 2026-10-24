@@ -27,6 +27,7 @@ from dmbot.memory.models import (
     MERGE_MANY_MAX,
     PLAYER_CHARACTER,
     PRONOUNCED,
+    PROPOSED,
     REJECTED,
     MemoryRuleError,
     Relation,
@@ -47,6 +48,7 @@ EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
 
+DECIDE = ("link-confirm", "link-reject")  # a proposed connection, said right or not right
 ALIAS_KIND = "nickname"  # what the name card calls an other name the DM adds
 
 
@@ -322,6 +324,8 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
     if link is None or entity_id not in (link.subject_id, link.object_id):
         return _failed(NOT_FOUND)
     pair = {"result_id": link.subject_id, "result_other": link.object_id}
+    if a.action in DECIDE:
+        return await _decide(memory, guild_id, cid, link, a, pair)
     if link.status != CONFIRMED:
         # A retried job (the first try did its work, then stopped before it was marked done) finds
         # the connection already ended: that is "done", as for a remove or merge in `apply`.
@@ -353,6 +357,29 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             )  # (a family role is said from the name it belongs to, #2457)
         else:
             return _failed(FAILED)
+    except MemoryRuleError:
+        return _failed(BAD_TARGET)
+    return Outcome(**pair)
+
+
+async def _decide(
+    memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action, pair: dict[str, str]
+) -> Outcome:
+    """The DM's Confirm or Not right on a connection PlotBot proposed (#2635), through the calls
+    the connection card's edits use. A retried job finds it already decided the same way, which
+    is "done"; decided the other way, or ended, is not found."""
+    want = CONFIRMED if a.action == "link-confirm" else REJECTED
+    if link.status == want:
+        return Outcome(**pair)
+    if link.status != PROPOSED:
+        return _failed(NOT_FOUND)
+    try:
+        if want == CONFIRMED:
+            await link_edits.confirm(memory, guild_id, cid, link)
+        else:
+            await link_edits.remove(
+                memory, guild_id, cid, link
+            )  # (rejected, and Undo puts it back)
     except MemoryRuleError:
         return _failed(BAD_TARGET)
     return Outcome(**pair)

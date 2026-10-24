@@ -281,6 +281,73 @@ class TheEdits(Editing):
         self.assertEqual((await self.poll(off))["state"], "done")
         self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), set())
 
+    async def proposed(self, predicate: str = "ally_of") -> str:
+        """A connection PlotBot proposed between Mira and the Far Hall, not yet the DM's."""
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, predicate, self.hall, source="extractor",
+            confidence=0.7, status="proposed",
+        )  # fmt: skip
+        return made.value[0].id
+
+    async def retry(self, link: str, action: str) -> wa.Outcome:
+        """The bot applies the same queued action again, as after a stopped first try."""
+        again = wa.Action(
+            id="a" * 32, campaign_id=self.one.id, entity_id=self.mira, user_id=ALICE.id,
+            action=action, target_id=link,
+        )  # fmt: skip
+        return await wa.apply(self.memory, self.g, {ALICE.id}, again)
+
+    async def status_of(self, link: str) -> str:
+        found = await self.memory.relation(self.g, self.one.id, link)
+        assert found is not None
+        return found.status
+
+    async def test_a_dm_confirms_a_proposed_connection_and_a_retry_is_done(self) -> None:
+        link = await self.proposed()
+        before = await self.memory.version(self.g, self.one.id)
+        answer = await self.edit(link, action="confirm")
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        done = await self.poll(answer)
+        self.assertEqual(done["state"], "done")
+        self.assertEqual({done["edge"]["a"], done["edge"]["b"]}, {self.mira, self.hall})
+        self.assertEqual(await self.status_of(link), "confirmed")
+        log = await self.log_since(before)
+        self.assertTrue(log and all(r["source"] == "dm" for r in log))
+        # a retried job (the first try did its work, then stopped before it was marked done)
+        self.assertEqual((await self.retry(link, "link-confirm")).error, "")
+
+    async def test_a_dm_says_not_right_and_undo_puts_it_back(self) -> None:
+        link = await self.proposed()
+        before = await self.memory.version(self.g, self.one.id)
+        answer = await self.edit(link, action="reject")
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["removed"]), ("done", True))
+        self.assertEqual(await self.status_of(link), "rejected")
+        batch = (await self.log_since(before))[-1]["batch"]
+        await self.memory.undo(self.g, self.one.id, batch, source=DM_SOURCE)
+        self.assertEqual(await self.status_of(link), "proposed")  # (Undo from Discord's card)
+        await self.edit(link, action="reject")
+        await self.apply_all()
+        self.assertEqual((await self.retry(link, "link-reject")).error, "")
+        # decided the other way after it ended: nothing to confirm any more
+        self.assertEqual((await self.retry(link, "link-confirm")).error, wa.NOT_FOUND)
+
+    async def test_only_a_proposed_connection_can_be_decided_and_only_by_a_dm(self) -> None:
+        stands = self.links["mira-keep"]  # confirmed already: the door refuses both
+        for action in ("confirm", "reject"):
+            self.assertEqual(await self.refused_edit(link=stands, action=action), "not_found")
+        link = await self.proposed()
+        self.assertEqual(
+            await self.refused_edit(self.player, link=link, action="confirm"), "not_allowed"
+        )
+        self.assertEqual(await self.status_of(link), "proposed")
+        # a DM who stopped being one when the bot got to it changes nothing
+        answer = await self.edit(link, action="confirm")
+        self.assertEqual([o.error for o in await self.apply_all(dms=set())], [wa.NOT_ALLOWED])
+        self.assertEqual((await self.poll(answer))["error"], wa.NOT_ALLOWED)
+        self.assertEqual(await self.status_of(link), "proposed")
+
     async def test_only_a_dm_can_queue_a_pin_and_it_needs_a_yes_or_no(self) -> None:
         link = await self.free_link("sworn to")
         self.assertEqual(await self.refused_edit(link=link, action="pin"), "bad_action")

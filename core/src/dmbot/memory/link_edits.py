@@ -10,7 +10,7 @@ are never logged here.
 from __future__ import annotations
 
 from dmbot.memory import kin
-from dmbot.memory.models import DM, REJECTED, Relation, Written
+from dmbot.memory.models import CONFIRMED, DM, REJECTED, Relation, Written
 from dmbot.memory.store import MemoryStore
 
 
@@ -31,6 +31,13 @@ async def remove(
 ) -> Written[Relation]:
     """Take the connection back. History is kept, and Undo can put it back (#1566)."""
     return await memory.update_relation(guild_id, campaign_id, link.id, source=DM, status=REJECTED)
+
+
+async def confirm(
+    memory: MemoryStore, guild_id: int, campaign_id: str, link: Relation
+) -> Written[Relation]:
+    """The DM says a connection PlotBot proposed is right (#2635): it stands from now on."""
+    return await memory.update_relation(guild_id, campaign_id, link.id, source=DM, status=CONFIRMED)
 
 
 async def change_words(
