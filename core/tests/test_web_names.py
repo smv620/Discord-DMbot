@@ -243,7 +243,11 @@ class Names(Base):
 
     async def test_a_saved_spelling_reaches_the_narrators_dictionary(self) -> None:
         await set_said_as(self.web, self.session, self.cref, self.main, "Kah-zeth")
-        bot = SimpleNamespace(lookup=LookupCache(self.memory))
+
+        async def recanted(*_a: object, **_k: object) -> tuple[str, ...]:
+            return ()  # (nothing was taken back)
+
+        bot = SimpleNamespace(lookup=LookupCache(self.memory), _recanted=recanted)
         got = await DMBot.recap_audio_inputs(bot, THURSDAY.id, self.one.id, SimpleNamespace())  # type: ignore[arg-type]
         assert got is not None
         rules = nm.rules(got.names)

@@ -329,7 +329,13 @@ from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
-from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
+from dmbot.recaps.inputs import (
+    EVERY_NAME,
+    load_inputs,
+    recap_name_sets,
+    recap_recanted,
+    recap_said,
+)
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
 from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
@@ -9354,6 +9360,30 @@ class DMBot(commands.AutoShardedBot):
         if asked is not None:
             await self.decision_lines.close(ask_key(table.campaign_id, asked), EXPIRED)
 
+    async def _recanted(self, gid: int, cid: str, session_at: int | None) -> Collection[str]:
+        """The secret names the DM took back for a session (#2591). If they can't be read, every
+        secret name said aloud counts as recanted: stricter, never looser."""
+        try:
+            return await recap_recanted(self.exposures, gid, cid, session_at)
+        except Exception:
+            log.exception("Recap: couldn't read the recanted secret names")
+            return EVERY_NAME
+
+    async def _relation_ties(
+        self, gid: int, cid: str
+    ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
+        """The campaign's 🤫 relations as pairs of name sets (#2591). The writer is told the pairs
+        (never the relation's words) and the DM gets a note on the sentence that names both. They
+        advise: if they can't be read the recap goes on without them, the DM decides."""
+        if self.memory is None:
+            return ()
+        try:
+            found = await secret_connections(self.memory, gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't read the secret connections")
+            return ()
+        return tuple((c.subject, c.object) for c in found)
+
     async def recap_secret_names(
         self, campaign: Campaign, session_at: int | None = None
     ) -> list[str] | None:
@@ -9369,7 +9399,9 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Recap: couldn't read the campaign's secret names")
             return None
         return recap_name_sets(
-            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+            lookup,
+            await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
+            await self._recanted(campaign.guild_id, campaign.id, session_at),
         )[1]
 
     async def recap_allowed_names(
@@ -9387,7 +9419,9 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Recap: couldn't read the campaign's confirmed names")
             return []
         return recap_name_sets(
-            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+            lookup,
+            await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
+            await self._recanted(campaign.guild_id, campaign.id, session_at),
         )[0]
 
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
@@ -9406,6 +9440,8 @@ class DMBot(commands.AutoShardedBot):
             styles=self.recap_styles,
             notes=self.recap_notes,
             importance=self.importance,
+            recanted=await self._recanted(gid, cid, job.session_at),
+            relation_ties=await self._relation_ties(gid, cid),
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
@@ -9672,6 +9708,7 @@ class DMBot(commands.AutoShardedBot):
             await recap_said(
                 getattr(self, "transcripts", None), gid, cid, getattr(job, "session_at", None)
             ),
+            await self._recanted(gid, cid, getattr(job, "session_at", None)),
         )
         hidden = set(secret)
         return AudioInputs(

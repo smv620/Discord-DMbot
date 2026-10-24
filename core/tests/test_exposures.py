@@ -93,6 +93,27 @@ class Store(MemoryTest):
         )
         self.assertEqual(await self.store.pending(GUILD_A, self.c, 999), [])
 
+    async def test_recanted_names_are_listed_for_their_session_only(self) -> None:
+        """#2591: a name the DM took back is secret again in that session's recap."""
+        await self.store.record(
+            GUILD_A,
+            self.c,
+            100,
+            [Exposure("name", "auril", None, 1), Exposure("name", "vex", None, 2)],
+        )
+        await self.store.record(GUILD_A, self.c, 200, [Exposure("name", "auril", None, 1)])
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM secret_exposures WHERE session_started_at = 100"
+                " AND spelling = 'auril'"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(await self.store.mark(GUILD_A, self.c, [row["id"]], "recanted"), 1)
+        self.assertEqual(await self.store.recanted(GUILD_A, self.c, 100), frozenset({"auril"}))
+        self.assertEqual(await self.store.recanted(GUILD_A, self.c, 200), frozenset())
+        self.assertEqual(await self.store.recanted(GUILD_B, self.c, 100), frozenset())
+
     async def test_recording_again_updates_what_is_pending_and_never_revives_a_settled_one(
         self,
     ) -> None:
