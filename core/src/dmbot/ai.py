@@ -19,6 +19,7 @@ import base64
 import enum
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -252,7 +253,17 @@ MAX_OUTPUT_TOKENS: dict[str, int] = {
 DEFAULT_MAX_OUTPUT = 16_000
 
 
+# What a Gemini model may write in one answer: its documented ceiling is lower than the Claude
+# models', and asking for more is refused. Override with GEMINI_MAX_OUTPUT (owner-set, #2599).
+GEMINI_MAX_OUTPUT = 8192
+
+
 def max_output(model: str) -> int:
+    if model.startswith("gemini"):
+        try:
+            return int(os.environ.get("GEMINI_MAX_OUTPUT", "") or GEMINI_MAX_OUTPUT)
+        except ValueError:
+            return GEMINI_MAX_OUTPUT
     return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
 
 

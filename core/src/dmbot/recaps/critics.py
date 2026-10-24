@@ -90,8 +90,11 @@ def wait_budget(batches: int) -> int:
 def wait_for(waits: int, *, soon: bool = False) -> int:
     """Seconds to wait before the next try, after `waits` waits. `soon`: the check failed on our
     side (`WAIT_SOON_S`), so it is tried again within minutes."""
-    if soon:
-        return WAIT_SOON_S[min(waits, len(WAIT_SOON_S) - 1)]
+    if soon and waits < len(WAIT_SOON_S):
+        return WAIT_SOON_S[waits]
+    # (after the first minutes the usual back-off follows, so a long outage does not burn the
+    # day's calls on tries that cannot work: 15 minutes, an hour, 4 hours, then 12)
+    waits -= len(WAIT_SOON_S) if soon else 0
     return WAIT_SCHEDULE_S[waits] if waits < len(WAIT_SCHEDULE_S) else WAIT_LONG_S
 
 
