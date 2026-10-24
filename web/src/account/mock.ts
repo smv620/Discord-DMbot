@@ -1656,6 +1656,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       };
       return { ...r };
     },
+    // What making the audio again would do (#2630): a pretend small change, one paragraph of three.
+    async recapAudioRemake(ref) {
+      calls.push(`recapAudioRemake:${ref}`);
+      await find(ref);
+      return { how: "voice", why: "", changed: 1, total: 3 };
+    },
     // "Tell DMbot what to fix" (#2114). The note is sorted into the same points every time; the
     // first look says "working", the next says "done", as the bot's queue would.
     async sendFix(ref, text) {
