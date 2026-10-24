@@ -76,7 +76,7 @@ class TheList(Past):
             (recap["status"], recap["working"], recap["approved"], recap["writtenBy"]),
             ("draft", False, False, None),
         )
-        self.assertFalse(recap["canMakeAgain"])  # (the key is the API's, false before #2613)
+        self.assertTrue(recap["canMakeAgain"])  # (a finished recap can be made again, #2613)
 
     async def test_a_session_whose_transcript_was_deleted_has_no_transcript(self) -> None:
         await self.transcripts.delete_session_transcript(
