@@ -208,6 +208,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " '{\"rules\": []}'::jsonb, true, %s, 1)",
                 (g, c, "a" * 32, DM),
             ),
+            "recap_upload_rights": (
+                "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
+                " VALUES (%s, %s, %s, 5)",
+                (g, c, DM),
+            ),
             "game_clocks": (
                 "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest,"
                 " updated_at, picked_group) VALUES (%s, %s, 5, 5, 1, 1)",

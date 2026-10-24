@@ -49,6 +49,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "game_effects": ("game_effects",),
     # (only ready jobs are carried today, which is part of what #2552 lists)
     "recaps": ("recap_jobs",),
+    "recap_rights": ("recap_upload_rights",),
     "memory_heard": ("memory_heard",),
 }
 

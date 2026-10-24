@@ -44,6 +44,7 @@ from dmbot.web.recaps import (
     month_usage,
     read_recap,
     redo_recap,
+    upload_recap,
 )
 from tests import recap_fixtures as fx
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
@@ -2173,3 +2174,101 @@ class MakeAgain(Base):
                 )
         self.assertEqual(callers("dmbot_recap_start_over"), {"schema.py", "recaps/store.py"})
         self.assertEqual(callers("dmbot_recap_redo"), {"schema.py", "web/recaps.py"})
+
+
+class UploadFromThePage(Base):
+    """A DM adds a recap written by someone at the table, on the page (#2609), through the
+    database's door: held to a DM of the campaign, the right to use asked once, an existing recap
+    replaced only with a yes (and kept as an earlier version), a Google Doc read through the
+    guarded reader."""
+
+    @property
+    def campaign_ref(self) -> str:
+        return f"{THURSDAY.id}.{self.one.id}"
+
+    async def read_link(self, link: object) -> str:
+        from dmbot.transcript import import_link
+
+        if link == "https://docs.google.com/document/d/" + "a" * 30 + "/edit":
+            return "Pasted from a doc.\n\nMira went."
+        raise import_link.DocError(import_link.NOT_SHARED)
+
+    async def add(self, **body: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "session": 300,
+            "writtenBy": "Mira",
+            "text": "Mira went home.",
+            "rights": True,
+        }
+        base.update(body)
+        return await upload_recap(
+            self.web, self.session, self.campaign_ref, base, read_link=self.read_link
+        )
+
+    async def test_pasted_text_is_stored_with_its_label(self) -> None:
+        page = await self.add()
+        self.assertEqual(
+            (page["writtenBy"], page["text"], page["state"], page["sessionAt"]),
+            ("Mira", "Mira went home.", "ready", 300),
+        )
+        self.assertTrue(page["approval"]["approved"])  # like an approved recap
+        self.assertEqual(page["title"], "Recap by Mira")
+
+    async def test_a_google_doc_is_read_and_a_file_sent_as_text_works_the_same(self) -> None:
+        link = "https://docs.google.com/document/d/" + "a" * 30 + "/edit"
+        page = await self.add(text=None, link=link, title="The doc")
+        self.assertEqual(
+            (page["title"], page["text"].startswith("Pasted from a doc")), ("The doc", True)
+        )
+        with self.assertRaises(RecapError) as unshared:
+            await self.add(
+                session=400, text=None, link="https://docs.google.com/document/d/" + "b" * 30
+            )
+        self.assertEqual(unshared.exception.code, "doc_not_shared")
+
+    async def test_the_first_upload_of_a_campaign_asks_for_the_right_to_use_once(self) -> None:
+        with self.assertRaises(RecapError) as asked:
+            await self.add(rights=False)
+        self.assertEqual(asked.exception.code, "needs_rights")
+        await self.add(rights=True)
+        again = await self.add(session=500, rights=False)  # not asked a second time
+        self.assertEqual(again["sessionAt"], 500)
+
+    async def test_replacing_asks_and_keeps_the_old_one_as_an_earlier_version(self) -> None:
+        await self.add()
+        with self.assertRaises(RecapError) as asked:
+            await self.add(text="A second telling.")
+        self.assertEqual(asked.exception.code, "needs_confirm")
+        page = await self.add(text="A second telling.", replace=True)
+        self.assertEqual(page["text"], "A second telling.")
+        self.assertEqual([e["text"] for e in page["earlier"]], ["Mira went home."])
+        self.assertEqual(page["earlier"][0]["writtenBy"], "Mira")
+
+    async def test_a_non_dm_bad_words_and_too_much_are_refused(self) -> None:
+        with self.assertRaises(RecapError) as other:
+            await upload_recap(
+                self.web, self.session, f"{THURSDAY.id}.{self.two.id}",
+                {"session": 300, "writtenBy": "Mira", "text": "x", "rights": True},
+                read_link=self.read_link,
+            )  # fmt: skip
+        self.assertEqual(other.exception.code, "not_allowed")
+        for bad in ({"text": "  "}, {"writtenBy": ""}, {"session": "soon"}, {"replace": 1}):
+            with self.subTest(bad=bad), self.assertRaises(RecapError) as refused:
+                await self.add(**bad)
+            self.assertEqual(refused.exception.code, "bad_text")
+        with self.assertRaises(RecapError) as big:
+            await self.add(text="x" * 50_001)
+        self.assertEqual(big.exception.code, "too_big")
+
+    async def test_the_bots_own_door_is_not_the_websites(self) -> None:
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                await conn.execute(
+                    "SELECT dmbot_recap_add_uploaded(%s, %s, 300, %s, 't', 'b', 'a', true, true)",
+                    (THURSDAY.id, self.one.id, BOB.id),
+                )
+        self.assertEqual(callers("dmbot_recap_add_uploaded"), {"schema.py", "recaps/store.py"})
+        self.assertEqual(callers("dmbot_recap_upload"), {"schema.py", "web/recaps.py"})

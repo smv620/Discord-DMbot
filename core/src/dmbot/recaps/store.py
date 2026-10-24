@@ -49,7 +49,8 @@ COLUMNS = (
     " speakers, grade, emailed_at, created_at, updated_at, audio, audio_tries, audio_next_at,"
     " audio_credits, audio_error, audio_text_hash, to_confirm, names_state, corrections,"
     " approved_by, approved_at, approved_hash, audio_choice, split, critics,"
-    " posting_since, posting_step, posted_url, restarted_at, previous"
+    " posting_since, posting_step, posted_url, restarted_at, previous, written_by, uploaded_by,"
+    " uploaded_at, earlier, checked_at"
 )
 
 
@@ -127,6 +128,13 @@ class Job:
     # recap that was there before, kept until the new one is approved.
     restarted_at: int = 0
     previous: Any = None
+    # A recap written by someone at the table (#2609): who wrote it (empty: DMbot did), the DM who
+    # added it and when, the recaps it replaced (newest first), and when its names were checked.
+    written_by: str = ""
+    uploaded_by: int = 0
+    uploaded_at: int = 0
+    earlier: Any = None
+    checked_at: int = 0
 
     @property
     def keeps_previous(self) -> bool:
@@ -195,6 +203,11 @@ def _job(r: dict[str, Any]) -> Job:
         r.get("posted_url") or "",
         int(r.get("restarted_at") or 0),
         r.get("previous"),
+        r.get("written_by") or "",
+        int(r.get("uploaded_by") or 0),
+        int(r.get("uploaded_at") or 0),
+        r.get("earlier") or [],
+        int(r.get("checked_at") or 0),
     )
 
 
@@ -816,6 +829,88 @@ class RecapStore:
             row = await cur.fetchone()
         return str(row["r"]) if row else "not_allowed"
 
+    async def upload(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        who: int,
+        *,
+        title: str,
+        text: str,
+        written_by: str,
+        replace_ok: bool = False,
+        rights: bool = False,
+    ) -> str:
+        """Keep a recap written by someone at the table as the session's recap (#2609), approved by
+        the DM who adds it, never through the AI writer. One of: `stored`, `needs_rights` (the
+        campaign's first upload: the DM confirms the right to use it once, then send `rights`),
+        `needs_confirm` (the session has a recap: ask once, then send `replace_ok`; the old one is
+        kept in `earlier`), `busy` (being written or sent), `bad_text`, `not_allowed` (`who` is no
+        DM). The session need not have a transcript."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_recap_add_uploaded(%s, %s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (
+                    guild_id, campaign_id, session_at, who, title, text, written_by,
+                    replace_ok, rights,
+                ),
+            )  # fmt: skip
+            row = await cur.fetchone()
+        return str(row["r"]) if row else "not_allowed"
+
+    async def unchecked_uploads(self, guild_id: int, limit: int = 5) -> list[tuple[str, int]]:
+        """(campaign, session) of uploaded recaps whose names were not checked yet, oldest first:
+        the website stores one without the memory it needs to do that (#2609)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_id, session_at FROM recap_jobs WHERE guild_id = %s"
+                " AND written_by <> '' AND checked_at = 0 AND state = 'ready' ORDER BY uploaded_at"
+                " LIMIT %s",
+                (guild_id, limit),
+            )
+            return [(r["campaign_id"], int(r["session_at"])) for r in await cur.fetchall()]
+
+    async def set_upload_check(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        *,
+        to_confirm: Sequence[str],
+        note: str,
+    ) -> bool:
+        """What the check of an uploaded recap found (#2609): the names to ask the DM about, and the
+        note for the recap page when it names something kept secret (advice, never a block). Once:
+        False when it was checked already, or the recap changed meanwhile."""
+        from dmbot.recaps import critics as cr  # (the loop's own JSON, for the page's notes)
+
+        notes = (note,) if note else ()
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE recap_jobs SET to_confirm = %s, checked_at = %s, critics = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                " AND written_by <> '' AND checked_at = 0",
+                (
+                    list(to_confirm), int(self._now()),
+                    Jsonb(cr.Loop(done=True, notes=notes).to_json()) if notes else None,
+                    guild_id, campaign_id, session_at,
+                ),
+            )  # fmt: skip
+            return bool(cur.rowcount)
+
+    async def rights(self, guild_id: int, campaign_id: str) -> tuple[int, int] | None:
+        """(who, when) the campaign's right-to-use confirmation for uploaded recaps was given, or
+        None: the next upload asks (#2609)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT user_id, confirmed_at FROM recap_upload_rights"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (int(row["user_id"]), int(row["confirmed_at"]))
+
     async def overview(self, guild_id: int, campaign_id: str) -> dict[int, tuple[str, str, bool]]:
         """For each session of the campaign that has a recap job: (state, status, approved), to say
         in a session picker what each one has (#2608). Words only, never the recap's text."""
@@ -1114,6 +1209,9 @@ class RecapSection:
         self._forget_audio = forget_audio  # removes a campaign's audio files from the disk
 
     _KEYS = frozenset({"session_at", "title", "summary", "housekeeping", "music", "game_day"})
+    # A recap written by someone at the table also carries who wrote it, when it was added and
+    # the recaps it replaced (#2609); a copy made before has none of the three.
+    _UPLOADED = frozenset({"written_by", "uploaded_at", "earlier"})
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
@@ -1129,6 +1227,15 @@ class RecapSection:
                 "housekeeping": list(r.housekeeping),
                 "music": list(r.music),
                 "game_day": r.game_day,
+                **(
+                    {
+                        "written_by": r.written_by,
+                        "uploaded_at": r.uploaded_at,
+                        "earlier": _earlier_out(r.earlier),
+                    }
+                    if r.written_by
+                    else {}
+                ),
             }
             for r in map(_job, await cur.fetchall())
         ]
@@ -1138,14 +1245,24 @@ class RecapSection:
             raise CampaignError(DAMAGED)
         out: list[dict[str, Any]] = []
         for row in rows:
-            if not isinstance(row, dict) or set(row) != set(self._KEYS):
+            if not isinstance(row, dict) or set(row) not in (
+                set(self._KEYS),
+                set(self._KEYS | self._UPLOADED),
+            ):
                 raise CampaignError(DAMAGED)
+            if "written_by" in row:
+                author, at, earlier = row["written_by"], row["uploaded_at"], row["earlier"]
+                if not isinstance(author, str) or not 1 <= len(author) <= 80:
+                    raise CampaignError(DAMAGED)
+                if type(at) is not int or at < 0:
+                    raise CampaignError(DAMAGED)
+                row["earlier"] = _earlier_in(earlier)
             if type(row["session_at"]) is not int or row["session_at"] <= 0:
                 raise CampaignError(DAMAGED)
             day = row["game_day"]
             if day is not None and (type(day) is not int or day <= 0):
                 raise CampaignError(DAMAGED)
-            for key, limit in (("title", 120), ("summary", 6000)):
+            for key, limit in (("title", 120), ("summary", 50000)):
                 if not isinstance(row[key], str) or not 1 <= len(row[key]) <= limit:
                     raise CampaignError(DAMAGED)
             for key in ("housekeeping", "music"):
@@ -1174,8 +1291,10 @@ class RecapSection:
             await conn.execute(
                 "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, state,"
                 " title, summary, original, housekeeping, music, game_day, status, created_at,"
-                " updated_at) VALUES (%s, %s, %s, %s, 'ready', %s, %s, %s, %s, %s, %s, 'draft',"
-                " %s, %s) ON CONFLICT (guild_id, campaign_id, session_at) DO NOTHING",
+                " updated_at, written_by, uploaded_by, uploaded_at, earlier, checked_at)"
+                " VALUES (%s, %s, %s, %s, 'ready', %s, %s, %s, %s, %s, %s, 'draft',"
+                " %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (guild_id, campaign_id, session_at)"
+                " DO NOTHING",
                 (
                     guild_id,
                     campaign_id,
@@ -1189,6 +1308,11 @@ class RecapSection:
                     row["game_day"],
                     now,
                     now,
+                    row.get("written_by", ""),
+                    who if row.get("written_by") else 0,
+                    row.get("uploaded_at", 0),
+                    Jsonb(row.get("earlier", [])),
+                    now if row.get("written_by") else 0,  # (its names were checked where it was)
                 ),
             )
 
@@ -1201,3 +1325,91 @@ class RecapSection:
             await asyncio.to_thread(  # the narration and music go with it
                 self._forget_audio, guild_id, campaign_id
             )
+
+
+def _earlier_out(earlier: Any) -> list[dict[str, Any]]:
+    """The recaps an uploaded one replaced, as a backup keeps them: the words and who wrote them,
+    never where they were posted (a link into one server means nothing in another)."""
+    return [
+        {
+            "title": str(e.get("title", ""))[:120],
+            "summary": str(e.get("summary", ""))[:50000],
+            "written_by": str(e.get("written_by", ""))[:80],
+            "replaced_at": int(e.get("replaced_at") or 0),
+        }
+        for e in (earlier if isinstance(earlier, list) else [])
+        if isinstance(e, dict)
+    ]
+
+
+def _earlier_in(raw: object) -> list[dict[str, Any]]:
+    """The same, read from an untrusted file: a short list of well-formed entries or a refusal."""
+    if not isinstance(raw, list) or len(raw) > 10:
+        raise CampaignError(DAMAGED)
+    out: list[dict[str, Any]] = []
+    for e in raw:
+        if (
+            not isinstance(e, dict)
+            or set(e) != {"title", "summary", "written_by", "replaced_at"}
+            or not isinstance(e["title"], str)
+            or len(e["title"]) > 120
+            or not isinstance(e["summary"], str)
+            or len(e["summary"]) > 50000
+            or not isinstance(e["written_by"], str)
+            or len(e["written_by"]) > 80
+            or type(e["replaced_at"]) is not int
+            or e["replaced_at"] < 0
+        ):
+            raise CampaignError(DAMAGED)
+        out.append(e)
+    return out
+
+
+class RecapRightsSection:
+    """Who confirmed the right to use recaps written by the table, and when (#2609), in a backup:
+    it belongs to the campaign, so a copy that holds such recaps is not asked again."""
+
+    name = "recap_rights"
+
+    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
+        cur = await conn.execute(
+            "SELECT user_id, confirmed_at FROM recap_upload_rights"
+            " WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        return [
+            {"user_id": str(r["user_id"]), "confirmed_at": int(r["confirmed_at"])}
+            for r in await cur.fetchall()
+        ]
+
+    @staticmethod
+    def check(rows: list[Any]) -> list[dict[str, Any]]:
+        if len(rows) > 1:
+            raise CampaignError(DAMAGED)
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or set(row) != {"user_id", "confirmed_at"}
+                or not isinstance(row["user_id"], str)
+                or not row["user_id"].isascii()
+                or not row["user_id"].isdigit()
+                or not 0 < int(row["user_id"]) <= 2**63 - 1
+                or type(row["confirmed_at"]) is not int
+                or row["confirmed_at"] < 0
+            ):
+                raise CampaignError(DAMAGED)
+        return rows
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        for row in self.check(list(rows)) if rows else []:
+            await conn.execute(
+                "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
+                " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (guild_id, campaign_id, int(row["user_id"]), row["confirmed_at"]),
+            )
+
+    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        await conn.execute(
+            "DELETE FROM recap_upload_rights WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
