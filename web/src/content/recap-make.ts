@@ -25,10 +25,14 @@ export const makeWords = {
   add: "Add a recap someone wrote",
   open: "Open the recap",
   close: "Close this",
-  askReplaceApproved: "This session's recap is already approved. Making it again replaces it. Make it again?",
-  askReplaceExisting: "This session already has a recap. Adding this one replaces it. Add it?",
-  yesAgain: "Yes, make it again",
-  yesReplace: "Yes, replace it",
+  // One question when a session already has a recap (the API's `needs_confirm`). An approved or posted recap
+  // is kept until the new one is approved, so the words say that only for those.
+  askAgain: (kept: boolean): string =>
+    `This session already has a recap. Make a new one?${kept ? " The one you have stays until you approve the new one." : ""}`,
+  askReplaceExisting: "This session already has a recap. Add this one in its place? The old one is kept as an earlier version.",
+  yesAgain: "Yes, make a new one",
+  yesReplace: "Yes, add it",
+  noTranscript: "No transcript is kept for this session. You can add a recap someone wrote.",
   keep: "No, keep it",
   form: {
     heading: "Add a recap someone wrote",
@@ -49,8 +53,16 @@ export const makeWords = {
     cancel: "Cancel",
     working: "Adding…",
   },
-  uploaded: (writer: string, uploader: string): string => `Written by ${writer}, uploaded by ${uploader}.`,
+  // "Written by Maren, added 12 Oct 2026." (the API gives who wrote it and when a game master added it)
+  uploaded: (writer: string, day: string | null): string => `Written by ${writer}${day ? `, added ${day}` : ""}.`,
+  // The recap's own state while it is made (the bot's steps), in plain words. Any other word gets the
+  // general "DMbot is working on it".
   stage: {
+    queued: "Waiting for its turn",
+    beats: "Working out what happened",
+    checked: "Checking it against what was said",
+    prose: "Writing the recap",
+    housekeeping: "Tidying up",
     reading: "Reading what was said",
     writing: "Writing the recap",
     checking: "Checking the recap",
@@ -67,14 +79,17 @@ export const makeWords = {
   stoppedWatching: "DMbot stopped checking after a long time with nothing new. Reload this page to look again.",
   errors: {
     "not-allowed": "Only this campaign's DMs can do this.",
-    "no-transcript": "That session has no transcript, so DMbot has nothing to write from. You can add a recap someone wrote instead.",
+    "no-lines": "That session's transcript isn't kept any more, so DMbot has nothing to write from. You can add a recap someone wrote instead.",
+    "busy": "A recap for that session is being written or sent right now. Wait for it to finish.",
     "not-in-plan": "Your plan doesn't include this. You can change your plan on My Account.",
-    "already-running": "A recap for that session is already being made. Wait for it to finish.",
     "too-soon": "Please wait a minute, then try again.",
-    "bad-text": "The recap is empty or too long. Paste or choose some text, or cut it down, and try again.",
-    "bad-link": "That doesn't look like a Google Doc link. Copy it from your browser's address bar and try again.",
-    "link-private": "DMbot can't read that document. Share it so anyone with the link can read it, then try again.",
-    "right-not-confirmed": "Tick the box to say you have the right to use this text.",
+    "bad-text": "The recap is empty or can't be used. Paste or choose some text and try again.",
+    "too-big": "That recap is too long. Cut it down and try again.",
+    "not-a-google-doc": "That doesn't look like a Google Doc link. Copy it from your browser's address bar and try again.",
+    "doc-not-shared": "DMbot can't read that document. In Google Docs choose Share, then General access, then Anyone with the link, and try again.",
+    "doc-unreachable": "DMbot couldn't open that document just now. Try again in a moment, or paste the text instead.",
+    "doc-too-big": "That document is too long. Paste a shorter part of it instead.",
+    "needs-rights": "Tick the box to say you have the right to use this text.",
     network: "We couldn't reach DMbot, so nothing was changed. Try again in a moment.",
     server: "That didn't work, and nothing was changed. Try again in a moment.",
   } as Record<string, string>,

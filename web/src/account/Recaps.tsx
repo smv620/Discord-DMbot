@@ -674,8 +674,8 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       <p class="small">
         {sessionLine(recap, [recap.serverName])}
       </p>
-      {RECAP_MAKE_LIVE && recap.uploaded && (
-        <p class="small">{makeWords.uploaded(recap.uploaded.writtenBy, recap.uploaded.uploadedBy)}</p>
+      {RECAP_MAKE_LIVE && recap.writtenBy && (
+        <p class="small">{makeWords.uploaded(recap.writtenBy, recap.uploadedAt ? sessionDay(recap.uploadedAt) : null)}</p>
       )}
       {recap.transcriptsDeletedAt && (
         <p class="small">

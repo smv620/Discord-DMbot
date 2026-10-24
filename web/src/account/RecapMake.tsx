@@ -1,15 +1,17 @@
 /** @jsxImportSource preact */
 // Recaps for past sessions (#2610; core #2608, #2609), for a campaign's DMs: make a recap for a session
-// that has none, make it again, or add one someone else wrote. The API decides who may and answers a
-// player "not allowed", in which case nothing shows. While a recap is made the page shows the shared wait
-// panel (stage, how far, how long it has run, when it last moved; owner rule 2026-10-23). It asks one
-// question when something would be replaced, and the right-to-use confirmation only the first time.
+// that has none, make it again, or add one someone else wrote. The sessions come from the page's own list
+// (`GET /me/campaigns/{ref}/past-sessions`, DMs only: anyone else gets "not allowed" and sees nothing). While
+// a recap is made the page shows the shared wait panel (stage, how far, how long it has run, when it last
+// moved; owner rule 2026-10-23). It asks one question when something would be replaced (the API's
+// `needs_confirm`), and the right-to-use confirmation only when the API asks for it (`needs_rights`, once
+// for a campaign). The API decides everything; this only sends what the DM chose and says what came back.
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { RECAP_MAKE_LIVE, makeWords as w } from "../content/recap-make";
 import { sessionDay } from "../content/recaps";
 import { stageWords, workWords } from "../content/work-progress";
-import { ApiError, type AccountApi, type PastSession, type PastSessions, type Recap } from "./api";
+import { ApiError, type AccountApi, type AddRecapInput, type PastSession, type Recap } from "./api";
 import WorkProgress from "./WorkProgress";
 
 const POLL_START_MS = 3_000;
@@ -18,11 +20,13 @@ const POLL_MAX_MS = 15_000;
 export const WATCH_LIMIT_MS = 30 * 60_000;
 const MAX_FILE_BYTES = 1_000_000;
 
-type Asking = { at: number; what: "again" | "replace"; input?: Parameters<NonNullable<AccountApi["addRecap"]>>[2] } | null;
+/** What was chosen when the API asked its one question. */
+type Asking = { ref: string; what: "again" | "replace"; kept: boolean; input?: AddRecapInput } | null;
 
 function kindOf(error: unknown): string {
   return error instanceof ApiError ? error.kind : "server";
 }
+// An unknown kind gets the general sentence, never the code itself.
 const say = (error: unknown): string => w.errors[kindOf(error)] ?? w.errors["server"] ?? "";
 
 function length(seconds: number | null | undefined): string {
@@ -33,18 +37,19 @@ function length(seconds: number | null | undefined): string {
 
 function stateOf(s: PastSession): string {
   const r = s.recap;
-  if (!r) return w.state["none"] as string;
-  if (r.state === "working") return w.state["working"] as string;
+  if (!r) return (s.held ? w.state["held"] : w.state["none"]) as string;
+  if (r.working) return w.state["working"] as string;
   if (r.state === "failed") return w.state["failed"] as string;
   if (r.status === "posted") return w.state["posted"] as string;
-  if (r.held) return w.state["held"] as string;
   return (r.approved ? w.state["approved"] : w.state["ready"]) as string;
 }
 
 export default function RecapMake({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
-  const [list, setList] = useState<PastSessions | "loading" | "hidden">("loading");
+  const [list, setList] = useState<PastSession[] | "loading" | "hidden">("loading");
   const [asking, setAsking] = useState<Asking>(null);
-  const [adding, setAdding] = useState<number | null>(null);
+  const [adding, setAdding] = useState<PastSession | null>(null);
+  // The API asked for the right-to-use confirmation: from then on the form shows the box.
+  const [needRights, setNeedRights] = useState(false);
   const [running, setRunning] = useState<{ at: number; ref: string } | null>(null);
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,7 +58,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
   const load = async (): Promise<void> => {
     if (!api.pastSessions) return setList("hidden");
     try {
-      setList(await api.pastSessions(campaignRef));
+      setList((await api.pastSessions(campaignRef)).sessions);
     } catch {
       setList("hidden"); // a player, a signed-out page or an older API: nothing to offer
     }
@@ -71,18 +76,20 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       </p>
     );
 
-  const start = async (at: number, replaceApproved: boolean): Promise<void> => {
+  /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
+  const start = async (s: PastSession, replace: boolean): Promise<void> => {
     if (inFlight.current || !api.makeRecap) return;
     inFlight.current = true;
     setBusy(true);
     setProblem("");
     try {
-      const got = await api.makeRecap(campaignRef, at, replaceApproved);
+      const got = await api.makeRecap(s.ref, replace);
       setAsking(null);
-      setRunning({ at, ref: got.ref });
+      setRunning({ at: s.sessionAt, ref: got.ref });
     } catch (error) {
-      if (kindOf(error) === "approved-exists") setAsking({ at, what: "again" });
-      else if (kindOf(error) === "already-running") await load(); // the list then shows it working and watches it
+      const kind = kindOf(error);
+      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") });
+      else if (kind === "busy") await load(); // the list then shows it being made and watches it
       else {
         setAsking(null);
         setProblem(say(error));
@@ -93,20 +100,25 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     }
   };
 
-  const submit = async (at: number, input: NonNullable<Asking>["input"]): Promise<boolean> => {
-    if (inFlight.current || !api.addRecap || !input) return false;
+  /** Add a recap someone wrote. True when it was taken (the form can go). */
+  const submit = async (s: PastSession, input: AddRecapInput): Promise<boolean> => {
+    if (inFlight.current || !api.addRecap) return false;
     inFlight.current = true;
     setBusy(true);
     setProblem("");
     try {
-      const got = await api.addRecap(campaignRef, at, input);
+      const got = await api.addRecap(campaignRef, input);
       setAsking(null);
       setAdding(null);
-      setRunning({ at, ref: got.ref });
+      setRunning({ at: s.sessionAt, ref: got.ref });
       return true;
     } catch (error) {
-      if (kindOf(error) === "recap-exists") setAsking({ at, what: "replace", input });
-      else setProblem(say(error));
+      const kind = kindOf(error);
+      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "replace", kept: false, input });
+      else {
+        if (kind === "needs-rights") setNeedRights(true);
+        setProblem(say(error));
+      }
       return false;
     } finally {
       inFlight.current = false;
@@ -114,7 +126,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     }
   };
 
-  const sessions = [...list.sessions].sort((a, b) => b.sessionAt - a.sessionAt);
+  const sessions = [...list].sort((a, b) => b.sessionAt - a.sessionAt);
   return (
     <section class="panel stack" aria-labelledby="recap-make-heading">
       <h2 id="recap-make-heading">{w.heading}</h2>
@@ -131,13 +143,12 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
           {sessions.map((s) => {
             const here = running?.at === s.sessionAt;
             // A recap that is already being made when the page opens is watched like one just started.
-            const watching = here ? running!.ref : s.recap?.state === "working" ? s.recap.ref : null;
+            const watching = here ? running!.ref : s.recap?.working ? s.ref : null;
             const working = watching !== null;
+            const question = asking?.ref === s.ref ? asking : null;
             return (
-              <li key={s.sessionAt}>
-                <span class="campaign-name">
-                  {w.session(s.sessionNumber, sessionDay(s.sessionAt), length(s.sessionSeconds))}
-                </span>
+              <li key={s.ref}>
+                <span class="campaign-name">{w.session(s.sessionNumber, sessionDay(s.sessionAt), length(s.sessionSeconds))}</span>
                 <span class="tags">
                   <span class="tag">{working ? (w.state["working"] as string) : stateOf(s)}</span>
                 </span>
@@ -155,24 +166,24 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       void load();
                     }}
                   />
-                ) : asking?.at === s.sessionAt ? (
-                  <div class="stack" role="group" aria-label={asking.what === "again" ? w.askReplaceApproved : w.askReplaceExisting}>
-                    <p>{asking.what === "again" ? w.askReplaceApproved : w.askReplaceExisting}</p>
+                ) : question ? (
+                  <div class="stack" role="group" aria-label={question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}>
+                    <p>{question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}</p>
                     <div class="row">
                       <button
                         type="button"
                         class="button"
                         disabled={busy}
-                        onClick={() => void (asking.what === "again" ? start(s.sessionAt, true) : submit(s.sessionAt, { ...asking.input!, replace: true }))}
+                        onClick={() => void (question.what === "again" ? start(s, true) : submit(s, { ...question.input!, replace: true }))}
                       >
-                        {asking.what === "again" ? w.yesAgain : w.yesReplace}
+                        {question.what === "again" ? w.yesAgain : w.yesReplace}
                       </button>
                       <button
                         type="button"
                         class="button secondary"
                         disabled={busy}
                         onClick={() => {
-                          if (asking.what === "replace") setAdding(null); // a clean cancel, not an empty form
+                          if (question.what === "replace") setAdding(null); // a clean cancel, not an empty form
                           setAsking(null);
                         }}
                       >
@@ -180,35 +191,39 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       </button>
                     </div>
                   </div>
-                ) : adding === s.sessionAt ? (
+                ) : adding?.ref === s.ref ? (
                   <AddForm
-                    needRight={!list.rightConfirmed}
+                    session={s}
+                    needRights={needRights}
                     busy={busy}
                     onCancel={() => setAdding(null)}
-                    onSubmit={(input) => submit(s.sessionAt, input)}
+                    onSubmit={(input) => submit(s, input)}
                   />
                 ) : (
-                  !working && (
+                  <div class="stack">
+                    {!s.recap && !s.held && !s.hasTranscript && <p class="small muted">{w.noTranscript}</p>}
                     <div class="row">
-                      <button type="button" class="button secondary" disabled={busy} onClick={() => void start(s.sessionAt, false)}>
-                        {s.recap ? w.again : w.make}
-                      </button>
-                      <button
-                        type="button"
-                        class="button secondary"
-                        disabled={busy}
-                        onClick={() => {
-                          setProblem("");
-                          setAdding(s.sessionAt);
-                        }}
-                      >
-                        {w.add}
-                      </button>
-                      {s.recap && (
-                        <a href={`/account/recaps/${encodeURIComponent(s.recap.ref)}`}>{w.open}</a>
+                      {!s.held && (s.recap ? s.recap.canMakeAgain : s.hasTranscript) && (
+                        <button type="button" class="button secondary" disabled={busy} onClick={() => void start(s, false)}>
+                          {s.recap ? w.again : w.make}
+                        </button>
                       )}
+                      {!s.held && (
+                        <button
+                          type="button"
+                          class="button secondary"
+                          disabled={busy}
+                          onClick={() => {
+                            setProblem("");
+                            setAdding(s);
+                          }}
+                        >
+                          {w.add}
+                        </button>
+                      )}
+                      {s.recap && <a href={`/account/recaps/${encodeURIComponent(s.ref)}`}>{w.open}</a>}
                     </div>
-                  )
+                  </div>
                 )}
               </li>
             );
@@ -220,7 +235,9 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
 }
 
 /** Watches one recap being made: the shared wait panel, asked again a little less often while nothing
- * moves, and given up on (with a way to look again) after a long time. */
+ * moves, and given up on (with a way to look again) after a long time. The recap's own progress is used
+ * when the API sends it; until then its state (the bot's step) says where it is, with the time since the
+ * DM asked. */
 function Making({ api, recapRef, onDone, onClose }: { api: AccountApi; recapRef: string; onDone: () => void; onClose: () => void }) {
   const [recap, setRecap] = useState<Recap | null>(null);
   const [gone, setGone] = useState("");
@@ -229,7 +246,7 @@ function Making({ api, recapRef, onDone, onClose }: { api: AccountApi; recapRef:
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let wait = POLL_START_MS;
-    let last = -1;
+    let last = "";
     const tick = async (): Promise<void> => {
       if (!api.recap) return setGone(w.errors["server"] as string);
       try {
@@ -240,9 +257,10 @@ function Making({ api, recapRef, onDone, onClose }: { api: AccountApi; recapRef:
           if (next.state !== "failed") onDone();
           return;
         }
-        const stamp = next.progress?.updatedAt ?? 0;
-        wait = stamp > last ? POLL_START_MS : Math.min(wait * 2, POLL_MAX_MS);
-        last = Math.max(last, stamp);
+        // Back off while nothing moves (the same step and the same last-moved time), start again when it does.
+        const seen = `${next.state}:${next.progress?.updatedAt ?? ""}:${next.progress?.done ?? ""}`;
+        wait = seen !== last ? POLL_START_MS : Math.min(wait * 2, POLL_MAX_MS);
+        last = seen;
         if (Date.now() - started.current > WATCH_LIMIT_MS) return setGone(w.stoppedWatching);
         timer = setTimeout(() => void tick(), wait);
       } catch (error) {
@@ -259,14 +277,15 @@ function Making({ api, recapRef, onDone, onClose }: { api: AccountApi; recapRef:
 
   const p = recap?.progress;
   const failed = !!recap && !recap.working && recap.state === "failed";
+  const began = p?.startedAt ?? (recap?.restartedAt || recap?.uploadedAt || undefined);
   return (
     <div class="stack">
       <WorkProgress
-        stage={stageWords(w.stage, p?.stage)}
+        stage={stageWords(w.stage, p?.stage ?? recap?.state)}
         done={p?.done}
         total={p?.total}
         unit={p?.unit ?? undefined}
-        startedAt={p?.startedAt}
+        startedAt={began}
         updatedAt={p?.updatedAt}
         serverNow={p?.serverNow ?? recap?.serverNow}
         state={failed ? "failed" : p?.state === "stalled" ? "stalled" : "running"}
@@ -286,18 +305,18 @@ function Making({ api, recapRef, onDone, onClose }: { api: AccountApi; recapRef:
   );
 }
 
-type FormInput = NonNullable<Asking>["input"];
-
 function AddForm({
-  needRight,
+  session,
+  needRights,
   busy,
   onCancel,
   onSubmit,
 }: {
-  needRight: boolean;
+  session: PastSession;
+  needRights: boolean;
   busy: boolean;
   onCancel: () => void;
-  onSubmit: (input: FormInput) => Promise<boolean>;
+  onSubmit: (input: AddRecapInput) => Promise<boolean>;
 }) {
   const f = w.form;
   const [how, setHow] = useState<"paste" | "file" | "link">("paste");
@@ -324,14 +343,14 @@ function AddForm({
   const send = async (event: Event): Promise<void> => {
     event.preventDefault();
     setNote("");
-    if (needRight && !right) return setNote(w.errors["right-not-confirmed"] as string);
-    const input: NonNullable<FormInput> = {
+    if (needRights && !right) return setNote(w.errors["needs-rights"] as string);
+    await onSubmit({
+      session: session.sessionAt,
       writtenBy: who.trim(),
+      ...(how === "link" ? { link: url.trim() } : { text }),
       ...(title.trim() ? { title: title.trim() } : {}),
-      ...(how === "link" ? { url: url.trim() } : { text }),
-      ...(needRight ? { confirmRight: true } : {}),
-    };
-    await onSubmit(input);
+      ...(needRights && right ? { rights: true } : {}),
+    });
   };
 
   return (
@@ -376,7 +395,7 @@ function AddForm({
         {f.title}
         <input type="text" value={title} onInput={(e) => setTitle((e.target as HTMLInputElement).value)} maxLength={120} />
       </label>
-      {needRight && (
+      {needRights && (
         <label>
           <input type="checkbox" checked={right} onChange={(e) => setRight((e.target as HTMLInputElement).checked)} /> {f.right}
           <span class="small muted"> {f.rightNote}</span>

@@ -721,25 +721,30 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
-  let rightGiven = false; // the DM said they may use text someone else wrote (asked once)
-  const made = new Map<number, NonNullable<PastSession["recap"]>>();
-  const startMade = (sessionAt: number, writtenBy?: string): { ref: string } => {
-    const ref = `mock.made.${sessionAt}`;
+  let rightGiven = false; // the API asked once for the right to use text someone else wrote (#2609)
+  // Recaps made or added on the past-sessions list, by the session's start time. The pretend sessions: 4 has
+  // an approved recap, 3 has none, 2's recap failed, 1 has no transcript kept.
+  const made = new Map<number, string>();
+  const startMade = (sessionAt: number, writtenBy?: string): Recap => {
+    const ref = `100.cmp1.${sessionAt}`;
     const base = recaps[0]!;
     const now = Math.floor(Date.now() / 1000);
-    recaps.push({
+    const next: Recap = {
       ...base,
       ref,
       sessionAt,
       title: "A made recap",
       working: true,
-      state: "writing",
-      progress: { stage: "writing", done: 1, total: 3, unit: "parts", startedAt: now, updatedAt: now, serverNow: now, state: "running", reason: null },
-      uploaded: writtenBy ? { writtenBy, uploadedBy: user.name } : null,
-    });
+      state: "queued",
+      restartedAt: now,
+      serverNow: now,
+      writtenBy: writtenBy ?? null,
+      uploadedAt: writtenBy ? now : 0,
+    };
+    recaps.push(next);
     writing.set(ref, 2);
-    made.set(sessionAt, { ref, state: "ready", status: "draft", held: false, approved: false });
-    return { ref };
+    made.set(sessionAt, ref);
+    return { ...next };
   };
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const fixLooks = new Map<string, number>();
@@ -779,38 +784,53 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       }
       return { ...r };
     },
-    // Recaps for past sessions (#2608, #2609): one session with an approved recap, one with none, one whose
-    // recap failed. A recap made or added here is one more recap that settles after two reads.
+    // Recaps for past sessions (#2610): the shapes of `GET past-sessions`, `POST /me/recaps/{ref}/again` and
+    // `POST /me/campaigns/{ref}/recaps/upload`, and their codes (#2613, #2614).
     async pastSessions(campaignRef) {
       calls.push(`pastSessions:${campaignRef}`);
       await reachable();
       signedIn();
       if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const ref = (at: number): string => `${campaignRef}.${at}`;
+      const ready = (approved: boolean): NonNullable<PastSession["recap"]> => ({
+        state: "ready", status: "draft", working: false, approved, writtenBy: null, canMakeAgain: true,
+      });
+      const mine = (at: number): PastSession["recap"] => {
+        const r = recaps.find((x) => x.ref === made.get(at));
+        return r
+          ? { state: r.state, status: "draft", working: r.working, approved: false, writtenBy: r.writtenBy ?? null, canMakeAgain: !r.working }
+          : null;
+      };
       return {
-        rightConfirmed: rightGiven,
         sessions: [
-          { sessionAt: 1791000000, sessionNumber: 4, sessionSeconds: 9300, recap: { ref: recaps[0]!.ref, state: "ready", status: "draft", held: false, approved: true } },
-          { sessionAt: 1790000000, sessionNumber: 3, sessionSeconds: 7200, recap: made.get(1790000000) ?? null },
-          { sessionAt: 1789000000, sessionNumber: 2, sessionSeconds: 5400, recap: { ref: "mock.failed.1789000000", state: "failed", status: "draft", held: false, approved: false } },
+          { ref: ref(1791000000), sessionAt: 1791000000, sessionNumber: 4, sessionSeconds: 9300, hasTranscript: true, held: false, recap: ready(true) },
+          { ref: ref(1790000000), sessionAt: 1790000000, sessionNumber: 3, sessionSeconds: 7200, hasTranscript: true, held: false, recap: mine(1790000000) },
+          { ref: ref(1789000000), sessionAt: 1789000000, sessionNumber: 2, sessionSeconds: 5400, hasTranscript: true, held: false,
+            recap: { state: "failed", status: "draft", working: false, approved: false, writtenBy: null, canMakeAgain: true } },
+          { ref: ref(1788000000), sessionAt: 1788000000, sessionNumber: 1, sessionSeconds: 3600, hasTranscript: false, held: false, recap: null },
         ],
       };
     },
-    async makeRecap(campaignRef, sessionAt, replaceApproved) {
-      calls.push(`makeRecap:${campaignRef}:${sessionAt}${replaceApproved ? ":replace" : ""}`);
+    async makeRecap(recapRef, replace) {
+      calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
       await reachable();
       signedIn();
-      if (sessionAt === 1791000000 && !replaceApproved) throw new ApiError("approved-exists");
-      return startMade(sessionAt);
+      const at = Number(recapRef.split(".").pop());
+      if (at === 1788000000) throw new ApiError("no-lines");
+      if (at === 1791000000 && !replace) throw new ApiError("needs-confirm");
+      if (made.has(at) && recaps.find((x) => x.ref === made.get(at))?.working) throw new ApiError("busy");
+      return startMade(at);
     },
-    async addRecap(campaignRef, sessionAt, input) {
-      calls.push(`addRecap:${campaignRef}:${sessionAt}:${input.url ? "link" : "text"}${input.replace ? ":replace" : ""}`);
+    async addRecap(campaignRef, input) {
+      calls.push(`addRecap:${campaignRef}:${input.session}:${input.link ? "link" : "text"}${input.replace ? ":replace" : ""}${input.rights ? ":rights" : ""}`);
       await reachable();
       signedIn();
-      if (!rightGiven && !input.confirmRight) throw new ApiError("right-not-confirmed");
-      if (sessionAt === 1791000000 && !input.replace) throw new ApiError("recap-exists");
-      if (input.url && input.url.includes("private")) throw new ApiError("link-private");
+      if (!rightGiven && !input.rights) throw new ApiError("needs-rights");
+      if (input.link && input.link.includes("private")) throw new ApiError("doc-not-shared");
+      if (input.link && !input.link.startsWith("https://docs.google.com/")) throw new ApiError("not-a-google-doc");
+      if (input.session === 1791000000 && !input.replace) throw new ApiError("needs-confirm");
       rightGiven = true;
-      return startMade(sessionAt, input.writtenBy);
+      return startMade(input.session, input.writtenBy);
     },
     async saveRecap(ref, summary, housekeeping) {
       calls.push(`saveRecap:${ref}`);

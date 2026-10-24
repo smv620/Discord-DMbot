@@ -1,23 +1,24 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// Recaps for past sessions (#2610; core #2608, #2609), against the pretend API with the switch on: make, make
-// again with the one question when a recap is approved, add one someone wrote (the right-to-use box only
-// the first time), the shared wait panel while it runs, and nothing at all for a player.
+// Recaps for past sessions (#2610; core #2608, #2609), against CloudDev's approved routes: the list
+// (`GET past-sessions`), `POST /me/recaps/{ref}/again` and `POST /me/campaigns/{ref}/recaps/upload`, with
+// the switch on. Make, make again with the one question, add one someone wrote (the right-to-use box only
+// when the API asks), the shared wait panel, every code in plain words, and nothing at all for a player.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError } from "../src/account/api";
+import { ApiError, httpApi, type ApiErrorKind } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import RecapMake from "../src/account/RecapMake";
 import { makeWords as w } from "../src/content/recap-make";
-
-/** A label as an exact pattern (the words hold brackets). */
-const rx = (label: string): RegExp => new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
 vi.mock("../src/content/recap-make", async (original) => ({
   ...(await original<typeof import("../src/content/recap-make")>()),
   RECAP_MAKE_LIVE: true,
 }));
+
+/** A label as an exact pattern (the words hold brackets). */
+const rx = (label: string): RegExp => new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
 beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
 afterEach(() => {
@@ -25,19 +26,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function open(campaign = "100.cmp1") {
-  const api = mockApi("table");
+async function open(campaign = "100.cmp1", api = mockApi("table")) {
   render(<RecapMake api={api} campaignRef={campaign} />);
   await screen.findByRole("heading", { name: w.heading });
   return api;
 }
 
 describe("the list of past sessions", () => {
-  it("offers Make the recap where there is none and Make it again where there is one", async () => {
+  it("offers Make the recap where there is none, Make it again where there is one, and neither without a transcript", async () => {
     await open();
-    expect(screen.getAllByRole("button", { name: w.make })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: w.again })).toHaveLength(2);
-    expect(screen.getAllByRole("button", { name: w.add })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: w.make })).toHaveLength(1); // session 3: no recap, has lines
+    expect(screen.getAllByRole("button", { name: w.again })).toHaveLength(2); // sessions 4 and 2
+    expect(screen.getAllByRole("button", { name: w.add })).toHaveLength(4);
+    expect(screen.getByText(w.noTranscript)).toBeTruthy(); // session 1: nothing kept
   });
 
   it("shows nothing to a player (the API says not allowed)", async () => {
@@ -49,103 +50,195 @@ describe("the list of past sessions", () => {
 });
 
 describe("making a recap", () => {
-  it("makes one for a session with none and shows the wait panel until it is ready", async () => {
+  it("asks for the session's own ref and shows the wait panel until it is ready", async () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: w.make }));
-    expect(await screen.findByText(w.stage["writing"] as string)).toBeTruthy();
-    expect(api.calls).toContain("makeRecap:100.cmp1:1790000000");
-    expect(screen.getByText(/1 of 3 parts/)).toBeTruthy();
-    await vi.advanceTimersByTimeAsync(7_000);
-    await waitFor(() => expect(screen.queryByText(w.stage["writing"] as string)).toBeNull());
+    expect(await screen.findByText(w.stage["queued"] as string)).toBeTruthy();
+    expect(api.calls).toContain("makeRecap:100.cmp1.1790000000");
+    await vi.advanceTimersByTimeAsync(9_000);
+    await waitFor(() => expect(screen.queryByText(w.stage["queued"] as string)).toBeNull());
   });
 
-  it("asks one question before replacing an approved recap, and keeps it on No", async () => {
+  it("asks one question before replacing an approved recap, says it stays until the new one is approved, and keeps it on No", async () => {
     const api = await open();
-    const again = screen.getAllByRole("button", { name: w.again })[0]!; // the newest session: approved
-    fireEvent.click(again);
-    expect(await screen.findByText(w.askReplaceApproved)).toBeTruthy();
-    expect(api.calls).toContain("makeRecap:100.cmp1:1791000000");
+    fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!); // the newest session: approved
+    expect(await screen.findByText(w.askAgain(true))).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.keep }));
-    expect(screen.queryByText(w.askReplaceApproved)).toBeNull();
-    expect(api.calls.filter((c) => c.startsWith("makeRecap")).length).toBe(1);
+    expect(screen.queryByText(w.askAgain(true))).toBeNull();
+    expect(api.calls.filter((c) => c.startsWith("makeRecap"))).toEqual(["makeRecap:100.cmp1.1791000000"]);
   });
 
-  it("sends the second request with replace after Yes", async () => {
+  it("sends replace after Yes", async () => {
     const api = await open();
     fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
     fireEvent.click(await screen.findByRole("button", { name: w.yesAgain }));
-    await waitFor(() => expect(api.calls).toContain("makeRecap:100.cmp1:1791000000:replace"));
+    await waitFor(() => expect(api.calls).toContain("makeRecap:100.cmp1.1791000000:replace"));
   });
 
-  it("says in plain words when it cannot be made", async () => {
+  it("a recap that is busy is looked at again, not shown as an error", async () => {
     const api = mockApi("table");
     api.makeRecap = async () => {
-      throw new ApiError("no-transcript");
+      throw new ApiError("busy");
     };
-    render(<RecapMake api={api} campaignRef="100.cmp1" />);
-    fireEvent.click(await screen.findByRole("button", { name: w.make }));
-    expect((await screen.findByRole("alert")).textContent).toBe(w.errors["no-transcript"]);
+    await open("100.cmp1", api);
+    fireEvent.click(screen.getByRole("button", { name: w.make }));
+    await waitFor(() => expect(api.calls.filter((c) => c.startsWith("pastSessions")).length).toBe(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says in plain words when the transcript is gone", async () => {
+    const api = mockApi("table");
+    api.makeRecap = async () => {
+      throw new ApiError("no-lines");
+    };
+    await open("100.cmp1", api);
+    fireEvent.click(screen.getByRole("button", { name: w.make }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.errors["no-lines"]);
   });
 });
 
 describe("adding a recap someone wrote", () => {
-  async function fill(extra?: () => void) {
-    fireEvent.click(screen.getAllByRole("button", { name: w.add })[1]!); // the session with no recap
+  async function fill(index = 2, link?: string) {
+    fireEvent.click(screen.getAllByRole("button", { name: w.add })[index]!);
     const form = await screen.findByRole("heading", { name: w.form.heading });
     expect(document.activeElement).toBe(form);
-    fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "The party crossed the river." } });
+    if (link === undefined) {
+      fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "The party crossed the river." } });
+    } else {
+      fireEvent.click(screen.getByLabelText(w.form.link));
+      fireEvent.input(screen.getByLabelText(rx(w.form.link_)), { target: { value: link } });
+    }
     fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
-    extra?.();
   }
 
-  it("asks for the right to use it the first time, and sends it with the recap", async () => {
+  it("shows no right-to-use box until the API asks for it, then sends it with the recap", async () => {
+    const api = await open();
+    await fill(1); // session 3: no recap yet
+    expect(screen.queryByLabelText(rx(w.form.right))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.errors["needs-rights"]);
+    expect(api.calls).toContain("addRecap:100.cmp1:1790000000:text");
+    fireEvent.click(screen.getByLabelText(rx(w.form.right)));
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    expect(await screen.findByText(w.stage["queued"] as string)).toBeTruthy();
+    expect(api.calls).toContain("addRecap:100.cmp1:1790000000:text:rights");
+  });
+
+  it("does not need the box again once the API has been told", async () => {
     const api = await open();
     await fill();
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-    expect((await screen.findByRole("alert")).textContent).toBe(w.errors["right-not-confirmed"]);
-    expect(api.calls.some((c) => c.startsWith("addRecap"))).toBe(false);
+    await screen.findByRole("alert");
     fireEvent.click(screen.getByLabelText(rx(w.form.right)));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-    expect(await screen.findByText(w.stage["writing"] as string)).toBeTruthy();
-    expect(api.calls).toContain("addRecap:100.cmp1:1790000000:text");
-  });
-
-  it("does not ask again once it was given", async () => {
-    const api = await open();
-    await fill(() => fireEvent.click(screen.getByLabelText(rx(w.form.right))));
-    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-    await screen.findByText(w.stage["writing"] as string);
+    await screen.findByText(w.stage["queued"] as string);
     cleanup();
     render(<RecapMake api={api} campaignRef="100.cmp1" />);
     await screen.findByRole("heading", { name: w.heading });
-    fireEvent.click(screen.getAllByRole("button", { name: w.add })[2]!);
+    fireEvent.click(screen.getAllByRole("button", { name: w.add })[3]!);
     await screen.findByRole("heading", { name: w.form.heading });
-    expect(screen.queryByLabelText(rx(w.form.right))).toBeNull();
+    fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Another recap." } });
+    fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    await waitFor(() => expect(api.calls.filter((c) => c.startsWith("addRecap")).length).toBe(3));
+    expect(screen.queryByLabelText(rx(w.form.right))).toBeNull(); // (the fresh page asks the API again; the mock now agrees)
   });
 
-  it("asks before replacing a recap that is there", async () => {
+  it("asks before replacing a recap that is there, and Keep is a clean cancel", async () => {
     const api = await open();
-    fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!); // the approved one
+    await fill(0);
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    await screen.findByRole("alert"); // needs rights first
+    fireEvent.click(screen.getByLabelText(rx(w.form.right)));
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.keep }));
+    expect(screen.queryByRole("heading", { name: w.form.heading })).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!);
     await screen.findByRole("heading", { name: w.form.heading });
     fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
     fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
     fireEvent.click(screen.getByLabelText(rx(w.form.right)));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-    expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: w.yesReplace }));
-    await waitFor(() => expect(api.calls).toContain("addRecap:100.cmp1:1791000000:text:replace"));
+    fireEvent.click(await screen.findByRole("button", { name: w.yesReplace }));
+    await waitFor(() => expect(api.calls).toContain("addRecap:100.cmp1:1791000000:text:replace:rights"));
   });
 
-  it("says when a Google Doc cannot be read", async () => {
-    await open();
-    fireEvent.click(screen.getAllByRole("button", { name: w.add })[1]!);
-    await screen.findByRole("heading", { name: w.form.heading });
-    fireEvent.click(screen.getByLabelText(w.form.link));
-    fireEvent.input(screen.getByLabelText(rx(w.form.link_)), { target: { value: "https://docs.example.com/private" } });
-    fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+  it("sends a Google Doc link as a link, and says when it is not one or is not shared", async () => {
+    const api = await open();
+    await fill(2, "https://example.com/elsewhere");
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    await screen.findByRole("alert"); // needs rights
     fireEvent.click(screen.getByLabelText(rx(w.form.right)));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-    expect((await screen.findByRole("alert")).textContent).toBe(w.errors["link-private"]);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["not-a-google-doc"]));
+    fireEvent.input(screen.getByLabelText(rx(w.form.link_)), { target: { value: "https://docs.google.com/private" } });
+    fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["doc-not-shared"]));
+    expect(api.calls.some((c) => c.includes(":link"))).toBe(true);
+  });
+});
+
+describe("every code the routes answer, in plain words", () => {
+  const codes: ApiErrorKind[] = ["no-lines", "busy", "not-in-plan", "too-soon", "bad-text", "too-big", "not-a-google-doc", "doc-not-shared", "doc-unreachable", "doc-too-big", "needs-rights", "not-allowed", "network", "server"];
+
+  it.each(codes)("%s has words", (kind) => {
+    expect(w.errors[kind]).toBeTruthy();
+    expect(w.errors[kind]).not.toMatch(/_|\bAPI\b|\b4\d\d\b/);
+  });
+
+  it("an unknown code gets the general sentence, never the code", async () => {
+    const api = mockApi("table");
+    api.makeRecap = async () => {
+      throw new ApiError("bad-page"); // (a kind this page has no words for)
+    };
+    await open("100.cmp1", api);
+    fireEvent.click(screen.getByRole("button", { name: w.make }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.errors["server"]);
+  });
+});
+
+describe("the real calls", () => {
+  function recorded(status: number, body: unknown) {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const api = httpApi("https://api.example", (async (url: string, init: RequestInit) => {
+      seen.push({ url, init });
+      return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch);
+    return { api, seen };
+  }
+
+  it("make it again posts {replace} to /me/recaps/{ref}/again", async () => {
+    const { api, seen } = recorded(200, { ref: "100.cmp1.5", state: "queued", working: true });
+    const got = await api.makeRecap!("100.cmp1.5", true);
+    expect(seen[0]!.url).toBe("https://api.example/me/recaps/100.cmp1.5/again");
+    expect(JSON.parse(String(seen[0]!.init.body))).toEqual({ replace: true });
+    expect(got.ref).toBe("100.cmp1.5");
+  });
+
+  it("add posts the body to /me/campaigns/{ref}/recaps/upload", async () => {
+    const { api, seen } = recorded(200, { ref: "100.cmp1.7", state: "ready", writtenBy: "Maren" });
+    await api.addRecap!("100.cmp1", { session: 7, writtenBy: "Maren", text: "x", rights: true });
+    expect(seen[0]!.url).toBe("https://api.example/me/campaigns/100.cmp1/recaps/upload");
+    expect(JSON.parse(String(seen[0]!.init.body))).toEqual({ session: 7, writtenBy: "Maren", text: "x", rights: true });
+  });
+
+  it.each([
+    [409, "needs_confirm", "needs-confirm"],
+    [409, "busy", "busy"],
+    [409, "no_lines", "no-lines"],
+    [409, "needs_rights", "needs-rights"],
+    [422, "not_a_google_doc", "not-a-google-doc"],
+    [422, "doc_not_shared", "doc-not-shared"],
+    [422, "doc_unreachable", "doc-unreachable"],
+    [413, "doc_too_big", "doc-too-big"],
+    [413, "too_big", "too-big"],
+    [422, "bad_text", "bad-text"],
+    [429, "too_soon", "too-soon"],
+  ])("%i %s reads as %s", async (status, code, kind) => {
+    const { api } = recorded(status, { error: code });
+    await expect(api.makeRecap!("100.cmp1.5", false)).rejects.toMatchObject({ kind });
+    await expect(api.addRecap!("100.cmp1", { session: 7, writtenBy: "M", text: "x" })).rejects.toMatchObject({ kind });
   });
 });
 
@@ -155,13 +248,15 @@ describe("a recap that is already being made", () => {
     const now = Math.floor(Date.now() / 1000);
     let looks = 0; // the first look finds it being made; after it failed, the list says so
     api.pastSessions = async () => ({
-      rightConfirmed: true,
       sessions: [
         {
+          ref: "100.cmp1.1790000000",
           sessionAt: 1790000000,
           sessionNumber: 3,
           sessionSeconds: 7200,
-          recap: { ref: "mock.working.1", state: looks++ === 0 ? "working" : "failed", status: "draft", held: false, approved: false },
+          hasTranscript: true,
+          held: false,
+          recap: { state: looks++ === 0 ? "prose" : "failed", status: "draft", working: looks === 1, approved: false, writtenBy: null, canMakeAgain: true },
         },
       ],
     });
@@ -171,7 +266,7 @@ describe("a recap that is already being made", () => {
       working: false,
       state: "failed",
       error: "",
-      progress: { stage: "writing", startedAt: now, updatedAt: now, serverNow: now, state: "failed", reason: "recap_failed" },
+      progress: { stage: "prose", startedAt: now, updatedAt: now, serverNow: now, state: "failed", reason: "recap_failed" },
     });
     render(<RecapMake api={api} campaignRef="100.cmp1" />);
     expect(await screen.findByText(w.failedReason["recap_failed"] as string)).toBeTruthy();
