@@ -21,7 +21,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.me import build_me
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 BOB = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
@@ -52,7 +52,9 @@ class Recording(DatabaseTest):
             clock=lambda: self.now,
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         await self.sign_in(self.client)
 
@@ -115,7 +117,7 @@ class Recording(DatabaseTest):
         self.assertEqual(plain.status_code, 403)
         self.assertTrue(await self.still_agreed(THURSDAY.id, ALICE.id))
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as stranger:
             out = await stranger.post(f"/me/recording/{THURSDAY.id}/stop", headers=HEADERS)
         self.assertEqual(out.status_code, 401)

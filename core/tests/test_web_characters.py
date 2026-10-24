@@ -23,7 +23,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.export import order_sheet_rows, read_sheet_rows
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, GORRAK, QUILLON, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_role import ensure_web_role, web_url
 
 BOB = DiscordUser(id=2002, name="Quillon", email="quillon@example.com")
@@ -183,7 +183,9 @@ class Route(DatabaseTest):
             clock=lambda: 1_800_000_000,
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as client:
             self.assertEqual((await client.get("/me/characters")).status_code, 401)
             start = await client.get("/auth/discord/start")

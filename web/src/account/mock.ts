@@ -22,6 +22,7 @@ import type {
   Offer,
   Person,
   CampaignName,
+  PastSession,
   Recap,
   RecapChoices,
   RecordingEntry,
@@ -29,6 +30,7 @@ import type {
   TranscriptVersion,
   WebEdge,
   WebGraph,
+  WebGroup,
   WebLink,
   WebLinkChange,
   WebNode,
@@ -522,7 +524,7 @@ interface WebState {
   nextLink: number;
 }
 
-function startWeb(big: boolean): WebState {
+function startWeb(big: boolean, lonely = false): WebState {
   const base = startNames();
   const nodes: WebNode[] = base.map((n) => ({ id: n.id, name: n.name, kind: n.kind, secret: n.secret }));
   if (big) {
@@ -562,6 +564,19 @@ function startWeb(big: boolean): WebState {
   // The first the party is wrong about (full view says so); the second is only a hunch.
   if (plain[0]) plain[0].belief = { confidence: 0.6, status: "Party theory", contradicted: true };
   if (plain[1]) plain[1].belief = { confidence: 0.3, status: "Accusation" };
+  // A young campaign (#2632): most names have no connection yet, and a second small group stands apart.
+  if (lonely) {
+    const extra: WebNode[] = [
+      { id: "lone-mill", name: "Old Mill", kind: "place", secret: false },
+      { id: "lone-tree", name: "Hollow Tree", kind: "place", secret: false },
+      { id: "lone-venn", name: "Brother Venn", kind: "npc", secret: false },
+      { id: "lone-wardens", name: "The Wardens", kind: "group", secret: false },
+      { id: "pair-brask", name: "Brask", kind: "npc", secret: false },
+      { id: "pair-ford", name: "Tolle Ford", kind: "place", secret: false },
+    ];
+    nodes.push(...extra);
+    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "ab" });
+  }
   return { nodes, links, nextLink: links.length + 1 };
 }
 
@@ -603,7 +618,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const webs = new Map<string, WebState>();
   const web = (ref: string): WebState => {
     let found = webs.get(ref);
-    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref))));
+    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
     return found;
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
@@ -721,6 +736,31 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
+  let rightGiven = false; // the API asked once for the right to use text someone else wrote (#2609)
+  // Recaps made or added on the past-sessions list, by the session's start time. The pretend sessions: 4 has
+  // an approved recap, 3 has none, 2's recap failed, 1 has no transcript kept.
+  const made = new Map<number, string>();
+  const startMade = (sessionAt: number, writtenBy?: string): Recap => {
+    const ref = `100.cmp1.${sessionAt}`;
+    const base = recaps[0]!;
+    const now = Math.floor(Date.now() / 1000);
+    const next: Recap = {
+      ...base,
+      ref,
+      sessionAt,
+      title: "A made recap",
+      working: true,
+      state: "queued",
+      restartedAt: now,
+      serverNow: now,
+      writtenBy: writtenBy ?? null,
+      uploadedAt: writtenBy ? now : 0,
+    };
+    recaps.push(next);
+    writing.set(ref, 2);
+    made.set(sessionAt, ref);
+    return { ...next };
+  };
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const fixLooks = new Map<string, number>();
   const voiceLooks = new Map<string, { looks: number; size: number }>();
@@ -731,6 +771,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const settle = (r: Recap): void => {
     writing.delete(r.ref);
     Object.assign(r, { working: false, state: "ready", canTryAgain: r.status === "draft" && r.triesLeft > 0 });
+    if (r.progress) r.progress = { ...r.progress, state: "done" };
   };
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -757,6 +798,54 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         else writing.set(ref, left - 1);
       }
       return { ...r };
+    },
+    // Recaps for past sessions (#2610): the shapes of `GET past-sessions`, `POST /me/recaps/{ref}/again` and
+    // `POST /me/campaigns/{ref}/recaps/upload`, and their codes (#2613, #2614).
+    async pastSessions(campaignRef) {
+      calls.push(`pastSessions:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const ref = (at: number): string => `${campaignRef}.${at}`;
+      const ready = (approved: boolean): NonNullable<PastSession["recap"]> => ({
+        state: "ready", status: "draft", working: false, approved, writtenBy: null, canMakeAgain: true,
+      });
+      const mine = (at: number): PastSession["recap"] => {
+        const r = recaps.find((x) => x.ref === made.get(at));
+        return r
+          ? { state: r.state, status: "draft", working: r.working, approved: false, writtenBy: r.writtenBy ?? null, canMakeAgain: !r.working }
+          : null;
+      };
+      return {
+        sessions: [
+          { ref: ref(1791000000), sessionAt: 1791000000, sessionNumber: 4, sessionSeconds: 9300, hasTranscript: true, held: false, recap: ready(true) },
+          { ref: ref(1790000000), sessionAt: 1790000000, sessionNumber: 3, sessionSeconds: 7200, hasTranscript: true, held: false, recap: mine(1790000000) },
+          { ref: ref(1789000000), sessionAt: 1789000000, sessionNumber: 2, sessionSeconds: 5400, hasTranscript: true, held: false,
+            recap: { state: "failed", status: "draft", working: false, approved: false, writtenBy: null, canMakeAgain: true } },
+          { ref: ref(1788000000), sessionAt: 1788000000, sessionNumber: 1, sessionSeconds: 3600, hasTranscript: false, held: false, recap: null },
+        ],
+      };
+    },
+    async makeRecap(recapRef, replace) {
+      calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
+      await reachable();
+      signedIn();
+      const at = Number(recapRef.split(".").pop());
+      if (at === 1788000000) throw new ApiError("no-lines");
+      if (at === 1791000000 && !replace) throw new ApiError("needs-confirm");
+      if (made.has(at) && recaps.find((x) => x.ref === made.get(at))?.working) throw new ApiError("busy");
+      return startMade(at);
+    },
+    async addRecap(campaignRef, input) {
+      calls.push(`addRecap:${campaignRef}:${input.session}:${input.link ? "link" : "text"}${input.replace ? ":replace" : ""}${input.rights ? ":rights" : ""}`);
+      await reachable();
+      signedIn();
+      if (!rightGiven && !input.rights) throw new ApiError("needs-rights");
+      if (input.link && input.link.includes("private")) throw new ApiError("doc-not-shared");
+      if (input.link && !input.link.startsWith("https://docs.google.com/")) throw new ApiError("not-a-google-doc");
+      if (input.session === 1791000000 && !input.replace) throw new ApiError("needs-confirm");
+      rightGiven = true;
+      return startMade(input.session, input.writtenBy);
     },
     async saveRecap(ref, summary, housekeeping) {
       calls.push(`saveRecap:${ref}`);
@@ -972,6 +1061,60 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       return webGraphOf(ref, query);
+    },
+    // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
+    async webOverview(ref, query) {
+      calls.push(`webOverview:${ref}${query.view ? `:view=${query.view}` : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const dm = view === "dm";
+      const visibility = webVisibility(ref);
+      if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
+      const all = dm ? query.view !== "players" : query.view === "full";
+      const state = web(ref);
+      const seen = state.nodes.filter((n) => all || (!n.secret && n.revealed !== false));
+      const ids = new Set(seen.map((n) => n.id));
+      const usable = state.links.filter(
+        (l) => ids.has(l.a) && ids.has(l.b) && (all || (!l.secret && l.revealed !== false)),
+      );
+      const degree = new Map<string, number>(seen.map((n) => [n.id, 0]));
+      for (const l of usable) {
+        degree.set(l.a, (degree.get(l.a) ?? 0) + 1);
+        degree.set(l.b, (degree.get(l.b) ?? 0) + 1);
+      }
+      const nodeOf = (n: WebNode): WebNode =>
+        all ? { ...n, revealed: n.revealed !== false } : { id: n.id, name: n.name, kind: n.kind };
+      const left = new Set(seen.filter((n) => (degree.get(n.id) ?? 0) > 0).map((n) => n.id));
+      const groups: WebGroup[] = [];
+      while (left.size > 0) {
+        const start = [...left][0]!;
+        const part = new Set([start]);
+        const queue = [start];
+        for (let i = 0; i < queue.length; i += 1) {
+          for (const l of usable) {
+            const there = l.a === queue[i] ? l.b : l.b === queue[i] ? l.a : null;
+            if (there !== null && !part.has(there)) {
+              part.add(there);
+              queue.push(there);
+            }
+          }
+        }
+        part.forEach((id) => left.delete(id));
+        const centre = [...part].sort((x, y) => (degree.get(y) ?? 0) - (degree.get(x) ?? 0))[0]!;
+        groups.push({ center: centre, centerName: state.nodes.find((n) => n.id === centre)!.name, size: part.size });
+      }
+      groups.sort((x, y) => y.size - x.size);
+      const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
+      return {
+        counts: { names: seen.length, connections: usable.length, connectedNames: seen.length - tray.length, notConnected: tray.length },
+        tray,
+        groups,
+        truncated: false,
+        canEdit: dm && all,
+        view: all ? "full" : "players",
+      };
     },
     async webSize(ref, query: WebQuery) {
       calls.push(`webSize:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
