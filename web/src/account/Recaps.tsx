@@ -296,12 +296,15 @@ function AudioPanel({
   const remakeOn = RECAP_REMAKE_LIVE && RECAP_AUDIO_LIVE;
   const canAsk = !!audio?.canAskAgain;
   useEffect(() => {
-    setRemake(null);
-    if (!remakeOn || !canAsk || !api.recapAudioRemake) return;
+    // The last answer stays while a new one is fetched, so the button's name doesn't flicker.
+    if (!remakeOn || !canAsk || !api.recapAudioRemake) {
+      setRemake(null);
+      return;
+    }
     let live = true;
     api.recapAudioRemake(recap.ref).then(
       (found) => live && setRemake(found),
-      () => live && setRemake(null),
+      () => live && setRemake(null), // (a failed look leaves the old button and words)
     );
     return () => {
       live = false;
@@ -359,7 +362,7 @@ function AudioPanel({
     setNote(null);
     try {
       onRecap(await api.askRecapAudioAgain(recap.ref));
-      setNote({ ok: true, message: panelWords.asked });
+      setNote({ ok: true, message: remakeOn ? remakeWords.asked : panelWords.asked });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setNote({
@@ -387,7 +390,9 @@ function AudioPanel({
         ? remakeWords.voice(remake.changed, remake.total)
         : remake.how === "same"
           ? remakeWords.same
-          : (remakeWords.all[remake.why] ?? remakeWords.allFallback);
+          : Object.hasOwn(remakeWords.all, remake.why)
+            ? (remakeWords.all[remake.why] as string)
+            : remakeWords.allFallback;
   const lastLine =
     !remakeOn || audio.state !== "ready" || !audio.current
       ? null
@@ -438,7 +443,11 @@ function AudioPanel({
           stage={stageWords(remakeWords.stage, audio.progress.stage)}
           done={audio.progress.done}
           total={audio.progress.total}
-          unit={audio.progress.unit ? remakeWords.unit[audio.progress.unit] : undefined}
+          unit={
+            audio.progress.unit && Object.hasOwn(remakeWords.unit, audio.progress.unit)
+              ? remakeWords.unit[audio.progress.unit]
+              : undefined
+          }
           startedAt={audio.progress.startedAt}
           updatedAt={audio.progress.updatedAt}
           serverNow={audio.progress.serverNow}

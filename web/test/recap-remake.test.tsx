@@ -91,7 +91,7 @@ describe("what would be made again", () => {
     const api = withAudio(stale, { how: "voice", why: "", changed: 1, total: 3 });
     await open(api);
     expect(await screen.findByText(w.voice(1, 3))).toBeTruthy();
-    expect(w.voice(1, 3)).toContain("1 of 3 paragraphs");
+    expect(w.voice(1, 3)).toContain("1 changed paragraph (of 3)");
     fireEvent.click(screen.getByRole("button", { name: w.voiceButton }));
     await waitFor(() => expect(api.calls).toContain(`askRecapAudioAgain:${draft.ref}`));
   });
@@ -106,6 +106,12 @@ describe("what would be made again", () => {
     await open(withAudio(stale, { how: "all", why, changed: 3, total: 3 }));
     expect(await screen.findByText(words as string)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.allButton })).toBeTruthy();
+  });
+
+  it("a reason that is also a property name gets the general sentence", async () => {
+    live.on = true;
+    await open(withAudio(stale, { how: "all", why: "constructor" as never, changed: 3, total: 3 }));
+    expect(await screen.findByText(w.allFallback)).toBeTruthy();
   });
 
   it("a reason the page doesn't know gets the general sentence, never the code", async () => {
@@ -127,9 +133,13 @@ describe("what would be made again", () => {
     "an API that can't say (%s) leaves the old button and words",
     async (kind) => {
       live.on = true;
-      await open(withAudio(stale, kind));
+      const api = withAudio(stale, kind);
+      await open(api);
       expect(await screen.findByRole("button", { name: "Make the audio again" })).toBeTruthy();
-      expect(screen.queryByText(/is made again/)).toBeNull();
+      // give the lookup time to settle before saying nothing was added
+      await new Promise((r) => setTimeout(r, 30));
+      expect(screen.queryByText(/will be made again|Only the voice/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Make the audio again" })).toBeTruthy();
     },
   );
 
@@ -204,7 +214,7 @@ describe("Fix a name everywhere", () => {
     live.on = on;
     render(<Recaps api={mockApi("table")} path={path} />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    return screen.findByLabelText(/Recap|recap/, { selector: "textarea" }).catch(() => null);
+    await waitFor(() => expect(document.getElementById("recap-text")).not.toBeNull());
   };
 
   it("is not in the editor while it is off", async () => {
@@ -246,6 +256,13 @@ describe("Fix a name everywhere", () => {
     });
     expect(replaceName("a.b a.b", "a.b", "x$&y")).toEqual({ text: "x$&y x$&y", times: 2 });
     expect(replaceName("nothing", "", "x")).toEqual({ text: "nothing", times: 0 });
+    // the same spelling (capitals aside) changes nothing
+    expect(replaceName("Mira", "Mira", "Mira")).toEqual({ text: "Mira", times: 0 });
+    // a name inside a cue is left alone, so the mood doesn't change
+    expect(replaceName("Mira ran 《Mira's theme》 and ((Mira pauses)) Mira", "Mira", "Mara")).toEqual({
+      text: "Mara ran 《Mira's theme》 and ((Mira pauses)) Mara",
+      times: 2,
+    });
   });
 });
 

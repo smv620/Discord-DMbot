@@ -27,7 +27,7 @@ export const panelWords = {
   stale:
     "The audio was made from the earlier text. Make it again after you save.",
   stalePosted:
-    "This audio was made before a name's spelling was fixed. Press Make the audio again to update it on this page. The message already in Discord keeps the old audio.",
+    "This audio was made before a name's spelling was fixed. Press the button below to update it on this page. The message already in Discord keeps the old audio.",
   audioOff: "Audio is switched off for now, so it can't be made. Try again later.",
   again: "Make the audio again",
   asked: "Making the audio again. This page shows it when it is ready.",
@@ -40,20 +40,20 @@ export const panelWords = {
 // in plain words: what is made again, and why when it is everything. Counts and codes only.
 export const remakeWords = {
   voiceButton: "Remake the voice",
-  allButton: "Remake the audio",
+  allButton: "Remake voice and music",
   voice: (changed: number, total: number): string =>
-    `Only the voice is made again: ${changed} of ${total} ${total === 1 ? "paragraph" : "paragraphs"} changed. The music stays as it is.`,
+    `Only the voice will be made again, for the ${changed} changed ${changed === 1 ? "paragraph" : "paragraphs"} (of ${total}). The music stays.`,
   all: {
-    paragraphs: "You added or removed a paragraph, so the music is made again too.",
-    moods: "You changed where the music changes mood or where the narrator pauses, so the music is made again too.",
-    size: "Your changes moved the story enough that the music is made again too.",
-    no_parts: "The earlier voice wasn't kept, so the voice and the music are made again.",
+    paragraphs: "You added or removed a paragraph, so the voice and the music will both be made again.",
+    moods: "You moved or changed a music or pause tag, so the voice and the music will both be made again.",
+    size: "You changed a lot of the text, so the voice and the music will both be made again to fit.",
+    no_parts: "The old voice is no longer stored, so the voice and the music will both be made again.",
   } as Record<string, string>,
-  allFallback: "The voice and the music are made again.",
-  same: "The words the narrator reads haven't changed, so there is nothing to remake.",
-  lastVoice: "The last time, only the voice was made again. The music was kept.",
-  lastAll: "The last time, the voice and the music were both made again.",
-  lookFailed: "We couldn't check what would be remade. You can still press Make the audio again.",
+  allFallback: "The voice and the music will both be made again.",
+  same: "The words the narrator reads haven't changed, so pressing the button makes nothing new.",
+  lastVoice: "Last remake: voice only. The music was kept.",
+  lastAll: "Last remake: voice and music.",
+  asked: "Started. The step, how far it has got and when it last moved show here.",
   stage: {
     audio_voice: "Speaking the paragraphs",
     audio_music: "Making the music",
@@ -66,12 +66,11 @@ export const remakeWords = {
 // and every use in the text box is replaced. Nothing is saved until Save; the names list is not touched.
 export const fixNameWords = {
   heading: "Fix a name everywhere",
-  wrongLabel: "Spelled wrong",
-  rightLabel: "Should be",
+  wrongLabel: "Wrong spelling",
+  rightLabel: "Right spelling",
   button: "Replace everywhere",
-  none: (wrong: string): string => `"${wrong}" isn't in the text.`,
+  none: (wrong: string): string => `"${wrong}" isn't in the text. It must be the whole word; capitals don't matter.`,
   done: (wrong: string, right: string, times: number): string =>
-    `Replaced "${wrong}" with "${right}" ${times} ${times === 1 ? "time" : "times"}. Press Save to keep it.`,
-  note: "This changes the text in the box only. Save it to keep it. The names list isn't changed.",
+    `Replaced "${wrong}" with "${right}" ${times} ${times === 1 ? "time" : "times"}.`,
+  note: "Changes the text in the box only. Nothing is kept until you press Save. The names list stays as it is.",
 };
-

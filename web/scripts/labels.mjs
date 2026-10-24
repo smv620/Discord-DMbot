@@ -137,7 +137,7 @@ export const siteButtons = [
   "Turn the link off",
   "Make a new link",
   "Remake the voice", // the recap page's audio part (#2630), on the website, not in Discord
-  "Remake the audio",
+  "Remake voice and music",
   "Replace everywhere", // "Fix a name everywhere" in the recap editor (#2630)
   "Save how to say it", // the Names page row editor (#2317), on the website, not in Discord
 ];

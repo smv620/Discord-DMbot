@@ -12,7 +12,20 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Replaces every whole-word use of `wrong` in `text`; returns the new text and how many were replaced. */
 export function replaceName(text: string, wrong: string, right: string): { text: string; times: number } {
   const needle = wrong.trim();
-  if (needle === "") return { text, times: 0 };
+  if (needle === "" || needle === right.trim()) return { text, times: 0 };
+  // Cues (《mood》 and ((pause))) are not the story: a name inside one is left alone, or the music's mood
+  // would change and the whole audio be made again for a spelling fix.
+  if (/(《[^》]*》|\(\([^)]*\)\))/.test(text)) {
+    let times = 0;
+    const parts = text.split(/(《[^》]*》|\(\([^)]*\)\))/);
+    const out = parts.map((part, i) => {
+      if (i % 2 === 1) return part; // (the odd parts are the cues the split kept)
+      const found = replaceName(part, wrong, right);
+      times += found.times;
+      return found.text;
+    });
+    return { text: out.join(""), times };
+  }
   // \b fails next to an apostrophe or a non-letter edge, so the edges are checked by hand.
   const pattern = new RegExp(`(^|[^\\p{L}\\p{N}_])(${escape(needle)})(?![\\p{L}\\p{N}_])`, "giu");
   let times = 0;
@@ -42,18 +55,22 @@ export default function RecapFixName({ text, onText }: { text: string; onText: (
     <fieldset class="panel">
       <legend>{words.heading}</legend>
       <label for="fix-name-wrong">{words.wrongLabel}</label>
-      <input id="fix-name-wrong" type="text" value={wrong} onInput={(e) => setWrong((e.target as HTMLInputElement).value)} />
+      <input id="fix-name-wrong" type="text" value={wrong} onInput={(e) => {
+          setWrong((e.target as HTMLInputElement).value);
+          setSaid(null);
+        }} />
       <label for="fix-name-right">{words.rightLabel}</label>
-      <input id="fix-name-right" type="text" value={right} onInput={(e) => setRight((e.target as HTMLInputElement).value)} />
+      <input id="fix-name-right" type="text" value={right} onInput={(e) => {
+          setRight((e.target as HTMLInputElement).value);
+          setSaid(null);
+        }} />
       <p class="muted small">{words.note}</p>
       <button type="button" class="button secondary" disabled={wrong.trim() === "" || right.trim() === ""} onClick={run}>
         {words.button}
       </button>
-      {said && (
-        <p role="status" class="small">
-          {said}
-        </p>
-      )}
+      <p role="status" class="small">
+        {said}
+      </p>
     </fieldset>
   );
 }

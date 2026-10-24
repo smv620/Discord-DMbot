@@ -50,7 +50,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Fix a word, remake only the voice",
-    text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words and save, then approve the new text. Under the player the page says what Make the audio again will do. If you changed a few words, it says Remake the voice: only the paragraphs you changed are spoken again, and the music stays. If you added or removed a paragraph, or changed where the music changes mood, it says Remake the audio and tells you why, because the music is made again too. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are DMbot's and can't be edited. In the editor, Fix a name everywhere replaces every use of a spelling in the text box at once. Press Save to keep it.",
+    text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words, save, and approve the new text. Under the player, a line tells you what the button will do. After a small change it says Remake the voice: only the paragraphs you changed are spoken again, and the music stays. After a bigger change it says Remake voice and music, and why. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are fixed, so they can't be edited. DMbot never changes your text on its own. In the editor, Fix a name everywhere replaces every use of a spelling in the box. Nothing is kept until you press Save.",
   },
   {
     audience: "gameMaster",
