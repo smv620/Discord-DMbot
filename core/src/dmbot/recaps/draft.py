@@ -32,7 +32,7 @@ from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
-from dmbot.memory.models import name_key
+from dmbot.memory.models import spelling_key
 from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
@@ -649,11 +649,13 @@ def prose_message(
     ending: Sequence[Beat] | None = None,
     transcript: str = "",
     guide: str = "",
+    apart: Sequence[tuple[str, str]] = (),
 ) -> str:
     """`transcript` and `guide` (#2590, RECAP_WRITER_READS=transcript): the writer reads the
     session's cleaned transcript and PlotBot's guide instead of the beat sheet, which is in the
-    guide as its checklist. `beats`: the ones the writer is shown (at most a few for a short
-    session). `ending`: the
+    guide as its checklist. `apart`: pairs of names that have a secret connection (#2591): they
+    may share a scene, but the recap must not state or hint at a link between them. `beats`: the
+    ones the writer is shown (at most a few for a short session). `ending`: the
     session's real last beats, the pair the ending check looks for (`check_prose`); the shown beats
     are a pick, so their last two are not the session's last two (the second-to-last of a pick is
     any beat of the middle), and a writer told to end there ends on the wrong beat."""
@@ -678,6 +680,13 @@ def prose_message(
         )
     if names:
         parts.append("<names>\n" + "; ".join(sorted(names)[:200]) + "\n</names>")
+    if apart:
+        pairs = "; ".join(f"{quoted(a)} and {quoted(b)}" for a, b in apart[:50])
+        parts.append(
+            "Each pair of names in <apart> has a connection the Dungeon Master keeps secret. They "
+            "may be in the same scene, but never say or hint that they are connected, and never "
+            f"explain how they know each other.\n<apart>\n{pairs}\n</apart>"
+        )
     parts.append(f"Game day: {day}." if day else "The game day is not known: do not mention a day.")
     return "\n".join(parts)
 
@@ -1050,10 +1059,12 @@ def states_secret_tie(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str
     which, so the retry message carries no name."""
     if not ties:
         return False
-    # ("Veil's daughter" names Veil: the possessive goes before names are compared)
-    sentences = [f" {name_key(re.sub(r"['’]s\b", '', x))} " for x in _sentences_of(text)]
+    # (spelling_key drops a possessive on both sides: "Veil's daughter" names Veil, and an end
+    # called "Dragon's Rest" meets "at Dragon's Rest")
+    sentences = [f" {spelling_key(x)} " for x in _sentences_of(text)]
     for subject, obj in ties:
-        a, b = {name_key(n) for n in subject}, {name_key(n) for n in obj}
+        a = {k for k in (spelling_key(n) for n in subject) if k}
+        b = {k for k in (spelling_key(n) for n in obj) if k}
         a, b = a - b, b - a  # (a name both ends have says nothing about either)
         if not a or not b:
             continue
@@ -1061,6 +1072,45 @@ def states_secret_tie(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str
             if any(f" {k} " in sentence for k in a) and any(f" {k} " in sentence for k in b):
                 return True
     return False
+
+
+def apart_pairs(
+    ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]], allowed: Collection[str]
+) -> list[tuple[str, str]]:
+    """The 🤫 relations as one name for each end, for the writer's instructions: only names the
+    recap may use (never a secret name), never the relation's words (#2591). A relation with an end
+    that has no usable name is left out: the writer cannot name it anyway."""
+    ok = set(allowed)
+    out: list[tuple[str, str]] = []
+    for subject, obj in ties:
+        a = next((n for n in subject if n in ok), None)
+        b = next((n for n in obj if n in ok), None)
+        if a is not None and b is not None and (a, b) not in out:
+            out.append((a, b))
+    return out
+
+
+def tie_notes(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]]) -> list[str]:
+    """Notes for the DM, one for each 🤫 relation whose two ends a sentence of `text` names
+    together (#2591): the sentence may or may not give the secret away, so this advises and never
+    refuses. The page it goes on is the DM's alone."""
+    sentences = [(s, f" {spelling_key(s)} ") for s in _sentences_of(text)]
+    notes: list[str] = []
+    for subject, obj in ties:
+        a = {spelling_key(n): n for n in subject if spelling_key(n)}
+        b = {spelling_key(n): n for n in obj if spelling_key(n)}
+        a = {k: v for k, v in a.items() if k not in b}
+        b = {k: v for k, v in b.items() if k not in a}
+        for _, flat in sentences:
+            left = next((v for k, v in a.items() if f" {k} " in flat), None)
+            right = next((v for k, v in b.items() if f" {k} " in flat), None)
+            if left is not None and right is not None:
+                notes.append(
+                    f"Check: a sentence names {left} and {right}, who have a secret connection. "
+                    "Make sure it doesn't give that away."
+                )
+                break
+    return list(dict.fromkeys(notes))
 
 
 def check_prose(
@@ -1078,12 +1128,13 @@ def check_prose(
     style: Collection[str] = (),
     corrections: Collection[str] = (),
     pcs: Collection[str] = (),
-    secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+    identity_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
-    `secret_ties`: the campaign's secret connections (every name of each end): a sentence naming
-    both ends is refused (`states_secret_tie`), though a secret name the table said aloud may be
-    used on its own (#2591).
+    `identity_ties`: a 🤫 spelling and its entry's public names: a sentence naming both says who is
+    who, so it is refused (`states_secret_tie`), though a secret name the table said aloud may be
+    used on its own (#2591). Relations between two names are not checked here: the writer is told
+    the pairs and the DM gets a note (`tie_notes`).
     `pcs`: the campaign's player characters, for the presence check (`presence_problems`).
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
     secret name, which may appear nowhere in the recap. `transcript`: the cleaned lines, only to
@@ -1150,10 +1201,10 @@ def check_prose(
         )
     if names_a_secret(" ".join([summary, *prose.music]), secret_names, allowed_names):
         problems.append("it names something the DM keeps secret: leave it out")
-    elif states_secret_tie(narration, secret_ties):
+    elif states_secret_tie(narration, identity_ties):
         problems.append(
-            "a sentence links two names in a way the DM keeps secret: write about each on its "
-            "own, or leave the link out"
+            "a sentence says which names are the same person or place: that is a secret, so use "
+            "only one of the two names in the recap"
         )
     elif refused and any(r in "".join(words(narration)) for r in refused):
         problems.append("a name is too like one the DM keeps secret: leave it out")

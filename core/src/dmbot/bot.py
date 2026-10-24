@@ -9335,14 +9335,19 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Recap: couldn't read the recanted secret names")
             return EVERY_NAME
 
-    async def _secret_ties(
+    async def _relation_ties(
         self, gid: int, cid: str
     ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
-        """The campaign's secret connections as pairs of name sets, for the draft check (#2591).
-        Never an empty answer on a failure: the recap is not written without them."""
+        """The campaign's 🤫 relations as pairs of name sets (#2591). The writer is told the pairs
+        (never the relation's words) and the DM gets a note on the sentence that names both. They
+        advise: if they can't be read the recap goes on without them, the DM decides."""
         if self.memory is None:
             return ()
-        found = await secret_connections(self.memory, gid, cid)
+        try:
+            found = await secret_connections(self.memory, gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't read the secret connections")
+            return ()
         return tuple((c.subject, c.object) for c in found)
 
     async def recap_secret_names(
@@ -9402,7 +9407,7 @@ class DMBot(commands.AutoShardedBot):
             notes=self.recap_notes,
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
-            secret_ties=await self._secret_ties(gid, cid),
+            relation_ties=await self._relation_ties(gid, cid),
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
