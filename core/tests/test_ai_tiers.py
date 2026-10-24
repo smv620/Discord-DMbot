@@ -465,9 +465,12 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
 
 class Timeouts(unittest.IsolatedAsyncioTestCase):
     async def test_the_slower_tiers_get_longer_to_answer(self) -> None:
-        self.assertEqual(ai_module.TIER_TIMEOUT_S[AIModelTier.FAST], ai_module.REQUEST_TIMEOUT_S)
+        # (a background answer may now be 16,000 tokens long, #2596; a table answer keeps 120 s)
+        self.assertEqual(ai_module.TIER_TIMEOUT_S[AIModelTier.FAST], ai_module.FAST_TIER_TIMEOUT_S)
         for tier in (AIModelTier.CAREFUL, AIModelTier.DEEP):
-            self.assertGreater(ai_module.TIER_TIMEOUT_S[tier], ai_module.REQUEST_TIMEOUT_S)
+            self.assertGreater(
+                ai_module.TIER_TIMEOUT_S[tier], ai_module.TIER_TIMEOUT_S[AIModelTier.FAST]
+            )
 
     async def test_a_request_that_takes_too_long_is_a_busy_error_not_a_hang(self) -> None:
         class Hangs(Service):
