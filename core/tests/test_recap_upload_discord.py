@@ -145,7 +145,7 @@ class Adding(Base):
         self.assertIsNone(await self.store.get(1, self.one.id, 700))
 
     async def test_a_recap_longer_than_a_form_holds_goes_in_whole_by_file(self) -> None:
-        interaction, send = talk(self.store, self.one)
+        interaction, _send = talk(self.store, self.one)
         long_text = ("The party walked on. " * 400).strip()  # 8,400 characters
         self.assertGreater(len(long_text), ru.FORM_MAX)
         await ru.submit(interaction, self.draft(text=long_text, rights=True))
