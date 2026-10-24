@@ -7,7 +7,6 @@ from dmbot.ai import Reply
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import (
     CONFIRMED,
-    GOD,
     NPC,
     PLAYER_CHARACTER,
     PROPOSED,
@@ -37,7 +36,7 @@ def lookup(*extra_entities: Entity, extra_aliases: tuple[Alias, ...] = ()) -> Ca
         person(HIRO, "Brother Hiro"),
         person(VANE, "The Baron"),
         person(CERRIC, "Cerric", PLAYER_CHARACTER),
-        person(AURIL, "Auril", GOD),
+        person(AURIL, "Auril", NPC),
         person(NEW, "Newcomer", NPC, PROPOSED),
         *extra_entities,
     )

@@ -344,7 +344,31 @@ Discord sign-in isn't set, because the API won't start without it):**
 
    Any other path gets an empty 404 from Cloudflare before it reaches DMbot. #2625 replaces this
    list with one route, `^/`, and a tested list of open paths in the code. Until dev1 deploys that,
-   a new public path needs its own route here.
+   a new public path needs its own route here (see the next paragraph for the change to one route).
+
+   **One route for the whole API (#2625; Supervisor's decision, 2026-10-24).** The routes above
+   (`^/admin…`, the Stripe, sign-in, `/me`, billing and support route, and `^/mail/inbound$`)
+   were the list of paths the outside world may reach, kept in the Cloudflare dashboard. That
+   list now lives in the code (`core/src/dmbot/web/public_paths.py`): a request that comes through
+   the tunnel to any other path gets the same empty 404 from the app itself, and a test fails
+   when a route has not been sorted. So the tunnel needs only **one** route. **Do this only after
+   dev1 has deployed this change and says so** (until then the old routes stay exactly as they
+   are, or the closed paths open up):
+   1. dev1 deploys, then runs `scripts/check-public-paths` from a computer outside the server.
+      Every line must say `ok`.
+   2. The owner adds one route as above (Subdomain `api`, Domain `getdmbot.com`, Service type
+      HTTP, URL `web-api:8080`) with the Path `^/` (copied exactly).
+   3. dev1 runs `scripts/check-public-paths` again. Every line must still say `ok`, and the three
+      "stays closed" lines (`/health`, `/personal`, a path that doesn't exist) must still be the
+      empty 404. If one of them isn't, the owner deletes the new route at once and tells dev1.
+   4. The owner removes the old routes one by one: every route in the table "The routes the tunnel
+      has today" except the new `^/` one. Nothing changes: the app now keeps what they kept.
+      dev1 then adds `^/` as the table's last row and removes the rows that are gone.
+   **Interim:** the owner added one route, Path `^/recap-audio/`, to `web-api:8080` on 2026-10-24,
+   so recap audio plays on the website until the single route is in. Don't ask for it again. It
+   is safe: each audio link is signed and expires.
+   A new public route is added in `public_paths.py` (with its reason) in the same change that
+   adds the route: no dashboard step.
 
 **You (the owner), on the server, once dev1 says the update is in:**
 

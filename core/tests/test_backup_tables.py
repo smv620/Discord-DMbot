@@ -17,6 +17,7 @@ from dmbot.bot import register_backup_sections
 from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.tables import SECTION_TABLES, backed_up
 from dmbot.memory.models import new_id
+from dmbot.recaps.approval import text_hash
 from tests.pg import DatabaseTest
 
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
@@ -195,6 +196,24 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " places) VALUES (%s, %s, %s, 1, 'a map', 'rooms', '[]'::json)",
                 (g, c, DM),
             ),
+            "recap_accepted": (
+                "INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version, text_hash,"
+                " title, summary, accepted_by, accepted_at) VALUES (%s, %s, 1, 1, %s, 'T', 'S',"
+                " %s, 1)",
+                (g, c, text_hash("T", "S"), DM),
+            ),
+            "plot_issues": (
+                "INSERT INTO plot_issues (guild_id, campaign_id, id, session_at, text_hash, kind,"
+                " level, sentence, sentence_text, reason, source_text, fine_key, created_at)"
+                " VALUES (%s, %s, repeat('a', 32), 1, repeat('b', 32), 'timeline', 'possible', 1, 'S', 'why', 'src', 'k',"
+                " 1)",
+                (g, c),
+            ),
+            "plot_fine": (
+                "INSERT INTO plot_fine (guild_id, campaign_id, fine_key, note, by_user, at)"
+                " VALUES (%s, %s, 'k', 'fine', %s, 1)",
+                (g, c, DM),
+            ),
             "recap_style_notes": (
                 "INSERT INTO recap_style_notes (guild_id, campaign_id, position, text, created_by,"
                 " created_at) VALUES (%s, %s, 1, 'Short', %s, 1)",
@@ -216,6 +235,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, 'house_rules', 'Theirs', 'Pat', 1,"
                 " '{\"rules\": []}'::jsonb, true, %s, 1)",
                 (g, c, "a" * 32, DM),
+            ),
+            "recap_upload_rights": (
+                "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
+                " VALUES (%s, %s, %s, 5)",
+                (g, c, DM),
             ),
             "transcript_sessions": (
                 "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, line_count)"

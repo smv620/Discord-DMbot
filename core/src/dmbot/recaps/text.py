@@ -12,6 +12,7 @@ from collections.abc import Collection
 from dmbot.secrets_match import WHOLE_NAME as WHOLE_NAME
 from dmbot.secrets_match import names_a_secret as names_a_secret
 from dmbot.secrets_match import secret_rule as secret_rule
+from dmbot.word_end import at_word_end as at_word_end  # (kept here for the recaps' callers)
 
 _CUE = re.compile(r"《[^《》]{1,60}》")
 _PERFORMANCE = re.compile(r"\(\([^()]{1,60}\)\)")
@@ -85,15 +86,3 @@ def is_known_name(name: str, allowed_names: Collection[str]) -> bool:
     """The name is one of the confirmed names (all its words are in one of them)."""
     mine = set(words(name))
     return bool(mine) and any(mine <= set(words(a)) for a in allowed_names)
-
-
-def at_word_end(text: str, limit: int) -> str:
-    """`text` shortened to at most `limit` characters at a word end, for a hard limit of a service
-    or of storage; the text itself when it fits. Never a reason to ask the AI again (#2597)."""
-    if len(text) <= limit:
-        return text
-    cut = text[:limit]
-    if text[limit].isspace():
-        return cut.rstrip()
-    head, _, _ = cut.rpartition(" ")
-    return (head or cut).rstrip()
