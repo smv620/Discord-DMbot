@@ -775,6 +775,47 @@ def _known(
     return known
 
 
+def respelled(
+    prose: Prose,
+    *,
+    beats: Sequence[Beat],
+    allowed_names: Collection[str],
+    secret_names: Collection[str],
+    previous: str = "",
+    setting: str | None = None,
+    transcript: str = "",
+    aliases: Mapping[str, str] | None = None,
+) -> tuple[Prose, tuple[str, ...]]:
+    """The prose with a character's misheard spelling put back to its name (#2573), and what is
+    too close to a secret name (#2591). Since #2628 the names of the transcript are settled by
+    PlotBot's name pass before the writer starts, so near misses are no longer respelled here:
+    the writer's text is changed only where a confirmed alias or said-as spelling stands for a
+    character. The near-secret detection stays: a word close to a secret name is refused, never
+    put in, so the guard against a secret reaching a recap is the one it always was."""
+    from dmbot.recaps.unknown_names import canonical, respell
+
+    names = {*allowed_names, *(w for b in beats for w in b.who)}
+    plain = ordinary(transcript)
+    summary = prose.summary
+    if aliases:
+        summary = canonical(
+            summary,
+            aliases,
+            names=sorted(allowed_names),
+            secret_names=secret_names,
+            ordinary_words=plain,
+            sound_names=[*aliases.values()],
+        )
+    done = respell(
+        summary,
+        names=sorted(names),
+        secret_names=secret_names,
+        known_words=_known(beats, allowed_names, previous, setting),
+        ordinary_words=_english() | set(_LOWER_WORD.findall(transcript)),
+    )
+    return Prose(summary, prose.music), done.refused  # (done.text is not used: no respelling)
+
+
 def kept_names(
     text: str,
     *,

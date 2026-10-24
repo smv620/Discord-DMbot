@@ -783,7 +783,8 @@ class TranscriptStore:
         """The session's name pass is done (or was not needed), so its recap may start."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE transcript_sessions SET names_repaired_at = %s WHERE id = %s",
+                "UPDATE transcript_sessions SET names_repaired_at = %s WHERE id = %s"
+                " AND names_repaired_at = 0",
                 (max(at, 1), session_id),
             )
 

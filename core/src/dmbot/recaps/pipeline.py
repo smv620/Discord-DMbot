@@ -73,6 +73,9 @@ CAP = "This recap has hit its limit for now. You can try again tomorrow."
 DAILY = "This campaign has used up today's recap writing. Try again tomorrow."
 NAMES_WAIT_S = 30 * 60  # the most step 1 waits for the name pass; then it goes on without it
 NAMES_RETRY_S = 30  # how often it looks again
+# The note on a recap held for the name pass (#2628): an explicit marker, so the page shows
+# "checking the names" with the time it has taken and when it last moved, and never a silent wait.
+CHECKING_NAMES = "🔎 Checking the names in the session before the recap is written."
 NO_NAMES = (
     "DMbot couldn't check your campaign's secret names, so it wrote nothing to be safe. "
     "Try again in a minute."
@@ -411,19 +414,26 @@ class RecapWorker:
         """Step 1 waits for PlotBot's name pass on the transcript (#2628), so the beats, the recap
         and the narration all use the list's spellings. A short, bounded wait that costs nothing
         and fails nothing: the pass marks the session done whatever happens, and after
-        `NAMES_WAIT_S` the recap goes on regardless. True when the job was put off."""
+        `NAMES_WAIT_S` the recap goes on regardless. While it waits the job says so
+        (`CHECKING_NAMES`, and each look moves its time). True when the job was put off."""
         if self._names_ready is None or job.state != "queued" or job.calls > 0:
             return False
-        if int(self._now()) - job.created_at >= NAMES_WAIT_S:
+        waiting = int(self._now()) - job.created_at < NAMES_WAIT_S
+        ready = False
+        if waiting:
+            try:
+                ready = await self._names_ready(gid, cid, job)
+            except Exception:
+                log.exception("Recap: couldn't tell whether the names are checked")
+                ready = True  # a pass that cannot be read must not hold the recap back
+        if ready or not waiting:
+            if job.last_error == CHECKING_NAMES:  # the wait is over: the note goes
+                await self._store.update(gid, cid, job.session_at, last_error="")
             return False
-        try:
-            ready = await self._names_ready(gid, cid, job)
-        except Exception:
-            log.exception("Recap: couldn't tell whether the names are checked")
-            return False
-        if ready:
-            return False
-        await self._store.update(gid, cid, job.session_at, next_at=int(self._now()) + NAMES_RETRY_S)
+        await self._store.update(
+            gid, cid, job.session_at, next_at=int(self._now()) + NAMES_RETRY_S,
+            last_error=CHECKING_NAMES,
+        )  # fmt: skip
         return True
 
     async def _call(
@@ -908,9 +918,16 @@ class RecapWorker:
                 len(prose.music),
                 len(fixed.music),
             )
-        # (No respelling here: the names were settled before the writer started, #2628 - the
-        # transcript and the names list the writer got were already right.)
-        prose, refused = fixed, ()
+        prose, refused = rd.respelled(
+            fixed,
+            beats=sheet,
+            allowed_names=inputs.allowed_names,
+            secret_names=inputs.secret_names,
+            previous=inputs.previous,
+            setting=inputs.setting,
+            transcript="\n".join(s.text for s in said),
+            aliases=inputs.aliases,
+        )  # a misheard spelling back to its name; what is too like a secret refused (#2591)
         transcript = "\n".join(s.text for s in said)
         self._annotate(gid, cid, job, stage, words=lambda: len(words(narration_of(prose.summary))))
 
@@ -951,7 +968,9 @@ class RecapWorker:
                 length.sections,
                 length.hours,
             )  # names and counts only
-            self._keep_rejected(key, prose, inputs, [prose.summary, *prose.music])
+            self._keep_rejected(
+                key, prose, inputs, [prose.summary, *prose.music], near_secret=bool(refused)
+            )
             return await self._prose_failed(gid, cid, job, problems, inputs, sheet, length)
         try:
             facts, asked = await self._facts(
@@ -1081,7 +1100,16 @@ class RecapWorker:
         if kept is not None:
             prose, grade, kept_event = kept
             transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
-            refused: tuple[str, ...] = ()  # (names are settled before the writer, #2628)
+            prose, refused = rd.respelled(
+                prose,
+                beats=sheet,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+                transcript=transcript,
+                aliases=inputs.aliases,
+            )
             if not rd.check_prose(
                 prose,
                 beats=sheet,
@@ -1576,7 +1604,16 @@ class RecapWorker:
         transcript = "\n".join(s.text for s in self._said(inputs, set(job.speakers)))
         grade: dict[str, int] = {}
         if revised is not None:
-            revised, refused = rd.fix_prose(revised, length.sections), ()  # (#2628)
+            revised, refused = rd.respelled(
+                rd.fix_prose(revised, length.sections),
+                beats=sheet,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                setting=inputs.setting,
+                transcript=transcript,
+                aliases=inputs.aliases,
+            )
             if rd.check_prose(
                 revised, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
@@ -1800,6 +1837,20 @@ class RecapWorker:
                 gid, cid, job, ["answer with the title and housekeeping JSON asked for"]
             )
         transcript = "\n".join(x.text for x in self._said(inputs, set(job.speakers)))
+        # Aliases put back to their names here too, and what is too like a secret refused (#2591).
+        fixed = [
+            rd.respelled(
+                rd.Prose(text, ()),
+                beats=sheet,
+                allowed_names=inputs.allowed_names,
+                secret_names=inputs.secret_names,
+                previous=inputs.previous,
+                transcript=transcript,
+                aliases=inputs.aliases,
+            )
+            for text in (parsed[0], *parsed[1])
+        ]
+        parsed = (fixed[0][0].summary, [f.summary for f, _ in fixed[1:]])
         finish, problems = rd.check_finish(
             parsed,
             beats=sheet,
@@ -1809,11 +1860,15 @@ class RecapWorker:
             previous=inputs.previous,
             transcript=transcript,
         )
+        if finish is not None and any(r for _, r in fixed):
+            finish, problems = None, ["a name is too like one the DM keeps secret: leave it out"]
         self._annotate(
             gid, cid, job, "title", checks=lambda: cl.kinds(problems) if finish is None else []
         )
         if finish is None:
-            self._keep_rejected(key, parsed, inputs, [parsed[0], *parsed[1]])
+            self._keep_rejected(
+                key, parsed, inputs, [parsed[0], *parsed[1]], near_secret=any(r for _, r in fixed)
+            )
             return await self._retry_or_fail(gid, cid, job, problems)
         self._rejected_finish.pop(key, None)
         await self._store.update(
@@ -1978,11 +2033,14 @@ class RecapWorker:
         draft: rd.Prose | tuple[str, list[str]],
         inputs: Inputs,
         texts: Sequence[str],
+        near_secret: bool = False,
     ) -> None:
-        """Keep a rejected draft to send back on the retry (#2026), unless it names a secret: the
-        checks keep secret names out of every retry message, and so must the draft. The retry
-        then goes without it."""
-        if names_a_secret(" ".join(texts), inputs.secret_names, inputs.allowed_names):
+        """Keep a rejected draft to send back on the retry (#2026), unless it names a secret, or a
+        word too like one (`near_secret`, #2591): the checks keep secret names out of every retry
+        message, and so must the draft. The retry then goes without it."""
+        if near_secret or names_a_secret(
+            " ".join(texts), inputs.secret_names, inputs.allowed_names
+        ):
             self._rejected_prose.pop(key, None)
             self._rejected_finish.pop(key, None)
         elif isinstance(draft, rd.Prose):

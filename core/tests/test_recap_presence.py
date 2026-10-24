@@ -56,6 +56,20 @@ class TheirNames(unittest.TestCase):
     def test_a_known_name_is_not_touched(self) -> None:
         self.assertEqual(put("Greyfen nodded."), "Greyfen nodded.")
 
+    def test_the_prose_is_put_right_before_the_name_check(self) -> None:
+        beat = bt.Beat(1, "Sarek lit the fire.", ("Sarek",), (1,), "event")
+        prose = rd.Prose("《Calm》 Sarek lit the fire.", ("soft strings",))
+        fixed, _ = rd.respelled(
+            prose,
+            beats=[beat],
+            allowed_names=NAMES,
+            secret_names=[],
+            transcript="sarek lit the fire",
+            aliases=ALIASES,
+        )
+        self.assertIn("Tavin lit the fire", fixed.summary)
+        self.assertNotIn("Sarek", fixed.summary)
+
 
 def entry(text: str, **more: bool) -> SimpleNamespace:
     flags = {"confirmed": True, "secret": False, "person": False, **more}

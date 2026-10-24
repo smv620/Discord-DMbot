@@ -52,7 +52,7 @@ async def run(
     texts = [x.text for x in stored]
     found = np.survey(texts, lookup, people)
     if not found.items:
-        return np.Report(new=found.new, guarded=found.guarded)
+        return np.Report(guarded=found.guarded)
     reply = await ask(np.SYSTEM, np.question(found.items))
     verdict = np.decide(reply, found.items)
     hidden = [n.text for n in lookup.names if n.secret or n.entity_id in lookup.hidden]
@@ -85,6 +85,6 @@ async def run(
     return np.Report(
         tuple(fixed),
         tuple(verdict.unsure),
-        found.new + len(verdict.new),
+        tuple(verdict.new),
         found.guarded,
     )

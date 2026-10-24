@@ -10,12 +10,16 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+from dmbot.campaigns.store import CampaignStore
+from dmbot.db import Database, drop_schema
 from dmbot.memory.lookup import LookupCache
 from dmbot.memory.models import KEEP
+from dmbot.schema import MIGRATIONS
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.ui import name_pass_undo
 from dmbot.ui import names as ui
+from tests.pg import TEST_URL, DatabaseTest
 from tests.test_memory_names import DM, GUILD, NamesTest
 
 PLAYER = 8
@@ -142,6 +146,42 @@ class ThePass(NamesTest):
         self.assertIn("Keirandal", names)  # offered to the DM: the existing hold waits for it
         self.assertNotIn(self.session, self.bot._name_pass_asks)  # asked once
 
+    async def test_a_new_name_plotbot_found_is_offered_even_heard_once_and_the_count_matches(
+        self,
+    ) -> None:
+        """#2628 review: the report says "New names (asked the DM)" only for what is offered."""
+        self.ai.complete.return_value = reply({"n": 1, "answer": "new", "name": ""})
+        await self.run_pass()
+        self.assertEqual(self.bot._name_pass_asks[self.session], [("Keirandal", 3)])
+        self.assertIn("New names (asked the DM): 1", self.bot.post.await_args.args[1])  # type: ignore[attr-defined]
+        await self.bot._propose_new_names(
+            GUILD, self.campaign.id, ["Nothing else here."], {PLAYER}, self.session
+        )
+        names = [e.name for e in await self.memory.entities(GUILD, self.campaign.id)]
+        self.assertIn("Keirandal", names)  # a word heard once is a name to check
+
+    async def test_a_word_the_campaign_already_holds_is_not_counted_as_asked(self) -> None:
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, type="concept", name="Keirandal", source="scan"
+        )  # (already a suggestion: the scan would skip it, so the report must not count it)
+        self.ai.complete.return_value = reply({"n": 1, "answer": "new", "name": ""})
+        await self.run_pass()
+        self.assertNotIn(self.session, self.bot._name_pass_asks)
+        posted = self.bot.post.await_args  # type: ignore[attr-defined]
+        if posted is not None:
+            self.assertNotIn("New names (asked the DM): 1", posted.args[1])
+
+    async def test_two_list_names_that_sound_alike_are_never_chosen_between(self) -> None:
+        """#2628 review: with Kethrandel on the list too, "Keirandal" is not fixed to either,
+        whatever PlotBot answers; the text is unchanged and the word is a name question."""
+        await ui.save_name(self.memory, self.campaign, "Kethrandel", "npc", [], [])
+        self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
+        before = await self.texts()
+        self.assertEqual(await self.run_pass(), 0)
+        self.assertEqual(await self.texts(), before)
+        self.assertEqual(self.bot._name_pass_asks[self.session], [("Keirandal", 3)])
+        self.assertIn("Not sure (asked the DM): 1", self.bot.post.await_args.args[1])  # type: ignore[attr-defined]
+
     async def test_a_failed_call_changes_nothing_and_does_not_hold_the_recap_back(self) -> None:
         self.ai.complete.side_effect = RuntimeError("the service is down")
         before = await self.texts()
@@ -237,9 +277,25 @@ class ThePass(NamesTest):
         await self.run_pass()
         self.assertTrue(await self.bot.recap_names_ready(GUILD, self.campaign.id, job))
         # a recap of a session with no transcript has nothing to wait for
-        gone = await store.get(GUILD, self.campaign.id, START)
+        await store.enqueue(GUILD, self.campaign.id, START + 99_999, dm_user_id=DM)
+        gone = await store.get(GUILD, self.campaign.id, START + 99_999)
         assert gone is not None
         self.assertTrue(await self.bot.recap_names_ready(GUILD, self.campaign.id, gone))
+
+    async def test_a_session_whose_scan_ends_early_is_still_marked_done(self) -> None:
+        """#2628 review: no lines were heard, so the scan returns early; the recap must not wait."""
+        table = SimpleNamespace(
+            guild_id=GUILD,
+            campaign_id=self.campaign.id,
+            heard=[],
+            transcript_session_id=self.session,
+        )
+        self.assertFalse(await self.done())
+        await self.bot.suggest_names(table)  # type: ignore[arg-type]
+        self.assertTrue(await self.done())
+        before = (await self.transcripts.lines(GUILD, self.session))[0].text
+        await self.transcripts.mark_names_repaired(GUILD, self.session, 5)  # a second mark
+        self.assertEqual((await self.transcripts.lines(GUILD, self.session))[0].text, before)
 
     async def run_tool(self, *, dry_run: bool) -> Any:
         from dmbot.transcript import name_pass_run
@@ -285,3 +341,40 @@ class ThePass(NamesTest):
         self.assertEqual(
             (args.guild, args.session, args.dry_run, args.yes), (1, "abc", True, False)
         )
+
+
+class Backfill(DatabaseTest):
+    """Migration 0227 runs with no server set, so its backfill must open the table it updates
+    (CLAUDE.md, "A migration that changes rows"): sessions from before it are marked done, so no
+    old recap waits for a pass that will never run."""
+
+    async def test_sessions_from_before_0227_are_marked_done_and_the_opening_is_gone(self) -> None:
+        before = [m for m in MIGRATIONS if m[0] < "0227"]
+        await self.db.close()  # start again from a schema as it was before 0227
+        await drop_schema(TEST_URL, self.schema)
+        self.db = await Database.open(TEST_URL, schema=self.schema, migrations=before)
+        campaigns = CampaignStore(self.db)
+        campaign = await campaigns.create(GUILD, "Old", DM)
+        transcripts = TranscriptStore(self.db)
+        old = await transcripts.open_session(GUILD, campaign.id, START)
+        await transcripts.end_session(GUILD, old, START + 100)
+        live = await transcripts.open_session(GUILD, campaign.id, START + 500)  # never ended
+        await self.db.migrate()
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT id, names_repaired_at FROM transcript_sessions ORDER BY started_at"
+            )
+            rows = {r["id"]: int(r["names_repaired_at"]) for r in await cur.fetchall()}
+        self.assertEqual(set(rows), {old, live})
+        self.assertTrue(all(at > 0 for at in rows.values()), rows)
+        self.assertTrue(await transcripts.names_repaired(GUILD, campaign.id, START))
+        self.assertTrue(await transcripts.names_repaired(GUILD, campaign.id, START + 500))
+        async with self.db.unscoped() as conn:  # the opening is gone again
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM pg_policies WHERE policyname = 'migrate_backfill'"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+        # a session made after the migration starts undone, as it should
+        fresh = await transcripts.open_session(GUILD, campaign.id, START + 900)
+        self.assertEqual(fresh is not None, True)
+        self.assertFalse(await transcripts.names_repaired(GUILD, campaign.id, START + 900))

@@ -44,6 +44,9 @@ SNIPPET = 70  # characters either side of the candidate
 MAX_CANDIDATES = 30  # asked in one call; the most heard first
 
 SURE, NEW, UNSURE = "is", "new", "unsure"
+# Two offered names this close in likeness (or sharing a sound) are too alike to choose between
+# in code, whatever PlotBot says: the word goes to the DM instead (#2628 review).
+AMBIGUOUS_MARGIN = 0.08
 
 SYSTEM = (
     "You help fix how a name is spelled in a tabletop role-playing game's transcript. "
@@ -239,6 +242,17 @@ class Verdict:
     new: list[Candidate]  # PlotBot says a new name: asked of the DM as any new name
 
 
+def too_alike_to_choose(c: Candidate) -> bool:
+    """Whether two or more of the names offered for this word are about as close as each other, or
+    sound the same: a sure answer for it is not believed, in code (#2628 review)."""
+    if len(c.near) < 2:
+        return False
+    if c.near[0].likeness - c.near[1].likeness <= AMBIGUOUS_MARGIN:
+        return True
+    codes = [set(sound_keys(n.name)) for n in c.near]
+    return any(a & b for i, a in enumerate(codes) for b in codes[i + 1 :])
+
+
 def decide(raw: str, cands: Sequence[Candidate]) -> Verdict:
     """PlotBot's reply, checked: a sure answer must name one of those offered for that candidate,
     spelled as listed. Everything else is not written: "a new name" is a new name, and anything
@@ -269,7 +283,7 @@ def decide(raw: str, cands: Sequence[Candidate]) -> Verdict:
     for n, c in enumerate(cands, 1):
         answer, name = answers.get(n, (UNSURE, ""))
         match = next((x for x in c.near if x.name.casefold() == name.strip().casefold()), None)
-        if answer == SURE and match is not None:
+        if answer == SURE and match is not None and not too_alike_to_choose(c):
             sure.append(Decision(c.heard, c.also, match.entity_id, match.name, c.times))
         elif answer == NEW:
             new.append(c)
@@ -306,7 +320,7 @@ class Report:
 
     fixed: tuple[Fixed, ...] = ()
     unsure: tuple[Candidate, ...] = ()
-    new: int = 0  # new names asked of the DM: PlotBot's and the words close to no list name
+    new: tuple[Candidate, ...] = ()  # PlotBot says a new name: offered to the DM as any new name
     guarded: int = 0
 
     @property
@@ -337,7 +351,7 @@ def report_text(report: Report) -> str:
     for c in report.unsure[:MAX_NAMES_SHOWN]:
         options = " or ".join(n.name for n in c.near)
         lines.append(f"  ({c.times}) {c.heard} → {options}?")
-    lines.append(f"New names (asked the DM): {report.new}")
+    lines.append(f"New names (asked the DM): {len(report.new)}")
     lines.append(f"Left as heard (secret-name guard): {report.guarded}")
     return "\n".join(lines)
 
@@ -346,7 +360,7 @@ def counts_line(report: Report) -> str:
     """The numbers only, safe for logs and the testing logs: no spelling in it."""
     return (
         f"{len(report.fixed)} names, {sum(f.times for f in report.fixed)} fixes, "
-        f"{len(report.unsure)} unsure, {report.new} new, {report.guarded} guarded"
+        f"{len(report.unsure)} unsure, {len(report.new)} new, {report.guarded} guarded"
     )
 
 

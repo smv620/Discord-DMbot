@@ -28,7 +28,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -10915,10 +10915,20 @@ class DMBot(commands.AutoShardedBot):
             people=people, agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400),
         )  # fmt: skip
-        # The words PlotBot was not sure of are name questions for the DM, whatever the scan's own
-        # "heard twice" rule says; the recap is held until they are answered (#2169).
-        if report.unsure:
-            self._name_pass_asks[session_id] = [(c.heard, c.times) for c in report.unsure]
+        # The words PlotBot was not sure of, and the ones it says are new names, are name questions
+        # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
+        # are answered (#2169). The report counts only what will really be offered: a word the
+        # campaign knows already, or a person at the table, is not (the same rule the scan uses).
+        skip = set(await self.memory.known_keys(gid, cid)) | people
+        report = replace(
+            report,
+            unsure=tuple(c for c in report.unsure if name_key(c.heard) not in skip),
+            new=tuple(c for c in report.new if name_key(c.heard) not in skip),
+        )
+        if report.unsure or report.new:
+            self._name_pass_asks[session_id] = [
+                (c.heard, c.times) for c in (*report.unsure, *report.new)
+            ]
         if not report.quiet and campaign.dm_screen_channel_id is not None:
             await self.post(
                 campaign.dm_screen_channel_id,
@@ -11048,7 +11058,21 @@ class DMBot(commands.AutoShardedBot):
     async def suggest_names(self, table: Table) -> None:
         """After a session: suggest names DMbot heard but doesn't know, for the DM to
         check. Only lines from people who still agree; never anything DMbot already has
-        an answer for (including names the DM said aren't names)."""
+        an answer for (including names the DM said aren't names). Whatever happens, the session's
+        name pass is marked done at the end (#2628): an early return, or a failure, must not leave
+        the recap waiting for a pass that will never run."""
+        session_id = table.transcript_session_id
+        gid = table.guild_id
+        try:
+            await self._suggest_names(table)
+        finally:
+            if session_id is not None and self.transcripts is not None:
+                try:
+                    await self.transcripts.mark_names_repaired(gid, session_id, int(time.time()))
+                except Exception:
+                    log.exception("The name pass couldn't be marked done")
+
+    async def _suggest_names(self, table: Table) -> None:
         if self.memory is None or table.campaign_id is None or not table.heard:
             return
         gid, cid = table.guild_id, table.campaign_id

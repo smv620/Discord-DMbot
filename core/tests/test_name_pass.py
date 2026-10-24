@@ -87,6 +87,21 @@ class Believing(unittest.TestCase):
         )
         self.assertEqual((got.unsure, got.new), ([], []))
 
+    def test_two_offered_names_too_alike_to_choose_between_are_never_a_fix(self) -> None:
+        """#2628 review: whatever PlotBot says, code does not choose between look-alikes."""
+        a = np.Near(KETH, "Kethrandil", "player character", 0.70)
+        b = np.Near(DREN, "Kethrandel", "npc", 0.66)  # within the margin of the first
+        cand = np.Candidate("Keirandal", (), 3, (a, b), ())
+        self.assertTrue(np.too_alike_to_choose(cand))
+        got = np.decide(self.answer({"n": 1, "answer": "is", "name": "Kethrandil"}), [cand])
+        self.assertEqual((got.sure, len(got.unsure)), ([], 1))  # goes to the DM
+        far = np.Near(DREN, "Drenwick", "npc", 0.50)
+        apart = np.Candidate("Keirandal", (), 3, (a, far), ())
+        self.assertFalse(np.too_alike_to_choose(apart))
+        sure = np.decide(self.answer({"n": 1, "answer": "is", "name": "Kethrandil"}), [apart])
+        self.assertEqual(len(sure.sure), 1)
+        self.assertFalse(np.too_alike_to_choose(np.Candidate("Keirandal", (), 3, (a,), ())))
+
     def test_new_is_new_and_every_other_answer_is_unsure_and_changes_nothing(self) -> None:
         got = np.decide(self.answer({"n": 1, "answer": "new", "name": ""}), self.cands)
         self.assertEqual((got.sure, len(got.new), got.unsure), ([], 1, []))
@@ -124,7 +139,7 @@ class Reporting(unittest.TestCase):
             unsure=(
                 np.Candidate("Kerran", (), 2, (near, np.Near(DREN, "Keirran", "npc", 0.6)), ()),
             ),
-            new=1,
+            new=(np.Candidate("Zorgul", (), 1, (), ()),),
             guarded=0,
         )
         self.assertEqual(
@@ -140,7 +155,10 @@ class Reporting(unittest.TestCase):
         )
 
     def test_the_counts_line_has_no_spelling_in_it(self) -> None:
-        report = np.Report(fixed=(np.Fixed("Kethrandil", (("Keith and Dill", 4),), 5),), new=2)
+        report = np.Report(
+            fixed=(np.Fixed("Kethrandil", (("Keith and Dill", 4),), 5),),
+            new=(np.Candidate("A", (), 1, (), ()), np.Candidate("B", (), 1, (), ())),
+        )
         line = np.counts_line(report)
         self.assertEqual(line, "1 names, 4 fixes, 0 unsure, 2 new, 0 guarded")
         self.assertNotIn("Keith", line)
