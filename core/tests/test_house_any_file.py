@@ -373,7 +373,7 @@ class TheList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [c.text for c in found.rules], ["Keep to it.", "Keep it.", "Keep to the rule."]
         )
-        self.assertLessEqual(len(found.rules[1].instead_of or ""), house_ai.RULE_MAX)
+        self.assertLessEqual(len(found.rules[1].instead_of or ""), RULE_MAX)
         self.assertEqual(found.unquoted, 1)
 
     async def test_a_failing_declined_or_garbled_answer_is_unread(self) -> None:

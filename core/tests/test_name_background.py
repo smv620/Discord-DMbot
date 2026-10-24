@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -76,7 +77,7 @@ class TheReader(unittest.TestCase):
         end = " ".join(["Brannoch"] * 12)
         text = f"{end} is a friend of Vale Keep."
         item = {"a": end, "b": "Vale Keep", "how": "friend", "quote": text.rstrip(".")}
-        lost: bg.Dropped = bg.Counter()
+        lost: bg.Dropped = Counter()
         self.assertEqual(
             bg.read_connections(json.dumps({"connections": [item]}), text, (), lost), []
         )
