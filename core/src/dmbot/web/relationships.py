@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.web import all_names
 from dmbot.web.names import _parse
@@ -541,6 +542,16 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
 WAITING_COUNT_KEYS = ("claims", "backstory", "which")
 
 
+def _can_be_secret(row: dict[str, Any]) -> bool:
+    """Whether "truth but secret" is offered: not for a condition ("Roan is dead"), by the DM
+    screen's own rule (`claims.condition_of`), so both read it the same way."""
+    said = Extracted(
+        str(row["subject"]), str(row["relationship"]), str(row["object"]),
+        str(row.get("details") or ""), (), str(row["how"]),
+    )  # fmt: skip
+    return condition_of(said) is None
+
+
 def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
@@ -564,7 +575,10 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
     got = found["r"] if found else None
     if got is None or got.get("status") != "ok":
         raise RecapError("not_found")
-    claims = [{**c, "statement": _claim_statement(c)} for c in got["claims"]]
+    claims = [
+        {**c, "statement": _claim_statement(c), "canSecret": _can_be_secret(c)}
+        for c in got["claims"]
+    ]
     backstory = [
         {**b, "how": link_words(str(b["predicate"]), str(b["detail"]))} for b in got["backstory"]
     ]

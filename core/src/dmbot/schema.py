@@ -12746,9 +12746,8 @@ WEB_WAITING = (
             'claims', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'id', m.id, 'subject', m.subject, 'relationship', m.relationship,
-                    'object', m.object, 'details', m.details, 'at', m.session_started_at,
-                    'canSecret', lower(m.relationship) NOT IN
-                        ('is', 'was', 'are', 'were', 'became', 'be'))
+                    'object', m.object, 'details', m.details, 'how', m.how,
+                    'at', m.session_started_at)
                     ORDER BY m.created_at, m.id)
                 FROM (SELECT * FROM memory_claims k
                       WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'

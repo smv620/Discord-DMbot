@@ -859,6 +859,43 @@ class TheEdits(Editing):
             assert row is not None
             self.assertIsNone(row["r"])  # not this person's campaign: nothing
 
+    async def test_a_condition_cannot_be_kept_secret_by_the_dm_screens_own_rule(self) -> None:
+        condition = await self.claim("Mira Voss", "Far Hall")
+        async with self.db.guild(self.g) as conn:  # "Mira is dead": a condition, not a fact
+            await conn.execute(
+                "UPDATE memory_claims SET relationship = 'is', object = 'dead'"
+                " WHERE guild_id = %s AND id = %s",
+                (self.g, condition),
+            )
+        plain = await self.claim("Rook", "Far Hall")
+        by_id = {c["id"]: c["canSecret"] for c in (await self.waiting_now())["claims"]}
+        self.assertEqual(by_id, {condition: False, plain: True})
+
+    async def test_a_dm_of_one_campaign_reads_nothing_of_another(self) -> None:
+        """#2654 review: a real second campaign, whose DM is someone else, in the same server."""
+        two = await self.campaigns.create(self.g, "Elsewhere Two", BOB.id)
+        mine = await self.which_question()
+        async with self.db.guild(self.g) as conn:  # a claim waiting in the other campaign
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, how, lines, speaker_ids, source, prompt_version, model, status,"
+                " created_at) VALUES (%s, %s, repeat('c', 32), 'Zed', 'knows', 'Yan', 'dm_said',"
+                " '{1}', '{7}', 'extractor', 'p', 'm', 'proposed', 1)",
+                (self.g, two.id),
+            )
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (self.g, two.id))
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertIsNone(row["r"])  # Alice is not a DM of campaign two
+        got = await self.waiting_now()
+        self.assertEqual([w["id"] for w in got["which"]], [mine])  # and hers holds only hers
+        self.assertEqual(got["claims"], [])  # not the other campaign's claim
+        with self.assertRaises(RecapError) as caught:
+            await relationships.read_waiting(self.web, self.session, f"{self.g}.{two.id}")
+        self.assertEqual(caught.exception.code, "not_found")
+
     async def test_a_flag_on_a_which_answer_is_refused_by_the_door(self) -> None:
         which = await self.which_question()
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
