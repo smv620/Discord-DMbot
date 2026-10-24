@@ -26,6 +26,28 @@ class ReviewTextTest(unittest.TestCase):
         self.assertIn("Is this a name in your game?", text)
         self.assertNotIn("Also heard", text)
 
+    def test_the_sentence_around_a_name_from_the_dms_text_is_shown_when_held(self) -> None:
+        text = ui.suggestion_text(suggested("Greyfen"), 1, context="The abbot of Greyfen waits.")
+        self.assertIn("Around it in your text: \u201cThe abbot of Greyfen waits.\u201d", text)
+        self.assertNotIn("Around it", ui.suggestion_text(suggested("Greyfen"), 1))
+
+    def test_only_a_dm_of_the_campaign_sees_the_sentence(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.memory.lore_context import Held
+
+        held = Held()
+        held.put(5, "a" * 32, "The abbot secretly pays them.")
+        client = SimpleNamespace(lore_context=held)
+        campaign = SimpleNamespace(guild_id=5, dm_user_ids=frozenset({9}))
+
+        def seen(user_id: int) -> str:
+            who = SimpleNamespace(client=client, user=SimpleNamespace(id=user_id))
+            return ui.SuggestionReview._context(who, campaign, suggested("Greyfen"))  # type: ignore[arg-type]
+
+        self.assertEqual(seen(9), "The abbot secretly pays them.")
+        self.assertEqual(seen(10), "")  # a server manager who is not a DM
+
     def test_two_rows_so_a_phone_never_cuts_the_labels(self) -> None:
         view = ui.SuggestionReview("c" * 32, ["a" * 32])
         view.match = Match("b" * 32, "Hrothgar")
@@ -39,11 +61,12 @@ class ReviewTextTest(unittest.TestCase):
                 ("🔗 Another known name…", 0),
                 ("🚫 Not a name", 1),
                 ("⏳ Later", 1),
+                ("✏️ Change the words", 1),
             ],
         )
         view.match = None
         view._buttons()
-        self.assertEqual([b.row for b in view.children], [0, 0, 1, 1])
+        self.assertEqual([b.row for b in view.children], [0, 0, 1, 1, 1])
 
     def test_names_are_shown_as_written(self) -> None:
         text = ui.suggestion_text(suggested("*Star*"), 1, match=Match("b" * 32, "*Sun*"))
@@ -55,6 +78,32 @@ class ReviewTextTest(unittest.TestCase):
         long = ui.its_label("Lord Dagult Neverember the Third")
         self.assertLessEqual(len(long), ui.REVIEW_LABEL_MAX)
         self.assertTrue(long.startswith("✅ It's Lord"))
+
+
+class FoundNoteTest(unittest.TestCase):
+    def test_a_shorter_list_is_never_a_silent_one(self) -> None:
+        from dmbot.ui.name_background import _found_note
+
+        self.assertEqual(_found_note(3, 3), "")
+        self.assertEqual(_found_note(0, 0), "")
+        note = _found_note(21, 3)
+        self.assertIn("saw 21 connections in your text and kept 3", note)
+        self.assertIn("one only when both names were found", note)
+        self.assertIn("saw 1 connection in", _found_note(1, 0))
+
+    def test_the_note_is_also_said_when_no_name_is_new(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.ui.name_background import summary
+
+        interaction = SimpleNamespace(edit_original_response=AsyncMock())
+        campaign = SimpleNamespace(id="c" * 32)
+        asyncio.run(summary(interaction, campaign, "Notes", {}, 0, links_found=4))  # type: ignore[arg-type]
+        text = interaction.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("found no new names", text)
+        self.assertIn("saw 4 connections in your text and kept 0", text)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ import base64
 import enum
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -58,13 +59,19 @@ class AIModelTier(enum.Enum):
 REQUEST_TIMEOUT_S = 120  # one request on the fast tier
 # The middle and strongest models write more slowly: a long answer (Find names on a big
 # document) needs longer. The session's own limit is the longest of them.
-SLOW_TIER_TIMEOUT_S = 240
+# A background call may now write up to OUTPUT_FLOOR tokens (#2596). The middle and strongest models
+# write about 40 to 80 tokens a second, so 16,000 tokens can take over four minutes: the slow tiers
+# wait 8 minutes, the fast ones 3. A live table answer keeps the short wait it always had
+# (`LIVE_TIMEOUT_S`), whatever its tier.
+SLOW_TIER_TIMEOUT_S = 480
+FAST_TIER_TIMEOUT_S = 180
+LIVE_TIMEOUT_S = REQUEST_TIMEOUT_S
 TIER_TIMEOUT_S = {
-    AIModelTier.FAST: REQUEST_TIMEOUT_S,
+    AIModelTier.FAST: FAST_TIER_TIMEOUT_S,
     AIModelTier.CAREFUL: SLOW_TIER_TIMEOUT_S,
     AIModelTier.DEEP: SLOW_TIER_TIMEOUT_S,
     AIModelTier.CREATIVE: SLOW_TIER_TIMEOUT_S,
-    AIModelTier.FORMATTING: REQUEST_TIMEOUT_S,
+    AIModelTier.FORMATTING: FAST_TIER_TIMEOUT_S,
 }
 
 NEXT_DOWN = {
@@ -117,7 +124,32 @@ class Feature(enum.StrEnum):
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
     IMAGE = "image"  # an image posted in the table chat, described once (#2450)
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
+    # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
+    NAME_PASS = "name_pass"
 
+
+# How much a background call may write at least (#2596, the owner 2026-10-24: "the cutoffs are
+# causing all kinds of problems"). Every call used to set its own hand-sized limit, estimated from
+# the answer it expected, and an answer longer than the estimate was cut off: a structured answer
+# could not be read, a step failed, and once the DM was told "found no new names" (#2454). The
+# service charges for the tokens actually written, never for the limit, so a generous limit costs
+# nothing and a tight one only guards against a runaway answer, which has not been the problem.
+# A caller's own number is still its estimate (and is logged against what was written, to tune
+# later); none goes below this floor, up to what the model can write.
+OUTPUT_FLOOR = 16_000
+# The jobs a person waits for at the table keep short answers, short by design ("Quick, short and
+# on topic"): they get their own number times this, so a normal answer is never cut, and the
+# short wait above.
+LIVE_FEATURES = frozenset(
+    {
+        Feature.SIDEBAR.value,
+        Feature.SIDEBAR_RETRY.value,
+        Feature.FIGHTBOT.value,
+        Feature.AUDIO_CHECK.value,
+        Feature.TIME_SUGGEST.value,
+    }
+)
+LIVE_MULTIPLE = 4
 
 # The tier of each job. Nothing else chooses: a job names its tier here, never a model.
 FEATURE_TIERS = {
@@ -152,6 +184,9 @@ FEATURE_TIERS = {
     # layout has to be detailed enough to draw (#2450).
     Feature.IMAGE: AIModelTier.FAST,
     Feature.IMAGE_MAP: AIModelTier.CAREFUL,
+    # Written into the transcript the whole server reads, but only a sure answer naming one of the
+    # offered list names, and the DM can Undo (#2628).
+    Feature.NAME_PASS: AIModelTier.CAREFUL,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
@@ -232,7 +267,17 @@ MAX_OUTPUT_TOKENS: dict[str, int] = {
 DEFAULT_MAX_OUTPUT = 16_000
 
 
+# What a Gemini model may write in one answer: its documented ceiling is lower than the Claude
+# models', and asking for more is refused. Override with GEMINI_MAX_OUTPUT (owner-set, #2599).
+GEMINI_MAX_OUTPUT = 8192
+
+
 def max_output(model: str) -> int:
+    if model.startswith("gemini"):
+        try:
+            return int(os.environ.get("GEMINI_MAX_OUTPUT", "") or GEMINI_MAX_OUTPUT)
+        except ValueError:
+            return GEMINI_MAX_OUTPUT
     return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
 
 
@@ -245,6 +290,15 @@ GEMINI_CONTEXT = 1_000_000
 
 def max_input(model: str) -> int:
     return GEMINI_CONTEXT if model.startswith("gemini-") else CLAUDE_CONTEXT
+
+
+def answer_room(estimate: int, model: str, *, live: bool = False) -> int:
+    """The output limit a call is sent with (#2596). A background call: its own estimate, but not
+    below `OUTPUT_FLOOR` (as far as the model can write). A live table answer: its estimate times
+    `LIVE_MULTIPLE`. Never below what the caller asked for, whatever the model's own limit."""
+    if live:
+        return estimate * LIVE_MULTIPLE
+    return max(estimate, min(OUTPUT_FLOOR, max_output(model)))
 
 
 BUSY = (
@@ -687,14 +741,19 @@ class AnthropicClient:
         plain words (AIOutOfFunds never falls back)."""
         chain = self._chain(tier)
         unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
+        live = feature in LIVE_FEATURES
         for position, (step, model) in enumerate(chain):
             lower = chain[position + 1] if position + 1 < len(chain) else None
+            room = answer_room(max_tokens, model, live=live)
             try:
                 if self._gemini is not None and step is AIModelTier.CREATIVE:
+                    # The room for Gemini's own model (`model` is the creative step's, a Gemini
+                    # name here): never below the generous floor (#2596, its thinking counts
+                    # against this limit) and never past what Gemini takes, or it refuses (#2575).
                     reply = await self._gemini.request(
                         system,
                         text,
-                        max_tokens,
+                        min(room, max_output(model)),
                         step,
                         model,
                         asked=tier,
@@ -707,7 +766,7 @@ class AnthropicClient:
                     reply = await self._request(
                         system,
                         text,
-                        max_tokens,
+                        room,
                         step,
                         model,
                         asked=tier,
@@ -716,6 +775,7 @@ class AnthropicClient:
                         cache_system=cache_system,
                         schema=schema,
                         images=images,
+                        live=live,
                     )
             except _ModelRefused as refused:
                 if lower is None:
@@ -724,6 +784,16 @@ class AnthropicClient:
                 log.debug("Model %s was refused (HTTP %s)", model, refused.status)
                 continue
             self._refused.pop(model, None)  # it works (again)
+            if reply.output_tokens > max_tokens:
+                # Data for bringing the limits down later with real numbers (#2596): counts only.
+                log.info(
+                    "AI answer longer than the caller's estimate: feature=%s estimate=%d wrote=%d "
+                    "room=%d",
+                    feature or "-",
+                    max_tokens,
+                    reply.output_tokens,
+                    room,
+                )
             # A lower tier answering proves the key is fine, so the model above it really
             # isn't available to it. Said once for each model.
             for gone_tier, gone in unavailable:
@@ -757,7 +827,9 @@ class AnthropicClient:
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        live: bool = False,
     ) -> Reply:
+        # `live`: a table answer keeps the short wait (`LIVE_TIMEOUT_S`).
         # `images`: each goes in as an image block before the text, base64 (#2450).
         # `schema`: structured outputs (#2039). The Messages API takes `output_config.format`
         # with `type: json_schema`; no beta header, and every model in the tier chain supports
@@ -798,7 +870,7 @@ class AnthropicClient:
         }
         try:
             async with (
-                asyncio.timeout(TIER_TIMEOUT_S[tier]),
+                asyncio.timeout(LIVE_TIMEOUT_S if live else TIER_TIMEOUT_S[tier]),
                 self._get_session().post(API_URL, json=body, headers=headers) as resp,
             ):
                 if resp.status != 200:

@@ -293,26 +293,26 @@ def final_checks(job: Job, inputs: pl.Inputs) -> list[tuple[str, bool, str]]:
         previous=inputs.previous,
         setting=inputs.setting,
         length=length,
-        last=True,  # the last try may stand up to 35% over the target (#2013)
     )
-    out.append(("prose: length, cues, names, no quotes, no copying", not issues, "; ".join(issues)))
+    out.append(("prose: cues, names, no quotes, no copying", not issues, "; ".join(issues)))
     words = len(
         narration_of(fixed_lines.without(job.summary)).split()
     )  # (the fixed lines are free)
     out.append(
         (
-            f"{words} words (about {length.hours:g} hours: target {length.target}, "
-            f"{length.low} to {length.high})",
-            length.low <= words <= length.last_high,
-            "" if words <= length.high else "over the range, accepted on the last try",
+            f"{words} words, {round(100 * words / length.target)}% of the target "
+            f"{length.target} (about {length.hours:g} hours)",
+            True,  # a number to read, never a pass or fail (owner, 2026-10-24, #2597)
+            "",
         )
     )
     out.append((f"{len(kept)} beats kept", len(kept) >= bt.MIN_BEATS, ""))
     out.append(
         (
-            "housekeeping bullets",
-            len(job.housekeeping) <= rd.HOUSEKEEPING_BULLETS,
-            f"{len(job.housekeeping)} bullet(s)",
+            f"{len(job.housekeeping)} housekeeping bullet(s) (asked for at most "
+            f"{rd.HOUSEKEEPING_BULLETS})",
+            True,
+            "",
         )
     )
     return out
@@ -1127,8 +1127,8 @@ def _length_line(args: argparse.Namespace, transcript: tf.Transcript, inputs: pl
         else "from the file's times"
     )
     return (
-        f"length: about {hours:g} hours ({how}); the recap will be about {length.target} words "
-        f"(between {length.low} and {length.high})."
+        f"length: about {hours:g} hours ({how}); the writer is asked for about {length.target} "
+        "words (a target, not a check)."
     )
 
 

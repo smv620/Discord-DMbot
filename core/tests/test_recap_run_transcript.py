@@ -336,7 +336,7 @@ class TheLength(unittest.TestCase):
         line, inputs = self.read("Sam: " + " ".join(["word"] * 14_000) + "\nMia: hi.\n")
         self.assertEqual(inputs.hours, 2.0)
         self.assertIn("about 2 hours (estimated from the words; give --hours to set it)", line)
-        self.assertIn("about 230 words (between 115 and 276)", line)
+        self.assertIn("about 230 words (a target, not a check)", line)
 
     def test_a_tiny_file_is_half_an_hour_at_least(self) -> None:
         _, inputs = self.read("Sam: hello there.\nMia: hi.\n")
