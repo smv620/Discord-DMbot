@@ -3,8 +3,10 @@ its short cap (times four), the wait matches, and a long answer is logged agains
 
 from __future__ import annotations
 
+import os
 import unittest
 from typing import Any
+from unittest import mock
 
 from dmbot import ai
 from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Feature
@@ -113,3 +115,16 @@ class TheListRead(unittest.IsolatedAsyncioTestCase):
         await lr.read_list(Ai(), "a short text", {}, nullcontext(), lr.Stats())  # type: ignore[arg-type]
         self.assertGreaterEqual(asked[0], ai.OUTPUT_FLOOR)
         self.assertGreater(asked[1], asked[0])
+
+
+class GeminiRoom(unittest.TestCase):
+    def test_a_gemini_model_gets_its_own_lower_ceiling(self) -> None:
+        self.assertEqual(ai.max_output("gemini-2.5-pro"), ai.GEMINI_MAX_OUTPUT)
+        self.assertEqual(ai.answer_room(200, "gemini-2.5-pro"), ai.GEMINI_MAX_OUTPUT)
+        self.assertLess(ai.GEMINI_MAX_OUTPUT, ai.OUTPUT_FLOOR)
+
+    def test_the_ceiling_can_be_set_and_a_bad_value_is_ignored(self) -> None:
+        with mock.patch.dict(os.environ, {"GEMINI_MAX_OUTPUT": "4000"}):
+            self.assertEqual(ai.max_output("gemini-2.5-flash"), 4000)
+        with mock.patch.dict(os.environ, {"GEMINI_MAX_OUTPUT": "lots"}):
+            self.assertEqual(ai.max_output("gemini-2.5-flash"), ai.GEMINI_MAX_OUTPUT)
