@@ -91,7 +91,7 @@ class TheDmsList(Listing):
             got["kinds"],
             [
                 {"key": "item", "label": "Items", "count": 1},
-                {"key": "npc", "label": "People", "count": 1},
+                {"key": "npc", "label": "NPCs", "count": 1},
                 {"key": "place", "label": "Places", "count": 1},
             ],
         )
@@ -109,10 +109,10 @@ class TheDmsList(Listing):
         self,
     ) -> None:
         await self.add("Rook", "character", role="player_character")
-        await self.add("Ilmara", "character", role="god")
+        await self.add("Ilmara", "character", role="npc")
         await self.add("Wanderer", "character")
         keys = {k["key"] for k in (await self.page())["kinds"]}
-        self.assertTrue({"player_character", "deity", "character"} <= keys)
+        self.assertTrue({"player_character", "npc", "character"} <= keys)
 
     async def test_search_finds_a_name_or_any_other_name_and_ignores_case(self) -> None:
         for typed, expected in (

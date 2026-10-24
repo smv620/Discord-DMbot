@@ -27,7 +27,6 @@ from dmbot.memory.models import (
     DESCRIPTION_MAX,
     DESTROYED,
     DM,
-    GOD,
     GOING,
     HINTED,
     INTACT,
@@ -195,7 +194,7 @@ CORE_TYPES: tuple[TypeTerm, ...] = (
 LEGACY_KINDS: Mapping[str, tuple[str, str | None]] = {
     "player_character": ("character", PLAYER_CHARACTER),
     "npc": ("character", NPC),
-    "deity": ("character", GOD),
+    "deity": ("character", NPC),  # a god is an NPC (#2562)
     "creature": ("character", NPC),
 }
 # What the migration (and an older backup, and an old change-log row) made of an older kind:
@@ -204,15 +203,28 @@ LEGACY_KINDS: Mapping[str, tuple[str, str | None]] = {
 MIGRATED_KINDS: Mapping[str, tuple[str, str | None, bool]] = {
     "player_character": ("character", PLAYER_CHARACTER, False),
     "npc": ("character", NPC, False),
-    "deity": ("character", GOD, False),
+    "deity": ("character", NPC, False),
     "creature": ("character", None, True),
     "spell": ("concept", None, True),
 }
+GOD_NOTE = "A god."
+
+
+def god_is_an_npc(description: str) -> str:
+    """The description of an entry that was a god and is an NPC now (#2562): it keeps "god" in its
+    words, as a note, unless they already say so. Within the description limit; nothing else is
+    changed."""
+    if re.search(r"\b(god|goddess|deity)\b", description, re.IGNORECASE):
+        return description
+    room = DESCRIPTION_MAX - len(GOD_NOTE) - 1
+    return f"{description[:room].rstrip()} {GOD_NOTE}".strip()
+
+
 SPELL_NOT_KEPT = "Spells aren't kept in campaign memory. To look one up, use /dmbot rule."
 
 
 UNNAMED_MONSTER = (
-    "That's a kind of monster, not one person. Name them (like 'Snot the goblin') "
+    "That's a kind of monster, not one character. Name them (like 'Snot the goblin') "
     "or link it as a stat block on a character."
 )
 
@@ -310,7 +322,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         not_this=(
             ("taking orders from a ruler without belonging to a group", "serves"),
-            ("bound by a sworn oath to a person or group", "sworn_to"),
+            ("bound by a sworn oath to a character or group", "sworn_to"),
             ("related by blood or marriage", "kin_of"),
         ),
         examples=("Cerric is a member of the Harpers.", "Snot is a member of the Red Fang."),
@@ -486,7 +498,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         not_this=(
             ("the thing is only in that place", "located_in"),
-            ("a person is bound to a master", "serves"),
+            ("a character is bound to a master", "serves"),
             ("who has an item in hand right now", "carries"),
         ),
         examples=("Cerric owns the Sun Blade.", "The Order owns the Silver Tower."),
@@ -558,7 +570,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
     PredicateTerm(
         "sworn_to",
         "is sworn to",
-        "Bound by a sworn oath, vow or pact to a person, a group or an idea: a paladin's oath, "
+        "Bound by a sworn oath, vow or pact to a character, a group or an idea: a paladin's oath, "
         "a warlock's pact, a knight's fealty.",
         _BEINGS,
         (*_BEINGS, "faction", "concept"),
@@ -639,8 +651,8 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         covers=("a link in the story's own words that no named relationship fits",),
         not_this=(
             ("one thing is inside another", "located_in"),
-            ("a person who belongs to a group", "member_of"),
-            ("a person who has heard of another", "knows"),
+            ("a character who belongs to a group", "member_of"),
+            ("a character who has heard of another", "knows"),
         ),
         examples=(
             "Aldric is blood-bound to Cerric (the table's words; no relationship is named so).",
