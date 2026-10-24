@@ -106,6 +106,7 @@ class Choices(Base):
                 (ALICE.id,),
             )
             row = await cur.fetchone()
+        assert row is not None
         self.assertEqual(row["n"], 2)
 
     async def test_put_back_lines_wait_in_the_queue_until_they_are_marked_read(self) -> None:
