@@ -35,9 +35,10 @@ ENDINGS = (
 CLOSING = "And so we continue, the {ending} of {name}."
 OPENING_BARE = "Previously…"
 CLOSING_BARE = "And so we continue, the {ending}."
-# What the database's recap columns hold (`recap_jobs.summary` and `original`, migration 0221 holds
-# the same number): a guard, not a target, so no story is cut for its length in practice (#2601).
-STORY_COLUMN_MAX = 30_000
+# What the database's recap columns hold (`recap_jobs.summary` and `original`; migration 0225, the
+# last to set them, holds the same number, and 0221 held 30,000 before it): a guard, not a target,
+# so no story is cut for its length in practice (#2601, #2609).
+STORY_COLUMN_MAX = 50_000
 ROOM = 400  # characters the web editor allows beyond the longest draft: both lines and their gap
 
 _CUE_BRACKETS = re.compile(r"[《》()]")
@@ -65,6 +66,12 @@ def usable_name(name: str, secret_names: Collection[str]) -> str:
     if not clean or names_a_secret(clean, secret_names, []):
         return ""
     return clean
+
+
+def is_closing(paragraph: str) -> bool:
+    """Whether a paragraph is the recap's fixed closing line (#2627): the same wording as
+    `CLOSING` and `CLOSING_BARE`, whichever ending and campaign name it was made with."""
+    return paragraph.strip().startswith(CLOSING_BARE.split("{")[0])
 
 
 def ending_for(earlier_sessions: int) -> int:
@@ -101,3 +108,20 @@ def without(summary: str) -> str:
     what the next recap is given as "last time" (so the writer is not shown lines to copy)."""
     body = _OPENS.sub("", summary.strip(), count=1).strip()
     return _CLOSES.sub("", body).strip()
+
+
+def _ends(summary: str) -> tuple[str, str]:
+    body = summary.strip()
+    opening, closing = _OPENS.match(body), _CLOSES.search(body)
+    return (
+        " ".join(opening.group().split()) if opening else "",
+        " ".join(closing.group().split()) if closing else "",
+    )
+
+
+def changes_fixed_lines(old: str, new: str) -> bool:
+    """Whether an edit changes, removes or adds the opening or closing line (#2630): the DM edits
+    the story between them; the two lines are DMbot's. A text that had no fixed line (an older
+    recap) may stay without one."""
+    was, now = _ends(old), _ends(new)
+    return (was[0] != now[0] and bool(was[0])) or (was[1] != now[1] and bool(was[1]))

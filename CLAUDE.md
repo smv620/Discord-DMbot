@@ -215,7 +215,7 @@ On the server that copy is the one in Docker Compose, run by dev1.
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
-session of a role works from this file and GitHub alone. **Each session is woken four times an hour (Supervisor twice, owner 2026-10-22)
+session of a role works from this file and GitHub alone. **Each session is woken four times an hour (Supervisor once and dev1 twice, owner 2026-10-24)
 by scheduled tasks** (a scheduled task fires at most hourly, so four make the 15 minutes). The minutes
 are staggered so each role finds the others' work done:
 
@@ -223,9 +223,9 @@ are staggered so each role finds the others' work done:
 |---|---|---|
 | CloudDev | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
 | WebDev | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
-| Supervisor | :04 (hourly summary), :34 (every 30 minutes, owner 2026-10-22) | long-lived cloud session |
+| Supervisor | :04 (hourly summary; once an hour, owner 2026-10-24) | long-lived cloud session |
 | RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
-| dev1 | :12 (hourly check), :27, :42, :57 | long-lived, on the server |
+| dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
 last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.

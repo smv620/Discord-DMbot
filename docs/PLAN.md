@@ -4908,7 +4908,32 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     text changed is thrown away and the new text is checked afresh. A recap with no earlier accepted recap, an
     answer that cannot be used or a refused call makes no issue and never holds Approve. This slice reads the earlier
     accepted recaps only; the code checks against the confirmed story memory, the pre-session note and recall, and
-    re-checking later recaps that name the same people, follow. The chat (#2123) follows.
+    re-checking later recaps that name the same people, follow.
+  - *Built, #2123 slice 1 (CloudDev, 2026-10-23): the talk, website side.* Migration 0211 adds `plot_chat` (per campaign
+    and server, row-level security, gone with the campaign, left out of backups) and three website doors: send (a DM
+    of the campaign; at most 1,000 characters; one waiting at a time, and one the bot never answered is given up after
+    ten minutes; at most 15 of the DM's messages on an issue, which belongs to one text of the recap, so a changed text
+    starts afresh), and at most 30 from a campaign's DMs in an hour (`too_soon`; the website refuses a message when PlotBot's switch is off),
+    read, and Save / Not that on one of PlotBot's proposals. The website has no AI key, so the message is queued and the
+    bot answers on a second row (slice 2), as for the typed notes of #2113. A DM reads only their own talk (a co-DM's is
+    not theirs); it is never in a transcript or on a public link and never logged. Routes `POST/GET
+    /me/recaps/{ref}/plot/{issue}/chat` and `POST .../plot/{issue}/proposals/{proposal}` with `{action: "save" |
+    "decline"}`. Not that closes the proposal and writes nothing; Save only marks it `saving`: the bot makes the change
+    as the DM's own fact (slice 3) and then answers the issue as "changed".
+  - *Built, #2123 slice 2 (CloudDev, 2026-10-23): PlotBot's answer.* The bot, in its own loop (every five seconds, so the
+    DM is not kept waiting and no slow check can hold an answer up), claims the DM's waiting message and makes one
+    careful-tier call (`Feature.PLOT_TALK`) with the issue, the recap, the earlier turns of this talk and the few
+    campaign entries named in it (confirmed ones only), with the conditions each kind can have. It answers in at most three
+    plain sentences, and code adds what the DM can do next ("Press Save…" or "…Leave it as is is always an answer").
+    **Code has the last word:** a request to invent or build the story gets the plain no with no call; **any words in
+    quotation marks must be words of the recap, the issue's own source or the DM's own messages** (a quotation from
+    anywhere else, such as a transcript line, fails the answer). The call is shown no transcript, only the recap, the issue
+    and its source, the campaign's entries and the DM's own messages; the quote check is a second lock, on marked quotations
+    only. That is why the talk is not erased with a player's transcripts (Supervisor, 2026-10-23). A proposal names an entry that was shown and a
+    condition its kind can have (alive, dead, resolved…) and its label is written by code. A message the bot cannot answer
+    is marked failed with a short code and the DM can send it again; nothing is saved to the campaign. A talk is kept for
+    thirty days (the send door clears a campaign's own, and the loop sweeps the rest about hourly). A campaign's DMs may
+    send 30 messages an hour in all (`too_soon`).
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap
@@ -5563,7 +5588,10 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
 - Which cloud speech-to-text service (#128): Deepgram built first (#170); the bake-off
   confirms or changes it
 - The Cleaner's confidence thresholds and target accuracy, set from the test set (#127)
-- Whether to use an embeddings provider for meaning-based matching, and which (#126)
+- ~~Whether to use an embeddings provider for meaning-based matching, and which (#126)~~ **Decided (owner,
+  2026-10-24, #2643):** Voyage AI (`voyage-3.5`, reranker `rerank-2.5`). Cost is about 15¢ a month per
+  campaign at 10 hours of play. It is named on the privacy page before use, and what may be embedded is in
+  docs/STORY_MEMORY.md, section 9a.
 - Whether players may suggest corrections to their own transcript lines, with the DM
   approving (#127)
 - Whether the downloadable cleaned transcript marks changed words (default: no marks;

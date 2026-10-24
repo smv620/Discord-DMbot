@@ -8,6 +8,7 @@ from typing import Any
 
 import tests.recap_fixtures as fx
 from dmbot.recaps.approval import text_hash
+from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.transcript.respell import recaps_note
 from tests.test_recap_jobs import Base
 
@@ -114,8 +115,9 @@ class Recaps(Base):
         await self.make(self.one, 200)
         async with self.db.guild(1) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET summary = %s WHERE session_at = 100", ("Branok " * 4285,)
-            )  # 29,995 characters: one more letter each would pass 30,000
+                "UPDATE recap_jobs SET summary = %s WHERE session_at = 100",
+                ("Branok " * (STORY_COLUMN_MAX // 7),),
+            )  # just under the column limit: one more letter each would pass it
         done = await self.respell()
         self.assertEqual((done.waiting, done.skipped), (1, 1))
         long = await self.store.get(1, self.one.id, 100)
