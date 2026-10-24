@@ -9,10 +9,10 @@ from typing import Any
 import httpx
 
 from dmbot.memory import web_actions as wa
-from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import DM as DM_SOURCE
-from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.models import MemoryRuleError, NewName
 from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
@@ -646,6 +646,162 @@ class TheEdits(Editing):
         done = await self.poll(answer)
         self.assertFalse(done["removed"])
         self.assertEqual(done["edge"]["more"], 0)
+
+    # ---- "Which Mara?" and the read door for what waits (#2652) ----------------------------------
+
+    async def which_question(self, *, secret: bool = False, upload: str = "Lore, 24 Oct") -> str:
+        """Two Maras and a question about "Sister Mara" and Rook, waiting for the DM's pick."""
+        self.mara_a = await self.add("Mara Ashgrove", "character", role="npc")
+        self.mara_b = await self.add("Mara Vell", "character", role="npc")
+        await self.backstory.add_which(
+            self.g,
+            self.one.id,
+            [NewWhich(self.rook, True, "knows", "Sister Mara", (self.mara_a, self.mara_b),
+                      "Rook knows Sister Mara", secret=secret, upload=upload)],
+        )  # fmt: skip
+        (found,) = await self.backstory.which_waiting(self.g, self.one.id)
+        return found.id
+
+    async def waiting_now(self, who: Any = None) -> dict[str, Any]:
+        return await relationships.read_waiting(self.web, who or self.session, self.cref)
+
+    async def test_the_door_lists_what_waits_with_the_upload_and_the_counts(self) -> None:
+        claim = await self.claim()
+        link = await self.waiting_link(self.mira, self.hall)
+        await self.backstory.add(
+            self.g,
+            self.one.id,
+            [NewLink(self.rook, "knows", self.hall, "q", upload="Lore, 24 Oct")],
+        )
+        which = await self.which_question(secret=True)
+        got = await self.waiting_now()
+        self.assertEqual([c["id"] for c in got["claims"]], [claim])
+        self.assertEqual(got["claims"][0]["statement"], "Mira Voss knows Far Hall")
+        self.assertTrue(got["claims"][0]["canSecret"])
+        by_id = {b["id"]: b for b in got["backstory"]}
+        self.assertIn(link, by_id)
+        self.assertEqual(
+            {b["upload"] for b in got["backstory"]}, {"", "Lore, 24 Oct"}
+        )  # the label the DM saw, "" for one queued before labels
+        self.assertTrue(all(b["ready"] and b["how"] for b in got["backstory"]))
+        (question,) = got["which"]
+        self.assertEqual(question["id"], which)
+        self.assertEqual(
+            (question["word"], question["other"], question["otherIsSubject"], question["secret"]),
+            ("Sister Mara", "Rook", True, True),
+        )
+        self.assertEqual(
+            sorted(c["name"] for c in question["candidates"]), ["Mara Ashgrove", "Mara Vell"]
+        )
+        self.assertEqual(
+            got["counts"], {"claims": 1, "backstory": 2, "ready": 2, "which": 1, "all": 4}
+        )
+
+    async def test_a_connection_waiting_on_a_name_says_which_name(self) -> None:
+        await self.memory.add_names(
+            self.g, self.one.id, [NewName("Newcomer", "character", "proposed", role="npc")],
+            source="dm",
+        )  # fmt: skip
+        ids = {e.name: e.id for e in await self.memory.entities(self.g, self.one.id)}
+        await self.backstory.add(
+            self.g, self.one.id, [NewLink(self.mira, "knows", ids["Newcomer"], "q")]
+        )
+        (item,) = (await self.waiting_now())["backstory"]
+        self.assertEqual((item["ready"], item["waitingOn"]), (False, ["Newcomer"]))
+
+    async def test_only_a_dm_reads_what_waits_and_a_player_cannot_answer_a_which(self) -> None:
+        which = await self.which_question()
+        with self.assertRaises(RecapError) as caught:
+            await self.waiting_now(self.player)
+        self.assertEqual(caught.exception.code, "not_found")
+        body = {"kind": "which", "action": "pick", "id": which, "entity": self.mara_a}
+        self.assertEqual(await self.refused_queue(self.player, **body), "not_allowed")
+        self.assertEqual(
+            await self.refused_queue(self.player, kind="which", action="neither", id=which),
+            "not_allowed",
+        )
+
+    async def test_a_pick_from_the_website_makes_the_connection_ready_and_it_can_be_kept(
+        self,
+    ) -> None:
+        which = await self.which_question(secret=True)
+        answer = await self.queue(kind="which", action="pick", id=which, entity=self.mara_b)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        self.assertEqual(await self.backstory.which_waiting(self.g, self.one.id), [])
+        (link,) = await self.backstory.waiting(self.g, self.one.id)
+        self.assertEqual((link.subject_id, link.object_id), (self.rook, self.mara_b))
+        self.assertTrue(link.ready and link.secret)  # the secret flag came with it
+        self.assertEqual(link.upload, "Lore, 24 Oct")
+        await self.queue(kind="backstory", action="keep", id=link.id)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        kept = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+            if {r.subject_id, r.object_id} == {self.rook, self.mara_b}
+        ]
+        self.assertEqual(len(kept), 1)
+        self.assertTrue(kept[0].secret)
+
+    async def test_neither_drops_the_question_and_a_second_answer_finds_it_gone(self) -> None:
+        which = await self.which_question()
+        await self.queue(kind="which", action="neither", id=which)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
+        again = await self.refused_queue(kind="which", action="neither", id=which)
+        self.assertEqual(again, "not_found")  # the door no longer finds it
+
+    async def test_a_pick_that_is_not_a_candidate_or_not_an_id_is_refused(self) -> None:
+        which = await self.which_question()
+        stranger = await self.refused_queue(kind="which", action="pick", id=which, entity=self.hall)
+        self.assertEqual(stranger, "not_found")
+        for bad in ("", "x", "g" * 32):
+            self.assertEqual(
+                await self.refused_queue(kind="which", action="pick", id=which, entity=bad),
+                "not_found",
+            )
+        self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
+
+    async def test_a_candidate_refused_while_the_answer_waits_is_not_picked(self) -> None:
+        which = await self.which_question()
+        await self.queue(kind="which", action="pick", id=which, entity=self.mara_a)
+        async with self.db.guild(self.g) as conn:  # the DM said "not a name" to that Mara
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE guild_id = %s AND id = %s",
+                (self.g, self.mara_a),
+            )
+        outcomes = await self.apply_waiting()
+        self.assertEqual([o.error for o in outcomes], [wa.GONE])
+        self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])
+
+    async def test_the_waiting_route_reads_for_a_dm_and_takes_a_which_pick(self) -> None:
+        from dmbot.web import sessions
+
+        which = await self.which_question()
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+            listed = await client.get(f"/me/campaigns/{self.cref}/web/waiting")
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(listed.json()["counts"]["which"], 1)
+            picked = await client.post(
+                f"/me/campaigns/{self.cref}/web/waiting",
+                json={"kind": "which", "action": "pick", "id": which, "entity": self.mara_a},
+            )
+            self.assertEqual(picked.status_code, 202)
+            await self.apply_waiting()
+            self.assertEqual(
+                (await client.get(f"/me/campaigns/{self.cref}/web/waiting")).json()["counts"],
+                {"claims": 0, "backstory": 1, "ready": 1, "which": 0, "all": 1},
+            )
 
 
 class Refusals(Editing):

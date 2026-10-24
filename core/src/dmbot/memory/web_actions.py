@@ -22,7 +22,7 @@ from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import link_edits
-from dmbot.memory.backstory_links import BackstoryLinks
+from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.models import (
@@ -57,6 +57,7 @@ GONE = "gone"  # a waiting question that is not waiting any more
 NAME_FIRST = "name_first"  # a new name in it has to be answered first (in Check new names)
 STOPPED = "stopped_recording"  # someone whose words it holds is no longer recorded
 CANNOT_WRITE = "cannot_write"  # the rules refuse to write that fact now
+QUEUE_FULL = "queue_full"  # too many connections wait already: answer some of them first
 
 WAITING = (
     "claim-confirm",
@@ -64,6 +65,8 @@ WAITING = (
     "backstory-keep",
     "backstory-skip",
     "backstory-keep-all",
+    "backstory-which-pick",
+    "backstory-which-neither",
 )
 CLAIM_REFUSALS = {
     claims_mod.GONE: GONE,
@@ -434,6 +437,14 @@ async def _answer_waiting(
             # someone who said it stopped being recorded, or the rules refuse the fact now
             return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
         return Outcome(result_id=confirmed.claim.fact_id or "")
+    if a.action in ("backstory-which-pick", "backstory-which-neither"):
+        # "Which Mara?" (#2652): the call the Discord card makes. `text` is the entry picked (one
+        # of the question's candidates, which `pick_which` checks again); Neither drops it.
+        picked = a.text if a.action == "backstory-which-pick" else None
+        result = await w.backstory.pick_which(guild_id, cid, a.target_id, picked)
+        if result == FULL:
+            return _failed(QUEUE_FULL)
+        return Outcome() if result == DONE else _failed(GONE)
     onto = await memory.ontology(guild_id, cid)
     symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
     # both ends are read again here: only a connection whose two names are confirmed is kept
