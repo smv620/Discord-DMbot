@@ -28,6 +28,8 @@ function page(file: string): AstroComponentFactory {
 const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/", "index.astro", "DMbot", false],
   ["/pricing", "pricing.astro", "Prices · DMbot", false],
+  ["/how-it-works", "how-it-works.astro", "How DMbot works · DMbot", false],
+  ["/handover", "handover.astro", "A campaign for you · DMbot", true],
   ["/install", "install.astro", "Add to Discord · DMbot", false],
   ["/account", "account.astro", "My Account · DMbot", true],
   ["/account/recaps", "account/recaps.astro", "Your recaps · DMbot", true],

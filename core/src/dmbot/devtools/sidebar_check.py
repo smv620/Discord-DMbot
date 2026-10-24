@@ -33,7 +33,6 @@ from dmbot.devtools import sidebar_cases
 from dmbot.devtools.common import add_fast_model_arg, timing_line, with_fast_model
 from dmbot.rules.house import HouseRule
 from dmbot.rules.index import srd
-from dmbot.sidebar import brevity
 from dmbot.sidebar.answer import Sidebar
 
 # The questions ship in the package (`dmbot.devtools.sidebar_cases`), so the tool finds them
@@ -116,14 +115,12 @@ async def check_cases(sidebar: Sidebar, cases: Sequence[Any], *, quiet: bool = F
         in_a_row = 0
         took = time.monotonic() - started
         seconds.append(took)
-        body = got.text.rsplit(" (", 1)[0] if got.text.endswith(")") else got.text
-        ok = brevity.within_limit(body) or len(got.parts) > 1
         # What the answer must and must not say (#992): the words are the case's own.
         lowered = got.text.lower()
         missing = bool(case.must_any) and not any(w.lower() in lowered for w in case.must_any)
         banned = [w for w in case.must_not if w.lower() in lowered]
-        failed += not ok or missing or bool(banned)
-        verdict = "ok" if ok else "TOO LONG"
+        failed += missing or bool(banned)
+        verdict = "ok"  # (length is for reading, never a check, #2597)
         if missing:
             verdict += f", MISSING one of {list(case.must_any)}"
         if banned:
