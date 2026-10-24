@@ -1688,16 +1688,18 @@ class RecapWorker:
     async def _hold(self, gid: int, cid: str, job: Job, loop: cr.Loop, why: str) -> Job | None:
         """No draft could be read (the service, or the day's tally): the recap waits for its check
         and is never cut, shipped unchecked or failed for waiting. The wait grows (15 minutes, an
-        hour, 4 hours, then every 12 hours) and its tries have a small budget of their own
-        (`cr.wait_budget`: a reading's batches and PlotBot's two calls, or a revision's
-        `cr.WAIT_REVISE_CALLS`; kept out of the job's calls and its ceiling). After 3 days the DM is
-        told once that DMbot hasn't been able to finish checking it and keeps trying; players
-        never see an unchecked draft."""
+        hour, 4 hours, then every 12 hours; minutes when the check failed on our side, #2596) and
+        its tries have a small budget of their own (`cr.wait_budget`: a reading's batches and
+        PlotBot's two calls, or a revision's `cr.WAIT_REVISE_CALLS`; kept out of the job's calls
+        and its ceiling). After 3 days the DM is told once that DMbot hasn't been able to finish
+        checking it and keeps trying; players never see an unchecked draft."""
         now = int(self._now())
         since = loop.since or now
-        delay = cr.wait_for(loop.waits)
+        # A cut or unreadable answer, or the service erroring, is ours to retry within minutes
+        # (#2596); only the day's tally is a rolling day, and waits as long as it needs.
+        delay = cr.wait_for(loop.waits, soon=why != STOP_TALLY)
         if why == STOP_TALLY:
-            delay = max(delay, CHECK_TALLY_RETRY_S)  # the day's tally is a rolling day
+            delay = max(cr.wait_for(loop.waits), CHECK_TALLY_RETRY_S)
         told = loop.told
         if not told and now - since >= cr.UNCHECKED_AFTER_S:
             told = True
