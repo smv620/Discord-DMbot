@@ -173,7 +173,7 @@ class Keeping(Base):
             {**good, "extra": 1},
             {**good, "session_at": 0},
             {**good, "title": ""},
-            {**good, "summary": "x" * 7000},
+            {**good, "summary": "x" * 50_001},
             {**good, "housekeeping": "no"},
             {**good, "game_day": -1},
             "nope",
