@@ -57,7 +57,7 @@ class TheReader(unittest.TestCase):
         (found,) = bg.read_answer(reply, TEXT)
         self.assertEqual((found.name, found.quote), ("Oakmere", ""))
 
-    def test_a_long_quote_is_dropped(self) -> None:
+    def test_a_long_quote_is_shortened_to_its_front_not_dropped(self) -> None:
         long = " ".join(["Brannoch"] * 25)
         (found,) = bg.read_answer(
             json.dumps(
@@ -65,7 +65,15 @@ class TheReader(unittest.TestCase):
             ),
             long,
         )
-        self.assertEqual(found.quote, "")
+        self.assertEqual(found.quote, " ".join(["Brannoch"] * bg.QUOTE_WORDS))  # still verbatim
+
+    def test_a_long_name_is_shortened_at_a_word_end_and_still_has_to_be_in_the_text(self) -> None:
+        name = " ".join(["Brannoch"] * 12)  # more than the most words a name has
+        item = {"name": name, "kind": "person", "also": [], "quote": ""}
+        (found,) = bg.read_answer(json.dumps({"names": [item]}), name)
+        self.assertEqual(found.name, " ".join(["Brannoch"] * bg.NAME_WORDS))
+        # not in the text at all: refused, however it is shortened
+        self.assertEqual(bg.read_answer(json.dumps({"names": [item]}), "something else"), [])
 
     def test_bad_answers_are_ignored(self) -> None:
         for reply in ("", "not json", "[]", '{"names": "x"}', '{"names": [1, "a"]}'):

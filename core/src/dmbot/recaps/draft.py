@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import re
 import unicodedata
 from collections.abc import Collection, Mapping, Sequence
@@ -34,6 +35,7 @@ from dmbot.memory.importance import beat_score
 from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
+from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.recaps.text import (
     CUE,
     NOT_NAMES,
@@ -47,6 +49,8 @@ from dmbot.recaps.text import (
     words,
 )
 
+log = logging.getLogger(__name__)
+
 BASE_WORDS = 75  # the recap's length: this many words, and 75 more for each hour played (#2368)
 WORDS_PER_HOUR = 75
 WORDS_CEILING = 450  # a 5-hour session or longer
@@ -56,7 +60,7 @@ MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 # The recap text the database holds (`recap_jobs.summary`, backups) and the web editor takes: the
 # story, the fixed opening and closing lines and their gap. A draft longer than the story's share is
 # shortened in code (`fit_summary`), never sent back (#2597).
-SUMMARY_MAX = 6000
+SUMMARY_MAX = STORY_COLUMN_MAX
 STORY_MAX = SUMMARY_MAX - FIXED_LINES_ROOM
 # Counts the writer is told (HOUSEKEEPING_SYSTEM, the music line) and never refused for: what comes
 # back is used (owner, 2026-10-24, #2597). The HARD ones are a storage or service limit, kept by
@@ -658,6 +662,9 @@ def fit_summary(summary: str, limit: int = STORY_MAX) -> str:
     as it is."""
     if len(summary) <= limit:
         return summary
+    log.warning(
+        "Recap: a story of %d characters was shortened to fit the column (%d)", len(summary), limit
+    )
     paragraphs = re.split(r"(\n\s*\n)", summary)  # paragraphs and the gaps between them
     while len(paragraphs) > 1 and len("".join(paragraphs)) > limit:
         del paragraphs[-2:]

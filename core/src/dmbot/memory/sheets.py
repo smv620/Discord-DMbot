@@ -25,6 +25,7 @@ from typing import Any
 import aiohttp
 
 from dmbot.memory.models import name_key
+from dmbot.word_end import at_word_end
 
 SOURCE_DNDBEYOND = "dndbeyond"
 SOURCE_TYPED = "typed"
@@ -486,11 +487,11 @@ def _int(value: Any, low: int, high: int) -> int | None:
 
 
 def _name(value: Any) -> str | None:
-    """A short single-line name, or None (anything long is likely text, not a name)."""
+    """A short single-line name, or None when there is none."""
     if not isinstance(value, str):
         return None
-    text = " ".join(value.split())
-    return text if 0 < len(text) <= NAME_MAX else None
+    text = at_word_end(" ".join(value.split()), NAME_MAX)  # shortened, not dropped (#2601)
+    return text or None
 
 
 def _names(values: Iterable[Any]) -> list[str]:

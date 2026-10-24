@@ -34,6 +34,7 @@ from dmbot.campaigns.store import DAMAGED
 from dmbot.db import Conn, Database
 from dmbot.memory.adventure import AdventureError, AdventureStore
 from dmbot.memory.claims import reads_like_instruction
+from dmbot.word_end import at_word_end
 
 # ---- money --------------------------------------------------------------------------------
 
@@ -201,7 +202,7 @@ def _clean(value: Any, limit: int) -> str | None:
     text = " ".join(text.split())
     if any("\ud800" <= c <= "\udfff" for c in text):
         return None  # a lone surrogate can't be stored as UTF-8
-    return text[:limit]
+    return at_word_end(text, limit)
 
 
 def _load(text: str) -> dict[str, Any] | None:
@@ -278,7 +279,7 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
             if not _words_in(name, whole):
                 out.drop("name not in the text")  # a real quote can't vouch for an invented name
                 continue
-            out.nodes.append(Node(kind, name, summary, proof[0][:QUOTE_MAX], proof[1]))
+            out.nodes.append(Node(kind, name, summary, at_word_end(proof[0], QUOTE_MAX), proof[1]))
     needs = data.get("needs", [])
     if not isinstance(needs, list):
         out.malformed = True
@@ -307,7 +308,7 @@ def parse_answer(text: str, batch: Sequence[ChunkRow]) -> Parsed:
         if proof is None:
             out.drop("quote not in the text")
             continue
-        out.needs.append(Need(ends[0], ends[1], need, proof[0][:QUOTE_MAX], proof[1]))
+        out.needs.append(Need(ends[0], ends[1], need, at_word_end(proof[0], QUOTE_MAX), proof[1]))
     return out
 
 

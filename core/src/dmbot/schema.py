@@ -11839,6 +11839,19 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+RECAP_STORY_ROOM = """
+    -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
+    -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
+    -- only a guard (`fit_summary` shortens past it and logs). The number is
+    -- `recaps.fixed_lines.STORY_COLUMN_MAX`; a test keeps the two equal. The constraint is
+    -- replaced, no row is rewritten, so no row-level security is touched.
+    ALTER TABLE recap_jobs
+        DROP CONSTRAINT recap_jobs_summary_check,
+        DROP CONSTRAINT recap_jobs_original_check,
+        ADD CONSTRAINT recap_jobs_summary_check CHECK (char_length(summary) <= 30000),
+        ADD CONSTRAINT recap_jobs_original_check CHECK (char_length(original) <= 30000);
+"""
+
 IMPORT_STEPS = """
     -- How far each imported session's cleaning has got and when anything about it last moved
     -- (#2564), so the website can show "420 of 900 lines" and say "stalled" when nothing has moved
@@ -12155,6 +12168,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
+    ("0221_recap_story_room", RECAP_STORY_ROOM),  # the recap story column holds 30,000 (#2601)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -21,8 +21,8 @@ from typing import Any
 
 from dmbot.ai import SLOW_TIER_TIMEOUT_S, Reply
 from dmbot.memory.name_documents import request_text
-from dmbot.recaps.text import at_word_end
 from dmbot.rules.house import HOUSE_RULES_MAX, RULE_MAX
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 

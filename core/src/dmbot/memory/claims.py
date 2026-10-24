@@ -60,6 +60,7 @@ from dmbot.memory.ontology import (
 )
 from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
 from dmbot.names import not_names
+from dmbot.word_end import at_word_end
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -181,7 +182,7 @@ def _field(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
-    return text[:FIELD_MAX] if text else None
+    return at_word_end(text, FIELD_MAX) if text else None
 
 
 _LIST_START = re.compile(r'\{\s*"claims"\s*:\s*\[')
@@ -236,7 +237,7 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
         subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
         obj = _field(item.get("object")) or ""
         said = item.get("details")  # words only: a list or a number is no detail
-        details = " ".join(said.split())[:DETAIL_MAX] if isinstance(said, str) else ""
+        details = at_word_end(" ".join(said.split()), DETAIL_MAX) if isinstance(said, str) else ""
         how = item.get("how")
         if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
             how = how.strip().rstrip(".").lower()
