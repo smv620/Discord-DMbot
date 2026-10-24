@@ -436,6 +436,10 @@ terminal output or Discord screenshots copied to it.
   what is written, not the limit. Only live table answers keep short caps, at least 4 times what they
   need. A cut answer (`reply.cut`) is retried in smaller parts or reported as stopped early, never
   as "nothing found". Bring limits down later only with logged numbers.
+  **Lengths are targets in the instructions, never checks** (owner, 2026-10-24, #2597): whatever
+  comes back is used in full. Never fail, retry, rewrite or cut an answer for being longer or shorter
+  than a target; only an empty or unreadable one is retried, and a platform's hard limit (Discord's
+  2,000 characters) splits a message into parts.
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests

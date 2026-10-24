@@ -4447,6 +4447,15 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
   same applies to the section count when the fix-up changes the sections: the length is checked again
   after it, and steered once if it left the range.
+  **Length is a target in the prompt, never a check** (owner, 2026-10-24, #2597; replaces the 50% under
+  and 20% / 35% over margins and the steered length retries above): the target is still worked out as
+  above and put in the writer's instructions, but whatever length comes back is used as it is. No
+  draft is failed, retried, rewritten or cut for being longer or shorter than the target, and a
+  sentence the fact check cuts never fails the recap for leaving it short. Why: going back and forth
+  over a draft that is a little long or short costs more than it gains. Only an empty or unreadable
+  answer is retried. The same holds for every AI write-up in DMbot (house-rule notes, support replies,
+  the DM sidebar's answers): limits are in the instructions, and only a platform's hard limit (Discord's
+  2,000 characters a message) splits an answer into parts, never cuts it.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
@@ -4459,11 +4468,11 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     draft and lists every sentence that states something the beats do not support (wrong place,
     wrong person, invented event or detail, contradiction), as a fixed-shape answer. A flagged draft
     is revised once with the list; a sentence still flagged after that is cut in code, and the
-    recap stands only if it still meets the minimum length. The grader's style scores never
+    recap stands (its length is never a reason to fail, #2597). The grader's style scores never
     outrank this check.
   - **Coverage:** the fact check also names the beats the draft leaves out that change the story
     (a new place, a new person met, a decision, a reveal). Those are given to the revision; the
-    length band, not coverage, decides when it stops.
+    revision is the one try, whatever the length (#2597).
   - Knowing the adventure's map (where a town lies, which way the party travels) needs the Shared
     story reader (docs/STORY_MEMORY.md); until a DM shares the adventure, the recap states no
     direction at all.
