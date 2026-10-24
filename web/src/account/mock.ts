@@ -29,6 +29,7 @@ import type {
   TranscriptVersion,
   WebEdge,
   WebGraph,
+  WebGroup,
   WebLink,
   WebLinkChange,
   WebNode,
@@ -59,6 +60,7 @@ export const scenarios = [
   "free",
   "free-until",
   "free-paying",
+  "lost-server",
   "down",
 ] as const;
 export type Scenario = (typeof scenarios)[number];
@@ -234,6 +236,10 @@ export function scenarioMe(scenario: Scenario): Me | null {
     servers,
     recording,
     dmbotId: "1P0Z4F6N2K9",
+    discordAccounts: [
+      { key: "d1", name: "Mira (main)", current: true, canRemove: true },
+      { key: "d2", name: "Mira on the phone", current: false, canRemove: true },
+    ],
     experiencePoints: 1245,
     canMove: false,
     canSupport: false,
@@ -272,6 +278,18 @@ export function scenarioMe(scenario: Scenario): Me | null {
           renewsOn: "2026-10-14",
           graceEndsOn: null,
         },
+      };
+    case "lost-server":
+      // The table plan, plus a campaign of yours on a server DMbot can't reach any more (#2555).
+      return {
+        ...base,
+        canMove: true,
+        canSupport: true,
+        campaigns: [
+          ...campaigns,
+          { id: "cmp-hollow", ref: "300.cmp9", name: "Lost Hollow", serverName: "", lastPlayedAt: null, status: "paused", role: "owner", serverReachable: false },
+        ],
+        plan: { id: "table", status: "active", hoursUsed: 11.2, hoursCap: 18, renewsOn: "2026-10-14", graceEndsOn: null },
       };
     case "grace":
       return {
@@ -505,7 +523,7 @@ interface WebState {
   nextLink: number;
 }
 
-function startWeb(big: boolean): WebState {
+function startWeb(big: boolean, lonely = false): WebState {
   const base = startNames();
   const nodes: WebNode[] = base.map((n) => ({ id: n.id, name: n.name, kind: n.kind, secret: n.secret }));
   if (big) {
@@ -545,6 +563,19 @@ function startWeb(big: boolean): WebState {
   // The first the party is wrong about (full view says so); the second is only a hunch.
   if (plain[0]) plain[0].belief = { confidence: 0.6, status: "Party theory", contradicted: true };
   if (plain[1]) plain[1].belief = { confidence: 0.3, status: "Accusation" };
+  // A young campaign (#2632): most names have no connection yet, and a second small group stands apart.
+  if (lonely) {
+    const extra: WebNode[] = [
+      { id: "lone-mill", name: "Old Mill", kind: "place", secret: false },
+      { id: "lone-tree", name: "Hollow Tree", kind: "place", secret: false },
+      { id: "lone-venn", name: "Brother Venn", kind: "npc", secret: false },
+      { id: "lone-wardens", name: "The Wardens", kind: "group", secret: false },
+      { id: "pair-brask", name: "Brask", kind: "npc", secret: false },
+      { id: "pair-ford", name: "Tolle Ford", kind: "place", secret: false },
+    ];
+    nodes.push(...extra);
+    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "ab" });
+  }
   return { nodes, links, nextLink: links.length + 1 };
 }
 
@@ -564,6 +595,7 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
     address: "dm@example.com",
     source: scenario === "table" ? "payment" : "signin",
@@ -585,7 +617,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const webs = new Map<string, WebState>();
   const web = (ref: string): WebState => {
     let found = webs.get(ref);
-    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref))));
+    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
     return found;
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
@@ -909,7 +941,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`importProgress:${ref}:${importId}`);
       const seen = calls.filter((c) => c.startsWith("importProgress:")).length;
       const state = seen < 2 ? ("working" as const) : ("done" as const);
+      const now = Math.floor(Date.now() / 1000);
       return {
+        // The whole import's progress, the shared shape (#2564).
+        import: {
+          stage: state === "done" ? "done" : "cleaning",
+          done: state === "done" ? 1 : 0,
+          total: 1,
+          unit: "sessions",
+          startedAt: now - 30,
+          updatedAt: now - 2,
+          serverNow: now,
+          state: state === "done" ? ("done" as const) : ("running" as const),
+          reason: null,
+        },
         sessions: [
           {
             file: "session-1-2026-09-14.txt",
@@ -941,6 +986,60 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       return webGraphOf(ref, query);
+    },
+    // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
+    async webOverview(ref, query) {
+      calls.push(`webOverview:${ref}${query.view ? `:view=${query.view}` : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const dm = view === "dm";
+      const visibility = webVisibility(ref);
+      if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
+      const all = dm ? query.view !== "players" : query.view === "full";
+      const state = web(ref);
+      const seen = state.nodes.filter((n) => all || (!n.secret && n.revealed !== false));
+      const ids = new Set(seen.map((n) => n.id));
+      const usable = state.links.filter(
+        (l) => ids.has(l.a) && ids.has(l.b) && (all || (!l.secret && l.revealed !== false)),
+      );
+      const degree = new Map<string, number>(seen.map((n) => [n.id, 0]));
+      for (const l of usable) {
+        degree.set(l.a, (degree.get(l.a) ?? 0) + 1);
+        degree.set(l.b, (degree.get(l.b) ?? 0) + 1);
+      }
+      const nodeOf = (n: WebNode): WebNode =>
+        all ? { ...n, revealed: n.revealed !== false } : { id: n.id, name: n.name, kind: n.kind };
+      const left = new Set(seen.filter((n) => (degree.get(n.id) ?? 0) > 0).map((n) => n.id));
+      const groups: WebGroup[] = [];
+      while (left.size > 0) {
+        const start = [...left][0]!;
+        const part = new Set([start]);
+        const queue = [start];
+        for (let i = 0; i < queue.length; i += 1) {
+          for (const l of usable) {
+            const there = l.a === queue[i] ? l.b : l.b === queue[i] ? l.a : null;
+            if (there !== null && !part.has(there)) {
+              part.add(there);
+              queue.push(there);
+            }
+          }
+        }
+        part.forEach((id) => left.delete(id));
+        const centre = [...part].sort((x, y) => (degree.get(y) ?? 0) - (degree.get(x) ?? 0))[0]!;
+        groups.push({ center: centre, centerName: state.nodes.find((n) => n.id === centre)!.name, size: part.size });
+      }
+      groups.sort((x, y) => y.size - x.size);
+      const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
+      return {
+        counts: { names: seen.length, connections: usable.length, connectedNames: seen.length - tray.length, notConnected: tray.length },
+        tray,
+        groups,
+        truncated: false,
+        canEdit: dm && all,
+        view: all ? "full" : "players",
+      };
     },
     async webSize(ref, query: WebQuery) {
       calls.push(`webSize:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
@@ -1248,7 +1347,38 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           next: null,
           transcriptsDeletedAt: 1_792_500_000,
         };
-      return mockTranscript(number, version);
+      return mockTranscript(number, version, putBackNow);
+    },
+    async transcriptStretch(campaignRef, number, skip) {
+      calls.push(`transcriptStretch:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (number !== 2 || skip.speaker !== MOCK_SKIP.speaker) throw new ApiError("not-found");
+      // (a line with markup in it: it must be shown as text, never as HTML)
+      return [
+        { when: "0:01:02", who: "Mia", text: "did you see the match" },
+        { when: "0:01:05", who: "Ash", text: "<b>no</b> I missed it" },
+        { when: "0:01:09", who: "Mia", text: "unreal" },
+      ];
+    },
+    // (a campaign address ending `.player` is a player's: the API refuses them both, as it refuses anyone who isn't a DM)
+    async transcriptPutBack(campaignRef, number, skip) {
+      calls.push(`transcriptPutBack:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const was = putBackNow;
+      putBackNow = true;
+      return was ? 0 : 3;
+    },
+    async transcriptLeaveOut(campaignRef, number, skip) {
+      calls.push(`transcriptLeaveOut:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const was = putBackNow;
+      putBackNow = false;
+      return was ? 3 : 0;
     },
     async transcriptFile(campaignRef, number, version) {
       calls.push(`transcriptFile:${campaignRef}:${number}:${version}`);
@@ -1595,6 +1725,94 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (token !== "good-link") throw new ApiError("bad-link");
       me = scenarioMe("table");
     },
+    // The owner's side of a hand-over by email (#2534): one open offer per campaign, and an answer that
+    // never says anything about the address. `bad` is not an address; `many@example.com` is over the limit.
+    async offerHandover(ref, email) {
+      calls.push(`offerHandover:${ref}:${email}`);
+      await reachable();
+      signedIn();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ApiError("bad-email");
+      if (email.startsWith("many@")) throw new ApiError("too-soon");
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      // (copied, never changed in place: the pretend campaigns are shared by every test)
+      const open = { sentAt: "2026-10-23T12:00:00Z", expiresAt: "2026-10-30T12:00:00Z" };
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: open } : x)) };
+    },
+    async deleteCampaign(ref, name) {
+      calls.push(`deleteCampaign:${ref}:${name}`);
+      await reachable();
+      signedIn();
+      const found = me?.campaigns.find((x) => x.ref === ref);
+      if (!found) throw new ApiError("not-found");
+      if (found.role !== "owner") throw new ApiError("not-allowed");
+      if (/running/i.test(found.name)) throw new ApiError("session-running");
+      if (name.split(/\s+/).join(" ").toLowerCase() !== found.name.split(/\s+/).join(" ").toLowerCase()) throw new ApiError("name-mismatch");
+      // (copied, never changed in place: the pretend campaigns are shared by every test)
+      me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
+      return { channelsLeft: found.serverReachable === false };
+    },
+    async campaignBackup(ref) {
+      calls.push(`campaignBackup:${ref}`);
+      await reachable();
+      signedIn();
+      if (me?.plan?.id === "try-it") throw new ApiError("no-backup");
+      return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
+    },
+    async takeBackHandover(ref) {
+      calls.push(`takeBackHandover:${ref}`);
+      await reachable();
+      signedIn();
+      if (!me?.campaigns.some((x) => x.ref === ref)) throw new ApiError("not-found");
+      me = { ...me, campaigns: me.campaigns.map((x) => (x.ref === ref ? { ...x, handover: null } : x)) };
+    },
+    // The hand-over accept page (#2534). Tokens: `open` (can accept), `no-plan`, `try-it`, `own`, `late`
+    // (ended); `gone-after` looks open and ends before accepting.
+    async handoverLook(token) {
+      calls.push(`handoverLook:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "late" || !/^[\w-]{1,200}$/.test(token)) return { status: "ended" };
+      const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
+      return {
+        status: "open",
+        campaign: { name: "The Silver Hall" },
+        from: { name: "Mira" },
+        server: { id: "s1", name: "Friday Night Dice" },
+        canAccept: why === null,
+        why,
+        servers: [
+          { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+          { id: "s2", name: "Sunday Table", current: false, botIn: true },
+          { id: "s3", name: "New Server", current: false, botIn: false },
+        ],
+      };
+    },
+    async handoverAccept(token, serverId) {
+      calls.push(`handoverAccept:${token}:${serverId}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+      if (serverId === "s3") throw new ApiError("bad-server");
+      return { campaignRef: "s1.cmp1" };
+    },
+    async handoverDecline(token) {
+      calls.push(`handoverDecline:${token}`);
+      await reachable();
+      signedIn();
+      if (token === "gone-after") throw new ApiError("ended");
+    },
+    addDiscordUrl: () => "#demo-add-discord",
+    async removeDiscordAccount(key) {
+      calls.push(`removeDiscordAccount:${key}`);
+      await reachable();
+      signedIn();
+      const list = me?.discordAccounts ?? [];
+      const found = list.find((a) => a.key === key);
+      if (!found) throw new ApiError("not-found");
+      if (list.length <= 1) throw new ApiError("last-account");
+      const left = list.filter((a) => a.key !== key);
+      me = { ...me!, discordAccounts: left.map((a) => ({ ...a, canRemove: left.length > 1 })) };
+    },
     async getMoveCode() {
       calls.push("move-code");
       signedIn();
@@ -1808,8 +2026,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
 }
 
 /** A pretend transcript in the shape the API gives: the file's header lines and its lines. */
-function mockTranscript(number: number, version: TranscriptVersion) {
+/** Session 2's cleaned reading has one left-out stretch (#2568): its marker is the third line. */
+const MOCK_SKIP = { line: 2, speaker: 1, fromMs: 62_000, toMs: 76_000, seconds: 14, lines: 3 };
+
+function mockTranscript(number: number, version: TranscriptVersion, putBack = false) {
   const heard = version === "heard";
+  const skipped = number === 2 && !heard;
   return {
     number,
     version,
@@ -1827,7 +2049,10 @@ function mockTranscript(number: number, version: TranscriptVersion) {
         ? "[0:00:40] (Speaker 2): Kazeth draws his sword."
         : "[0:00:40] (Speaker 2): Ka'zeth draws his sword.",
       ...(heard ? ["[0:01:02] (Speaker 1) {non-game_content}: did you see the match"] : []),
+      ...(skipped && !putBack ? ["[0:01:02] (Speaker 1) [14s of off-topic chat skipped]"] : []),
+      ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
+    ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
   };
 }
 

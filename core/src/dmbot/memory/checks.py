@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from dmbot.memory import kin
 from dmbot.memory.models import REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
@@ -67,12 +68,30 @@ def conflicts(onto: Ontology, p: PredicateTerm, other_key: str) -> bool:
     return other_key in p.conflicts_with or (other is not None and p.key in other.conflicts_with)
 
 
-def ordered(p: PredicateTerm, subject_id: str, object_id: str) -> tuple[str, str]:
+def ordered(
+    p: PredicateTerm, subject_id: str, object_id: str, detail: str = "", directional: bool = False
+) -> tuple[str, str]:
     """Two-way relationships are stored once, smaller ID first, so "A ally B" and
-    "B ally A" are the same fact (inverse consistency by construction)."""
+    "B ally A" are the same fact (inverse consistency by construction). Not a family connection
+    with a role true of one name only ("Mira is the niece of Aldric"): there the order is the
+    meaning (#2457)."""
+    if p.key == "kin_of" and directional and kin.directional(detail):
+        return subject_id, object_id
     if p.symmetric and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
+
+
+def _same_order(old: Relation, new: Relation) -> bool:
+    """Do the two say it between the same names in the same order? A family role the DM gave a
+    direction to ("Mira is the niece of Aldric") is twin to a plain one with that role in either
+    order: the plain one has no direction, so the DM's word on it wins (#2457). Two with a
+    direction must agree on it."""
+    if (old.subject_id, old.object_id) == (new.subject_id, new.object_id):
+        return True
+    if new.predicate == "kin_of" and not (old.directional and new.directional):
+        return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
+    return False
 
 
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:
@@ -83,7 +102,7 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
         for old in existing
         if old.id != new.id
         and old.predicate == new.predicate
-        and (old.subject_id, old.object_id) == (new.subject_id, new.object_id)
+        and _same_order(old, new)
         and old.detail.casefold() == new.detail.casefold()
         and same_time(old, new)
     ]

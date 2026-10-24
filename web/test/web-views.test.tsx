@@ -63,6 +63,53 @@ describe("a DM's Full View and Players View", () => {
     await waitFor(() => expect(notRevealed().length).toBeLessThan(before));
     await screen.findByText(w.revealed);
   });
+
+  it("says why a name could not be revealed, and keeps the button for another try", async () => {
+    const api = await open();
+    api.webReveal = async () => {
+      throw new ApiError("not-allowed");
+    };
+    const button = screen.getAllByRole("button", { name: /^Reveal .* to the players$/ })[0] as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(button.disabled).toBe(false);
+  });
+
+  it("greys a Reveal button while the bot is still working, so it can't be pressed twice", async () => {
+    const api = await open();
+    let finish: () => void = () => {};
+    let asked = 0;
+    api.webReveal = () => {
+      asked += 1;
+      return new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    };
+    const button = screen.getAllByRole("button", { name: /^Reveal .* to the players$/ })[0] as HTMLButtonElement;
+    fireEvent.click(button);
+    await waitFor(() => expect(button.disabled).toBe(true));
+    fireEvent.click(button);
+    expect(asked).toBe(1);
+    finish();
+    await waitFor(() => expect(button.disabled).toBe(false));
+  });
+
+  it("says why a connection could not be revealed", async () => {
+    const api = await open();
+    api.webReveal = async () => {
+      throw new ApiError("not-found");
+    };
+    // Open each pair's connections until one that isn't revealed shows its Reveal button.
+    let button: HTMLButtonElement | undefined;
+    for (const see of screen.getAllByRole("button", { name: /^See the connections/ })) {
+      fireEvent.click(see);
+      button = screen.queryAllByRole("button", { name: /^Reveal connection \d+ to the players$/ })[0] as HTMLButtonElement | undefined;
+      if (button) break;
+    }
+    expect(button).toBeTruthy();
+    fireEvent.click(button!);
+    expect(await screen.findByRole("alert")).toBeTruthy();
+  });
 });
 
 describe("what a player must never see", () => {

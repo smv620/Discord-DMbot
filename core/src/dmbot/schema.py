@@ -2913,6 +2913,49 @@ OWNER_LEFT = """
     REVOKE ALL ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) FROM PUBLIC;
 """
 
+TRANSCRIPT_ERASURES = (
+    """
+    -- Who erased their transcripts in a server, and when (#2605). A backup made before that is
+    -- restored without those lines: the person's "Delete my transcripts" must hold for a copy
+    -- too. One row for each person and server (a later erase replaces the time). Ids and a time
+    -- only, no words. A restore into another server cannot see this server's rows, so it asks
+    -- through a door that answers for one server and the speakers named, and says nothing else.
+    CREATE TABLE transcript_erasures (
+        guild_id  BIGINT NOT NULL,
+        user_id   BIGINT NOT NULL,
+        erased_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
+    );
+    """
+    + _isolate("transcript_erasures")
+    + """
+    CREATE FUNCTION dmbot_erased_speakers(g BIGINT, users BIGINT[])
+        RETURNS TABLE (user_id BIGINT, erased_at BIGINT)
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    DECLARE
+        before TEXT := COALESCE(current_setting('dmbot.guild_id', true), '');
+    BEGIN
+        -- (the table's rows are isolated by server even for its owner: look as that server,
+        -- for this one query, then as the caller's again)
+        PERFORM set_config('dmbot.guild_id', g::TEXT, true);
+        RETURN QUERY SELECT e.user_id, e.erased_at FROM transcript_erasures e
+            WHERE e.guild_id = g AND e.user_id = ANY(users);
+        PERFORM set_config('dmbot.guild_id', before, true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_erased_speakers(BIGINT, BIGINT[])'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_erased_speakers(BIGINT, BIGINT[]) FROM PUBLIC;
+"""
+)
+
 PLAN_ENDS = """
     -- A paid plan that its owner has cancelled, which keeps working to the end of the period
     -- already paid for (#824): the payment company's "cancelled" event stores that end here, and
@@ -3143,6 +3186,14 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # PlotBot's check of a recap: read and answered by a DM (#2122).
     ("dmbot_plot_read", "dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT)"),
     ("dmbot_plot_answer", "dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)"),
+    # ... and approving a draft that waited 3 days for its check, as it is (#2305).
+    (
+        "dmbot_recap_approve_unchecked",
+        "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)",
+    ),
+    # The owner's own campaigns in any server, and deleting one from the website (#2554).
+    ("dmbot_web_owned_campaigns", "dmbot_web_owned_campaigns()"),
+    ("dmbot_web_delete_campaign", "dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)"),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -3207,6 +3258,16 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # Who plays which character in a campaign, for the transcript's labels (#1512).
     ("dmbot_web_transcript_characters", "dmbot_web_transcript_characters(BIGINT, TEXT)"),
     ("dmbot_web_transcript_speakers", "dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)"),
+    # What was left out of a session, and a DM putting it back (#2567).
+    (
+        "dmbot_web_transcript_stretch",
+        "dmbot_web_transcript_stretch(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)",
+    ),
+    ("dmbot_web_transcript_choices", "dmbot_web_transcript_choices(BIGINT, TEXT, TEXT)"),
+    (
+        "dmbot_web_transcript_choose",
+        "dmbot_web_transcript_choose(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN)",
+    ),
     ("dmbot_web_transcript_campaigns", "dmbot_web_transcript_campaigns(BIGINT)"),
     # The campaign's names with the narrator's spelling (#1451): read and write, DM only.
     ("dmbot_web_names", "dmbot_web_names(BIGINT, TEXT)"),
@@ -3232,6 +3293,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_web_relationships",
         "dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)",
     ),
+    # Every name the caller may see and which pairs are connected, for the Story graph's count line,
+    # its "Not connected yet" tray and its other groups (#2632).
+    ("dmbot_web_graph_overview", "dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -10748,6 +10812,29 @@ RECAP_POSTING_CLOCK = r"""
         FOR EACH ROW EXECUTE FUNCTION dmbot_recap_posting_clock();
 """
 
+RECAP_AUDIO_TOLD = """
+    -- The DM is told once, on the DM screen, when a recap's audio is ready or has failed (#2621).
+    -- `audio_told` holds the audio state that was told ('ready' or 'failed'); '' when none is. A
+    -- trigger clears it each time the audio is queued, whichever door queued it (approval, the
+    -- website's Make it again, the bot), so a new making is told again and a restart never repeats
+    -- a notice. Recaps whose audio is already ready or failed are marked as told: no old news.
+    ALTER TABLE recap_jobs ADD COLUMN audio_told TEXT NOT NULL DEFAULT '';
+    CREATE POLICY migrate_backfill ON recap_jobs FOR ALL USING (true) WITH CHECK (true);
+    UPDATE recap_jobs SET audio_told = audio WHERE audio IN ('ready', 'failed');
+    DROP POLICY migrate_backfill ON recap_jobs;
+    CREATE FUNCTION dmbot_recap_audio_told_clock() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $fn$
+    BEGIN
+        IF NEW.audio = 'queued' AND OLD.audio IS DISTINCT FROM 'queued' THEN
+            NEW.audio_told := '';
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER recap_jobs_audio_told BEFORE UPDATE OF audio ON recap_jobs
+        FOR EACH ROW EXECUTE FUNCTION dmbot_recap_audio_told_clock();
+"""
+
 BELIEFS = (
     f"""
     -- Assertions, perspectives and evidence (#2409; docs/STORY_MEMORY.md, section 9). A connection
@@ -11305,6 +11392,24 @@ PINNED_TRUTH = """
     1,
 )
 
+# Family roles (#2457, Supervisor's ruling A): whether a family connection's detail is a role that
+# reads one way ("Mira is the niece of Aldric"). Older rows are false: their detail was stored with
+# the two names sorted by id, so its direction is arbitrary and they keep reading "is family of".
+# The column has a default and is added, not updated, so no row changes and no backfill policy.
+# The website's door sends it with each connection, built from the door as it stands now (0190).
+_DIRECTIONAL_LINK = "'detail', r.detail, 'secret', r.secret, 'at', r.created_at,"
+_door_directional = PINNED_TRUTH[
+    PINNED_TRUTH.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships") :
+]
+assert _door_directional.count(_DIRECTIONAL_LINK) == 1
+RELATION_DIRECTIONAL = """
+    ALTER TABLE memory_relations ADD COLUMN directional BOOLEAN NOT NULL DEFAULT false;
+    """ + _door_directional.replace(
+    _DIRECTIONAL_LINK,
+    "'detail', r.detail, 'directional', r.directional, 'secret', r.secret, 'at', r.created_at,",
+    1,
+)
+
 LINK_PIN_ACTION = """
     -- The website's 📌 pin (#2447): a DM pins a connection as 100% truth, or takes it back, through
     -- the same queue as the other connection edits ('link-pin': `target_id` the connection, `flag`
@@ -11660,6 +11765,44 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+TIMELINE_STABLE = """
+    -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
+    -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
+    -- keeps its pinned search_path, its owner and its grants. No rows change.
+    ALTER FUNCTION dmbot_web_story_timeline(BIGINT, TEXT) STABLE;
+"""
+
+WEB_IMAGE_LINES = """
+    -- The website's transcript lines say which line describes a picture (#2507, after #2450): the
+    -- reading page and the downloads tag it "(image)", as the bot's own file does, never "(typed)".
+    -- The door is the one WEB_TRANSCRIPT_PAGES made, with one more key on each line. No rows
+    -- change.
+"""
+_lines_start = WEB_TRANSCRIPT_PAGES.index("    CREATE FUNCTION dmbot_web_transcript_lines(")
+_lines_end = WEB_TRANSCRIPT_PAGES.index("    $fn$;", _lines_start) + len("    $fn$;")
+_lines_door = WEB_TRANSCRIPT_PAGES[_lines_start:_lines_end].replace(
+    "CREATE FUNCTION dmbot_web_transcript_lines(",
+    "CREATE OR REPLACE FUNCTION dmbot_web_transcript_lines(",
+    1,
+)
+assert _lines_door.count("'typed', p.typed)") == 1
+WEB_IMAGE_LINES += (
+    _lines_door.replace("'typed', p.typed)", "'typed', p.typed, 'image', p.image)")
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_lines(BIGINT, TEXT, TEXT, BIGINT, BIGINT)
+        FROM PUBLIC;
+"""
+)
+
 IMAGE_LINES = """
     -- A transcript line that describes an image posted in the table chat (#2450, docs/PLAN.md,
     -- "Images posted there"): stored as a typed line (everything that treats typed lines apart
@@ -11683,6 +11826,77 @@ IMAGE_LINES = """
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
     );
     """ + _isolate("image_day_use")
+
+RECAP_APPROVE_UNCHECKED = """
+    -- "Approve it as it is" for a recap whose critics could not be reached for 3 days (#2305).
+    -- The website's role may not write recap_jobs, so this is the door: only a DM of the campaign,
+    -- only a draft still in the critics' loop that has waited at least `wait_s` seconds for its
+    -- check (the caller passes the 3 days, so the number lives in one place), and only the text
+    -- the DM read: `expected` is the hash of the title and summary the page showed, and a draft
+    -- the worker has revised since approves nothing ('changed'). A second press after an approval
+    -- answers 'approved' again and changes nothing. It marks the loop done, records who and when
+    -- in the loop's JSON, adds the note that the draft was never fully checked, and lets the
+    -- worker run on to the title step (next_at = 0), which makes it ready.
+    -- A new function: no rows change, so no row-level-security policy is needed.
+    CREATE FUNCTION dmbot_recap_approve_unchecked(
+        g BIGINT, c TEXT, at_ BIGINT, wait_s BIGINT, note TEXT, expected TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        since_s BIGINT;
+    BEGIN
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_allowed';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND OR job.status <> 'draft' OR job.state <> 'prose'
+           OR job.critics IS NULL OR job.summary = '' THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF COALESCE((job.critics->>'approved_at')::BIGINT, 0) > 0 THEN
+            RETURN 'approved';  -- already approved: a second press changes nothing
+        END IF;
+        IF COALESCE(job.critics->>'done', 'false') = 'true' THEN
+            RETURN 'not_allowed';
+        END IF;
+        IF expected <> encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')),
+                              'hex') THEN
+            RETURN 'changed';
+        END IF;
+        -- Waiting for the check at all (a wait was counted), and for long enough.
+        since_s := COALESCE((job.critics->>'since')::BIGINT, 0);
+        IF COALESCE((job.critics->>'waits')::BIGINT, 0) = 0 OR since_s = 0
+           OR now_s - since_s < wait_s THEN
+            RETURN 'not_yet';
+        END IF;
+        UPDATE recap_jobs SET
+            critics = job.critics || jsonb_build_object(
+                'done', true, 'approved_by', dmbot_current_user(), 'approved_at', now_s,
+                'notes', CASE WHEN jsonb_typeof(job.critics->'notes') = 'array'
+                              THEN job.critics->'notes' ELSE '[]'::jsonb END || to_jsonb(note)),
+            last_error = '', errors = 0, next_at = 0
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN 'approved';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)
+        FROM PUBLIC;
+    """
 
 MAP_NOTES = """
     -- A map someone posted in the table chat, put into words for MapBot, a later feature (#2450,
@@ -11709,6 +11923,563 @@ MAP_NOTES = """
     CREATE INDEX map_notes_person ON map_notes (guild_id, user_id);
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
+
+WEB_OWNED_CAMPAIGNS = """
+    -- The website's two doors for a campaign's owner, in any server (#2554, docs/PLAN.md,
+    -- "Everything on the website except picking Discord channels"). The website's role sees a
+    -- server only when it is in the session's own list (`web_session_servers`, not widened here):
+    -- an owner whose server has gone, or whose bot was removed, could not see or delete their own
+    -- campaign. These doors are keyed by the signed-in account and return only list fields, or do
+    -- the one delete. New functions only: no rows change, so no row-level-security policy is
+    -- needed.
+
+    -- The signed-in account's own campaigns in every server DMbot knows. `owner_campaigns` has the
+    -- ids but deliberately no server, so each server of the routing table is looked in, with
+    -- that server's scope, for those ids only.
+    CREATE FUNCTION dmbot_web_owned_campaigns() RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ids TEXT[];
+        g BIGINT;
+        found JSONB;
+        found_all JSONB := '[]'::jsonb;
+        saved TEXT := coalesce(current_setting('dmbot.guild_id', true), '');
+    BEGIN
+        IF me IS NULL THEN
+            RETURN found_all;
+        END IF;
+        SELECT coalesce(array_agg(campaign_id), '{}') INTO ids
+            FROM owner_campaigns WHERE owner_user_id = me;
+        IF cardinality(ids) = 0 THEN
+            RETURN found_all;
+        END IF;
+        FOR g IN SELECT guild_id FROM campaign_guilds ORDER BY guild_id LOOP
+            PERFORM set_config('dmbot.guild_id', g::text, true);
+            SELECT coalesce(jsonb_agg(jsonb_build_object(
+                       'id', c.id, 'guildId', c.guild_id::text, 'name', c.name,
+                       'lastPlayedAt', c.last_played_at) ORDER BY c.name), '[]'::jsonb)
+                INTO found
+                FROM campaigns c
+                WHERE c.guild_id = g AND c.id = ANY (ids) AND c.owner_user_id = me;
+            found_all := found_all || found;
+        END LOOP;
+        PERFORM set_config('dmbot.guild_id', saved, true);
+        RETURN found_all;
+    END
+    $fn$;
+
+    -- Delete a campaign from the website: the same rule as Discord's "Delete this campaign"
+    -- (#1608, #2556). The owner may, in any server; with no owner, any game master who can reach
+    -- the server may. The typed name must match (case and spacing ignored), and not while a
+    -- session runs. The answer says which of these stopped it; 'not_found' for a campaign that is
+    -- not this person's to know about. The caller connects scoped to the campaign's server, like
+    -- every door.
+    CREATE FUNCTION dmbot_web_delete_campaign(g BIGINT, c TEXT, typed TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        camp campaigns%ROWTYPE;
+        is_dm BOOLEAN;
+        had_channels BOOLEAN;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR c IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) INTO is_dm;
+        IF camp.owner_user_id IS DISTINCT FROM me THEN
+            -- Not the owner. Someone who is not a game master of it, or cannot reach its server,
+            -- is told nothing about it; a game master is told it is not theirs to delete.
+            IF NOT is_dm OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+            IF camp.owner_user_id IS NOT NULL THEN
+                RETURN jsonb_build_object('status', 'not_the_owner');
+            END IF;
+        END IF;
+        -- The typed name arrives as its `name_key` (Python's, the one Discord's delete uses), so
+        -- there is one rule for what counts as the same name.
+        IF typed IS DISTINCT FROM camp.name_key THEN
+            RETURN jsonb_build_object('status', 'name_mismatch');
+        END IF;
+        IF EXISTS (SELECT 1 FROM active_sessions a WHERE a.guild_id = g AND a.campaign_id = c) THEN
+            RETURN jsonb_build_object('status', 'session_running');
+        END IF;
+        had_channels := camp.dm_screen_channel_id IS NOT NULL
+            OR camp.transcript_channel_id IS NOT NULL OR camp.gametime_channel_id IS NOT NULL
+            OR camp.dmbchat_channel_id IS NOT NULL OR camp.dm_bot_channel_id IS NOT NULL
+            OR camp.rules_channel_id IS NOT NULL OR camp.npcs_channel_id IS NOT NULL;
+        -- Every table of the campaign goes with its row: each one's foreign key cascades, as
+        -- for Discord's delete.
+        DELETE FROM campaigns WHERE guild_id = g AND id = c;
+        RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels);
+    END
+    $fn$;
+
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_owned_campaigns() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_owned_campaigns() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_delete_campaign(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+WEB_DELETE_NOTICES = (
+    """
+    -- What the bot needs to finish a campaign the website deleted (#2554, part 1b): tidy the
+    -- Discord channels the way Discord's own delete does, and tell the other game masters. The
+    -- website cannot do either, and the campaign's row (with its channel ids) is gone when the bot
+    -- hears of it, so the delete door leaves this note first. It holds the campaign's name, who
+    -- deleted it, the other game masters' IDs and the channel IDs: nothing of the story. The bot
+    -- takes it (deleting the row) within seconds; one it never took is swept after a week. Isolated
+    -- per server, never read by the website's role, and left out of backups: it is not campaign
+    -- data, and has no key to the campaign (which no longer exists).
+    CREATE TABLE web_delete_notices (
+        guild_id             BIGINT NOT NULL,
+        id                   TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        gone_id              TEXT NOT NULL,
+        campaign_name        TEXT NOT NULL CHECK (char_length(campaign_name) <= 200),
+        by_user_id           BIGINT NOT NULL CHECK (by_user_id > 0),
+        other_dms            BIGINT[] NOT NULL DEFAULT '{}',
+        dm_screen_channel_id    BIGINT,
+        transcript_channel_id   BIGINT,
+        gametime_channel_id     BIGINT,
+        dmbchat_channel_id      BIGINT,
+        dm_bot_channel_id       BIGINT,
+        rules_channel_id        BIGINT,
+        npcs_channel_id         BIGINT,
+        created_at           BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX web_delete_notices_waiting ON web_delete_notices (guild_id, created_at);
+    """
+    + _isolate("web_delete_notices")
+    + r"""
+    -- The website's delete door again (replaces 0216's): the same checks and the same delete, and
+    -- first the note above. The answer is unchanged.
+    CREATE OR REPLACE FUNCTION dmbot_web_delete_campaign(g BIGINT, c TEXT, typed TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        camp campaigns%ROWTYPE;
+        is_dm BOOLEAN;
+        had_channels BOOLEAN;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR c IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT * INTO camp FROM campaigns WHERE guild_id = g AND id = c FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('status', 'not_found');
+        END IF;
+        SELECT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) INTO is_dm;
+        IF camp.owner_user_id IS DISTINCT FROM me THEN
+            IF NOT is_dm OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+            IF camp.owner_user_id IS NOT NULL THEN
+                RETURN jsonb_build_object('status', 'not_the_owner');
+            END IF;
+        END IF;
+        IF typed IS DISTINCT FROM camp.name_key THEN
+            RETURN jsonb_build_object('status', 'name_mismatch');
+        END IF;
+        IF EXISTS (SELECT 1 FROM active_sessions a WHERE a.guild_id = g AND a.campaign_id = c) THEN
+            RETURN jsonb_build_object('status', 'session_running');
+        END IF;
+        had_channels := camp.dm_screen_channel_id IS NOT NULL
+            OR camp.transcript_channel_id IS NOT NULL OR camp.gametime_channel_id IS NOT NULL
+            OR camp.dmbchat_channel_id IS NOT NULL OR camp.dm_bot_channel_id IS NOT NULL
+            OR camp.rules_channel_id IS NOT NULL OR camp.npcs_channel_id IS NOT NULL;
+        INSERT INTO web_delete_notices (
+            guild_id, id, gone_id, campaign_name, by_user_id, other_dms,
+            dm_screen_channel_id, transcript_channel_id, gametime_channel_id,
+            dmbchat_channel_id, dm_bot_channel_id, rules_channel_id, npcs_channel_id, created_at)
+        SELECT g, replace(gen_random_uuid()::TEXT, '-', ''), c, left(camp.name, 200), me,
+               COALESCE((SELECT array_agg(d.user_id ORDER BY d.user_id) FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id <> me), '{}'),
+               camp.dm_screen_channel_id, camp.transcript_channel_id, camp.gametime_channel_id,
+               camp.dmbchat_channel_id, camp.dm_bot_channel_id, camp.rules_channel_id,
+               camp.npcs_channel_id, floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        -- The server stays on the routing list until the bot has taken the note, so it is looked
+        -- at even if this was its last campaign.
+        INSERT INTO campaign_guilds (guild_id) VALUES (g) ON CONFLICT DO NOTHING;
+        DELETE FROM campaigns WHERE guild_id = g AND id = c;
+        RETURN jsonb_build_object('status', 'deleted', 'channels', had_channels);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+)
+
+NAME_PASS = """
+    -- PlotBot's name pass on a finished session's cleaned transcript (#2628): when it was done
+    -- (Unix seconds), 0 when it has not been. The recap of a session waits for it (a bounded wait,
+    -- in code). Every session that exists now is marked done, so nothing old is asked again and no
+    -- old recap waits. A time only, no words.
+    ALTER TABLE transcript_sessions ADD COLUMN names_repaired_at BIGINT NOT NULL DEFAULT 0;
+    -- Migrations run with no server set, so row-level security hides every row: open the table to
+    -- this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON transcript_sessions
+        FOR ALL USING (true) WITH CHECK (true);
+    UPDATE transcript_sessions SET names_repaired_at = GREATEST(COALESCE(ended_at, started_at), 1);
+    DROP POLICY migrate_backfill ON transcript_sessions;
+"""
+
+IMPORT_STEPS = """
+    -- How far each imported session's cleaning has got and when anything about it last moved
+    -- (#2564), so the website can show "420 of 900 lines" and say "stalled" when nothing has moved
+    -- for longer than the stage's limit (kept in code, `progress.py`). Counts and times only. The
+    -- columns have defaults, so no row changes and no backfill policy is needed. A trigger stamps
+    -- `updated_at` whenever a step column changes, so no worker has to remember to.
+    ALTER TABLE session_imports
+        ADD COLUMN step_done  INT NOT NULL DEFAULT 0,
+        ADD COLUMN step_total INT NOT NULL DEFAULT 0,
+        ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+
+    CREATE FUNCTION session_imports_moved() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog AS $fn$
+    BEGIN
+        IF NEW.updated_at = OLD.updated_at AND (
+               NEW.state, NEW.scanned, NEW.scan_finished, NEW.scan_tries, NEW.recap_started,
+               NEW.recap_tries, NEW.step_done, NEW.step_total, NEW.scan_gave_up)
+           IS DISTINCT FROM (
+               OLD.state, OLD.scanned, OLD.scan_finished, OLD.scan_tries, OLD.recap_started,
+               OLD.recap_tries, OLD.step_done, OLD.step_total, OLD.scan_gave_up) THEN
+            NEW.updated_at := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER session_imports_moved BEFORE UPDATE ON session_imports
+        FOR EACH ROW EXECUTE FUNCTION session_imports_moved();
+
+    -- dmbot_import_progress, again (replaces 0154's): the same per-session rows with the counts and
+    -- times the shared progress shape needs. NULL unless a DM.
+    CREATE OR REPLACE FUNCTION dmbot_import_progress(g BIGINT, c TEXT, imp TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                       'file', i.file_name, 'state', i.state, 'reason', i.reason,
+                       'date', t.started_at,
+                       'namesUnchecked', i.scan_gave_up,
+                       'namesToAnswer', CASE WHEN h.asked THEN h.names_open ELSE 0 END,
+                       'imported', i.imported_at,
+                       'moved', i.updated_at,
+                       'recapMoved', COALESCE(r.updated_at, 0),
+                       'stepDone', i.step_done, 'stepTotal', i.step_total,
+                       'scanned', i.scanned, 'recapState', r.state,
+                       'stage', CASE
+                           WHEN i.state = 'failed' THEN 'failed'
+                           WHEN i.state <> 'done' THEN 'cleaning'
+                           WHEN NOT i.scan_finished THEN 'checking_names'
+                           WHEN NOT i.write_recap THEN 'done'
+                           WHEN h.session_at IS NOT NULL AND NOT h.asked THEN 'finding_names'
+                           WHEN h.session_at IS NOT NULL THEN 'waiting_for_names'
+                           WHEN r.state = 'ready' THEN 'recap_ready'
+                           WHEN r.state = 'failed' THEN 'recap_failed'
+                           WHEN r.session_at IS NOT NULL THEN 'writing_recap'
+                           WHEN i.recap_started THEN 'recap_not_written'
+                           ELSE 'starting_recap' END)
+                   ORDER BY t.started_at, i.session_id)
+            FROM session_imports i
+            JOIN transcript_sessions t ON t.guild_id = i.guild_id AND t.id = i.session_id
+            LEFT JOIN recap_holds h ON h.guild_id = i.guild_id AND h.campaign_id = i.campaign_id
+                AND h.session_at = t.started_at
+            LEFT JOIN recap_jobs r ON r.guild_id = i.guild_id AND r.campaign_id = i.campaign_id
+                AND r.session_at = t.started_at
+            WHERE i.guild_id = g AND i.campaign_id = c AND i.import_id = imp), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_import_progress(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+"""
+
+
+TOPIC_CHOICES = """
+    -- Who put a line back (or left it out again) after the session, and what the off-topic filter
+    -- turned back into game talk (#2567, docs/PLAN.md, "Off-topic talk"). Three columns on a
+    -- line, all defaulted, so no row changes and no backfill policy is needed:
+    --   topic_by / topic_set_at: the DM's choice, final: the filter never flips such a line again;
+    --   leaned: the filter's own "when unsure, keep it" pass turned this line back to game;
+    --   reread: a put-back line the names and story-memory readers have not read yet.
+    -- A line's words are not touched. The raw transcript is unchanged.
+    ALTER TABLE transcript_lines
+        ADD COLUMN topic_by     BIGINT,
+        ADD COLUMN topic_set_at BIGINT,
+        ADD COLUMN leaned       BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN reread       BOOLEAN NOT NULL DEFAULT FALSE;
+
+    -- dmbot_web_transcript_stretch: the as-heard words of one person's stretch that was left out,
+    -- put back or turned back by the filter, at most 200 lines, for whoever may read this session
+    -- (anyone in the server, as for the lines). Only that person's spoken lines between the two
+    -- start times, and only ones the filter or a DM touched. NULL when the caller is not in the
+    -- server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_stretch(
+        g BIGINT, c TEXT, sid TEXT, who BIGINT, from_ms BIGINT, to_ms BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('lines', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('startedMs', x.started_ms, 'heard', x.heard)
+                             ORDER BY x.started_ms, x.id)
+            FROM (SELECT l.id, l.started_ms, l.heard FROM transcript_lines l
+                  WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
+                    AND l.sidebar IS NULL AND NOT l.typed
+                    AND l.started_ms BETWEEN from_ms AND to_ms
+                    AND (l.topic = 'off_topic' OR l.leaned OR l.topic_by IS NOT NULL)
+                  ORDER BY l.started_ms, l.id LIMIT 200) x),
+            '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_transcript_choices: how the filter treated a session's spoken lines, and the
+    -- stretches a DM decided, for whoever may read the session. Counts only, and each decided
+    -- stretch as who, from, to and how many lines (a batch is one person's lines set at one moment
+    -- in one direction). NULL when the caller is not in the server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_choices(g BIGINT, c TEXT, sid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'kept', (SELECT count(*) FROM transcript_lines l
+                     WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                       AND NOT l.typed AND l.topic <> 'off_topic' AND NOT l.leaned
+                       AND l.topic_by IS NULL),
+            'leanedBack', (SELECT count(*) FROM transcript_lines l
+                           WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                             AND NOT l.typed AND l.leaned AND l.topic_by IS NULL),
+            'leftOut', (SELECT count(*) FROM transcript_lines l
+                        WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                          AND NOT l.typed AND l.topic = 'off_topic'),
+            'putBack', (SELECT count(*) FROM transcript_lines l
+                        WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                          AND NOT l.typed AND l.topic <> 'off_topic' AND l.topic_by IS NOT NULL),
+            'choices', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'speaker', x.user_id::TEXT, 'fromMs', x.first_ms, 'toMs', x.last_ms,
+                           'lines', x.n, 'putBack', x.put_back) ORDER BY x.first_ms)
+                FROM (SELECT l.user_id, l.topic_set_at, (l.topic <> 'off_topic') AS put_back,
+                             min(l.started_ms) AS first_ms, max(l.started_ms) AS last_ms,
+                             count(*) AS n
+                      FROM transcript_lines l
+                      WHERE l.guild_id = g AND l.session_id = sid AND l.sidebar IS NULL
+                        AND NOT l.typed AND l.topic_by IS NOT NULL
+                      GROUP BY l.user_id, l.topic_set_at, (l.topic <> 'off_topic')
+                      ORDER BY min(l.started_ms) LIMIT 200) x),
+                '[]'::jsonb));
+    END
+    $fn$;
+
+    -- dmbot_web_transcript_choose: a DM of the campaign puts one person's stretch back (the lines
+    -- count as game talk, so the cleaned file and its downloads include them and the readers take
+    -- them up) or leaves it out again. Only that person's spoken lines between the two start
+    -- times; "put back" changes lines that are left out, "leave out" only lines a DM put back,
+    -- never a plain game line or one the filter itself kept. Who and when are kept. Answers the
+    -- number of lines changed, 'not_allowed' for anyone who is not a DM of the campaign, NULL
+    -- when the caller is not in the server or there is no such session.
+    CREATE FUNCTION dmbot_web_transcript_choose(
+        g BIGINT, c TEXT, sid TEXT, who BIGINT, from_ms BIGINT, to_ms BIGINT, back BOOLEAN)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        n INT;
+    BEGIN
+        IF me IS NULL
+           OR dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                          WHERE t.guild_id = g AND t.campaign_id = c AND t.id = sid) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) THEN
+            RETURN jsonb_build_object('status', 'not_allowed');
+        END IF;
+        IF back THEN
+            UPDATE transcript_lines l SET topic = 'game', topic_by = me, topic_set_at = now_s,
+                   leaned = FALSE, reread = TRUE
+                WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
+                  AND l.sidebar IS NULL AND NOT l.typed
+                  AND l.started_ms BETWEEN from_ms AND to_ms AND l.topic = 'off_topic';
+        ELSE
+            UPDATE transcript_lines l SET topic = 'off_topic', topic_by = me, topic_set_at = now_s,
+                   reread = FALSE
+                WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
+                  AND l.sidebar IS NULL AND NOT l.typed
+                  AND l.started_ms BETWEEN from_ms AND to_ms AND l.topic = 'game'
+                  AND l.topic_by IS NOT NULL;
+        END IF;
+        GET DIAGNOSTICS n = ROW_COUNT;
+        RETURN jsonb_build_object('status', 'ok', 'changed', n);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_stretch'
+            '(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_choices(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_transcript_choose'
+            '(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_stretch(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)
+        FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_choices(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_transcript_choose
+        (BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN) FROM PUBLIC;
+"""
+
+
+# The Story graph's overview (#2632): every name the caller may see, and which pairs of names are
+# connected, so the page can say "51 names", list the names with no connection yet beside the
+# graph and offer every group of linked names. The graph door (above) starts at the most-connected
+# name and walks only its confirmed connections, so a young campaign drew 2 names of 51. This door
+# reads the same names and the same connections by the same rules: its first half is cut out of
+# that door's own text (the checks, the view, `vis` and `rel_ids`), so the two can never disagree
+# about who sees what. A test compares them. Read-only: no row changes, no table, nothing in a
+# backup.
+# (Frozen at the graph door's text as of RELATION_DIRECTIONAL: a later migration that redefines
+# `dmbot_web_relationships` must change what this slices from, or the two doors would disagree.)
+_overview_door = RELATION_DIRECTIONAL[
+    RELATION_DIRECTIONAL.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships(") :
+]
+_overview_checks = _overview_door[
+    _overview_door.index("IF dmbot_current_guild() IS DISTINCT FROM g") : _overview_door.index(
+        "IF start_id IS NULL THEN"
+    )
+]
+assert "vis := ARRAY(" in _overview_checks and "rel_ids := ARRAY(" in _overview_checks
+GRAPH_OVERVIEW = (
+    """
+    CREATE OR REPLACE FUNCTION dmbot_web_graph_overview(
+        g BIGINT, c TEXT, cap_names INT, cap_pairs INT
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
+        sees_all BOOLEAN;
+        wanted TEXT;
+        screen TEXT;
+        vis TEXT[];
+        rel_ids TEXT[];
+    BEGIN
+        """
+    + _overview_checks
+    + """
+        RETURN jsonb_build_object(
+            'status', 'ok', 'canEdit', is_dm AND sees_all, 'seesAll', sees_all,
+            'view', CASE WHEN sees_all THEN 'full' ELSE 'players' END,
+            'visibility', screen, 'canPeek', is_dm OR screen IN ('peek', 'open'),
+            'total', COALESCE(array_length(vis, 1), 0),
+            'connections', COALESCE(array_length(rel_ids, 1), 0),
+            -- the names, as the graph's nodes tell them; at most `cap_names` (`total` says if more)
+            'names', COALESCE((
+                SELECT jsonb_agg(x.j ORDER BY x.n, x.id) FROM (
+                    SELECT e.id, lower(e.name) AS n, jsonb_build_object(
+                        'id', e.id, 'name', e.name,
+                        'revealed', NOT (e.hidden_from_players OR e.audience_limited),
+                        'kind', CASE WHEN e.type = 'character' THEN
+                                    CASE e.role WHEN 'player_character' THEN 'player_character'
+                                                WHEN 'npc' THEN 'npc' WHEN 'god' THEN 'deity'
+                                                ELSE 'character' END
+                                ELSE e.type END,
+                        'secret', CASE WHEN sees_all THEN EXISTS (
+                            SELECT 1 FROM memory_aliases a
+                            WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                              AND a.status <> 'rejected' AND a.secret
+                              AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g')) END)
+                        AS j
+                    FROM memory_entities e
+                    WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (vis)
+                    ORDER BY lower(e.name), e.id LIMIT GREATEST(cap_names, 1)) x), '[]'::jsonb),
+            -- which two names each visible connection joins, once for each pair, in a fixed order
+            -- so a cut list is the same on every load; `pairsMore` says if pairs were cut
+            'pairs', COALESCE((
+                SELECT jsonb_agg(q.p ORDER BY q.a, q.b) FROM (
+                    SELECT DISTINCT LEAST(r.subject_id, r.object_id) AS a,
+                                    GREATEST(r.subject_id, r.object_id) AS b,
+                                    jsonb_build_array(LEAST(r.subject_id, r.object_id),
+                                                      GREATEST(r.subject_id, r.object_id)) AS p
+                    FROM memory_relations r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
+                    ORDER BY 1, 2 LIMIT GREATEST(cap_pairs, 1)) q), '[]'::jsonb),
+            'pairsMore', (
+                SELECT count(*) > GREATEST(cap_pairs, 1) FROM (
+                    SELECT DISTINCT LEAST(r.subject_id, r.object_id),
+                                    GREATEST(r.subject_id, r.object_id)
+                    FROM memory_relations r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)) d));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT) FROM PUBLIC;
+    """
+)
 
 
 def _approve_with_versions() -> str:
@@ -12278,8 +13049,23 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0201_exposure_summary", EXPOSURE_SUMMARY),  # the summary applies exposures (#2410)
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
+    ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
+    ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
+    ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
+    ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
     ("0209_recap_accepted", RECAP_ACCEPTED),  # each approved version of a recap (#2122)
     ("0210_plot_issues", PLOT_ISSUES),  # PlotBot's check of a recap and its issues (#2122)
+    ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
+    ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
+    ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
+    ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
+    ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
+    ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
+    ("0227_name_pass", NAME_PASS),  # PlotBot repairs names in a finished transcript (#2628)
+    (
+        "0228_graph_overview",
+        GRAPH_OVERVIEW,
+    ),  # every name on the Story graph, not only the centre's web (#2632)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -12289,7 +13075,9 @@ ISOLATED_TABLES = (
     "plot_checks",
     "plot_issues",
     "plot_fine",
+    "transcript_erasures",
     "secret_exposures",
+    "web_delete_notices",
     "merge_restores",
     "transcript_respells",
     "image_day_use",

@@ -84,6 +84,9 @@ SPELLING, DM_FIX, SOUND = "spelling", "dm", "sound"
 # A whole line the DM rewrote by hand (#1499): shown with Undo like a fix, but it is not a name, so
 # Undo saves no "keep as heard" rule for it.
 DM_EDIT = "edit"
+# The words in a picture of text, corrected by its poster or a DM (#2450): the same, but it is a
+# described picture's line, which is kept apart from speech.
+IMAGE_EDIT = "image_edit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +96,7 @@ class Fix:
     heard: str
     written: str
     entity_id: str
-    how: str  # SPELLING, DM_FIX, SOUND or DM_EDIT
+    how: str  # SPELLING, DM_FIX, SOUND, DM_EDIT or IMAGE_EDIT
     # False: from a name DMbot only suggested, or a close look-alike of a confirmed name
     # (#573): the fix is made and the DM screen shows it with Undo (#296)
     sure: bool = True
