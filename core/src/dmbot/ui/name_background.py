@@ -247,9 +247,10 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         if memory is not None and pronouns.says_i(upload.text)
         else []
     )
+    lone = memory is not None and not choices and pronouns.says_i(upload.text)
     await _send(
         interaction,
-        offer_text(upload, False, ask=bool(choices)),
+        offer_text(upload, False, ask=bool(choices)) + (NO_CHARACTERS if lone else ""),
         BackgroundOffer(campaign.id, upload, choices),
     )
 
@@ -282,7 +283,11 @@ def offer_text(
     )
 
 
-NOT_ONE = "Not one character's"
+NO_CHARACTERS = (
+    '\n\nIt says "I" or "my", but no character is confirmed yet. Confirm the character first, '
+    'or connections that say "I" are left out.'
+)
+NOT_ONE = "No one in particular"
 NOT_ONE_VALUE = "-"
 
 
@@ -290,10 +295,13 @@ def whose_text(speaker: str | None) -> str:
     """The question for a text that says "I" or "my" (#2650). Never guessed: until the DM picks,
     a connection that needs "I" is left out and counted."""
     if speaker:
-        return f'**Whose backstory is this?** {_md(speaker)}\'s. "I" and "my" mean them.\n\n'
+        return (
+            f'**Whose backstory is this?** {_md(speaker)}\'s. "I", "my" and a bare "his" or '
+            '"her" mean them. (Change it in the menu.)\n\n'
+        )
     return (
-        '**Whose backstory is this?** It says "I" or "my". Pick the character, or DMbot '
-        "leaves those connections out.\n\n"
+        '**Whose backstory is this?** It says "I" or "my". Pick the character in the menu below. '
+        'If you don\'t, connections that say "I" are left out.\n\n'
     )
 
 
@@ -322,18 +330,24 @@ class BackgroundOffer(_Menu):
         if self.choices:
             self.add_item(self._select())
         self.truth = False  # asked once per upload (#2447): "may change in play" by default
-        self.add_item(_Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary))
-        self.switch = _Button(self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary)
+        self.add_item(
+            _Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary, row=1)
+        )
+        self.switch = _Button(
+            self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary, row=1
+        )
         self.add_item(self.switch)
-        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+        self.add_item(
+            _Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+        )
 
     def _select(self) -> discord.ui.Select[Any]:
         options = [discord.SelectOption(label=NOT_ONE, value=NOT_ONE_VALUE, default=True)] + [
-            discord.SelectOption(label=logic.shorten(name, 100), value=entity_id)
+            discord.SelectOption(label=logic.shorten(name, 25), value=entity_id)
             for entity_id, name in self.choices.items()
         ]
         select: discord.ui.Select[Any] = discord.ui.Select(
-            placeholder="Whose backstory is this?", options=options, row=1
+            placeholder="Whose backstory is this?", options=options, row=0
         )
         select.callback = self._whose  # type: ignore[method-assign]
         self.whose = select
@@ -650,8 +664,8 @@ def _found_note(
         f"{waits} wait for names you haven't confirmed" if waits else "",
         f"{known} already known" if known else "",
         f"{left} left out" + (f" ({asked})" if asked else "") if left else "",
-        f'{whose} about "I" left out: say whose backstory it is' if whose else "",
-        f"{picking} wait for you to pick which one" if picking else "",
+        f'{whose} about "I" left out: upload again and say whose backstory it is' if whose else "",
+        f"{picking} need your pick: press 📜 Check the connections" if picking else "",
         f"{unread} not read in time" if unread else "",
     ]
     return (
@@ -836,7 +850,7 @@ async def _queue_picks(
     added = int(await store.add_which(campaign.guild_id, campaign.id, rows)) if rows else 0
     if dropped is not None and added < len(rows):  # already waiting, or past the most
         dropped["which_waiting"] -= len(rows) - added
-        dropped["already_waiting"] += len(rows) - added
+        dropped["over_cap"] += len(rows) - added  # (or already waiting: either way not new)
     return added
 
 
@@ -952,7 +966,7 @@ class WhichOffer(_Menu):
             self.add_item(
                 _Button(
                     partial(self._pick, index),
-                    label=logic.shorten(name, 40),
+                    label=logic.shorten(name, 25),
                     style=discord.ButtonStyle.primary,
                 )
             )
@@ -969,10 +983,11 @@ class WhichOffer(_Menu):
     def text(self) -> str:
         c = self.current
         if c is None:
-            left = f" Left out {self.dropped}." if self.dropped else ""
+            if not self.picked:
+                return "🔎 Done. Nothing to check."
             return (
-                f"🔎 Done. Picked {self.picked}.{left} Each pick is a connection to check "
-                "once both its names are answered."
+                f"🔎 Done. You picked {self.picked}, left out {self.dropped}. Picks are ready to "
+                "check once their names are confirmed (press 📜 Check the connections)."
             )
         how = link_words(c.predicate, c.detail)
         if how == c.predicate.replace("_", " "):
@@ -982,10 +997,13 @@ class WhichOffer(_Menu):
             if c.other_is_subject
             else f"**{_md(c.word)}** {how} **{_md(c.other)}**"
         )
+        names = ", ".join(_md(name) for _, name in c.candidates[:3])
+        place = f" ({self.picked + self.dropped + 1} of {self.total})" if self.total > 1 else ""
         return (
-            f"🔎 **Which {_md(c.word)}?** ({self.picked + self.dropped + 1} of {self.total})\n"
+            f"🔎 **Which {_md(c.word)} is this?**{place}\n"
             f"{pair}\n"
-            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d"
+            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            f"It could be {names}. Tap the right one. Neither leaves this connection out."
         )
 
     async def _show(self, interaction: discord.Interaction, waiting: list[WhichWaiting]) -> None:
@@ -1044,7 +1062,10 @@ class WhichOffer(_Menu):
         self.stop()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=f"🔎 The other {self.left} wait. Press 📜 Check the connections to go on.",
+                content=(
+                    f"⏭️ Saved for later. {self.left} still waiting: press 📜 Check the "
+                    "connections when you are ready."
+                ),
                 view=None,
                 allowed_mentions=NO_PINGS,
             )

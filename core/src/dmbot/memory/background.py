@@ -152,6 +152,7 @@ class Pick:
     words: str = ""
 
 
+MAX_PICK_CHOICES = 3  # the card has a button for each; more is left out as `which_one`
 MAX_PICKS = 50  # "Which Mara?" questions from one reading
 
 
@@ -573,6 +574,7 @@ def keep_connections(
                 picks is not None
                 and len(picks) < MAX_PICKS
                 and first.ambiguous != second.ambiguous  # exactly one end is the question
+                and max(len(first.ambiguous), len(second.ambiguous)) <= MAX_PICK_CHOICES
                 and (second.name if first.ambiguous else first.name) is not None
             ):
                 fixed, other = (first, second) if second.ambiguous else (second, first)

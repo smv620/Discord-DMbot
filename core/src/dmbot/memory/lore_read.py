@@ -99,16 +99,12 @@ NAMES
 
 
 def _speaking(speaker: str | None) -> str:
-    """The sentence about "I" and "my" (#2650): they are the character the DM chose, or, when
-    nobody said whose backstory it is, they stay as written."""
-    if speaker:
-        return (
-            f" (this is {speaker}'s own backstory: 'I', 'my' and 'me' mean {speaker}, so write "
-            f"{speaker} for them)."
-        )
+    """The sentence about "I" and "my" (#2650). Always the word as written: the code, not the
+    model, turns it into the character the DM chose (a name the text never says would fail the
+    check that every end is really in the text), and without a choice nobody is guessed."""
     return (
         " (when the text says 'I', 'my' or 'me', write that word as the end, for example 'I': "
-        "never guess who is speaking)."
+        "never write a name for it, and never guess who is speaking)."
     )
 
 

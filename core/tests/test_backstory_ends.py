@@ -598,14 +598,17 @@ class Pronouns(unittest.TestCase):
         self.assertEqual([(x.a, x.b) for x in kept], [("Ulric Stonehand", "Brannoc")])
         self.assertEqual(lost["whose"], 2)
         note = ui_bg._found_note(3, 1, ready=1, dropped=lost)
-        self.assertIn('2 about "I" left out: say whose backstory it is', note)
+        self.assertIn('2 about "I" left out: upload again and say whose backstory it is', note)
         self.assertNotIn("not read in time", note)  # the parts still add up to what was found
 
     def test_the_reading_is_told_who_is_speaking_or_not_to_guess(self) -> None:
-        self.assertIn(
-            "Tavin Ashgrove's own backstory", lr.read_instructions(None, "Tavin Ashgrove")
-        )
-        self.assertIn("never guess who is speaking", lr.read_instructions(None, None))
+        for speaker in ("Tavin Ashgrove", None):
+            text = lr.read_instructions(None, speaker)
+            self.assertIn("write that word as the end", text)
+            self.assertNotIn(
+                "Tavin Ashgrove", text
+            )  # the code maps the word; a name would fail the check
+            self.assertIn("never guess who is speaking", text)
 
 
 class WhoseBackstory(NamesTest):
@@ -705,7 +708,9 @@ class WhoseBackstory(NamesTest):
         press = self.it()
         await view._read(press)
         self.assertEqual(await self.waiting(), [])
-        self.assertIn('about "I" left out: say whose backstory it is', shown(press))
+        self.assertIn(
+            'about "I" left out: upload again and say whose backstory it is', shown(press)
+        )
 
 
 class WhichPicks(unittest.TestCase):
@@ -741,7 +746,7 @@ class WhichPicks(unittest.TestCase):
     def test_the_summary_counts_the_ones_waiting_for_a_pick(self) -> None:
         lost = Counter({"which_waiting": 2})
         note = ui_bg._found_note(5, 3, ready=3, dropped=lost)
-        self.assertIn("2 wait for you to pick which one", note)
+        self.assertIn("2 need your pick: press 📜 Check the connections", note)
         self.assertNotIn("not read in time", note)
 
 
@@ -798,7 +803,7 @@ class WhichMara(NamesTest):
         self.assertEqual((lost["which_waiting"], lost["which_one"]), (1, 0))
         self.assertEqual(await self.store.count(GUILD, self.campaign.id), 1)
         _, view, text = await self.ask()
-        self.assertIn("Which Sister Mara?", text)
+        self.assertIn("Which Sister Mara is this?", text)
         self.assertEqual(
             [b.label for b in view.children][:3], ["Mara Ashgrove", "Mara Vell", "❌ Neither"]
         )
@@ -847,3 +852,14 @@ class WhichMara(NamesTest):
             )
         self.assertEqual(await self.store.which_waiting(GUILD, self.campaign.id), [])
         self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
+
+
+class PickEdges(unittest.TestCase):
+    def test_a_name_that_fits_more_than_three_people_is_left_out_not_asked(self) -> None:
+        listed = [bg.Found(f"Mara {w}", "npc", (), (), "") for w in ("A", "B", "C", "D")] + [
+            bg.Found("Ulric Stonehand", "npc", (), (), "")
+        ]
+        lost: Counter[str] = Counter()
+        picks: list[bg.Pick] = []
+        bg.keep_connections([[c("Mara", "knows", "Ulric")]], listed, {}, dropped=lost, picks=picks)
+        self.assertEqual((picks, lost["which_one"]), ([], 1))

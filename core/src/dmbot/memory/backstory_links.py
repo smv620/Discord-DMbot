@@ -267,7 +267,15 @@ class BackstoryLinks:
                 end = self._end(entities, entity_id)
                 if end is None or end not in ends or entities[end]["status"] == "rejected":
                     return False
-                if end != row["other_id"]:
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
+                    " AND campaign_id = %s",
+                    (guild_id, campaign_id),
+                )
+                full = (
+                    int((await cur.fetchone())["n"]) >= MAX_WAITING
+                )  # (the cap holds for picks too)
+                if end != row["other_id"] and not full:
                     a, b = (
                         (row["other_id"], end)
                         if row["other_is_subject"]
