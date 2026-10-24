@@ -13917,6 +13917,27 @@ WEB_WAITING = (
     """
 )
 
+# A real person at the table, told apart as "player" or "dm" (#2670, for #2618): the website shows
+# each `person` in the Story graph with that one word in place of "At the table". "dm" means the
+# person is one of the campaign's DMs now: the same `campaign_dms` row the doors already read for
+# `canEdit`, looked up at each read, so a person who stops being a DM reads "player" the next
+# time. Only a `person` row carries the key (the others are left as they were), and nothing
+# else about the person is added, no Discord ID. Cut from the two doors' current text (the graph's
+# own text as of RELATION_DIRECTIONAL, and the overview), so each keeps its rules.
+_AT_TABLE_NODE = "jsonb_build_object(\n                    'id', e.id, 'name', e.name,"
+_AT_TABLE_NAME = "jsonb_build_object(\n                        'id', e.id, 'name', e.name,"
+_AT_TABLE_KEY = """CASE WHEN e.type = 'person' THEN jsonb_build_object('atTable', CASE WHEN EXISTS (
+                        SELECT 1 FROM campaign_dms d WHERE d.guild_id = g AND d.campaign_id = c
+                          AND d.user_id = e.played_by) THEN 'dm' ELSE 'player' END)
+                    ELSE '{}'::jsonb END || """
+_at_graph = RELATION_DIRECTIONAL[
+    RELATION_DIRECTIONAL.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships(") :
+]
+assert _at_graph.count(_AT_TABLE_NODE) == 1 and GRAPH_OVERVIEW.count(_AT_TABLE_NAME) == 1
+AT_TABLE = _at_graph.replace(_AT_TABLE_NODE, _AT_TABLE_KEY + _AT_TABLE_NODE, 1) + (
+    GRAPH_OVERVIEW.replace(_AT_TABLE_NAME, _AT_TABLE_KEY + _AT_TABLE_NAME, 1)
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -14177,6 +14198,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0231_link_upload", BACKSTORY_LINK_UPLOAD),  # where a waiting connection came from (#2650)
     ("0232_link_which", BACKSTORY_WHICH),  # "Which Mara?" waits for the DM's pick (#2650)
     ("0233_web_waiting", WEB_WAITING),  # the website reads and answers what waits (#2652)
+    ("0235_at_table", AT_TABLE),  # a person at the table is a player or a DM (#2670)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -283,4 +283,13 @@ class TheSliceStaysCurrent(unittest.TestCase):
             if "CREATE OR REPLACE FUNCTION dmbot_web_relationships(" in sql
             or "CREATE FUNCTION dmbot_web_relationships(" in sql
         ][-1]
-        self.assertEqual("0204_relation_directional", latest)
+        # (0235 only adds the person's `atTable` word to the nodes; its checks are the same text)
+        self.assertEqual("0235_at_table", latest)
+        door = dict(schema.MIGRATIONS)[latest]
+        door = door[door.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships(") :]
+        checks = door[
+            door.index("IF dmbot_current_guild() IS DISTINCT FROM g") : door.index(
+                "IF start_id IS NULL THEN"
+            )
+        ]
+        self.assertEqual(checks, schema._overview_checks)
