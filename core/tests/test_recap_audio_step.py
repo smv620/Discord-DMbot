@@ -517,9 +517,8 @@ class Rendering(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(argv[0], "ffmpeg")
         self.assertIn("sidechaincompress", argv[argv.index("-filter_complex") + 1])
         self.assertEqual(sorted(made.files), sorted([VOICE, MUSIC, MIX]))
-        self.assertEqual(
-            {p.name for p in self.into.iterdir()}, set(FILE_NAMES.values())
-        )  # the working files are gone
+        # the working files are gone; what a small change later reuses is kept (#2630)
+        self.assertEqual({p.name for p in self.into.iterdir()}, {*FILE_NAMES.values(), "work"})
 
     async def test_a_failed_mix_is_an_error_not_a_half_result(self) -> None:
         self.renderer = Renderer(self.eleven, self.files, runner=Mixer(code=1))

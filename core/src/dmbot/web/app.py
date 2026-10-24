@@ -94,7 +94,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
-from dmbot.web.plot import answer_issue, read_plot
+from dmbot.web.plot import answer_issue, answer_proposal, read_chat, read_plot, send_chat
 from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
@@ -725,9 +725,12 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
         "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        # PlotBot is still answering the last message (#2123); a recap being written or sent (#2608)
+        "busy": (409, "busy"),
         "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
         "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
@@ -755,7 +758,6 @@ def create_app(
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "needs_confirm": (409, "needs_confirm"),  # it has a recap: ask once, send `replace` (#2608)
-        "busy": (409, "busy"),  # being written or sent now (#2608)
         # Adding a recap written by someone at the table (#2609)
         "needs_rights": (409, "needs_rights"),  # the campaign's first: ask once, send `rights`
         "not_a_google_doc": (422, "not_a_google_doc"),
@@ -957,6 +959,19 @@ def create_app(
             return {"links": {}}
         return {"links": audio_links.links(recap_files, settings.secret_key, settings.api_url, ref)}
 
+    @app.get("/me/recaps/{ref}/audio/remake")
+    async def me_recap_audio_remake(ref: str, signed: Signed) -> dict[str, Any]:
+        """What "Make it again" would do for this recap now (#2630): only the voice (`how: "voice"`,
+        the changed paragraphs of `total`), everything again (`how: "all"` and `why`), nothing
+        (`same`) or a first making (`new`). A DM of the campaign only, like reading the recap."""
+        session, _token = signed
+        try:
+            recap = await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return audio_links.remake(recap_files, ref, recap, voice_tags=settings.recap_voice_tags)
+
     @app.post("/me/recaps/{ref}/audio/again")
     async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
         """ "Make the audio again": at most once in 10 minutes for a recap, the database's rule."""
@@ -1053,6 +1068,57 @@ def create_app(
             raise HTTPException(status_code=422, detail="bad_answer")
         try:
             return await answer_issue(db, session, ref, issue, kind, note)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/chat")
+    async def me_recap_plot_chat_send(
+        ref: str, issue: str, signed: Signed, request: Request
+    ) -> Any:
+        """The DM's message about one issue: `{"text"}`. Queued for PlotBot; poll the GET below.
+        The words are the DM's own: never logged, never in a transcript or on a public link."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        if not settings.plot_check_on:  # nothing would answer: the page says PlotBot is not on
+            raise HTTPException(status_code=409, detail="not_allowed")
+        try:
+            return await send_chat(db, session, ref, issue, text)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/plot/{issue}/chat")
+    async def me_recap_plot_chat_read(ref: str, issue: str, signed: Signed) -> Any:
+        """The DM's own talk about one issue, with PlotBot's proposals and where each stands."""
+        session, _token = signed
+        try:
+            return await read_chat(db, session, ref, issue)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/proposals/{proposal}")
+    async def me_recap_plot_proposal(
+        ref: str, issue: str, proposal: str, signed: Signed, request: Request
+    ) -> Any:
+        """Save or Not that: `{"action": "save" | "decline"}`. Nothing is saved without Save."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        action = body.get("action") if isinstance(body, dict) else None
+        if not isinstance(action, str):
+            raise HTTPException(status_code=422, detail="bad_answer")
+        try:
+            return await answer_proposal(db, session, ref, issue, proposal, action)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

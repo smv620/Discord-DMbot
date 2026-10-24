@@ -4908,7 +4908,18 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     text changed is thrown away and the new text is checked afresh. A recap with no earlier accepted recap, an
     answer that cannot be used or a refused call makes no issue and never holds Approve. This slice reads the earlier
     accepted recaps only; the code checks against the confirmed story memory, the pre-session note and recall, and
-    re-checking later recaps that name the same people, follow. The chat (#2123) follows.
+    re-checking later recaps that name the same people, follow.
+  - *Built, #2123 slice 1 (CloudDev, 2026-10-23): the talk, website side.* Migration 0211 adds `plot_chat` (per campaign
+    and server, row-level security, gone with the campaign, left out of backups) and three website doors: send (a DM
+    of the campaign; at most 1,000 characters; one waiting at a time, and one the bot never answered is given up after
+    ten minutes; at most 15 of the DM's messages on an issue, which belongs to one text of the recap, so a changed text
+    starts afresh), and at most 30 from a campaign's DMs in an hour (`too_soon`; the website refuses a message when PlotBot's switch is off),
+    read, and Save / Not that on one of PlotBot's proposals. The website has no AI key, so the message is queued and the
+    bot answers on a second row (slice 2), as for the typed notes of #2113. A DM reads only their own talk (a co-DM's is
+    not theirs); it is never in a transcript or on a public link and never logged. Routes `POST/GET
+    /me/recaps/{ref}/plot/{issue}/chat` and `POST .../plot/{issue}/proposals/{proposal}` with `{action: "save" |
+    "decline"}`. Not that closes the proposal and writes nothing; Save only marks it `saving`: the bot makes the change
+    as the DM's own fact (slice 3) and then answers the issue as "changed".
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap
