@@ -109,13 +109,18 @@ class HandoverOffer:
     end_told_at: int | None = None
     # Made by email (#2532): to whoever opens its link on the website; `to_name` is empty.
     via_email: bool = False
+    # The person accepted and chose another server (#2532, slice C): the bot moves the campaign
+    # there. Until it has, the offer is neither open to answer nor allowed to run out or be taken
+    # back. `moved_campaign_id`: the copy in that server, once made (a retry reuses it).
+    move_to_guild_id: int | None = None
+    moved_campaign_id: str | None = None
 
     @property
     def expires_at(self) -> int:
         return self.created_at + HANDOVER_SECONDS
 
     def is_open(self, now: int) -> bool:
-        return self.status == "open" and now < self.expires_at
+        return self.status == "open" and now < self.expires_at and self.move_to_guild_id is None
 
 
 class CampaignError(ValueError):

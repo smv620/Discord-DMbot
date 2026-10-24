@@ -331,6 +331,10 @@ KEEP_CHOICES = (None, 365, 90, 30)  # how long transcripts are kept (#1533); Non
 
 # Hand-over (#437 part 1b): plain words for the person who tried.
 NOT_THE_OWNER = "Only the campaign's owner can hand it over. Ask them to do it."
+MOVE_UNDER_WAY = (
+    "The new owner has accepted and DMbot is moving the campaign to their server. Nothing can be "
+    "changed until that is done."
+)
 NO_OWNER_YET = (
     "This campaign has no owner yet. Whoever runs `/dmbot start` next will be asked to take it "
     "on (their plan pays for its hours)."
@@ -1109,6 +1113,13 @@ class CampaignStore:
                 raise CampaignError(NO_OWNER_YET)
             if campaign.owner_user_id != from_user_id:
                 raise CampaignError(NOT_THE_OWNER)
+            moving = await conn.execute(
+                "SELECT 1 FROM campaign_handover_offers WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'open' AND move_to_guild_id IS NOT NULL",
+                (guild_id, campaign_id),
+            )
+            if await moving.fetchone() is not None:  # a move that was asked for is not taken back
+                raise CampaignError(MOVE_UNDER_WAY)
             await conn.execute(
                 "UPDATE campaign_handover_offers SET status = 'withdrawn', decided_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'open'",
@@ -1186,7 +1197,8 @@ class CampaignStore:
             await conn.execute(
                 "UPDATE campaign_handover_offers SET status = 'expired',"
                 " decided_at = created_at + %s"
-                " WHERE guild_id = %s AND status = 'open' AND created_at + %s <= %s",
+                " WHERE guild_id = %s AND status = 'open' AND created_at + %s <= %s"
+                " AND move_to_guild_id IS NULL",  # (a move that was asked for runs to its end)
                 (HANDOVER_SECONDS, guild_id, HANDOVER_SECONDS, now),
             )
             cur = await conn.execute(
@@ -1311,7 +1323,7 @@ class CampaignStore:
         """The offer as it stands now: one past its 7 days reads as expired, never open."""
         async with self._db.guild(guild_id) as conn:
             offer = await self._offer(conn, guild_id, offer_id)
-        if offer is not None and offer.status == "open" and not offer.is_open(now):
+        if offer is not None and offer.status == "open" and now >= offer.expires_at:
             return dataclasses.replace(offer, status="expired", decided_at=offer.expires_at)
         return offer
 
@@ -1319,7 +1331,10 @@ class CampaignStore:
         """The campaign's offer waiting for an answer, if any (not one past its 7 days)."""
         async with self._db.guild(guild_id) as conn:
             offer = await self._open_offer(conn, guild_id, campaign_id)
-        return offer if offer is not None and offer.is_open(now) else None
+        waiting = offer is not None and (
+            offer.is_open(now) or offer.move_to_guild_id is not None  # (a move runs to its end)
+        )
+        return offer if waiting else None
 
     async def take_ownership(
         self, guild_id: int, campaign_id: str, user_id: int, now: int
@@ -1433,7 +1448,7 @@ class CampaignStore:
 
     async def _expire(self, conn: Conn, offer: HandoverOffer, now: int) -> None:
         """An open offer found past its 7 days is marked so, for the website's lists."""
-        if offer.status == "open" and not offer.is_open(now):
+        if offer.status == "open" and now >= offer.expires_at and offer.move_to_guild_id is None:
             await self._decide(conn, offer.guild_id, offer.id, "expired", offer.expires_at)
 
     async def _decide(
@@ -2013,6 +2028,8 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         message_id=row_int(row, "message_id"),
         end_told_at=row_int(row, "end_told_at"),
         via_email=bool(row.get("via_email", False)),
+        move_to_guild_id=row_int(row, "move_to_guild_id"),
+        moved_campaign_id=row.get("moved_campaign_id"),
     )
 
 

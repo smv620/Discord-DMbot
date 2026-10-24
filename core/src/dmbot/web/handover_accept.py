@@ -23,9 +23,23 @@ from dmbot.web.sessions import Session, hash_token
 
 log = logging.getLogger(__name__)
 
+# Slice C1 (#2532): the website can record that the person wants the campaign in another server,
+# but nothing moves it until C2's bot sweep exists, so an accepted move would wait for ever. Until
+# C2 turns this on, another server is refused ("bad_server") and the page lists only the server the
+# campaign runs on now.
+MOVES_ARE_RUN = False
+
 Why = Literal["no_plan", "try_it", "no_slot", "owner"]
 Outcome = Literal[
-    "accepted", "declined", "ended", "no_plan", "try_it", "no_slot", "owner", "bad_server"
+    "accepted",
+    "moving",
+    "declined",
+    "ended",
+    "no_plan",
+    "try_it",
+    "no_slot",
+    "owner",
+    "bad_server",
 ]
 
 _LINK = re.compile(r"(\d{1,19})-(\d{1,19})-([A-Za-z0-9_-]{20,128})")  # BIGINT holds 19 digits
@@ -77,6 +91,41 @@ async def _release(db: Database, session: Session, link: tuple[int, int, str]) -
         log.warning("A hand-over claim could not be given back")
 
 
+MAX_SERVERS = 25  # asked about on one page; a person with more picks from the first ones
+
+
+async def _bot_in(db: Database, session: Session, guild_id: int) -> bool:
+    """Is DMbot installed in this server (a server of the session's own list)?"""
+    async with db.as_person(session.user_id, session.id_hash).guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %s AND left_at IS NULL) AS yes",
+            (guild_id,),
+        )
+        row = await cur.fetchone()
+    return bool(row and row["yes"])
+
+
+async def _servers(db: Database, session: Session, current: int) -> list[dict[str, Any]]:
+    """Where the campaign could run: the server it runs on now (when the person is in it), and,
+    once the bot's move exists (`MOVES_ARE_RUN`), their other servers with whether DMbot is in
+    each ("Add DMbot to a server" for the rest). The server list is a snapshot from sign-in, not a
+    live check (as for every other answer on the website, web/offers.py)."""
+    out: list[dict[str, Any]] = []
+    for g in session.guilds[:MAX_SERVERS]:
+        if g.id == current:
+            out.append({"id": str(g.id), "name": g.name, "current": True, "botIn": True})
+        elif MOVES_ARE_RUN and g.manage:
+            out.append(
+                {
+                    "id": str(g.id),
+                    "name": g.name,
+                    "current": False,
+                    "botIn": await _bot_in(db, session, g.id),
+                }
+            )
+    return sorted(out, key=lambda s: not s["current"])
+
+
 async def look(db: Database, session: Session, raw: object, *, now: int) -> dict[str, Any]:
     """What the page shows. Changes nothing. `{"status": "ended"}` for every link that opens
     nothing now."""
@@ -86,21 +135,16 @@ async def look(db: Database, session: Session, raw: object, *, now: int) -> dict
         return ENDED
     guild_id = link[0]
     why = await _why_not(db, session, guild_id, offer, now=now)
-    # The session's server list is a snapshot from sign-in (not a live check that the person is
-    # still in the server), as for every other answer on the website (web/offers.py).
+    servers = await _servers(db, session, guild_id)
     mine = next((g for g in session.guilds if g.id == guild_id), None)
-    server = {"id": str(guild_id), "name": mine.name if mine else ""}
     return {
         "status": "open",
         "campaign": {"name": offer["campaign_name"]},
         "from": {"name": offer["from_name"]},
-        "server": server,
-        "canAccept": why is None and mine is not None,
+        "server": {"id": str(guild_id), "name": mine.name if mine else ""},
+        "canAccept": why is None and any(s["current"] or s["botIn"] for s in servers),
         "why": why,
-        # Slice B: only the server it runs on now, and only when the person is in it (C adds more).
-        "servers": []
-        if mine is None
-        else [{"id": str(guild_id), "name": mine.name, "current": True, "botIn": True}],
+        "servers": servers,
     }
 
 
@@ -129,14 +173,22 @@ async def accept(
     if link is None:
         return "ended", None
     guild_id, offer_id, _secret = link
-    if str(server_id) != str(guild_id) or guild_id not in {g.id for g in session.guilds}:
-        return "bad_server", None  # slice C: another server
+    target = _as_server(server_id)
+    mine = {g.id for g in session.guilds}
+    managed = {g.id for g in session.guilds if g.manage}
+    elsewhere = target is not None and target != guild_id
+    if target is None or target not in mine or (elsewhere and not MOVES_ARE_RUN):
+        return "bad_server", None
+    if elsewhere and target not in managed:  # the page lists only servers the person manages
+        return "bad_server", None
     offer = await _open(db, session, link, claim=False)
     if offer is None:
         return "ended", None
     why = await _why_not(db, session, guild_id, offer, now=now)
     if why is not None:
         return why, None
+    if elsewhere:
+        return await _ask_for_move(db, session, link, target), None
     if await _open(db, session, link, claim=True) is None:
         return "ended", None
     try:
@@ -150,6 +202,36 @@ async def accept(
         return "accepted", f"{guild_id}.{offer['campaign_id']}"
     await _release(db, session, link)
     return ("no_slot" if result == "no_free_slot" else "ended"), None
+
+
+def _as_server(value: object) -> int | None:
+    text = str(value)
+    return int(text) if text.isdigit() and len(text) <= 19 else None
+
+
+async def _ask_for_move(
+    db: Database,
+    session: Session,
+    link: tuple[int, int, str],
+    target: int | None,
+) -> Outcome:
+    """Claim the link and record that the person wants the campaign in `target` (one database
+    step): the bot moves it (slice C2). "bad_server" when that server is not one of theirs with
+    DMbot installed; "ended" when the link opens nothing now."""
+    guild_id, offer_id, secret = link
+    assert target is not None
+    async with db.as_person(session.user_id, session.id_hash).guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_handover_request_move(%s, %s, %s, %s, %s) AS ok",
+            (guild_id, offer_id, hash_token(secret), session.display_name, target),
+        )
+        row = await cur.fetchone()
+    if row and row["ok"]:
+        return "moving"
+    # The same "no" for every reason would hide a missing install: say which when the link is fine.
+    if await _open(db, session, link, claim=False) is None:
+        return "ended"
+    return "bad_server"
 
 
 async def decline(db: Database, session: Session, raw: object) -> Outcome:
