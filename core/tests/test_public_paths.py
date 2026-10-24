@@ -19,6 +19,7 @@ from dmbot.web.app import create_app
 from dmbot.web.settings import WebSettings
 
 API = "https://api.dmbot.example"
+INSIDE = "http://web-api:8080"  # how the Docker network and dev1 reach it
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 
 
@@ -34,8 +35,8 @@ def make_app() -> Any:
     return create_app(settings, SimpleNamespace(), SimpleNamespace())  # type: ignore[arg-type]
 
 
-def client(app: Any) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+def client(app: Any, base: str = INSIDE) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base)
 
 
 class ThePaths(unittest.TestCase):
@@ -71,7 +72,8 @@ class ThePaths(unittest.TestCase):
 
 class TheMiddleware(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.http = client(make_app())
+        self.app = make_app()
+        self.http = client(self.app)
 
     async def asyncTearDown(self) -> None:
         await self.http.aclose()
@@ -87,6 +89,27 @@ class TheMiddleware(unittest.IsolatedAsyncioTestCase):
     async def test_a_public_path_through_the_tunnel_reaches_the_app(self) -> None:
         got = await self.http.get("/me", headers={pp.TUNNEL_HEADER: "203.0.113.5"})
         self.assertEqual((got.status_code, got.json()), (401, {"error": "signed_out"}))
+
+    async def test_the_public_host_alone_is_outside_even_without_the_tunnels_header(self) -> None:
+        outside = client(self.app, API)
+        try:
+            got = await outside.get("/health")
+            self.assertEqual((got.status_code, got.content), (404, b""))
+            got = await outside.get("/health", headers={"Host": "API.dmbot.example:443"})
+            self.assertEqual(got.status_code, 404)  # (case and a port make no difference)
+            got = await outside.get("/me")
+            self.assertEqual(got.status_code, 401)  # a public path still reaches the app
+        finally:
+            await outside.aclose()
+
+    async def test_the_inside_hosts_are_not_affected(self) -> None:
+        for base in ("http://web-api:8080", "http://localhost:8080", "http://127.0.0.1:8080"):
+            inside = client(self.app, base)
+            try:
+                got = await inside.get("/health")
+                self.assertEqual((got.status_code, got.json()), (200, {"status": "ok"}), base)
+            finally:
+                await inside.aclose()
 
     async def test_a_path_that_is_not_a_route_is_also_empty_from_outside(self) -> None:
         got = await self.http.get("/nothing-here", headers={pp.TUNNEL_HEADER: "203.0.113.5"})

@@ -22,12 +22,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from starlette.requests import Request
+
 TUNNEL_HEADER = "CF-Connecting-IP"
 
 
 @dataclass(frozen=True, slots=True)
 class PublicPath:
-    pattern: re.Pattern[str]  # matched against a request's path, from its start
+    # Matched with `re.match`, so anchored at the start of the path: write `/me(/|$)`, never `^/me`.
+    pattern: re.Pattern[str]
     reason: str
     examples: tuple[str, ...]  # real paths it must pass: the sorting test and dev1's check use them
 
@@ -81,6 +84,12 @@ INSIDE_ONLY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"/feedback$"), CLOSED_UNTIL_LIVE + " (the Say hello form)"),
     (re.compile(r"/webhooks/"), "any payment company other than Stripe is not exposed"),
 )
+
+
+def request_host(request: Request) -> str:
+    """The host a request was sent to, without a port, in lower case ("" when it has none)."""
+    host = request.headers.get("host", "").strip().lower()
+    return host.rsplit(":", 1)[0] if host and ":" in host and not host.endswith("]") else host
 
 
 def is_public(path: str) -> bool:

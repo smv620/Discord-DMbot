@@ -11,7 +11,7 @@ import httpx
 from dmbot.web.app import create_app
 from dmbot.web.limits import FREE_TICKETS_PER_DAY, LIMITS, RateLimit, free_ticket_refusal
 from tests.pg import DatabaseTest
-from tests.test_web_api import API, SITE, FakeDiscord, settings
+from tests.test_web_api import SITE, FakeDiscord, settings
 
 HEADERS = {"X-DMbot-Request": "1", "Origin": SITE}
 
@@ -114,7 +114,9 @@ class Routes(DatabaseTest):
             FakeDiscord(),
             route_limits=route_limits,
         )
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
@@ -243,7 +245,9 @@ class Routes(DatabaseTest):
 
     async def test_the_real_limits_are_wired_by_default(self) -> None:
         app = create_app(settings(client_ip_header="X-Test-Client-IP"), self.db, FakeDiscord())
-        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
         self.addAsyncCleanup(client.aclose)
         codes = [
             (

@@ -25,7 +25,7 @@ from dmbot.web.feedback import (
 from dmbot.web.limits import RateLimit
 from dmbot.web.settings import load_web_settings
 from tests.pg import DatabaseTest
-from tests.test_web_api import API, SITE, FakeDiscord, settings
+from tests.test_web_api import SITE, FakeDiscord, settings
 from tests.test_web_api import Settings as SettingsTest
 
 HEADERS = {"X-DMbot-Request": "1", "Origin": SITE}
@@ -76,7 +76,9 @@ class FeedbackRoute(DatabaseTest):
             clock=lambda: NOW,
             **options,
         )
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
@@ -252,7 +254,9 @@ class FeedbackRoute(DatabaseTest):
             discussions=self.github,
             feedback_limit=RateLimit(clock=lambda: self.time),
         )
-        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
         self.assertEqual((await self.send(ip="203.0.113.5")).status_code, 200)
         self.assertEqual((await self.send(ip="198.51.100.7")).status_code, 429)
 

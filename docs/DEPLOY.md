@@ -333,10 +333,12 @@ Discord sign-in isn't set, because the API won't start without it):**
    3. dev1 runs `scripts/check-public-paths` again. Every line must still say `ok`, and the three
       "stays closed" lines (`/health`, `/personal`, a path that doesn't exist) must still be the
       empty 404. If one of them isn't, the owner deletes the new route at once and tells dev1.
-   4. The owner removes the old routes one by one. Nothing changes: the app now keeps what they
-      kept.
-   **Interim, until then:** the owner can add one route, Path `^/recap-audio/`, to `web-api:8080`
-   so recap audio plays on the website. It is safe: each audio link is signed and expires.
+   4. The owner removes the old routes one by one: every route in the table "The routes the tunnel
+      has today" except the new `^/` one. Nothing changes: the app now keeps what they kept.
+      dev1 then adds `^/` as the table's last row and removes the rows that are gone.
+   **Interim:** the owner added one route, Path `^/recap-audio/`, to `web-api:8080` on 2026-10-24,
+   so recap audio plays on the website until the single route is in. Don't ask for it again. It
+   is safe: each audio link is signed and expires.
    A new public route is added in `public_paths.py` (with its reason) in the same change that
    adds the route: no dashboard step.
 

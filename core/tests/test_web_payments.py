@@ -20,7 +20,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider, PaymentError, PaymentEvent
 from dmbot.web.settings import load_web_settings
 from tests.pg import DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, FakeDiscord, settings
 
 DAY = 86400
 HOOK_SECRET = b"h" * 32
@@ -35,7 +35,9 @@ class Payments(DatabaseTest):
             settings(), self.db, FakeDiscord(), payments=self.provider, clock=lambda: self.now
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.events = 0
         await self.sign_in()
@@ -1181,7 +1183,9 @@ class Payments(DatabaseTest):
 class NoPaymentCompanyYet(DatabaseTest):
     async def test_buying_says_payments_are_off(self) -> None:
         app = create_app(settings(), self.db, FakeDiscord(), clock=lambda: 1_800_000_000)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API) as c:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        ) as c:
             start = await c.get("/auth/discord/start")
             state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
             await c.get("/auth/discord/callback", params={"state": state, "code": "good-code"})
