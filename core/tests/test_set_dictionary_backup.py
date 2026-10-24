@@ -5,6 +5,7 @@ Needs Postgres."""
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from dmbot.campaigns import CampaignError, CampaignStore
@@ -76,7 +77,7 @@ class SetsInBackups(DatabaseTest):
 
     async def test_a_damaged_set_is_refused_whole(self) -> None:
         backup = await self.campaigns.export(GUILD_A, self.pub)
-        damages = (
+        damages: tuple[Callable[[dict[str, Any]], Any], ...] = (
             lambda r: r.update(kind="elsewhere"),
             lambda r: r.update(name=""),
             lambda r: r.update(status="open"),
