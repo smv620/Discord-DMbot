@@ -47,11 +47,13 @@ export const webPage = {
   legendHeading: "What the shapes mean",
   // Kinds the API may send; any other key is shown as it comes.
   kinds: {
-    npc: "People",
+    npc: "NPCs",
+    player_character: "PCs",
     place: "Places",
     group: "Groups",
     item: "Items",
     event: "Events",
+    person: "At the table", // a real person at the table (#2618): a Player or the DM, apart from the story's kinds
   } as Record<string, string>,
   secretMark: "🤫",
   secretWords: "Secret: only the DM sees this",
