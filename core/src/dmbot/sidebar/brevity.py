@@ -1,10 +1,11 @@
 """How short a sidebar answer must be (owner, 2026-10-09: short answers matter most; #934).
 
-The prompt asks for brevity, but the rules also live here, in code, because a model slips:
-an answer is at most `MAX_SENTENCES` sentences and `MAX_CHARS` characters (the short source
-and "confident" or "uncertain" come after, outside the limit) unless the DM asked for the full
-text. A yes-or-no question gets "Yes." or "No." first. Greetings, repeated questions and
-offers of more help are removed. All of it is pure text work, so it tests with no AI and no Discord.
+The prompt asks for brevity (`MAX_SENTENCES` sentences, `MAX_CHARS` characters), and that is all
+the length rule there is: it is an instruction and never a check (owner, 2026-10-24, #2597), so
+an answer is not sent back or cut for its length. The rules in code that remain: a yes-or-no
+question gets "Yes." or "No." first. Greetings, repeated questions and offers of more help are
+removed. `shorten` is for text made in code (a rule entry's own
+words), not for an AI answer. All of it is pure text work, so it tests with no AI and no Discord.
 """
 
 from __future__ import annotations
@@ -109,11 +110,6 @@ def violations(question: str, text: str, *, full_text: bool) -> list[str]:
     if full_text:
         return []
     problems: list[str] = []
-    parts = sentences(text)
-    if len(parts) > MAX_SENTENCES:
-        problems.append(f"use at most {MAX_SENTENCES} sentences")
-    if len(text) > MAX_CHARS:
-        problems.append(f"use at most {MAX_CHARS} characters")
     if is_yes_no_question(question) and not starts_with_the_answer(text):
         problems.append('start with "Yes." or "No."')
     if text != strip_padding(text):
@@ -140,6 +136,8 @@ def shorten(text: str) -> str:
 
 
 def within_limit(text: str) -> bool:
+    """Whether an answer is inside the target. For reading in reports (`recheck`), never a check
+    on an answer (#2597)."""
     return len(sentences(text)) <= MAX_SENTENCES and len(text) <= MAX_CHARS
 
 

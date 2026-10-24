@@ -66,7 +66,7 @@ FAILED_CHECKS = (
     "DMbot couldn't write this one so that every detail came from what was said, so it wrote "
     "nothing. You can try again."
 )
-TOO_LONG = "The recap came out too long for DMbot to finish. You can try again."
+CUT_OFF = "DMbot's answer was cut off before it was finished. You can try again."
 SERVICE = "The writing service wasn't available. You can try again."
 FUNDS = "DMbot's writing service is unavailable right now. We've been told. Try again later."
 CAP = "This recap has hit its limit for now. You can try again tomorrow."
@@ -179,7 +179,7 @@ def unusable(reply: Reply) -> str:
     if reply.refused:
         return "the answer was declined: write it again from the beats"
     if reply.cut:
-        return "the answer was cut off: write it again, shorter"
+        return "the answer was cut off: write it again"
     return ""
 
 
@@ -241,10 +241,6 @@ class RecapWorker:
         # words only. The worker fills in the event as the answer is checked.
         self._on_call = on_call
         self._last: dict[tuple[int, str, int, str], cl.CallEvent] = {}
-        # The last draft that was too short (+1) or too long (-1): its words and which way, for the
-        # check that a retry moved the length the way it was steered (the owner's rule, #2383).
-        # Dropped with the rejected draft it belongs to.
-        self._lengths: dict[tuple[int, str, int], tuple[int, int]] = {}
         # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
         # in memory only: after a restart the retry just goes without it. Dropped when the stage
         # passes or the job fails.
@@ -559,7 +555,7 @@ class RecapWorker:
             )
             self._annotate(gid, cid, job, "beats", checks=["cut off"])
             return await self._retry_or_fail(
-                gid, cid, job, ["the answer was cut off: write it again, shorter"], too_long=True
+                gid, cid, job, ["the answer was cut off: write it again"], cut_off=True
             )
         # (everyone whose words went to an AI for this recap: the play, the retelling, and the
         # catching up the housekeeping step reads; the talk went nowhere)
@@ -898,7 +894,6 @@ class RecapWorker:
             aliases=inputs.aliases,
         )  # near-miss names put right, in code (#2027)
         transcript = "\n".join(s.text for s in said)
-        last = job.attempt >= PROSE_LAST_ATTEMPT
         self._annotate(gid, cid, job, stage, words=lambda: len(words(narration_of(prose.summary))))
 
         draft: rd.Prose = prose  # (the closure below reads this one; `prose` may be cut later)
@@ -921,51 +916,19 @@ class RecapWorker:
             )
 
         problems = checked(False)
-        count = len(words(narration_of(prose.summary)))
-        low, high = rd.length_range(length, last)
-        if low <= count <= high:
-            self._lengths.pop(key, None)  # it fits: nothing to steer
-        else:
-            # A draft of the wrong length is steered (the retry says which way and how far). A
-            # retry that moves the wrong way, not at all, or past the other end fails the job on
-            # our side, so the DM keeps the Try again (#2383).
-            wrong = rd.length_move(self._lengths.get(key), count, length, last)
-            if wrong:
-                kinds = cl.kinds(problems)  # the length problem, and whatever else failed with it
-                log.info(
-                    "Recap: the retry's length is %s: %d words (range %d-%d); %d check(s) "
-                    "failed: %s",
-                    wrong,
-                    count,
-                    low,
-                    high,
-                    len(problems),
-                    ", ".join(kinds),
-                )  # names and counts only
-                self._annotate(gid, cid, job, stage, checks=kinds)
-                return await self._fail(gid, cid, job, FAILED_CHECKS, check="length", ours=True)
-            self._lengths[key] = (count, 1 if count < low else -1)
-        if problems and last and not checked(True):
-            # Length is a quality target, not a grounding rule: on the last try a draft up to
-            # 35% over the target stands if everything else passes (owner, #2013).
+        if problems and job.attempt >= PROSE_LAST_ATTEMPT and not checked(True):
+            # A draft that passes everything but a doubtful scene check stands on the last try.
             problems = []
-            if self._on_note is not None:
-                self._on_note(
-                    f"Accepted at {len(words(narration_of(prose.summary)))} words: over the "
-                    f"{length.high} for about {length.hours:g} hours, within "
-                    f"{round(rd.LAST_UP * 100)}% over the target {length.target}, and every "
-                    "other check passed."
-                )
+        count = len(words(narration_of(prose.summary)))
         self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
         if problems:
             log.info(
-                "Recap: a draft failed %d check(s): %s (%d words, %d to %d wanted, %d section(s) "
+                "Recap: a draft failed %d check(s): %s (%d words, %d wanted, %d section(s) "
                 "of at most %d, about %.2f hours)",
                 len(problems),
                 ", ".join(cl.kinds(problems)),
                 count,
-                low,
-                high,
+                length.target,
                 len(CUE.findall(prose.summary)),
                 length.sections,
                 length.hours,
@@ -1091,7 +1054,7 @@ class RecapWorker:
         length: rd.Length,
     ) -> Job | None:
         """The prose stage's try failed. After a draft that passed but graded weak, a revision
-        that fails its checks (cut off, declined, unreadable, too short) leaves that draft
+        that fails its checks (cut off, declined, unreadable, empty) leaves that draft
         standing, checked again against the names as they are now (the DM may have made one
         secret since); otherwise the usual retry, and the last try's failure fails the job. A
         service error or running out of credit during the revision still fails the job."""
@@ -1181,7 +1144,6 @@ class RecapWorker:
         if event is not None:
             event.outcome = outcome
         self._rejected_prose.pop(key, None)
-        self._lengths.pop(key, None)
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
             gid,
@@ -1307,7 +1269,7 @@ class RecapWorker:
         length: rd.Length,
     ) -> rd.Prose | None:
         """The draft without the sentences still flagged, done in code. None when what is left
-        no longer meets the checks (the minimum length above all): then there is no recap."""
+        no longer meets the checks: then there is no recap."""
         cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
         if self._on_note is not None and facts.unsupported:
             self._on_note(
@@ -1679,7 +1641,6 @@ class RecapWorker:
 
     def _forget_draft(self, key: tuple[int, str, int]) -> None:
         self._rejected_prose.pop(key, None)
-        self._lengths.pop(key, None)
         self._fallback.pop(key, None)
         self._flags.pop(key, None)
         self._revised.discard(key)
@@ -1918,7 +1879,7 @@ class RecapWorker:
         problems: Sequence[str],
         *,
         last_attempt: int = 1,
-        too_long: bool = False,
+        cut_off: bool = False,
     ) -> Job | None:
         """A check failed: once more on the careful tier (the prose stage twice more), then the
         job fails plainly."""
@@ -1933,7 +1894,7 @@ class RecapWorker:
                 gid,
                 cid,
                 job,
-                TOO_LONG if too_long else FAILED_CHECKS,
+                CUT_OFF if cut_off else FAILED_CHECKS,
                 error=named,
                 check=named,
                 ours=True,
@@ -2040,7 +2001,6 @@ class RecapWorker:
         if names_a_secret(" ".join(texts), inputs.secret_names, inputs.allowed_names):
             self._rejected_prose.pop(key, None)
             self._rejected_finish.pop(key, None)
-            self._lengths.pop(key, None)  # the retry gets no draft to move from
         elif isinstance(draft, rd.Prose):
             self._rejected_prose[key] = draft
         else:
@@ -2048,7 +2008,6 @@ class RecapWorker:
 
     def _forget(self, gid: int, cid: str, job: Job) -> None:
         self._rejected_prose.pop((gid, cid, job.session_at), None)
-        self._lengths.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
         self._fallback.pop((gid, cid, job.session_at), None)
         self._flags.pop((gid, cid, job.session_at), None)
