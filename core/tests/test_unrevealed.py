@@ -221,7 +221,9 @@ class TheListeners(Held):
         allowed, hidden = recap_name_sets(lookup, said_in([line("We met orla finch at the ford")]))
         self.assertIn("Orla Finch", allowed)
         self.assertNotIn("Orla Finch", hidden)
-        self.assertIn("The Stranger", hidden)  # a 🤫 spelling stays secret, said or not
+        self.assertIn(
+            "The Stranger", hidden
+        )  # a 🤫 spelling stays secret unless it is said (#2591)
         for lines in ([line("We met Mira at the ford")], [line("Orla Finch?", sidebar="question")]):
             allowed, hidden = recap_name_sets(lookup, said_in(lines))
             self.assertNotIn("Orla Finch", allowed)  # not said at the table: not for the recap

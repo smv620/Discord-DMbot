@@ -32,6 +32,7 @@ from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
+from dmbot.memory.models import name_key
 from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
@@ -913,6 +914,31 @@ def length_move(before: tuple[int, int] | None, count: int, length: Length, last
     return "stuck" if count >= words_before - STILL_MARGIN else ""
 
 
+def _sentences_of(text: str) -> list[str]:
+    return [x for x in re.split(r"(?<=[.!?…])\s+|\n+", text) if x.strip()]
+
+
+def states_secret_tie(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]]) -> bool:
+    """Whether a sentence of `text` names both ends of a secret connection (#2591). A secret name
+    the table said aloud is no longer secret, but only the name: the connection stays the DM's.
+    Whole words, compared as names are everywhere; the two ends are told apart as the exposure
+    finder does, so a name the ends share ("the stranger") is not taken for a link. Never says
+    which, so the retry message carries no name."""
+    if not ties:
+        return False
+    # ("Veil's daughter" names Veil: the possessive goes before names are compared)
+    sentences = [f" {name_key(re.sub(r"['’]s\b", '', x))} " for x in _sentences_of(text)]
+    for subject, obj in ties:
+        a, b = {name_key(n) for n in subject}, {name_key(n) for n in obj}
+        a, b = a - b, b - a  # (a name both ends have says nothing about either)
+        if not a or not b:
+            continue
+        for sentence in sentences:
+            if any(f" {k} " in sentence for k in a) and any(f" {k} " in sentence for k in b):
+                return True
+    return False
+
+
 def check_prose(
     prose: Prose,
     *,
@@ -928,8 +954,12 @@ def check_prose(
     style: Collection[str] = (),
     corrections: Collection[str] = (),
     pcs: Collection[str] = (),
+    secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
+    `secret_ties`: the campaign's secret connections (every name of each end): a sentence naming
+    both ends is refused (`states_secret_tie`), though a secret name the table said aloud may be
+    used on its own (#2591).
     `pcs`: the campaign's player characters, for the presence check (`presence_problems`).
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
     secret name, which may appear nowhere in the recap. `transcript`: the cleaned lines, only to
@@ -996,6 +1026,11 @@ def check_prose(
         )
     if names_a_secret(" ".join([summary, *prose.music]), secret_names, allowed_names):
         problems.append("it names something the DM keeps secret: leave it out")
+    elif states_secret_tie(narration, secret_ties):
+        problems.append(
+            "a sentence links two names in a way the DM keeps secret: write about each on its "
+            "own, or leave the link out"
+        )
     elif refused and any(r in "".join(words(narration)) for r in refused):
         problems.append("a name is too like one the DM keeps secret: leave it out")
     if not last:  # a recap that passes everything else is not ended by a doubtful scene check

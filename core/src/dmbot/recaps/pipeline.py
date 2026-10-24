@@ -118,6 +118,9 @@ class Inputs:
     aliases: Mapping[str, str] = field(default_factory=dict)
     pcs: Sequence[str] = ()
     party: Mapping[int, Sequence[str]] = field(default_factory=dict)
+    # The campaign's secret connections as (every name of one end, every name of the other): a
+    # sentence naming both ends is refused, even when the table said both names (#2591).
+    secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = ()
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -918,6 +921,7 @@ class RecapWorker:
                 style=inputs.style,
                 corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                secret_ties=inputs.secret_ties,
             )
 
         problems = checked(False)
@@ -1124,6 +1128,7 @@ class RecapWorker:
                 style=inputs.style,
                 corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                secret_ties=inputs.secret_ties,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -1328,6 +1333,7 @@ class RecapWorker:
             style=inputs.style,
             corrections=inputs.corrections,
             pcs=inputs.pcs,
+            secret_ties=inputs.secret_ties,
         ):
             return None
         return cut
@@ -1621,6 +1627,7 @@ class RecapWorker:
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=refused, style=inputs.style, corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                secret_ties=inputs.secret_ties,
             ):  # fmt: skip
                 revised = None
         if revised is not None:
@@ -1761,6 +1768,7 @@ class RecapWorker:
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=[], style=inputs.style, corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                secret_ties=inputs.secret_ties,
             )  # fmt: skip
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
