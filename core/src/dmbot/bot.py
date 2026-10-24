@@ -57,7 +57,7 @@ from dmbot import (
     usage,
 )
 from dmbot.account_move import AccountMoves
-from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature
+from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, GeminiClient
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -1307,8 +1307,19 @@ class DMBot(commands.AutoShardedBot):
             )
         else:
             log.info("AI is off (no ANTHROPIC_API_KEY)")
+        gemini = (
+            GeminiClient(settings.gemini_key, watch=self.ai_watch)
+            if settings.ai_provider_creative == "gemini" and settings.gemini_key
+            else None
+        )
+        if gemini is not None:
+            log.warning(
+                "The recap writer is %s (Gemini): GEMINI_API_KEY must belong to a Google account "
+                "with billing on, or Google may use the recaps' text (the free tier's terms).",
+                settings.ai_models.creative,
+            )
         self.ai_client = (
-            AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch)
+            AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch, gemini=gemini)
             if settings.ai_key
             else None
         )
