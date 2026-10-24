@@ -258,7 +258,14 @@ from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
 from dmbot.members import MemberDirectory
-from dmbot.memory import definitions, document_reader, extractor, plan_reader, web_actions
+from dmbot.memory import (
+    definitions,
+    document_reader,
+    extractor,
+    lore_context,
+    plan_reader,
+    web_actions,
+)
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
 from dmbot.memory.adventure import AdventureSection, AdventureStore
@@ -1296,6 +1303,9 @@ class DMBot(commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        # The sentences around the names a DM's text suggested, held in memory for the review
+        # (#2561); never stored.
+        self.lore_context = lore_context.Held()
         # The names in a DM's own campaign background (#2167): suggestions only, on the fast tier.
         self.background_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
