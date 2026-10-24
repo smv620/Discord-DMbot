@@ -40,16 +40,42 @@ class Kept(unittest.TestCase):
         self.assertLessEqual(len(got), claims.FIELD_MAX)
         self.assertTrue(got.endswith("word"))
 
+    def test_a_claims_name_over_the_limit_is_dropped_never_cut(self) -> None:
+        self.assertIsNone(claims._field(LONG, name=True))  # (#2607) a cut name is another name
+
+    def test_a_story_plan_name_over_the_limit_is_dropped_never_cut(self) -> None:
+        self.assertIsNone(story_plan._clean(LONG, 120, whole=True))
+        self.assertEqual(story_plan._clean("Captain Varn", 120, whole=True), "Captain Varn")
+
+    def test_a_house_rule_cut_to_the_limit_says_so_and_a_whole_one_does_not(self) -> None:
+        from dmbot.dm_screen.house_sync import _found_summary
+        from dmbot.rules import house_ai
+        from dmbot.rules.house import RULE_MAX
+
+        long_rule = "Every player may reroll one die per day " + "and then some " * 60
+        quote = "Every player may reroll one die per day"
+        file = f"{quote} and then some. Short rule: no chairs."
+        items = [
+            {"text": long_rule, "quote": quote},
+            {"text": "No chairs.", "quote": "Short rule: no chairs."},
+        ]
+        found = house_ai.keep(items, file, [])
+        self.assertEqual([c.shortened for c in found.rules], [True, False])
+        self.assertLessEqual(len(found.rules[0].text), RULE_MAX)
+        said = _found_summary(found, "your file", 4)
+        self.assertIn("Shortened: check the end** of rule 4", said)
+        self.assertNotIn("rule 5", said)
+
     def test_story_plan_text_is_shortened_not_dropped(self) -> None:
         got = story_plan._clean(LONG, 120)
         assert got is not None
         self.assertLessEqual(len(got), 120)
         self.assertTrue(got.endswith("word"))
 
-    def test_a_sheet_name_over_the_limit_is_kept_shortened(self) -> None:
-        got = sheets._name(LONG)
-        assert got is not None
-        self.assertLessEqual(len(got), sheets.NAME_MAX)
+    def test_a_sheet_name_over_the_limit_is_dropped_never_cut(self) -> None:
+        # (#2607) a cut name is another name
+        self.assertIsNone(sheets._name(LONG))
+        self.assertEqual(sheets._name("Cloak of Elvenkind"), "Cloak of Elvenkind")
 
     def test_image_text_is_shortened_at_a_word_end(self) -> None:
         got = images.clean(LONG, 300)

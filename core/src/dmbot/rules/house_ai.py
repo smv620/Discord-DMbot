@@ -101,6 +101,7 @@ def norm(text: str) -> str:
 class Candidate:
     text: str
     instead_of: str | None
+    shortened: bool = False  # cut to the table's limit: the DM is told to check its end (#2607)
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +140,7 @@ def keep(items: Sequence[object], source: str, existing: Sequence[tuple[str, str
         if len(quote) < MIN_QUOTE or quote not in haystack:
             unquoted += 1
             continue
+        cut = len(text) > RULE_MAX or (instead is not None and len(instead) > RULE_MAX)
         text = at_word_end(text, RULE_MAX)
         if instead is not None:
             instead = at_word_end(instead, RULE_MAX) or None
@@ -150,7 +152,7 @@ def keep(items: Sequence[object], source: str, existing: Sequence[tuple[str, str
             over += 1
             continue
         seen.add(key)
-        kept.append(Candidate(text, instead))
+        kept.append(Candidate(text, instead, cut))
     return Found(tuple(kept), False, len(items), unquoted, repeats, over)
 
 

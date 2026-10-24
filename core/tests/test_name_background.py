@@ -67,13 +67,20 @@ class TheReader(unittest.TestCase):
         )
         self.assertEqual(found.quote, " ".join(["Brannoch"] * bg.QUOTE_WORDS))  # still verbatim
 
-    def test_a_long_name_is_shortened_at_a_word_end_and_still_has_to_be_in_the_text(self) -> None:
-        name = " ".join(["Brannoch"] * 12)  # more than the most words a name has
+    def test_a_name_over_the_limits_is_dropped_never_shortened(self) -> None:
+        name = " ".join(["Brannoch"] * 12)  # more than the most words a name has (#2607)
         item = {"name": name, "kind": "person", "also": [], "quote": ""}
-        (found,) = bg.read_answer(json.dumps({"names": [item]}), name)
-        self.assertEqual(found.name, " ".join(["Brannoch"] * bg.NAME_WORDS))
-        # not in the text at all: refused, however it is shortened
-        self.assertEqual(bg.read_answer(json.dumps({"names": [item]}), "something else"), [])
+        self.assertEqual(bg.read_answer(json.dumps({"names": [item]}), name), [])
+
+    def test_a_connection_end_over_the_limit_is_dropped_and_counted_as_bad_names(self) -> None:
+        end = " ".join(["Brannoch"] * 12)
+        text = f"{end} is a friend of Vale Keep."
+        item = {"a": end, "b": "Vale Keep", "how": "friend", "quote": text.rstrip(".")}
+        lost: bg.Dropped = bg.Counter()
+        self.assertEqual(
+            bg.read_connections(json.dumps({"connections": [item]}), text, (), lost), []
+        )
+        self.assertEqual(lost["bad_names"], 1)
 
     def test_bad_answers_are_ignored(self) -> None:
         for reply in ("", "not json", "[]", '{"names": "x"}', '{"names": [1, "a"]}'):

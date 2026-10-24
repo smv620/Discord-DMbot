@@ -176,12 +176,14 @@ class Confirmed:
     batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
 
 
-def _field(value: object) -> str | None:
+def _field(value: object, *, name: bool = False) -> str | None:
     """A short piece of the extractor's answer: one line of text within the limit, or None
     when it is not text or is empty."""
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
+    if name:  # a name is never shortened (#2607): a cut one is another name
+        return text if 0 < len(text) <= FIELD_MAX else None
     return at_word_end(text, FIELD_MAX) if text else None
 
 
@@ -234,8 +236,9 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
         if not isinstance(item, dict):
             bad += 1
             continue
-        subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
-        obj = _field(item.get("object")) or ""
+        subject = _field(item.get("subject"), name=True)
+        relationship = _field(item.get("relationship"))
+        obj = _field(item.get("object"), name=True) or ""
         said = item.get("details")  # words only: a list or a number is no detail
         details = at_word_end(" ".join(said.split()), DETAIL_MAX) if isinstance(said, str) else ""
         how = item.get("how")

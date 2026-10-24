@@ -192,12 +192,11 @@ def _spellings(
     for other in raw if isinstance(raw, list) else []:
         if not isinstance(other, str):
             continue
-        other = at_word_end(
-            " ".join(other.split()), NAME_CHARS
-        )  # (shortened, never dropped, #2601)
+        other = " ".join(other.split())
         key = name_key(other)
         if (
             other
+            and len(other) <= NAME_CHARS  # (a name is never shortened: a cut one is another name)
             and "|" not in other
             and key != name_key(name)
             and key not in skip
@@ -226,10 +225,16 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         kind = KINDS.get(str(item.get("kind", "")).strip().lower())
         if not isinstance(name, str) or kind is None:
             continue
-        # A name over the limits is shortened at a word end, not dropped (#2601); it must still be
-        # in the text, which a front part of a name in the text is.
-        name = at_word_end(" ".join(name.split()[:NAME_WORDS]), NAME_CHARS)
-        if not name or "|" in name or not _has(haystack, name) or not not_names.allowed(name, cued):
+        # A name is never shortened (#2607): over the limits it is a sentence, not a name.
+        name = " ".join(name.split())
+        if (
+            not name
+            or len(name) > NAME_CHARS
+            or len(name.split()) > NAME_WORDS
+            or "|" in name
+            or not _has(haystack, name)
+            or not not_names.allowed(name, cued)
+        ):
             continue
         # A disguise is read first, so the same spelling is never also a public one.
         seen: set[str] = set()
@@ -459,10 +464,17 @@ def read_connections(
         if not all(isinstance(x, str) for x in (a, b, quote)):
             lost["unreadable"] += 1
             continue
-        a = at_word_end(" ".join(str(a).split()), NAME_CHARS)  # (shortened, not dropped, #2601)
-        b = at_word_end(" ".join(str(b).split()), NAME_CHARS)
+        # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
+        a, b = " ".join(str(a).split()), " ".join(str(b).split())
         words = _quote_window(str(quote).split(), a, b)
-        if not a or not b or name_key(a) == name_key(b) or not words:
+        if (
+            not a
+            or not b
+            or len(a) > NAME_CHARS
+            or len(b) > NAME_CHARS
+            or name_key(a) == name_key(b)
+            or not words
+        ):
             lost["bad_names"] += 1
             continue
         said = " ".join(words)
