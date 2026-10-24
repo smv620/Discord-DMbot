@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
+from dmbot.memory import claims as claims_mod
 from dmbot.memory import link_edits
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.claims import ClaimStore
@@ -52,6 +53,10 @@ BAD_KIND = "bad_kind"  # a kind the rules do not take
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
+GONE = "gone"  # a waiting question that is not waiting any more
+NAME_FIRST = "name_first"  # a new name in it has to be answered first (in Check new names)
+STOPPED = "stopped_recording"  # someone whose words it holds is no longer recorded
+CANNOT_WRITE = "cannot_write"  # the rules refuse to write that fact now
 
 WAITING = (
     "claim-confirm",
@@ -60,6 +65,11 @@ WAITING = (
     "backstory-skip",
     "backstory-keep-all",
 )
+CLAIM_REFUSALS = {
+    claims_mod.GONE: GONE,
+    claims_mod.NAME_FIRST: NAME_FIRST,
+    claims_mod.STOPPED_NOW: STOPPED,
+}
 ALIAS_KIND = "nickname"  # what the name card calls an other name the DM adds
 
 
@@ -412,18 +422,25 @@ async def _answer_waiting(
         if a.action == "claim-reject":
             await w.claims.reject(guild_id, cid, a.target_id)
             return Outcome()
-        confirmed = await w.claims.confirm(
-            guild_id, cid, a.target_id, opted_in=await w.opted_in(), secret=a.flag
-        )
+        try:
+            confirmed = await w.claims.confirm(
+                guild_id, cid, a.target_id, opted_in=await w.opted_in(), secret=a.flag
+            )
+        except MemoryRuleError as exc:
+            # the page words these: the question is gone, a new name has to be answered first,
+            # someone who said it stopped being recorded, or the rules refuse the fact now
+            return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
         return Outcome(result_id=confirmed.claim.fact_id or "")
     onto = await memory.ontology(guild_id, cid)
     symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
     # both ends are read again here: only a connection whose two names are confirmed is kept
     ready = [x for x in await w.backstory.waiting(guild_id, cid, symmetric=symmetric) if x.ready]
     if a.action == "backstory-keep-all":
-        if not ready:
+        shown = set(a.text.split())  # the ids the page showed: no other is kept
+        todo = [x for x in ready if x.id in shown]
+        if not todo:
             return _failed(NOT_FOUND)
-        done_all = await keep.keep_all(memory, w.backstory, guild_id, cid, ready)
+        done_all = await keep.keep_all(memory, w.backstory, guild_id, cid, todo)
         return Outcome(result_id=str(len(done_all.kept))) if done_all.kept else _failed(BAD_TARGET)
     link = next((x for x in ready if x.id == a.target_id), None)
     if link is None:

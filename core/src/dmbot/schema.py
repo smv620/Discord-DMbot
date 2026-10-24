@@ -11466,6 +11466,7 @@ WAITING_ACTIONS = (
 )  # fmt: skip
 _WAITING_LIST = ", ".join(f"'{a}'" for a in WAITING_ACTIONS)
 _WAITING_NEED_TARGET = ", ".join(f"'{a}'" for a in WAITING_ACTIONS[:4])  # keep-all has none
+_KEEP_ALL_IDS = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"  # Keep all names the ids the page showed
 
 LINK_DECIDE_ACTIONS = (
     """
@@ -11494,6 +11495,11 @@ LINK_DECIDE_ACTIONS = (
          """
     + _WAITING_LIST
     + """));
+    -- Keep all carries the ids of the connections the page showed (at most 50 of 32 letters, space
+    -- apart), so a link that turned ready while the DM was looking is not kept unseen.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check CHECK (char_length(text) <=
+        CASE WHEN action IN ('merge-many', 'backstory-keep-all') THEN 1700 ELSE 100 END);
 """
 )
 # Built from the door as it stands now (with `link-pin`, 0193), not from an older text: a door
@@ -11512,7 +11518,8 @@ _waiting_check = """        IF act LIKE 'claim-%' OR act LIKE 'backstory-%' THEN
                    AND b.id = tgt) THEN
                 RETURN jsonb_build_object('status', 'not_found');
             ELSIF act = 'backstory-keep-all' AND NOT EXISTS (
-                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c) THEN
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c
+                   AND b.id = ANY (string_to_array(clean, ' '))) THEN
                 RETURN jsonb_build_object('status', 'not_found');
             END IF;
         ELSIF is_link AND act <> 'link-add' THEN"""
@@ -11525,7 +11532,7 @@ for _old, _new in (
     (
         "'link-secret', 'link-remove', 'link-pin')\n               AND clean <> '')",
         f"'link-secret', 'link-remove', 'link-pin',\n"
-        f"                       {_WAITING_LIST})\n               AND clean <> '')",
+        f"                       {_WAITING_NEED_TARGET})\n               AND clean <> '')",
     ),
     (
         "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
@@ -11544,6 +11551,16 @@ for _old, _new in (
         "                       'backstory-keep') AND fl IS NULL",
     ),
     ("        IF is_link AND act <> 'link-add' THEN", _waiting_check),
+    (
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+        "char_length(clean) > (CASE WHEN act IN ('merge-many', 'backstory-keep-all')"
+        " THEN 1700 ELSE 100 END)",
+    ),
+    (
+        "OR (act = 'merge-many' AND (clean = '' OR clean !~",
+        "OR (act = 'backstory-keep-all' AND (clean = '' OR clean !~ " + _KEEP_ALL_IDS + "))\n"
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~",
+    ),
 ):
     assert _decide_door.count(_old) == 1, (_old, _decide_door.count(_old))
     _decide_door = _decide_door.replace(_old, _new)

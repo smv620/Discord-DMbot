@@ -359,8 +359,8 @@ class TheEdits(Editing):
         claim = await self.claim()
         answer = await self.queue(kind="claim", action="confirm", id=claim)
         outcomes = await self.apply_waiting(opted_in=set())  # nobody consents now
-        self.assertEqual([o.error for o in outcomes], [wa.NOT_FOUND])
-        self.assertEqual((await self.poll(answer))["error"], wa.NOT_FOUND)
+        self.assertEqual([o.error for o in outcomes], [wa.STOPPED])
+        self.assertEqual((await self.poll(answer))["error"], wa.STOPPED)
         self.assertIsNone(await self.claims.get(self.g, self.one.id, claim))
         self.assertEqual(
             [
@@ -428,7 +428,8 @@ class TheEdits(Editing):
     ) -> None:
         for a in (self.mira, self.rook, self.keep):
             await self.waiting_link(a, self.hall)
-        answer = await self.queue(kind="backstory", action="keep_all")
+        ids = [w.id for w in await self.backstory.waiting(self.g, self.one.id)]
+        answer = await self.queue(kind="backstory", action="keep_all", ids=ids)
         before = await self.memory.version(self.g, self.one.id)
         self.assertEqual([o.error for o in await self.apply_waiting()], [""])
         done = await self.poll(answer)
@@ -448,6 +449,50 @@ class TheEdits(Editing):
             ],
             [],
         )
+
+    async def test_keep_all_keeps_only_the_ids_the_page_showed(self) -> None:
+        shown = await self.waiting_link(self.mira, self.hall)
+        unseen = await self.waiting_link(self.rook, self.hall)  # turned ready after the page loaded
+        await self.queue(kind="backstory", action="keep_all", ids=[shown])
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual([r.subject_id for r in await self.knows_hall()], [self.mira])
+        left = await self.backstory.waiting(self.g, self.one.id)
+        self.assertEqual([w.id for w in left], [unseen])
+        # an empty or oversized list, or an id that is no id, is refused at the door
+        self.assertEqual(
+            await self.refused_queue(kind="backstory", action="keep_all", ids=[]), "bad_action"
+        )
+        self.assertEqual(
+            await self.refused_queue(kind="backstory", action="keep_all", ids=["x"]), "not_found"
+        )
+        self.assertEqual(
+            await self.refused_queue(kind="backstory", action="keep_all", ids=["a" * 32]),
+            "not_found",
+        )  # (none of them waits)
+
+    async def test_a_refused_claim_says_why_in_a_code_the_page_can_word(self) -> None:
+        # a new name in it that is still only a suggestion: answer that first
+        new = (
+            await self.memory.add_entity(
+                self.g, self.one.id, type="character", name="Newcomer", source="scan"
+            )
+        ).value
+        await self.claims.propose(
+            self.g, self.one.id, [said(new.name, "knows", "Far Hall")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT id FROM memory_claims WHERE subject = 'Newcomer'")
+            row = await cur.fetchone()
+        assert row is not None
+        claim = await self.claims.get(self.g, self.one.id, row["id"])
+        assert claim is not None
+        await self.queue(kind="claim", action="confirm", id=claim.id)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [wa.NAME_FIRST])
+        # it is still waiting, so the DM can answer the name and try again
+        again = await self.claims.get(self.g, self.one.id, claim.id)
+        assert again is not None
+        self.assertEqual(again.status, "proposed")
 
     async def test_a_secret_backstory_connection_is_kept_secret_and_keep_as_secret_hides_more(
         self,
@@ -477,7 +522,7 @@ class TheEdits(Editing):
         for body in (
             {"kind": "claim", "action": "confirm", "id": claim},
             {"kind": "backstory", "action": "keep", "id": link},
-            {"kind": "backstory", "action": "keep_all"},
+            {"kind": "backstory", "action": "keep_all", "ids": [link]},
         ):
             self.assertEqual(await self.refused_queue(self.player, **body), "not_allowed", body)
         self.assertEqual(

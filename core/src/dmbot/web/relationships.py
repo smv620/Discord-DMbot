@@ -418,7 +418,7 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # Answers to the connections that wait for the DM (#2635, #2642): body `{kind, action, id, secret}`.
 # `kind` "claim" (said at the table; actions confirm, reject; `secret` is "truth but secret") or
 # "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
-# `keep_all` keeps every one that is ready and takes no id).
+# `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others).
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
     ("claim", "reject"): "claim-reject",
@@ -439,11 +439,21 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
     secret = body.get("secret", False)
     if not isinstance(secret, bool):
         raise RecapError("bad_action")
+    text = ""
     target = "" if action == "backstory-keep-all" else str(body.get("id") or "")
-    if action != "backstory-keep-all" and not ID_PATTERN.match(target):
+    if action == "backstory-keep-all":
+        # Keep all keeps exactly the connections the page showed (ids), never one that turned
+        # ready while the DM was looking
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 50:
+            raise RecapError("bad_action")
+        if not all(isinstance(i, str) and ID_PATTERN.match(i) for i in ids):
+            raise RecapError("not_found")
+        text = " ".join(dict.fromkeys(ids))
+    elif not ID_PATTERN.match(target):
         raise RecapError("not_found")
     return await _queue(
-        db, session, ref, entity="", action=action, target=target, text="",
+        db, session, ref, entity="", action=action, target=target, text=text,
         flag=secret and action in ("claim-confirm", "backstory-keep"),
     )  # fmt: skip
 
