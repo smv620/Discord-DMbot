@@ -31,7 +31,7 @@ from dmbot.web.recaps import RecapError
 from tests.test_npcs_channel import MemMap, entry
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
 from tests.test_rules_channel import ME, Chan, Msg
-from tests.test_web_api import API, QUILLON, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import QUILLON, SITE, THURSDAY, FakeDiscord, settings
 
 GUILD = THURSDAY.id
 CAROL = SimpleNamespace(id=3003, name="Carol", email="carol@example.com")
@@ -508,9 +508,11 @@ class TheRoutes(WithNpcs):
         ):
             token = await sessions.sign_in(self.web, cast(Any, user), guilds, now=NOW, days=30)
             client = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+                transport=httpx.ASGITransport(app=app),
+                base_url="https://web-api.internal.test",
+                headers=HEADERS,
             )
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             self.clients[name] = client
 
     async def asyncTearDown(self) -> None:
