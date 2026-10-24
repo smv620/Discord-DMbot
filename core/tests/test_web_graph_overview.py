@@ -269,3 +269,18 @@ class TheShapingAlone(unittest.TestCase):
             }
         )  # fmt: skip
         self.assertNotIn("secret", got["tray"][0])
+
+
+class TheSliceStaysCurrent(unittest.TestCase):
+    def test_overview_is_cut_from_the_graph_doors_latest_definition(self) -> None:
+        # A later migration that redefines dmbot_web_relationships must move the overview's source
+        # with it, or the two doors would silently disagree about who sees what.
+        from dmbot import schema
+
+        latest = [
+            name
+            for name, sql in schema.MIGRATIONS
+            if "CREATE OR REPLACE FUNCTION dmbot_web_relationships(" in sql
+            or "CREATE FUNCTION dmbot_web_relationships(" in sql
+        ][-1]
+        self.assertEqual("0204_relation_directional", latest)
