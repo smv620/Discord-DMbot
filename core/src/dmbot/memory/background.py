@@ -22,6 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.scan import COMMON, GAME_TERMS
@@ -181,6 +182,18 @@ def _json(reply: str) -> object:
 def _has(haystack: str, text: str) -> bool:
     """Is `text` in the (squashed) haystack as whole words? "Ann" is not in "annual"."""
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
+
+
+def _in_quote(quote: str, end: str) -> bool:
+    """Whether the quote holds this end: the name whole, or (the quote says "my brother Ulric" and
+    the end is the listed "Ulric Stonehand", #2642) a word of it that is a name's own, not a title
+    or a short word. The name itself must stand in the text (checked by the caller)."""
+    if _has(quote, end):
+        return True
+    return any(
+        len(word) >= SHORTEST and word not in FILLER and _has(quote, word)
+        for word in name_key(end).split()
+    )
 
 
 def _spellings(
@@ -466,8 +479,8 @@ def read_connections(
         if (
             _has(haystack, a)
             and _has(haystack, b)
-            and _has(_squash(said), a)
-            and _has(_squash(said), b)
+            and _in_quote(_squash(said), a)
+            and _in_quote(_squash(said), b)
             and _has(haystack, said)
         ):
             out.append(Connection(a, how, b, said, words=label))
@@ -484,13 +497,19 @@ def keep_connections(
     cap: int = MAX_CONNECTIONS,
     skip: Callable[[Connection], bool] | None = None,
     dropped: Dropped | None = None,
+    questions: list[str] | None = None,
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
     of the campaign's own mapped to its name). Each end becomes the name it stands for. The same
     pair is offered once, whichever way round or how it was said (one fact per pair and kind;
     friends and family read the same both ways). At most `cap`. `dropped` counts why each one that
-    was not kept was not (`name_not_found`, `same_pair`, `already_have`, `over_cap`)."""
+    was not kept was not (`name_not_found`, `which_one`, `same_pair`, `already_have`,
+    `over_cap`).
+
+    An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
+    title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
+    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
@@ -506,11 +525,20 @@ def keep_connections(
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
     both_ways = {"kin_of", "ally_of", "enemy_of"}
+    reader = Ends(ends, {*ends.values()})
     seen: set[tuple[str, str, str]] = set()
     out: list[Connection] = []
     for piece in answers:
         for c in piece:
-            a, b = ends.get(name_key(c.a)), ends.get(name_key(c.b))
+            first, second = reader.match(c.a), reader.match(c.b)
+            if first.ambiguous or second.ambiguous:
+                lost["which_one"] += 1
+                if questions is not None:
+                    for end, got in ((c.a, first), (c.b, second)):
+                        if got.ambiguous and end not in questions:
+                            questions.append(end)
+                continue
+            a, b = first.name, second.name
             if a is None or b is None or name_key(a) == name_key(b):
                 lost["name_not_found"] += 1
                 continue
