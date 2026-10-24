@@ -106,6 +106,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "recap_requests": _WAIT,
     "recap_name_checks": _WAIT,
     "backstory_links": _WAIT,
+    "backstory_which": _WAIT,
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,

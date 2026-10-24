@@ -26,7 +26,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import lore_context, lore_read, pronouns
-from dmbot.memory.backstory_links import UPLOAD_MAX, NewLink, Waiting
+from dmbot.memory.backstory_links import UPLOAD_MAX, NewLink, NewWhich, Waiting, WhichWaiting
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -632,15 +632,16 @@ def _found_note(
     haven't confirmed, 2 already known, 1 left out (Which Mara?)". The parts add up to `found`.
     A connection is kept only when its two ends are names and the words are really in your text;
     DMbot never guesses one. Counts, and the DM's own words for a question, shown to them only."""
-    if found <= kept:
-        return ""
     lost = dropped or {}
+    if found <= kept and not lost.get("which_waiting", 0):
+        return ""
     known = sum(lost.get(k, 0) for k in KNOWN_ALREADY)
     left = sum(lost.get(k, 0) for k in LEFT_OUT)
     whose = lost.get("whose", 0)
+    picking = lost.get("which_waiting", 0)
     unread = sum(lost.get(k, 0) for k in NOT_READ)
     # whatever else is missing (cut at the time limit, not shaped) is "not read"
-    unread += max(0, found - kept - known - left - whose - unread)
+    unread += max(0, found - kept - known - left - whose - picking - unread)
     ready_n = kept if ready is None else min(ready, kept)
     waits = kept - ready_n
     asked = ", ".join(f"Which {_md(q)}?" for q in questions[:3])
@@ -650,6 +651,7 @@ def _found_note(
         f"{known} already known" if known else "",
         f"{left} left out" + (f" ({asked})" if asked else "") if left else "",
         f'{whose} about "I" left out: say whose backstory it is' if whose else "",
+        f"{picking} wait for you to pick which one" if picking else "",
         f"{unread} not read in time" if unread else "",
     ]
     return (
@@ -691,7 +693,7 @@ async def summary(
     parts = ", ".join(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
     )
-    view = BulkConfirm(campaign.id, stored, queued)
+    view = BulkConfirm(campaign.id, stored, queued + (dropped or {}).get("which_waiting", 0))
     await interaction.edit_original_response(
         content=(
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
@@ -779,10 +781,12 @@ async def queue_links(
             return True  # an end that is no entry of the campaign (a name that was refused)
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
+    picks: list[bg.Pick] = []
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
-        questions=questions, speaker=speaker,
+        questions=questions, speaker=speaker, picks=picks,
     )  # fmt: skip
+    await _queue_picks(store, campaign, picks, entry, truth, upload, dropped)
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload)
         for c in kept
@@ -802,6 +806,38 @@ async def queue_links(
     if keys is not None:
         keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh)
     return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
+
+
+async def _queue_picks(
+    store: Any,
+    campaign: Campaign,
+    picks: list[bg.Pick],
+    entry: Callable[[str], str | None],
+    truth: bool,
+    upload: str,
+    dropped: bg.Dropped | None,
+) -> int:
+    """Queue the "Which Mara?" questions (#2650). One whose names are not entries of the campaign
+    after all is counted as not found, so the summary's parts still add up."""
+    rows: list[NewWhich] = []
+    for p in picks:
+        fixed = entry(p.fixed)
+        ids = tuple(dict.fromkeys(i for n in p.candidates if (i := entry(n)) is not None))
+        if fixed is None or len(ids) < 2:
+            if dropped is not None:
+                dropped["which_waiting"] -= 1
+                dropped["name_not_found"] += 1
+            continue
+        rows.append(
+            NewWhich(
+                fixed, p.fixed_is_a, p.how, p.word, ids, p.quote, p.secret, p.words, truth, upload
+            )
+        )
+    added = int(await store.add_which(campaign.guild_id, campaign.id, rows)) if rows else 0
+    if dropped is not None and added < len(rows):  # already waiting, or past the most
+        dropped["which_waiting"] -= len(rows) - added
+        dropped["already_waiting"] += len(rows) - added
+    return added
 
 
 async def count_ready(bot: Any, campaign: Campaign, keys: set[tuple[str, str, str]]) -> int | None:
@@ -845,17 +881,173 @@ async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:
 
 
 async def ask_connections(interaction: discord.Interaction, campaign_id: str) -> None:
-    """The 📜 button (on the names summary and on the 📇 Names card): the connections that are
-    ready, or why none is."""
+    """The 📜 button (on the names summary, the 📇 Names card and the DM-screen notice): the "Which
+    one?" questions, then the connections that are ready, or why none is."""
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
-    if not await offer_ready(interaction, campaign_id):
+    asked = await offer_which(interaction, campaign_id)
+    if not await offer_ready(interaction, campaign_id) and not asked:
         await _tell(
             interaction,
             "None to check yet. Each connection waits until both its names are answered. "
             "Answer more names (✅ Add all, or 📝 Check new names), then press 📜 Check the "
             "connections again.",
         )
+
+
+async def offer_which(interaction: discord.Interaction, campaign_id: str) -> bool:
+    """The "Which Mara?" questions, one at a time in a private message (#2650). Returns whether
+    there was anything to ask."""
+    try:
+        view = WhichOffer(campaign_id)
+        if not await view.load(interaction):
+            return False
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.followup.send(
+                view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+            )
+        return True
+    except Exception:
+        log.exception("Couldn't offer the which-one questions from a background")
+        return False
+
+
+class WhichOffer(_Menu):
+    """A backstory connection with one end that fits two or more names ("Brannoc's sister Mara":
+    Mara Ashgrove or Mara Voss) waits for the DM to say which, never guessed (#2650). One card at
+    a time with a button for each name, ❌ Neither, and ⏭️ Not now (the rest wait). A pick makes
+    the connection an ordinary waiting one: ready to check when both its names are answered."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.current: WhichWaiting | None = None
+        self.picked = 0
+        self.dropped = 0
+        self.left = 0
+        self.total = 0
+        self.busy = asyncio.Lock()
+        self.words: dict[str, str] = {}
+
+    async def _waiting(
+        self, interaction: discord.Interaction, campaign: Campaign
+    ) -> list[WhichWaiting]:
+        memory = _memory(interaction)
+        store = getattr(_bot(interaction), "backstory_links", None)
+        if memory is None or store is None:
+            return []
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        self.words = {k: p.label for k, p in onto.predicates.items() if not p.core}
+        return list(await store.which_waiting(campaign.guild_id, campaign.id))
+
+    def _set(self, waiting: list[WhichWaiting]) -> None:
+        self.left = len(waiting)
+        self.total = max(self.total, self.picked + self.dropped + self.left)
+        self.current = waiting[0] if waiting else None
+        self.clear_items()
+        if self.current is None:
+            return
+        grey = discord.ButtonStyle.secondary
+        for index, (_, name) in enumerate(self.current.candidates[:3]):
+            self.add_item(
+                _Button(
+                    partial(self._pick, index),
+                    label=logic.shorten(name, 40),
+                    style=discord.ButtonStyle.primary,
+                )
+            )
+        self.add_item(_Button(self._neither, label="❌ Neither", style=grey, row=1))
+        self.add_item(_Button(self._not_now, label="⏭️ Not now", style=grey, row=1))
+
+    async def load(self, interaction: discord.Interaction) -> bool:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+            return False
+        self._set(await self._waiting(interaction, campaign))
+        return self.current is not None
+
+    def text(self) -> str:
+        c = self.current
+        if c is None:
+            left = f" Left out {self.dropped}." if self.dropped else ""
+            return (
+                f"🔎 Done. Picked {self.picked}.{left} Each pick is a connection to check "
+                "once both its names are answered."
+            )
+        how = link_words(c.predicate, c.detail)
+        if how == c.predicate.replace("_", " "):
+            how = self.words.get(c.predicate, how)
+        pair = (
+            f"**{_md(c.other)}** {how} **{_md(c.word)}**"
+            if c.other_is_subject
+            else f"**{_md(c.word)}** {how} **{_md(c.other)}**"
+        )
+        return (
+            f"🔎 **Which {_md(c.word)}?** ({self.picked + self.dropped + 1} of {self.total})\n"
+            f"{pair}\n"
+            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d"
+        )
+
+    async def _show(self, interaction: discord.Interaction, waiting: list[WhichWaiting]) -> None:
+        self._set(waiting)
+        if self.current is None:
+            self.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=self.text(),
+                view=self if self.current else None,
+                allowed_mentions=NO_PINGS,
+            )
+
+    async def _answer(self, interaction: discord.Interaction, index: int | None) -> None:
+        """Pick candidate `index`, or None for Neither. The card is read again first: a question
+        that went away or changed meanwhile moves on to the next one."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await _campaign_for(interaction, self.campaign_id)
+            if campaign is None:
+                return
+            if interaction.user.id not in campaign.dm_user_ids:  # on every press
+                await _tell(interaction, ONLY_DMS)
+                return
+            store = getattr(_bot(interaction), "backstory_links", None)
+            shown = self.current
+            if store is None or shown is None:
+                return
+            now = await self._waiting(interaction, campaign)
+            same = next((w for w in now if w.id == shown.id), None)
+            if same is None or (
+                index is not None
+                and (index >= len(same.candidates) or same.candidates != shown.candidates)
+            ):
+                await self._show(interaction, now)  # it changed: carry on with what is there
+                return
+            chosen = None if index is None else same.candidates[index][0]
+            if await store.pick_which(campaign.guild_id, campaign.id, same.id, chosen):
+                if chosen is None:
+                    self.dropped += 1
+                else:
+                    self.picked += 1
+            changed(interaction, campaign)
+            await self._show(interaction, await self._waiting(interaction, campaign))
+        if self.current is None and self.picked:  # their connections may be ready now
+            await offer_ready(interaction, self.campaign_id)
+
+    async def _pick(self, index: int, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, index)
+
+    async def _neither(self, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, None)
+
+    async def _not_now(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        self.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=f"🔎 The other {self.left} wait. Press 📜 Check the connections to go on.",
+                view=None,
+                allowed_mentions=NO_PINGS,
+            )
 
 
 async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> bool:

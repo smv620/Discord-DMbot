@@ -695,7 +695,10 @@ class WhoseBackstory(NamesTest):
         self.assertEqual(len(done.kept), 2)
         ents = {e.id: e.name for e in await self.memory.entities(GUILD, self.campaign.id)}
         rels = await self.relations()
-        self.assertEqual({ents[r.subject_id] for r in rels}, {"Tavin Ashgrove"})
+        # (a family link reads the same both ways, so its two ends may be either way round)
+        self.assertTrue(
+            all("Tavin Ashgrove" in (ents[r.subject_id], ents[r.object_id]) for r in rels)
+        )
 
     async def test_no_pick_leaves_the_i_connections_out_and_says_so(self) -> None:
         view, _ = await self.offered()
@@ -703,3 +706,144 @@ class WhoseBackstory(NamesTest):
         await view._read(press)
         self.assertEqual(await self.waiting(), [])
         self.assertIn('about "I" left out: say whose backstory it is', shown(press))
+
+
+class WhichPicks(unittest.TestCase):
+    def test_a_connection_with_one_unclear_end_waits_for_a_pick(self) -> None:
+        ends = [
+            c("Sister Mara", "knows", "Ulric"),  # which Mara?
+            c("Ulric", "knows", "Sister Mara"),  # the same question the other way round
+            c("Ashgrove", "knows", "Mara"),  # both ends unclear: left out as before
+            c("Brannoc", "kin_of", "Aldric"),
+        ]
+        lost: Counter[str] = Counter()
+        picks: list[bg.Pick] = []
+        questions: list[str] = []
+        kept = bg.keep_connections(
+            [ends], LISTED, {}, dropped=lost, questions=questions, picks=picks
+        )
+        self.assertEqual([(x.a, x.b) for x in kept], [("Brannoc", "Aldric")])
+        self.assertEqual(len(picks), 2)
+        first, second = picks
+        self.assertEqual(
+            (first.fixed, first.fixed_is_a, first.word), ("Ulric Stonehand", False, "Sister Mara")
+        )
+        self.assertEqual(first.candidates, ("Mara Ashgrove", "Mara Vell"))
+        self.assertEqual((second.fixed, second.fixed_is_a), ("Ulric Stonehand", True))
+        self.assertEqual((lost["which_waiting"], lost["which_one"]), (2, 1))
+        self.assertEqual(questions, ["Ashgrove", "Mara"])  # (both ends asked about)
+
+    def test_without_a_place_to_wait_it_is_left_out_as_before(self) -> None:
+        lost: Counter[str] = Counter()
+        kept = bg.keep_connections([[c("Sister Mara", "knows", "Ulric")]], LISTED, {}, dropped=lost)
+        self.assertEqual((kept, lost["which_one"], lost["which_waiting"]), ([], 1, 0))
+
+    def test_the_summary_counts_the_ones_waiting_for_a_pick(self) -> None:
+        lost = Counter({"which_waiting": 2})
+        note = ui_bg._found_note(5, 3, ready=3, dropped=lost)
+        self.assertIn("2 wait for you to pick which one", note)
+        self.assertNotIn("not read in time", note)
+
+
+class WhichMara(NamesTest):
+    """With Postgres: the question, the pick, and a kept connection (#2650 item 2)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Mara Ashgrove", "character", CONFIRMED, role="npc"),
+             NewName("Mara Vell", "character", CONFIRMED, role="npc"),
+             NewName("Ulric Stonehand", "character", CONFIRMED, role="npc")],
+            source="dm",
+        )  # fmt: skip
+        self.ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+
+    async def queue(self) -> Counter[str]:
+        found = [bg.Found(n, "npc", (), (), "") for n in self.ids]
+        lost: Counter[str] = Counter()
+        await ui_bg.queue_links(
+            self.bot,
+            self.memory,
+            self.campaign,
+            found,
+            [
+                [
+                    bg.Connection(
+                        "Sister Mara",
+                        "knows",
+                        "Ulric Stonehand",
+                        "Sister Mara knows Ulric Stonehand",
+                    )
+                ]
+            ],
+            set(),
+            dropped=lost,
+            upload="Lore, 1 Jan",
+        )
+        return lost
+
+    async def ask(self) -> tuple[Any, Any]:
+        it = self.it()
+        asked = await ui_bg.offer_which(it, self.campaign.id)
+        self.assertTrue(asked)
+        sent = it.followup.send.await_args
+        return it, sent.kwargs["view"], sent.args[0]
+
+    async def test_it_waits_and_the_card_names_both_maras_and_uses_the_bare_name(self) -> None:
+        lost = await self.queue()
+        self.assertEqual((lost["which_waiting"], lost["which_one"]), (1, 0))
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 1)
+        _, view, text = await self.ask()
+        self.assertIn("Which Sister Mara?", text)
+        self.assertEqual(
+            [b.label for b in view.children][:3], ["Mara Ashgrove", "Mara Vell", "❌ Neither"]
+        )
+
+    async def test_a_pick_makes_it_a_ready_connection_that_can_be_kept(self) -> None:
+        await self.queue()
+        _, view, _ = await self.ask()
+        press = self.it()
+        with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
+            await view.children[1].callback(press)  # Mara Vell
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(
+            (w.subject, w.object, w.ready, w.upload),
+            ("Mara Vell", "Ulric Stonehand", True, "Lore, 1 Jan"),
+        )
+        # the pair was written with Mara first or second as the text said it
+        self.assertEqual(await self.store.which_waiting(GUILD, self.campaign.id), [])
+        done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [w])
+        self.assertEqual(len(done.kept), 1)
+
+    async def test_neither_drops_it_and_two_presses_answer_once(self) -> None:
+        await self.queue()
+        await self.ask()
+        (question,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        a = await self.store.pick_which(GUILD, self.campaign.id, question.id, None)
+        b = await self.store.pick_which(GUILD, self.campaign.id, question.id, None)
+        self.assertEqual((a, b), (True, False))
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
+        self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
+
+    async def test_a_pick_that_is_not_a_candidate_is_refused(self) -> None:
+        await self.queue()
+        (question,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        refused = await self.store.pick_which(
+            GUILD, self.campaign.id, question.id, self.ids["Ulric Stonehand"]
+        )
+        self.assertFalse(refused)
+        self.assertEqual(len(await self.store.which_waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_a_candidate_that_is_refused_leaves_nothing_to_ask(self) -> None:
+        await self.queue()
+        async with self.db.guild(GUILD) as conn:  # (the DM answered "not a name" to one Mara)
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'rejected' WHERE guild_id = %s AND id = %s",
+                (GUILD, self.ids["Mara Vell"]),
+            )
+        self.assertEqual(await self.store.which_waiting(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)

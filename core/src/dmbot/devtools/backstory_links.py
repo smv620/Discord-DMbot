@@ -57,10 +57,12 @@ async def main_async(args: argparse.Namespace) -> int:
         return 2
     db = await Database.open(url, migrate=False, max_size=2)
     try:
-        rows = await BackstoryLinks(db).counts(args.guild, args.campaign)
+        store = BackstoryLinks(db)
+        rows = await store.counts(args.guild, args.campaign)
+        picks = await store.count_which(args.guild, args.campaign)
     finally:
         await db.close()
-    print("\n".join(report(rows)))
+    print("\n".join([*report(rows), f"waiting for a pick (which one?): {picks}"]))
     return 0
 
 

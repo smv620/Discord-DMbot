@@ -21,6 +21,8 @@ from typing import Any
 from dmbot.db import Database
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
+MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
+MAX_CANDIDATES = 10
 QUOTE_MAX = 400
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
@@ -36,6 +38,37 @@ class NewLink:
     detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # the DM said this upload is 100% truth (#2447): pinned when kept
     upload: str = ""  # the upload's name and date, as the DM saw them (#2650)
+
+
+@dataclass(frozen=True, slots=True)
+class NewWhich:
+    """A connection whose one end fits several names (#2650): `other_id` is the end that is a
+    name (the connection's subject when `other_is_subject`), `word` the other end as written."""
+
+    other_id: str
+    other_is_subject: bool
+    predicate: str
+    word: str
+    candidates: tuple[str, ...]  # entry ids, at least two
+    quote: str
+    secret: bool = False
+    detail: str = ""
+    truth: bool = False
+    upload: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class WhichWaiting:
+    id: str
+    other_id: str
+    other: str  # the name, as it is now
+    other_is_subject: bool
+    predicate: str
+    word: str
+    candidates: tuple[tuple[str, str], ...]  # (entry id, name), still live
+    quote: str
+    detail: str
+    upload: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,16 +144,149 @@ class BackstoryLinks:
         return added
 
     async def count(self, guild_id: int, campaign_id: str) -> int:
-        """How many connections wait for this campaign, without cleaning the queue (the 📇 Names
-        card shows it; the clean-up happens when they are asked)."""
+        """How many connections wait for this campaign, with the "Which Mara?" questions, without
+        cleaning the queue (the 📇 Names card shows it; the clean-up happens when they are
+        asked)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT count(*) AS n FROM backstory_links"
+                "SELECT (SELECT count(*) FROM backstory_links WHERE guild_id = %s"
+                " AND campaign_id = %s) + (SELECT count(*) FROM backstory_which WHERE guild_id = %s"
+                " AND campaign_id = %s) AS n",
+                (guild_id, campaign_id, guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
+    async def count_which(self, guild_id: int, campaign_id: str) -> int:
+        """How many "Which one?" questions wait (read-only)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM backstory_which"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
+
+    async def add_which(self, guild_id: int, campaign_id: str, rows: Sequence[NewWhich]) -> int:
+        """Queue "Which one?" questions (one already waiting for the same end and word is kept as
+        it is). Returns how many are new; at most MAX_WHICH wait for a campaign."""
+        added = 0
+        now = int(self._clock())
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM backstory_which"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+            room = max(0, MAX_WHICH - int(row["n"] if row else 0))
+            for w in rows:
+                if added >= room or len(set(w.candidates)) < 2:
+                    continue
+                cur = await conn.execute(
+                    "INSERT INTO backstory_which (guild_id, campaign_id, other_id,"
+                    " other_is_subject, predicate, word, candidates, quote, secret, detail, truth,"
+                    " upload, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s) ON CONFLICT DO NOTHING",
+                    (guild_id, campaign_id, w.other_id, w.other_is_subject, w.predicate,
+                     w.word[:80], list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES],
+                     w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now),
+                )  # fmt: skip
+                added += cur.rowcount
+        return added
+
+    async def which_waiting(self, guild_id: int, campaign_id: str) -> list[WhichWaiting]:
+        """The questions still worth asking, oldest first. A candidate that was refused or merged
+        away is dropped (or follows the merge); a question left with fewer than two candidates,
+        or about a name that is gone or refused, is not asked and is deleted."""
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
+            cur = await conn.execute(
+                "SELECT id, other_id, other_is_subject, predicate, word, candidates, quote, detail,"
+                " upload FROM backstory_which WHERE guild_id = %s AND campaign_id = %s"
+                " ORDER BY created_at, id",
+                (guild_id, campaign_id),
+            )
+            rows = list(await cur.fetchall())
+            if not rows:
+                return []
+            wanted = {r["other_id"] for r in rows} | {c for r in rows for c in r["candidates"]}
+            entities = await self._entities(conn, guild_id, campaign_id, wanted)
+            out: list[WhichWaiting] = []
+            drop: list[str] = []
+            for r in rows:
+                other = self._end(entities, r["other_id"])
+                live: dict[str, str] = {}
+                for candidate in r["candidates"]:
+                    end = self._end(entities, candidate)
+                    if end is not None and entities[end]["status"] != "rejected" and end != other:
+                        live[end] = str(entities[end]["name"])
+                if other is None or entities[other]["status"] == "rejected" or len(live) < 2:
+                    drop.append(str(r["id"]))
+                    continue
+                out.append(
+                    WhichWaiting(
+                        str(r["id"]), other, str(entities[other]["name"]),
+                        bool(r["other_is_subject"]), str(r["predicate"]), str(r["word"]),
+                        tuple(live.items()), str(r["quote"]), str(r["detail"]), str(r["upload"]),
+                    )
+                )  # fmt: skip
+            if drop:
+                await conn.execute(
+                    "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = ANY(%s)",
+                    (guild_id, campaign_id, drop),
+                )
+        return out
+
+    async def pick_which(
+        self, guild_id: int, campaign_id: str, which_id: str, entity_id: str | None
+    ) -> bool:
+        """The DM's answer: one of the candidates (the connection joins the waiting ones, ready
+        as soon as both its names are answered) or None for "Neither" (it is dropped). False when
+        the question is gone or the pick is not one of its candidates. Under the campaign lock, so
+        two presses answer once."""
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
+            cur = await conn.execute(
+                "SELECT other_id, other_is_subject, predicate, candidates, quote, secret, detail,"
+                " truth, upload, created_at FROM backstory_which WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, which_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return False
+            if entity_id is not None:
+                entities = await self._entities(
+                    conn, guild_id, campaign_id, {entity_id, *row["candidates"]}
+                )
+                ends = {self._end(entities, c) for c in row["candidates"]}
+                end = self._end(entities, entity_id)
+                if end is None or end not in ends or entities[end]["status"] == "rejected":
+                    return False
+                if end != row["other_id"]:
+                    a, b = (
+                        (row["other_id"], end)
+                        if row["other_is_subject"]
+                        else (end, row["other_id"])
+                    )
+                    await conn.execute(
+                        "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
+                        " object_id, quote, secret, detail, truth, created_at, upload)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        " ON CONFLICT DO NOTHING",
+                        (guild_id, campaign_id, a, row["predicate"], b, row["quote"],
+                         row["secret"], row["detail"], row["truth"], row["created_at"],
+                         row["upload"]),
+                    )  # fmt: skip
+            await conn.execute(
+                "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, which_id),
+            )
+        return True
 
     async def waiting(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
