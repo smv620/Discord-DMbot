@@ -13,6 +13,7 @@ from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import post
+from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
 from dmbot.recaps.notify import _kind, page_link, parse_ref
 from dmbot.recaps.store import Job
 from dmbot.recaps.text import (
@@ -382,7 +383,7 @@ class TheProse(unittest.TestCase):
             self.assertGreater(length.max_tokens, length.room)
         # the database's cap on the whole text; the story's share leaves the fixed lines their room
         self.assertEqual(rd.SUMMARY_MAX, 30_000)
-        self.assertEqual(rd.STORY_MAX, 30_000 - rd.FIXED_LINES_ROOM)
+        self.assertEqual(rd.STORY_MAX, 30_000 - FIXED_LINES_ROOM)
 
     def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
         def lines(*times_ms: int, words: int = 3) -> list[Said]:
