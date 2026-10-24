@@ -17,7 +17,7 @@ from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from tests.pg import DatabaseTest
 from tests.test_web_admin import ADMIN, HASH, HEADERS, PASSWORD
-from tests.test_web_api import API, FakeDiscord, settings
+from tests.test_web_api import FakeDiscord, settings
 
 FRIEND = "123456789012345678"
 OTHER = "223456789012345678"
@@ -44,7 +44,9 @@ class AdminGrants(DatabaseTest):
         )
         self.app = app
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(self.client.aclose)
 
@@ -196,7 +198,9 @@ class AdminGrants(DatabaseTest):
             clock=lambda: self.now,
         )
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=later), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=later),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(client.aclose)
         signed = await client.post(
@@ -325,7 +329,9 @@ class AdminGrants(DatabaseTest):
         await self.give(csrf, note="keep")
         before = (await grants.grants(self.db), await grants.log_entries(self.db))
         # No session, then a session with a forged token: nothing changes, either way.
-        other = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url=API)
+        other = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
+        )
         self.addAsyncCleanup(other.aclose)
         for answer in (
             await other.post(
@@ -365,7 +371,7 @@ class AdminGrants(DatabaseTest):
     async def test_every_grants_route_is_not_there_while_the_admin_page_is_off(self) -> None:
         app = create_app(settings(), self.db, FakeDiscord())
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             self.assertEqual((await client.get("/admin/grants")).status_code, 404)
             for path in ("/admin/grants", f"/admin/grants/{FRIEND}/revoke"):
