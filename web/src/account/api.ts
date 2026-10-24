@@ -372,6 +372,16 @@ export interface Recap {
   uncheckedDraft?: string[];
   /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
   canApproveUnchecked?: boolean;
+  /** While it is being made: how far along (#2564, #2608). Missing from an API older than that. */
+  progress?: JobProgress;
+  /** Start the recap over is possible now (#2608): not while it is written or sent. */
+  canMakeAgain?: boolean;
+  /** When the DM last started it over (Unix seconds, 0: never). */
+  restartedAt?: number;
+  /** A recap written by someone at the table (#2609): who, null for DMbot's own; when it was added
+   * (Unix seconds, 0 for DMbot's own). */
+  writtenBy?: string | null;
+  uploadedAt?: number;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -398,6 +408,43 @@ export interface Recap {
   /** The public link, for the DM of a posted recap (#2118). `path` is `/r/<token>`; the page adds
    * its own address. Missing from an older API. */
   share?: RecapShare;
+}
+
+/** One past session as the recap maker lists it (`GET /me/campaigns/{ref}/past-sessions`, #2610). */
+export interface PastSession {
+  /** What "make it again" takes. */
+  ref: string;
+  sessionAt: number;
+  sessionNumber: number | null;
+  sessionSeconds: number | null;
+  /** Lines are kept, so a recap can be written from them. */
+  hasTranscript: boolean;
+  /** A recap waits for the DM's answers about names. */
+  held: boolean;
+  recap: null | {
+    state: string;
+    status: "draft" | "posting" | "posted" | "dropped";
+    working: boolean;
+    approved: boolean;
+    writtenBy: string | null;
+    canMakeAgain: boolean;
+  };
+}
+export interface PastSessions {
+  sessions: PastSession[];
+}
+/** Adding a recap someone wrote (`POST /me/campaigns/{ref}/recaps/upload`, #2609): `text` or `link`. */
+export interface AddRecapInput {
+  /** When the session began (Unix seconds). */
+  session: number;
+  writtenBy: string;
+  text?: string;
+  link?: string;
+  title?: string;
+  /** The DM said yes to replacing the recap the session has. */
+  replace?: boolean;
+  /** The DM said they may use it: asked once for a campaign. */
+  rights?: boolean;
 }
 
 /** A recap's public link: on or off, and where it is. */
@@ -1170,6 +1217,13 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
+  | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
+  | "needs-rights" // the campaign's first added recap: say you may use it (#2609)
+  | "not-a-google-doc" // a link that is not a Google Doc (#2609)
+  | "doc-not-shared" // a Google Doc that is not shared with the link (#2609)
+  | "doc-unreachable" // a Google Doc DMbot could not fetch (#2609)
+  | "doc-too-big" // a Google Doc that is too long (#2609)
   | "network" // couldn't reach the API
   | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
@@ -1326,6 +1380,13 @@ export interface AccountApi {
   /** The same list with each campaign's recaps used this month (#1444). The page prefers it;
    * `thisMonth` is empty from an API older than #1428. */
   recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
+  /** A campaign's past sessions with what each one's recap is (DMs only; #2608). */
+  pastSessions?(campaignRef: string): Promise<PastSessions>;
+  /** Make a recap for a session, or make it again (`POST /me/recaps/{ref}/again`, #2608); `replace` after
+   * the DM said yes to "This session already has a recap". The recap comes back, queued. */
+  makeRecap?(recapRef: string, replace: boolean): Promise<Recap>;
+  /** Add a recap someone wrote (#2609); the recap comes back with `writtenBy` set. */
+  addRecap?(campaignRef: string, input: AddRecapInput): Promise<Recap>;
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
   saveRecap?(
@@ -1533,6 +1594,12 @@ export interface AccountApi {
 }
 
 const errorKinds: Record<string, ApiErrorKind> = {
+  no_lines: "no-lines",
+  needs_rights: "needs-rights",
+  not_a_google_doc: "not-a-google-doc",
+  doc_not_shared: "doc-not-shared",
+  doc_unreachable: "doc-unreachable",
+  doc_too_big: "doc-too-big",
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
   sign_in_again: "sign-in-again",
@@ -1616,6 +1683,17 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_setting: "bad-setting",
   bad_value: "bad-value",
 };
+
+/** The recap routes answer 409 `busy` ("being written or sent now"), which the shared code table reads as
+ * "slow down" for the sign-in and billing routes; here it means the recap is busy. */
+async function busyAsBusy<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof ApiError && error.kind === "slow-down") throw new ApiError("busy");
+    throw error;
+  }
+}
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
 function withLinks<T extends object>(
@@ -1847,6 +1925,14 @@ export function httpApi(
       (await call("GET", "/me/export", undefined, true)) as Blob,
     recaps: async () =>
       ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    pastSessions: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/past-sessions`)) as PastSessions,
+    makeRecap: async (recapRef, replace) =>
+      recapFrom(await busyAsBusy(() => call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/again`, { replace }))),
+    addRecap: async (campaignRef, input) =>
+      recapFrom(
+        await busyAsBusy(() => call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/recaps/upload`, input)),
+      ),
     recapList: async () => {
       const got = (await call("GET", "/me/recaps")) as {
         recaps: Recap[];

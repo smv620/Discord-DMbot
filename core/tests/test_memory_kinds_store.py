@@ -52,14 +52,14 @@ class Roles(MemoryTest):
             GUILD_A, self.c, type="character", role="npc", name="Snot", source="dm"
         )
         auril = await self.memory.add_entity(
-            GUILD_A, self.c, type="character", role="god", name="Auril", source="dm"
+            GUILD_A, self.c, type="character", role="npc", name="Auril", source="dm"
         )
         self.assertEqual((snot.value.type, snot.value.role), ("character", "npc"))
-        self.assertEqual((auril.value.type, auril.value.role), ("character", "god"))
+        self.assertEqual((auril.value.type, auril.value.role), ("character", "npc"))
         self.assertEqual((snot.value.needs_look, snot.value.played_by), (False, None))
 
     async def test_the_older_kinds_are_stored_as_a_character_with_a_role(self) -> None:
-        for old, role in (("npc", "npc"), ("deity", "god"), ("creature", "npc")):
+        for old, role in (("npc", "npc"), ("deity", "npc"), ("creature", "npc")):
             made = await self.memory.add_entity(
                 GUILD_A, self.c, type=old, name=f"Some {old}", source="dm"
             )
@@ -105,7 +105,7 @@ class Roles(MemoryTest):
                 self.c,
                 [
                     NewName("Snot", "npc", CONFIRMED),
-                    NewName("Auril", "character", CONFIRMED, role="god"),
+                    NewName("Auril", "character", CONFIRMED, role="npc"),
                     NewName("Rex", "creature", PROPOSED),
                     NewName("Tower", "place", CONFIRMED),
                 ],
@@ -118,7 +118,7 @@ class Roles(MemoryTest):
             {n: (e.type, e.role) for n, e in by_name.items()},
             {
                 "Snot": ("character", "npc"),
-                "Auril": ("character", "god"),
+                "Auril": ("character", "npc"),
                 "Rex": ("character", "npc"),
                 "Tower": ("place", None),
             },
@@ -133,9 +133,9 @@ class Roles(MemoryTest):
         changed = await self.memory.set_entity_type(GUILD_A, self.c, e, "place", source="dm")
         self.assertEqual((changed.value.type, changed.value.role), ("place", None))
         again = await self.memory.set_entity_type(
-            GUILD_A, self.c, e, "character", source="dm", role="god"
+            GUILD_A, self.c, e, "character", source="dm", role="npc"
         )
-        self.assertEqual((again.value.type, again.value.role), ("character", "god"))
+        self.assertEqual((again.value.type, again.value.role), ("character", "npc"))
         pc = await self.memory.confirm_entity(
             GUILD_A, self.c, e, "player_character", source="dm", played_by=PLAYER
         )
@@ -163,7 +163,7 @@ class Roles(MemoryTest):
 
     async def test_two_with_different_roles_merge_only_if_the_dm_says_so(self) -> None:
         npc = await self.add("Bell", type="character", role="npc", status=PROPOSED)
-        god = await self.add("Belleros", type="character", role="god", status=PROPOSED)
+        god = await self.add("Belleros", type="character", role="player_character", status=PROPOSED)
         with self.assertRaises(MemoryRuleError):
             await self.memory.merge(GUILD_A, self.c, npc, god, source="entitybot")
         merged = await self.memory.merge(GUILD_A, self.c, npc, god, source="dm", dm_said_same=True)
@@ -400,7 +400,7 @@ class Backups(MemoryTest):
             {
                 "Snot": ("character", "npc", False, None),
                 "Testa": ("character", "player_character", False, PLAYER),
-                "Auril": ("character", "god", False, None),
+                "Auril": ("character", "npc", False, None),
                 "Rex": ("character", None, True, None),
                 "Fireball": ("concept", None, True, None),
                 "Tower": ("place", None, False, None),
@@ -491,7 +491,7 @@ class Migration0044(MemoryTest):
             {
                 "Snot": ("character", "npc", False, None),
                 "Testa": ("character", "player_character", False, PLAYER),
-                "Auril": ("character", "god", False, None),
+                "Auril": ("character", "npc", False, None),
                 "Rex": ("character", None, True, None),  # nothing deleted; the DM decides
                 "Fireball": ("concept", None, True, None),
                 "Tower": ("place", None, False, None),

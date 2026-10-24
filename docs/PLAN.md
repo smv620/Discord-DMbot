@@ -2520,6 +2520,13 @@ plays). There is no third kind of character and no "person" in the story.
    for the DM, never guessed; a PC has a player (`plays`), and one with no player yet is asked about.
    Existing `god` and creature characters become NPCs with their description kept (nothing is deleted).
 4. *(Supervisor, build):* #2562 (core: the words, the roles, the rule) and the website's words with it.
+   *(Built, 2026-10-24, #2562.)* The rule lives in `memory/voice.py` and runs where a claim is judged
+   (`memory/claims.py`). It covers the relationships that carry a character's own attitude, loyalty or
+   vow: `ally_of`, `enemy_of`, `serves`, `sworn_to` (a list in code until the ontology's definitions,
+   which are hashed and versioned, gain a flag). A PC's own: only from its player's lines. The DM
+   saying it of a PC: offered to the DM with the note "told by the DM as something that happened to
+   them". A player saying it of someone else's character: not offered as true (The party's belief).
+   An NPC's: only from the DM. A group's attitude and every other relationship are unchanged.
 
 **Players and the DM in the names (owner, 2026-10-14).** DMbot also learns the names the table uses for
 the **real people** at it, so "Mike, what do you do?" followed by "I run at it with my sword" tells it
@@ -4869,6 +4876,64 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     campaign applies, and it is counted in docs/costs.md.
   - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
     check leans on the earlier accepted recaps. It grows more useful as memory fills.
+  - *Built, part 1 (CloudDev, 2026-10-23, #2122): the accepted versions.* When the DM approves a recap's text
+    (the website's Approve), the approval (the website's door `dmbot_recap_approve` and the Discord button, both through
+    `dmbot_recap_keep_version`, migration 0209) also writes that text to
+    `recap_accepted` as the session's next version: session, version, hash, title, text, who and when. The same text
+    approved again adds nothing, a changed text is the next version, and an old version is never overwritten (a session
+    keeps version 1 and the 19 newest, so its backup always restores; at the limit the oldest after
+    version 1 is dropped to make room, a stored version is never rewritten, and numbers only go up; Supervisor, 2026-10-23). It is
+    per campaign and server (row-level security), travels in the campaign's backup (`AcceptedSection`) and goes with
+    the campaign. `AcceptedStore.newest` gives the newest version of each session, for PlotBot, the pre-session note,
+    recall and the later plot checks to read (wired as each is built).
+  - *Built, part 2a (CloudDev, 2026-10-23, #2122): the issues and the Approve gate.* Migration 0210 adds
+    `plot_checks`, `plot_issues` and `plot_fine` (per campaign and server, row-level security) and two website
+    doors: `dmbot_plot_read` (state checking, ready or unavailable; the issues with their level, sentence and
+    quoted source; the approved versions) and `dmbot_plot_answer` (fix, changed, fine or leave, with the DM's
+    note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
+    `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` (checked inside the approval door, under its lock) while an issue has
+    no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
+    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
+    The Discord Approve button is held the same way (a plain line pointing to the recap page, and the store
+    refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
+    (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
+    checked and a restored campaign is checked afresh.
+  - *Built, part 2b (CloudDev, 2026-10-23, #2122): the checker.* The bot runs `PlotRunner` in its own loop (never inside the recap loop, so a slow AI call cannot delay a recap job) (when
+    `DMBOT_PLOT_CHECK` is on): for each ready draft whose text has no check it starts one (at most 6 a campaign an
+    hour, a check that never finished is tried 3 times) and makes one careful-tier call (`Feature.PLOT_CHECK`) with the
+    recap's numbered sentences and the earlier accepted recaps (`memory/plot_check.py`). The call only advises:
+    code keeps a finding only when its kind and level are the fixed words, the sentence number is the recap's and
+    the quote is really in the earlier recap shown (an invented source never reaches the DM); a finding the DM
+    already answered "Not a problem" (same point, same words) is not raised again; an answer written after the
+    text changed is thrown away and the new text is checked afresh. A recap with no earlier accepted recap, an
+    answer that cannot be used or a refused call makes no issue and never holds Approve. This slice reads the earlier
+    accepted recaps only; the code checks against the confirmed story memory, the pre-session note and recall, and
+    re-checking later recaps that name the same people, follow.
+  - *Built, #2123 slice 1 (CloudDev, 2026-10-23): the talk, website side.* Migration 0211 adds `plot_chat` (per campaign
+    and server, row-level security, gone with the campaign, left out of backups) and three website doors: send (a DM
+    of the campaign; at most 1,000 characters; one waiting at a time, and one the bot never answered is given up after
+    ten minutes; at most 15 of the DM's messages on an issue, which belongs to one text of the recap, so a changed text
+    starts afresh), and at most 30 from a campaign's DMs in an hour (`too_soon`; the website refuses a message when PlotBot's switch is off),
+    read, and Save / Not that on one of PlotBot's proposals. The website has no AI key, so the message is queued and the
+    bot answers on a second row (slice 2), as for the typed notes of #2113. A DM reads only their own talk (a co-DM's is
+    not theirs); it is never in a transcript or on a public link and never logged. Routes `POST/GET
+    /me/recaps/{ref}/plot/{issue}/chat` and `POST .../plot/{issue}/proposals/{proposal}` with `{action: "save" |
+    "decline"}`. Not that closes the proposal and writes nothing; Save only marks it `saving`: the bot makes the change
+    as the DM's own fact (slice 3) and then answers the issue as "changed".
+  - *Built, #2123 slice 2 (CloudDev, 2026-10-23): PlotBot's answer.* The bot, in its own loop (every five seconds, so the
+    DM is not kept waiting and no slow check can hold an answer up), claims the DM's waiting message and makes one
+    careful-tier call (`Feature.PLOT_TALK`) with the issue, the recap, the earlier turns of this talk and the few
+    campaign entries named in it (confirmed ones only), with the conditions each kind can have. It answers in at most three
+    plain sentences, and code adds what the DM can do next ("Press Save…" or "…Leave it as is is always an answer").
+    **Code has the last word:** a request to invent or build the story gets the plain no with no call; **any words in
+    quotation marks must be words of the recap, the issue's own source or the DM's own messages** (a quotation from
+    anywhere else, such as a transcript line, fails the answer). The call is shown no transcript, only the recap, the issue
+    and its source, the campaign's entries and the DM's own messages; the quote check is a second lock, on marked quotations
+    only. That is why the talk is not erased with a player's transcripts (Supervisor, 2026-10-23). A proposal names an entry that was shown and a
+    condition its kind can have (alive, dead, resolved…) and its label is written by code. A message the bot cannot answer
+    is marked failed with a short code and the DM can send it again; nothing is saved to the campaign. A talk is kept for
+    thirty days (the send door clears a campaign's own, and the loop sweeps the rest about hourly). A campaign's DMs may
+    send 30 messages an hour in all (`too_soon`).
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap
@@ -5523,7 +5588,10 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
 - Which cloud speech-to-text service (#128): Deepgram built first (#170); the bake-off
   confirms or changes it
 - The Cleaner's confidence thresholds and target accuracy, set from the test set (#127)
-- Whether to use an embeddings provider for meaning-based matching, and which (#126)
+- ~~Whether to use an embeddings provider for meaning-based matching, and which (#126)~~ **Decided (owner,
+  2026-10-24, #2643):** Voyage AI (`voyage-3.5`, reranker `rerank-2.5`). Cost is about 15¢ a month per
+  campaign at 10 hours of play. It is named on the privacy page before use, and what may be embedded is in
+  docs/STORY_MEMORY.md, section 9a.
 - Whether players may suggest corrections to their own transcript lines, with the DM
   approving (#127)
 - Whether the downloadable cleaned transcript marks changed words (default: no marks;

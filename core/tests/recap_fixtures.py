@@ -162,7 +162,7 @@ class Canned:
         max_tokens: int = 0,
         schema: dict[str, Any] | None = None,
     ) -> Reply:
-        if system == rd.FACTS_SYSTEM:
+        if system in (rd.FACTS_SYSTEM, rd.FACTS_SYSTEM_TRANSCRIPT):
             self.fact_sent.append(text)
             self.fact_tokens.append(max_tokens)
             given = self.facts.pop(0) if self.facts else CLEAN_FACTS

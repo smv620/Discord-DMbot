@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 from dmbot.db import Conn
 from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
-from dmbot.memory.ontology import MIGRATED_KINDS
+from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 ALREADY_UNDONE = "That was already undone."
@@ -639,6 +639,13 @@ def _filled(table: Table, snapshot: Any) -> Any:
         return snapshot
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name == "memory_entities" and snapshot.get("role") == "god":
+        # a god is an NPC now (#2562), with the word kept in its description
+        return {
+            **snapshot,
+            "role": "npc",
+            "description": god_is_an_npc(str(snapshot.get("description") or "")),
+        }
     if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(
