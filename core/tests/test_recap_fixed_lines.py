@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 from dmbot.recaps import fixed_lines as fl
 from dmbot.recaps.audio import script
-from dmbot.recaps.draft import SUMMARY_MAX, WORDS_CEILING, length_for
+from dmbot.recaps.draft import STORY_MAX, SUMMARY_MAX, WORDS_CEILING
 from dmbot.recaps.text import narration_of, words
 from tests import recap_fixtures as fx
 from tests.pg import DatabaseTest
@@ -74,9 +74,8 @@ class TheLines(unittest.TestCase):
         self.assertIn("And so we continue, the epic adventure of The Ember Road", spoken)
 
     def test_the_editor_has_room_for_the_longest_draft_with_both_lines(self) -> None:
-        longest = round(length_for(8).last_high) * 8  # the most a draft may be, in characters
-        opening, closing = fl.lines("x" * 100)
-        self.assertLessEqual(longest + len(opening) + len(closing) + 4, SUMMARY_MAX)
+        opening, closing = fl.lines("x" * 100)  # the story is shortened to STORY_MAX (#2597)
+        self.assertLessEqual(STORY_MAX + len(opening) + len(closing) + 4, SUMMARY_MAX)
         self.assertGreater(WORDS_CEILING, 0)
 
     def test_a_story_that_only_reads_like_the_lines_is_left_alone(self) -> None:
