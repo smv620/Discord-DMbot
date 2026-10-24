@@ -38,6 +38,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot.memory import kin
 from dmbot.memory._changes import Scope
 from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
@@ -214,6 +215,7 @@ class _Fact:
     hops: int
     near: str  # the end already reached when this fact was found
     far: str
+    directional: bool = False  # a family role that reads one way (#2457)
 
 
 def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
@@ -221,6 +223,7 @@ def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
         str(r["id"]), str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]),
         str(r["detail"]), r["from_session_at"], bool(r["secret"]),
         tuple(str(m) for m in r["mention_ids"] or ()), hops, near, far,
+        bool(r.get("directional", False)),
     )  # fmt: skip
 
 
@@ -360,7 +363,8 @@ class RecallService:
                 aliases.setdefault(str(r["entity_id"]), []).append(str(r["text"]))
             party = await party_id(scope)
             cur = await scope.conn.execute(
-                "SELECT subject_id, predicate, object_id, source FROM memory_relations"
+                "SELECT subject_id, predicate, object_id, detail, directional, source"
+                " FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 f" AND to_session_at IS NULL AND {party_knows_by('memory_relations', party)}"
                 " AND predicate = ANY(%s)"
@@ -379,6 +383,16 @@ class RecallService:
             if predicate == ROSTER_GROUP_LINK:
                 if onto.is_a(str(shown[b]["type"]), "faction"):
                     groups.setdefault(a, []).append(names[b])
+            elif (
+                predicate == "kin_of"
+                and r["directional"]
+                and kin.directional(str(r["detail"] or ""))
+            ):
+                family = kin.role_of(str(r["detail"])) or ""
+                # a family role is true of one name only (#2457): "is the niece of Aldric" on the
+                # one, "has a niece: Mira" on the other
+                ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
+                ties.setdefault(b, []).append(f"{kin.backward(family)}: {names[a]}")
             else:
                 ties.setdefault(a, []).append(names[b])
                 ties.setdefault(b, []).append(names[a])
@@ -443,7 +457,7 @@ class RecallService:
             ends = sorted(frontier)
             cur = await scope.conn.execute(
                 "SELECT id, subject_id, predicate, object_id, detail, from_session_at,"
-                " to_session_at, secret, source, mention_ids FROM memory_relations"
+                " to_session_at, secret, source, mention_ids, directional FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 f" AND (subject_id = ANY(%s) OR object_id = ANY(%s)) AND {when}{secret}"
                 " ORDER BY from_session_at DESC NULLS LAST, id LIMIT %s",
@@ -746,7 +760,7 @@ class _Found:
 
     def _fact_text(self, f: _Fact) -> str:
         walk = self.walk
-        what = _predicate_words(self.onto, f.predicate, f.detail)
+        what = _predicate_words(self.onto, f.predicate, f.detail, f.directional)
         return f"{walk.entities[f.subject_id]['name']} {what} {walk.entities[f.object_id]['name']}"
 
 

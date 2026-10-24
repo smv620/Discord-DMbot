@@ -21,7 +21,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 from tests.test_web_email_signin import (
     BOB,
     HEADERS,
@@ -88,9 +88,11 @@ class Changing(DatabaseTest):
     async def person(self, user: Any) -> httpx.AsyncClient:
         token = await sessions.sign_in(self.web, user, [THURSDAY], now=self.now, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         return client
 
     async def exist(self, *users: Any) -> None:
@@ -179,7 +181,9 @@ class Changing(DatabaseTest):
 
     async def test_a_person_cannot_use_a_signed_out_request_or_see_another_address(self) -> None:
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as nobody:
             for call in (
                 nobody.get("/me/email"),

@@ -59,6 +59,15 @@ export interface Campaign {
   players?: number;
   npcs?: number;
   startedAt?: string;
+  /** An offer to hand this campaign over by email that nobody has answered yet (#2534; core #2532):
+   * when it was sent and when it ends, never the address. Missing from an older API. */
+  handover?: { sentAt: string; expiresAt: string } | null;
+  /** False when the account's server list doesn't have this campaign's server, or DMbot isn't in it any more
+   * (#2555; core #2554). Only the owner's campaigns can be like that. Missing from an older API. */
+  serverReachable?: boolean;
+  /** Whether this person may delete the campaign: the plan holder, or a game master of a campaign that
+   * has no owner yet (#2555). Missing from an older API: the owner may. */
+  canDelete?: boolean;
 }
 
 /** One campaign's own page (#2416): what to call it, and whether the person runs it. */
@@ -153,6 +162,41 @@ export interface RecapAudio {
   canBuy: boolean;
 }
 
+/** One server a person could take a handed-over campaign to (#2534; core #2532). */
+export interface HandoverServer {
+  id: string;
+  name: string;
+  /** Where the campaign runs now. */
+  current: boolean;
+  /** False: DMbot has to be added to it first. */
+  botIn: boolean;
+}
+
+/** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
+ * alike, so the page can't tell anyone which. */
+export type HandoverLook =
+  | { status: "ended" }
+  | {
+      status: "open";
+      campaign: { name: string };
+      from: { name: string };
+      server: { id: string; name: string };
+      canAccept: boolean;
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      servers: HandoverServer[];
+    };
+
+/** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
+ * Discord number; the page shows `name` only. */
+export interface DiscordAccount {
+  key: string;
+  name: string;
+  /** The one signed in right now. */
+  current: boolean;
+  /** False for the last one. */
+  canRemove: boolean;
+}
+
 export interface Me {
   user: Person;
   plan: MyPlan | null;
@@ -160,6 +204,8 @@ export interface Me {
   access?: Access;
   campaigns: Campaign[];
   servers: Server[];
+  /** The Discord accounts on this DMbot account (#2534). Missing from an API older than #2533. */
+  discordAccounts?: DiscordAccount[];
   // The API also sends `installs` (servers this person added DMbot to); the servers list
   // already says "You added DMbot here", so the page doesn't use it (#497).
   /** A first payment failed and none has gone through since (#922): the page says to try again. */
@@ -326,6 +372,16 @@ export interface Recap {
   uncheckedDraft?: string[];
   /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
   canApproveUnchecked?: boolean;
+  /** While it is being made: how far along (#2564, #2608). Missing from an API older than that. */
+  progress?: JobProgress;
+  /** Start the recap over is possible now (#2608): not while it is written or sent. */
+  canMakeAgain?: boolean;
+  /** When the DM last started it over (Unix seconds, 0: never). */
+  restartedAt?: number;
+  /** A recap written by someone at the table (#2609): who, null for DMbot's own; when it was added
+   * (Unix seconds, 0 for DMbot's own). */
+  writtenBy?: string | null;
+  uploadedAt?: number;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -352,6 +408,43 @@ export interface Recap {
   /** The public link, for the DM of a posted recap (#2118). `path` is `/r/<token>`; the page adds
    * its own address. Missing from an older API. */
   share?: RecapShare;
+}
+
+/** One past session as the recap maker lists it (`GET /me/campaigns/{ref}/past-sessions`, #2610). */
+export interface PastSession {
+  /** What "make it again" takes. */
+  ref: string;
+  sessionAt: number;
+  sessionNumber: number | null;
+  sessionSeconds: number | null;
+  /** Lines are kept, so a recap can be written from them. */
+  hasTranscript: boolean;
+  /** A recap waits for the DM's answers about names. */
+  held: boolean;
+  recap: null | {
+    state: string;
+    status: "draft" | "posting" | "posted" | "dropped";
+    working: boolean;
+    approved: boolean;
+    writtenBy: string | null;
+    canMakeAgain: boolean;
+  };
+}
+export interface PastSessions {
+  sessions: PastSession[];
+}
+/** Adding a recap someone wrote (`POST /me/campaigns/{ref}/recaps/upload`, #2609): `text` or `link`. */
+export interface AddRecapInput {
+  /** When the session began (Unix seconds). */
+  session: number;
+  writtenBy: string;
+  text?: string;
+  link?: string;
+  title?: string;
+  /** The DM said yes to replacing the recap the session has. */
+  replace?: boolean;
+  /** The DM said they may use it: asked once for a campaign. */
+  rights?: boolean;
 }
 
 /** A recap's public link: on or off, and where it is. */
@@ -482,6 +575,25 @@ export interface RecapAudioState {
   /** The recap is already posted: a new narration is for this page, and the Discord message keeps
    * its old audio (#2183). Missing from an older API. */
   postedNote?: boolean;
+  /** What the last making did (#2630): `new`, `voice` (only the changed paragraphs were spoken again,
+   * the music kept), `all` (everything again; `why` says why) or `same`. Missing from an older API. */
+  how?: RemakeHow | "";
+  why?: RemakeWhy;
+  /** While the audio is made: the shared progress shape (stage audio_voice / audio_music / audio_mix,
+   * paragraphs spoken `done` of `total`). Missing from an older API, or when nothing is under way. */
+  progress?: JobProgress | null;
+}
+
+/** What "Make the audio again" would do for this recap now (#2630; CloudDev's
+ * `GET /me/recaps/{ref}/audio/remake`): only the voice, everything, nothing, or a first making. `why`
+ * is a fixed code and says why everything is made again; `changed` of `total` paragraphs differ. */
+export type RemakeHow = "voice" | "all" | "same" | "new";
+export type RemakeWhy = "" | "paragraphs" | "moods" | "size" | "no_parts";
+export interface RecapRemake {
+  how: RemakeHow;
+  why: RemakeWhy;
+  changed: number;
+  total: number;
 }
 
 /** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
@@ -579,7 +691,12 @@ export interface ImportSpeaker {
 export interface ImportPreviewFile {
   name: string;
   format: string | null;
-  /** "unreadable", "too_big", "not_txt" or "empty"; null when the file can be used. */
+  /** Why the file or doc can't be used, or null when it can. One of the codes the import API
+   * returns: from the reader (`unreadable`, `unknown_format`, `no_speaker_names`), from the file
+   * (`not_txt`, `too_big`, `empty`, `too_many_lines`, `too_many_speakers`) or from a Google Doc
+   * link (`not_a_google_doc`, `repeated_link`, `doc_not_shared`, `doc_too_big`, `doc_unreachable`).
+   * Each has plain words in `importPage.fileError`; test/import-error-codes.test.ts keeps the three
+   * lists (core, this comment and those words) in step. */
   error: string | null;
   suggestedDate: string | null;
   lineCount: number;
@@ -629,6 +746,21 @@ export interface ImportPlan {
   sessions: { file: string; date: string; order: number; writeRecap?: true }[];
 }
 export type ImportState = "waiting" | "working" | "done" | "failed";
+/** How far a job has got, the same shape wherever a job is shown (#2564; CloudDev). Times are Unix seconds on
+ * the server's clock; `stalled` is the server's word, worked out per stage; only counts and codes. */
+export interface JobProgress {
+  stage: string;
+  done?: number | null;
+  total?: number | null;
+  /** What done and total count: a code (`sessions`, `parts` or `lines`). */
+  unit?: string | null;
+  startedAt?: number | null;
+  /** The last time it moved forward (not a heartbeat). Only grows. */
+  updatedAt?: number | null;
+  serverNow?: number | null;
+  state: "running" | "stalled" | "failed" | "done";
+  reason?: string | null;
+}
 export interface ImportStarted {
   importId: string;
   sessions: { file: string; state: ImportState; writeRecap?: boolean }[];
@@ -652,12 +784,17 @@ export type ImportStage =
   | "done"
   | "failed";
 export interface ImportProgress {
+  /** The whole import's progress (#2564); missing from an API older than that. */
+  import?: JobProgress;
   sessions: {
     file: string;
     date: string;
     state: ImportState;
     reason: string | null;
     stage?: ImportStage;
+    /** This session's own progress in the shared job shape (#2564), nested because the session's `state`
+     * above keeps its old words. Missing from an API older than that. */
+    progress?: JobProgress;
     /** This session's own recap (its address is `/account/recaps/<recap>`), sent for the stages that
      * have a recap or a held one; null otherwise, missing from an API older than #2240. */
     recap?: string | null;
@@ -694,6 +831,31 @@ export interface TranscriptView {
   next?: number | null;
   /** Set when this session's transcript was deleted: no lines, nothing to save (#1548). */
   transcriptsDeletedAt?: number | null;
+  /** Where each "[… of off-topic chat skipped]" line is in THIS page's `lines`, and which stretch it stands
+   * for (#2568; core #2567). Only the cleaned reading has them; no words are in them. */
+  skips?: TranscriptSkip[];
+  /** Lines kept, left out, and put back by a DM and still in force (cleaned reading). */
+  filter?: { kept: number; leftOut: number; putBack: number };
+}
+
+/** One stretch of off-topic chat left out of the cleaned transcript. `line` is its marker's index in the
+ * page's `lines`; `speaker`, `fromMs` and `toMs` name the stretch to the API (never a Discord id). */
+export interface TranscriptSkip {
+  line: number;
+  speaker: number;
+  fromMs: number;
+  toMs: number;
+  seconds: number;
+  lines: number;
+  /** True when a DM put it back. */
+  putBack: boolean;
+}
+
+/** One line of a left-out stretch, as heard (rendered as text only). */
+export interface StretchLine {
+  when: string;
+  who: string;
+  text: string;
 }
 
 /** A campaign with house rules or a followed set in one of the person's servers (#1521). `ref` is
@@ -900,6 +1062,33 @@ export interface WebGraph {
   view?: WebView;
 }
 
+/** One group of linked names, as the overview lists it (#2632): the name to put in the middle to see it. */
+export interface WebGroup {
+  center: string;
+  centerName: string;
+  size: number;
+}
+
+/** Every name the person may see, with the ones that have no connection yet and the groups of linked
+ * names (#2632). The graph alone draws one centre's web, so a young campaign looked almost empty. */
+export interface WebOverview {
+  counts: {
+    names: number;
+    /** Connections the person may see (a DM's include the secret ones). */
+    connections: number;
+    connectedNames: number;
+    notConnected: number;
+  };
+  /** The names with no connection yet, by kind then name. A list, not drawn. */
+  tray: WebNode[];
+  /** Groups of two or more linked names, the largest first. */
+  groups: WebGroup[];
+  /** The API stopped at its cap of names. */
+  truncated: boolean;
+  canEdit: boolean;
+  view?: WebView;
+}
+
 export interface WebQuery {
   /** null: the API picks the most connected name. */
   center: string | null;
@@ -1002,6 +1191,13 @@ interface NameAnswer {
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
+/** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
+interface WebAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error?: string | null;
+  edge?: WebEdge | null;
+  removed?: boolean;
+}
 
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
@@ -1040,6 +1236,13 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
+  | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
+  | "needs-rights" // the campaign's first added recap: say you may use it (#2609)
+  | "not-a-google-doc" // a link that is not a Google Doc (#2609)
+  | "doc-not-shared" // a Google Doc that is not shared with the link (#2609)
+  | "doc-unreachable" // a Google Doc DMbot could not fetch (#2609)
+  | "doc-too-big" // a Google Doc that is too long (#2609)
   | "network" // couldn't reach the API
   | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
@@ -1091,6 +1294,7 @@ export type ApiErrorKind =
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
+  | "fixed-lines" // the opening or closing line of a recap was edited; they are DMbot's (#2630)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
@@ -1110,6 +1314,13 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "ended" // a hand-over offer that has ended (#2534)
+  | "owner-offer" // the person is the campaign's own owner (#2534)
+  | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "session-running" // a session is running, so the campaign can't be deleted (#2555)
+  | "name-mismatch" // the typed name isn't the campaign's (#2555)
+  | "no-backup" // a Try It campaign has no backup (#2555)
+  | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
 export class ApiError extends Error {
@@ -1152,6 +1363,24 @@ export interface AccountApi {
   emailSignInUse?(token: string): Promise<void>;
   /** Email a move code to the payment email (paid plans, #1231). */
   getMoveCode?(): Promise<void>;
+  /** The owner hands a campaign over by email (#2534; core #2532). Always answers the same, whatever the
+   * address is: the page never learns whether it has an account or a plan. */
+  offerHandover?(ref: string, email: string): Promise<void>;
+  /** Take the open offer back. */
+  takeBackHandover?(ref: string): Promise<void>;
+  /** Delete a campaign for good, with its name typed to confirm (#2555; core #2554). `channelsLeft` is true
+   * when DMbot couldn't reach the server, so its Discord channels stay. Only the plan holder may. */
+  deleteCampaign?(ref: string, name: string): Promise<{ channelsLeft: boolean }>;
+  /** The whole campaign as a JSON backup file, offered before Delete (owner and co-DMs; not Try It). */
+  campaignBackup?(ref: string): Promise<Blob>;
+  /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
+  handoverLook?(token: string): Promise<HandoverLook>;
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  handoverDecline?(token: string): Promise<void>;
+  /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
+  addDiscordUrl?(): string;
+  /** Take one Discord account off this DMbot account; never the last (#2534). */
+  removeDiscordAccount?(key: string): Promise<void>;
   /** The email DMbot uses for this person (recap emails, #2349): only their own, never logged.
    * Missing from an API older than that. */
   myEmail?(): Promise<MyEmail>;
@@ -1171,6 +1400,13 @@ export interface AccountApi {
   /** The same list with each campaign's recaps used this month (#1444). The page prefers it;
    * `thisMonth` is empty from an API older than #1428. */
   recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
+  /** A campaign's past sessions with what each one's recap is (DMs only; #2608). */
+  pastSessions?(campaignRef: string): Promise<PastSessions>;
+  /** Make a recap for a session, or make it again (`POST /me/recaps/{ref}/again`, #2608); `replace` after
+   * the DM said yes to "This session already has a recap". The recap comes back, queued. */
+  makeRecap?(recapRef: string, replace: boolean): Promise<Recap>;
+  /** Add a recap someone wrote (#2609); the recap comes back with `writtenBy` set. */
+  addRecap?(campaignRef: string, input: AddRecapInput): Promise<Recap>;
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
   saveRecap?(
@@ -1216,6 +1452,9 @@ export interface AccountApi {
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
   webSize?(ref: string, query: WebQuery): Promise<{ names: number }>;
+  /** The Story graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
+   * older than that: then the page is the graph alone. */
+  webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
     /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
   webPeek?(ref: string): Promise<void>;
   /** A DM shows a name or a connection to the players (#2405). */
@@ -1242,6 +1481,11 @@ export interface AccountApi {
     offset?: number,
   ): Promise<TranscriptView>;
   /** The same text as a file to save, as Discord's download button gives it. */
+  /** The as-heard words of one left-out stretch (anyone who may read the transcript; #2568). */
+  transcriptStretch?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<StretchLine[]>;
+  /** A DM puts a stretch back into the cleaned transcript, or leaves it out again; answers how many lines changed. */
+  transcriptPutBack?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<number>;
+  transcriptLeaveOut?(campaignRef: string, number: number, skip: TranscriptSkip): Promise<number>;
   transcriptFile?(
     campaignRef: string,
     number: number,
@@ -1297,6 +1541,9 @@ export interface AccountApi {
   respellFromVoice?(campaignRef: string, nameId: string, clip: Blob): Promise<string>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
+  /** What that would do (#2630): only the voice or the whole audio, and why. Missing from an API older
+   * than #2630; the page then offers "Make the audio again" as before. */
+  recapAudioRemake?(ref: string): Promise<RecapRemake>;
   /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
    * the DM kept. Missing from an API older than #2113. */
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -1370,6 +1617,12 @@ export interface AccountApi {
 }
 
 const errorKinds: Record<string, ApiErrorKind> = {
+  no_lines: "no-lines",
+  needs_rights: "needs-rights",
+  not_a_google_doc: "not-a-google-doc",
+  doc_not_shared: "doc-not-shared",
+  doc_unreachable: "doc-unreachable",
+  doc_too_big: "doc-too-big",
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
   sign_in_again: "sign-in-again",
@@ -1390,6 +1643,14 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  ended: "ended",
+  owner: "owner-offer",
+  bad_server: "bad-server",
+  last_account: "last-account",
+  not_the_owner: "not-allowed",
+  session_running: "session-running",
+  name_mismatch: "name-mismatch",
+  no_backup_on_this_plan: "no-backup",
   needs_approval: "needs-approval",
   email_failed: "email-failed",
   not_paying: "not-paying",
@@ -1424,6 +1685,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
+  fixed_lines: "fixed-lines",
   no_tries: "no-tries",
   sort_failed: "sort-failed",
   bad_type: "bad-type",
@@ -1445,6 +1707,17 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_setting: "bad-setting",
   bad_value: "bad-value",
 };
+
+/** The recap routes answer 409 `busy` ("being written or sent now"), which the shared code table reads as
+ * "slow down" for the sign-in and billing routes; here it means the recap is busy. */
+async function busyAsBusy<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof ApiError && error.kind === "slow-down") throw new ApiError("busy");
+    throw error;
+  }
+}
 
 /** An import request's body with its Google Doc links, only when there are any (#2140). */
 function withLinks<T extends object>(
@@ -1537,6 +1810,24 @@ export function httpApi(
     return asFile ? response.blob() : response.json();
   }
 
+  /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
+   * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
+   * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
+  async function waitForAnswer(path: string): Promise<WebAnswer> {
+    for (let i = 0; i < NAME_POLLS; i++) {
+      let got: WebAnswer | null = null;
+      try {
+        got = (await call("GET", path)) as WebAnswer;
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "signed-out") throw error;
+      }
+      if (got?.state === "done") return got;
+      if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+      if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+    }
+    throw new ApiError("still-waiting");
+  }
+
   const url = async (path: string, body?: unknown): Promise<string> =>
     ((await call("POST", path, body)) as { url: string }).url;
 
@@ -1564,6 +1855,26 @@ export function httpApi(
     },
     emailSignInUse: async (token) => {
       await call("POST", "/auth/email/verify", { token });
+    },
+    offerHandover: async (ref, email) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/handover`, { email });
+    },
+    deleteCampaign: async (ref, name) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
+    campaignBackup: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/backup`, undefined, true)) as Blob,
+    takeBackHandover: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
+    },
+    handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
+    handoverAccept: async (token, serverId) =>
+      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverDecline: async (token) => {
+      await call("POST", "/me/handover/decline", { token });
+    },
+    addDiscordUrl: () => `${root}/auth/discord/add?next=${encodeURIComponent("/account")}`,
+    removeDiscordAccount: async (key) => {
+      await call("POST", `/me/discord-accounts/${encodeURIComponent(key)}/remove`);
     },
     getMoveCode: async () => {
       await call("POST", "/me/move-code");
@@ -1638,6 +1949,14 @@ export function httpApi(
       (await call("GET", "/me/export", undefined, true)) as Blob,
     recaps: async () =>
       ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    pastSessions: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/past-sessions`)) as PastSessions,
+    makeRecap: async (recapRef, replace) =>
+      recapFrom(await busyAsBusy(() => call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/again`, { replace }))),
+    addRecap: async (campaignRef, input) =>
+      recapFrom(
+        await busyAsBusy(() => call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/recaps/upload`, input)),
+      ),
     recapList: async () => {
       const got = (await call("GET", "/me/recaps")) as {
         recaps: Recap[];
@@ -1672,6 +1991,29 @@ export function httpApi(
         undefined,
         true,
       )) as Blob,
+    transcriptStretch: async (campaignRef, number, skip) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/stretch?speaker=${skip.speaker}&fromMs=${skip.fromMs}&toMs=${skip.toMs}`,
+        )) as { lines: StretchLine[] }
+      ).lines,
+    transcriptPutBack: async (campaignRef, number, skip) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/put-back`, {
+          speaker: skip.speaker,
+          fromMs: skip.fromMs,
+          toMs: skip.toMs,
+        })) as { changed: number }
+      ).changed,
+    transcriptLeaveOut: async (campaignRef, number, skip) =>
+      (
+        (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/leave-out`, {
+          speaker: skip.speaker,
+          fromMs: skip.fromMs,
+          toMs: skip.toMs,
+        })) as { changed: number }
+      ).changed,
     setCampaignSetting: async (campaignRef, choice) =>
       (
         (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/settings`, {
@@ -1808,6 +2150,11 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    recapAudioRemake: async (ref) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/audio/remake`,
+      )) as RecapRemake,
     sendFix: async (ref, text) =>
       (await call(
         "POST",
@@ -1945,20 +2292,43 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
       )) as { names: number };
     },
+    webOverview: async (ref, q) => {
+      const params = new URLSearchParams();
+      if (q.view) params.set("view", q.view);
+      const tail = params.toString();
+      return (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
+      )) as WebOverview;
+    },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
     },
+    // A DM's reveal is queued for the bot like every other edit (202 {answer}); a name is answered at
+    // the All names answers, a connection at the web's own (#2405).
     webReveal: async (ref, target) => {
-      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/reveal`, target);
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/web/reveal`, target)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const where = target.kind === "name" ? "all-names" : "web";
+      await waitForAnswer(`${base}/${where}/answers/${encodeURIComponent(queued.answer)}`);
     },
+    // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
     changeWebLink: async (ref, change) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}/web/links`;
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
+      let queued: { answer: string };
       if (change.action === "add") {
         const { action: _action, ...body } = change;
-        return (await call("POST", base, body)) as WebEdge;
+        queued = (await call("POST", `${base}/links`, body)) as { answer: string };
+      } else {
+        const { id, ...body } = change;
+        queued = (await call("POST", `${base}/links/${encodeURIComponent(id)}`, body)) as {
+          answer: string;
+        };
       }
-      const { id, ...body } = change;
-      return (await call("POST", `${base}/${encodeURIComponent(id)}`, body)) as WebEdge | { removed: true };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
+      return got.removed || !got.edge ? { removed: true } : got.edge;
     },
     importProgress: async (ref, importId) =>
       (await call(

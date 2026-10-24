@@ -37,7 +37,7 @@ class ThePureParts(unittest.TestCase):
             ("names that are not allowed: Zed. Use only the names listed", "names"),
             ("it names something the DM keeps secret: leave it out", "secret"),
             ("give exactly one music prompt for each 《…》 section: 3 sections", "layout"),
-            ("the answer was cut off: write it again, shorter", "cut off"),
+            ("the answer was cut off: write it again", "cut off"),
             ("the answer was declined: write it again from the beats", "declined"),
             ("it copies the table word for word: tell that part in your own words", "copying"),
             ("something nobody wrote yet", "other"),
@@ -79,10 +79,10 @@ class TheReport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[-1], "  Draft that became the recap: try 1")
         self.assertIn("Calls (5):", "\n".join(run.report(out, {})))  # and it is in the report
 
-    async def test_a_short_revision_and_a_cut_off_one_leave_the_first_draft_standing(self) -> None:
-        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
-        for revision, why in (
-            (short, "length"),
+    async def test_a_failed_revision_and_a_cut_off_one_leave_the_first_draft_standing(self) -> None:
+        wrong_end = fx.prose_answer("《Tense》 They walked on.", "1. Low strings.")
+        for revision, why in (  # (a short draft alone is no failure: length is never a check)
+            (wrong_end, "ending"),
             (Reply("{", True, 50, 2559, "m"), "cut off"),
         ):
             out = await run.run_text(

@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 from dmbot.db import Conn
 from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
-from dmbot.memory.ontology import MIGRATED_KINDS
+from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 ALREADY_UNDONE = "That was already undone."
@@ -142,8 +142,10 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at", "definition_version", "unrevealed"),
-    defaults={"unrevealed": False},  # held back from the players until said at the table (#2404)
+     "secret", "created_at", "definition_version", "unrevealed", "directional"),
+    # unrevealed: held back from the players until said at the table (#2404). directional: an
+    # older row's role has no direction (#2457)
+    defaults={"unrevealed": False, "directional": False},
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -609,7 +611,7 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
-    "memory_relations": {"definition_version": 1, "unrevealed": False},
+    "memory_relations": {"definition_version": 1, "unrevealed": False, "directional": False},
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
     "memory_entities": {
@@ -637,6 +639,13 @@ def _filled(table: Table, snapshot: Any) -> Any:
         return snapshot
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name == "memory_entities" and snapshot.get("role") == "god":
+        # a god is an NPC now (#2562), with the word kept in its description
+        return {
+            **snapshot,
+            "role": "npc",
+            "description": god_is_an_npc(str(snapshot.get("description") or "")),
+        }
     if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(

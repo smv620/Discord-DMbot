@@ -269,7 +269,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(bot.post.await_args.kwargs["view"].children[1].item.disabled)
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
-        failed = SimpleNamespace(state="failed", session_at=100, title="")
+        failed = SimpleNamespace(state="failed", session_at=100, title="", keeps_previous=False)
         off = fake_bot(campaign(recaps_email=False))
         with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
             await off.recap_told(GUILD, "c" * 32, failed)

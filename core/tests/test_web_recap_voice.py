@@ -354,10 +354,13 @@ class TheClip(WithClips):
     def test_nothing_is_left_on_disk(self) -> None:
         import os
         import tempfile
+        from unittest import mock
 
-        before = set(os.listdir(tempfile.gettempdir()))
-        voice.decode(tone("webm", 1.0), "audio/webm")
-        self.assertEqual(set(os.listdir(tempfile.gettempdir())) - before, set())
+        # The test's own temp folder, not the shared /tmp: other processes (the CI runner's) write
+        # there while this runs, and a file they make is not the clip code's (#2512).
+        with tempfile.TemporaryDirectory() as own, mock.patch.object(tempfile, "tempdir", own):
+            voice.decode(tone("webm", 1.0), "audio/webm")
+            self.assertEqual(os.listdir(own), [])
 
 
 KNOWN = "m" * 32
@@ -786,7 +789,7 @@ class TheRoutes(WithClips):
         from dmbot.web.app import create_app
         from dmbot.web.payments import FakeProvider
         from tests.test_recap_web import HEADERS
-        from tests.test_web_api import API, SITE, FakeDiscord, settings
+        from tests.test_web_api import SITE, FakeDiscord, settings
         from tests.test_web_recap_requests import fx_alice
 
         app = create_app(
@@ -797,9 +800,11 @@ class TheRoutes(WithClips):
             self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.url = f"/me/recaps/{self.ref}/voice"
 
     async def asyncTearDown(self) -> None:
@@ -862,7 +867,7 @@ class TheRoutes(WithClips):
         from dmbot.web.app import create_app
         from dmbot.web.payments import FakeProvider
         from tests.test_recap_web import HEADERS
-        from tests.test_web_api import API, SITE, FakeDiscord, settings
+        from tests.test_web_api import SITE, FakeDiscord, settings
         from tests.test_web_recap_requests import fx_alice
 
         app = create_app(
@@ -873,9 +878,11 @@ class TheRoutes(WithClips):
             self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             asked = await client.post(
                 self.url, content=CLIP, headers={"content-type": "audio/webm"}
             )

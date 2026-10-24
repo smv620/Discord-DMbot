@@ -1,7 +1,8 @@
 """🗑 Delete this campaign, in ⚙️ Settings → 🗂️ Campaign management (#1608; owner decision
 2026-10-16, docs/PLAN.md, "Data,
 ownership and deletion"). Only the game master whose plan the campaign uses (its owner) may
-delete it; every other game master is told whose it is. One warning, then the campaign's name
+delete it (a campaign with no owner: any of its game masters, #2556); every other game master
+is told whose it is. One warning, then the campaign's name
 typed back, so a stray tap can never do it. Not while a session of it is running.
 
 The delete is `CampaignStore.delete`, then the channels are tidied the way retention does it
@@ -33,15 +34,13 @@ GONE = "That campaign isn't here any more."
 FAILED = "That didn't work. Nothing was deleted. Try again in a moment."
 ONLY_GMS = "Only this campaign's game masters can use its settings."
 NOT_YOURS = "Only {who}, whose plan this campaign uses, can delete it. Ask them to do it."
-UNKNOWN_HOLDER = (
-    "Only the game master whose plan this campaign uses can delete it. Ask them to do it."
-)
 PLAYING = "**{name}** is being played right now. Stop the session first, then try again."
 WARNING = (
     "🗑 This deletes **{name}** for everyone: its story memory, notes, recaps, house rules, "
     "homebrew and transcripts. It can't be undone. Copies people already downloaded stay, "
     "and transcripts already posted in your channels stay there."
 )
+WARNING_NO_OWNER = "\n\nThis campaign has no owner, so any of its game masters may delete it."
 WARNING_BACKUP = " To keep a copy, press 💾 Back up first."
 WARNING_END = "\n\nSure? Press **Delete it**. You'll type the name to confirm."
 KEPT = "OK, **{name}** is kept. Nothing was deleted."
@@ -58,8 +57,13 @@ NAME_LIMIT = 100  # a campaign name's longest length; the typed box holds as muc
 
 
 def holder_may(campaign: Campaign, user_id: int) -> bool:
-    """The plan holder: the campaign's owner, and still one of its game masters."""
-    return campaign.owner_user_id == user_id and user_id in campaign.dm_user_ids
+    """The plan holder: the campaign's owner, and still one of its game masters. A campaign with
+    no owner yet may be deleted by any of its game masters (Supervisor, #2556): any of them could
+    press Take it on and then delete it, but taking it on uses a slot of their plan, which they may
+    not have, and the campaign would be one nobody can remove."""
+    if user_id not in campaign.dm_user_ids:
+        return False
+    return campaign.owner_user_id is None or campaign.owner_user_id == user_id
 
 
 def same_name(typed: str, campaign: Campaign) -> bool:
@@ -84,8 +88,6 @@ async def refusal(client: Any, campaign: Campaign | None, user_id: int) -> str |
         return ONLY_GMS
     if not holder_may(campaign, user_id):
         owner = campaign.owner_user_id
-        if owner is None:
-            return UNKNOWN_HOLDER
         who = discord.utils.escape_markdown(client.name_of(campaign.guild_id, owner))
         return NOT_YOURS.format(who=who)
     if await client.is_campaign_playing(campaign.guild_id, campaign.id):
@@ -97,7 +99,8 @@ class DeleteButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:delcampaign:{_ID}",
 ):
-    """🗑 Delete this campaign: the warning, for the plan holder only."""
+    """🗑 Delete this campaign: the warning, for whoever may delete it (the owner, or any game
+    master when the campaign has no owner)."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -140,7 +143,10 @@ class DeleteButton(
             return
         text = WARNING.format(name=discord.utils.escape_markdown(campaign.name))
         await interaction.followup.send(
-            text + (WARNING_BACKUP if can_copy else "") + WARNING_END,
+            text
+            + (WARNING_NO_OWNER if campaign.owner_user_id is None else "")
+            + (WARNING_BACKUP if can_copy else "")
+            + WARNING_END,
             view=DeleteWarning(campaign.id, campaign.name, can_copy=can_copy),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
@@ -227,7 +233,7 @@ async def delete_now(interaction: discord.Interaction, campaign_id: str, typed: 
             await _tell(interaction, FAILED)
             return False
     with log_context(guild_id=guild.id, campaign_id=campaign.id):
-        log.info("A campaign was deleted by its plan holder")
+        log.info("A campaign was deleted by a game master")
     # After the delete went through, from the row as it was before it (the channel ids went
     # with the row). The campaign is gone either way: a failure here only leaves a channel.
     try:

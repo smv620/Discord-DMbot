@@ -24,11 +24,10 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 import discord
 
-from dmbot.campaigns import Campaign
 from dmbot.dm_screen.dm_bot_channel import is_dm_bot_name
 from dmbot.dm_screen.gametime_channel import is_gametime_name
 from dmbot.dm_screen.names import is_screen_name
@@ -66,9 +65,34 @@ class ChannelCounts:
         self.skipped += other.skipped
 
 
+class HasChannels(Protocol):
+    """What tidying a deleted campaign's channels needs: its server and the channel IDs recorded
+    on it. A `Campaign` has them; so does the note a website delete leaves (#2554), once the
+    campaign's row is gone."""
+
+    @property
+    def id(self) -> str: ...
+    @property
+    def guild_id(self) -> int: ...
+    @property
+    def dm_screen_channel_id(self) -> int | None: ...
+    @property
+    def gametime_channel_id(self) -> int | None: ...
+    @property
+    def dm_bot_channel_id(self) -> int | None: ...
+    @property
+    def rules_channel_id(self) -> int | None: ...
+    @property
+    def npcs_channel_id(self) -> int | None: ...
+    @property
+    def transcript_channel_id(self) -> int | None: ...
+    @property
+    def dmbchat_channel_id(self) -> int | None: ...
+
+
 async def retire_channels(
     guild: discord.Guild | None,
-    campaign: Campaign,
+    campaign: HasChannels,
     me_id: int,
     now: int,
     *,
