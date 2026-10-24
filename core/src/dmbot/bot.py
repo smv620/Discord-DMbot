@@ -435,7 +435,7 @@ from dmbot.transcription.base import (
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import guide as guide_screen
-from dmbot.ui import image_fix, looked_at, rule_card
+from dmbot.ui import image_fix, looked_at, recap_audio, rule_card
 from dmbot.ui import logic as ui_logic
 from dmbot.ui import recap_feedback as recap_feedback_screen
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
@@ -1622,6 +1622,9 @@ class DMBot(commands.AutoShardedBot):
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
         self.add_dynamic_items(SeenButton)  # 👍 Got it: the mark of every summary variant
         self.add_dynamic_items(RecapButton)  # the recap on the DM screen (#1455)
+        self.add_dynamic_items(
+            recap_audio.ListenButton, recap_audio.KeepAudioButton, recap_audio.MakeAudioAgainButton
+        )  # the audio's end, said once (#2621)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
         self.add_dynamic_items(
             ShortRecapButton
@@ -9862,6 +9865,47 @@ class DMBot(commands.AutoShardedBot):
                 if ran is not None:
                     return  # one recap's audio a round: the next round takes the next
 
+    async def run_audio_notices(self) -> None:
+        """Say once, on the DM screen, that a recap's audio is ready or has failed (#2621). The
+        marker is written first and only if the audio is still what is being told, so a restart
+        never says it twice and a new making that has begun meanwhile is told when it ends."""
+        if self.recaps is None:
+            return
+        for guild in list(self.guilds):
+            try:
+                due = await self.recaps.audio_to_tell(guild.id)
+            except Exception:
+                log.exception("Recap audio: couldn't list the notices for a server")
+                continue
+            for cid, at, what in due:
+                with log_context(guild_id=guild.id, campaign_id=cid):
+                    try:
+                        if await self.recaps.mark_audio_told(guild.id, cid, at, what):
+                            await self.recap_audio_told(guild.id, cid, at, what)
+                    except Exception:
+                        log.exception("Recap audio: the notice failed")
+
+    async def recap_audio_told(self, gid: int, cid: str, at: int, what: str) -> None:
+        """The notice itself, to the DM screen only. Fixed words and the recap's title."""
+        assert self.recaps is not None
+        campaign = await self.campaigns.get(gid, cid)
+        job = await self.recaps.get(gid, cid, at)
+        if campaign is None or job is None or campaign.dm_screen_channel_id is None:
+            return
+        failed = what == "failed"
+        link = page_link(self.settings.site_url, gid, cid, at) if self.settings.site_url else ""
+        text = (recap_audio.failed_text if failed else recap_audio.ready_text)(job.title)
+        await self.post(
+            campaign.dm_screen_channel_id,
+            text + (f"\nYour recap page: {link}" if link else ""),
+            recap_audio.audio_view(cid, at, failed=failed, review_url=link),
+        )
+
+    async def recap_audio_started(self, campaign: Campaign, session_at: int) -> None:
+        """The progress line when audio is chosen: it is being made, and it will be said here."""
+        if campaign.dm_screen_channel_id is not None:
+            await self.post(campaign.dm_screen_channel_id, recap_audio.MAKING)
+
     async def post_recaps(self, guild_id: int) -> None:
         """Send the recaps the DM pressed Post on, after checking again what may have changed
         since: the plan, who is still recorded, secret names read fresh. A check that fails
@@ -11213,6 +11257,7 @@ class DMBot(commands.AutoShardedBot):
         while True:
             try:
                 await self.run_recap_audio()
+                await self.run_audio_notices()
             except Exception:
                 log.exception("The recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
