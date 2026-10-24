@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -24,6 +24,7 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
+from dmbot.memory import backstory_keep as keep
 from dmbot.memory import lore_context, lore_read
 from dmbot.memory.backstory_links import NewLink, Waiting
 from dmbot.memory.link_words import link_words
@@ -403,6 +404,8 @@ class BackgroundOffer(_Menu):
             stored = await store(
                 memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
             )
+            questions: list[str] = []
+            keys: set[tuple[str, str, str]] = set()
             queued = await queue_links(
                 bot,
                 memory,
@@ -412,7 +415,10 @@ class BackgroundOffer(_Menu):
                 set(own),
                 truth=truth,
                 dropped=read.stats.dropped,
+                questions=questions,
+                keys=keys,
             )
+            ready = await count_ready(bot, campaign, keys)
             cut = read.cut
             log.info(
                 "Background read: %d names and %d connections suggested%s; %d connection lines "
@@ -422,7 +428,7 @@ class BackgroundOffer(_Menu):
                 ", an answer cut off" if cut else "",
                 read.stats.links_listed,
                 ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
-            )
+            )  # (counts only: the questions are the DM's own words, shown only to them)
             await summary(
                 interaction,
                 campaign,
@@ -432,6 +438,9 @@ class BackgroundOffer(_Menu):
                 cut=cut,
                 # (lines for connections that were already there are not "found" again)
                 links_found=read.stats.links_listed - read.stats.dropped["already_connected"],
+                ready=ready,
+                dropped=read.stats.dropped,
+                questions=questions,
             )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
@@ -515,15 +524,52 @@ def _waiting_note(queued: int) -> str:
     return CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
 
 
-def _found_note(found: int, kept: int) -> str:
-    """How many connection lines DMbot saw in the text against how many it kept (#2563), so a
-    shorter list is never a silent one. A connection is kept only when both names were found and
-    the line is really in your text; DMbot never guesses one."""
+# What became of each connection line, for the summary (#2642). Every reason `keep_connections`,
+# `read_connections` and the lore read count falls in one of these three, and what is left over
+# (a slice cut at the time limit, a line the model did not shape) is "not read", so the parts
+# always add up to what was found.
+KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
+LEFT_OUT = (
+    "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
+)  # fmt: skip
+NOT_READ = ("cut_before_check", "over_cap")
+
+
+def _found_note(
+    found: int,
+    kept: int,
+    *,
+    ready: int | None = None,
+    dropped: Mapping[str, int] | None = None,
+    questions: Sequence[str] = (),
+) -> str:
+    """What became of the connection lines DMbot saw in the text (#2563, #2642), so a shorter
+    list is never a silent one: "Found 34 connections: 30 ready to check, 3 wait for names you
+    haven't confirmed, 2 already known, 1 left out (Which Mara?)". The parts add up to `found`.
+    A connection is kept only when its two ends are names and the words are really in your text;
+    DMbot never guesses one. Counts, and the DM's own words for a question, shown to them only."""
     if found <= kept:
         return ""
+    lost = dropped or {}
+    known = sum(lost.get(k, 0) for k in KNOWN_ALREADY)
+    left = sum(lost.get(k, 0) for k in LEFT_OUT)
+    unread = sum(lost.get(k, 0) for k in NOT_READ)
+    # whatever else is missing (cut at the time limit, not shaped) is "not read"
+    unread += max(0, found - kept - known - left - unread)
+    ready_n = kept if ready is None else min(ready, kept)
+    waits = kept - ready_n
+    asked = ", ".join(f"Which {_md(q)}?" for q in questions[:3])
+    parts = [
+        f"{ready_n} ready to check" if ready_n else "",
+        f"{waits} wait for names you haven't confirmed" if waits else "",
+        f"{known} already known" if known else "",
+        f"{left} left out" + (f" ({asked})" if asked else "") if left else "",
+        f"{unread} not read in time" if unread else "",
+    ]
     return (
-        f"\n🔎 DMbot saw {found} connection{'' if found == 1 else 's'} in your text and kept "
-        f"{kept}. It keeps one only when both names were found and the words are really in your "
+        f"\n🔎 Found {found} connection{'' if found == 1 else 's'}: "
+        + ", ".join(x for x in parts if x)
+        + ". DMbot keeps one only when both ends are names and the words are really in your "
         "text, so a few may be missing. You can add any you know from a name's card."
     )
 
@@ -537,16 +583,19 @@ async def summary(
     *,
     cut: bool = False,
     links_found: int = 0,
+    ready: int | None = None,
+    dropped: Mapping[str, int] | None = None,
+    questions: Sequence[str] = (),
 ) -> None:
     total = sum(map(len, stored.values()))
+    note = _found_note(links_found, queued, ready=ready, dropped=dropped, questions=questions)
     if not total:
         # Never "no names" after a cut-off: the reading did not finish, so nothing is known (#2454)
         await interaction.edit_original_response(
             content=(
                 CUT_NOTHING.format(label=_md(label))
                 if cut
-                else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
-                + _found_note(links_found, queued)
+                else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added." + note
             ),
             allowed_mentions=NO_PINGS,
         )
@@ -568,7 +617,7 @@ async def summary(
                 if queued
                 else ""
             )
-            + _found_note(links_found, queued)
+            + note
             + (CUT_NOTE if cut else "")
         ),
         view=view,
@@ -600,10 +649,14 @@ async def queue_links(
     *,
     truth: bool = False,
     dropped: bg.Dropped | None = None,
+    questions: list[str] | None = None,
+    keys: set[tuple[str, str, str]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
-    already is left out before the cap. Returns how many wait."""
+    already is left out before the cap. Returns how many wait. `questions` collects the ends that
+    fit two names ("Which Mara?", #2642); `keys` collects the (subject, how, object) of each one
+    queued, so the summary can say how many are ready."""
     store = getattr(bot, "backstory_links", None)
     if store is None or not any(answers):
         return 0
@@ -631,14 +684,42 @@ async def queue_links(
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
     kept = bg.keep_connections(
-        answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped
-    )
+        answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
+        questions=questions,
+    )  # fmt: skip
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret, c.words, truth)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
-    return int(await store.add(campaign.guild_id, campaign.id, rows)) if rows else 0
+    if not rows:
+        return 0
+    # A connection already waiting from an earlier reading is not new: it is counted as such (and
+    # not as ready or waiting again), so the summary's parts add up (#2642 review).
+    waiting_now = {
+        (w.subject_id, w.predicate, w.object_id)
+        for w in await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
+    }
+    fresh = [r for r in rows if (r.subject_id, r.predicate, r.object_id) not in waiting_now]
+    if dropped is not None:
+        dropped["already_waiting"] += len(rows) - len(fresh)
+    if keys is not None:
+        keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh)
+    return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
+
+
+async def count_ready(bot: Any, campaign: Campaign, keys: set[tuple[str, str, str]]) -> int | None:
+    """Of the connections this reading queued (`keys`), how many are ready to check now: both
+    names are confirmed. None when the queue can't be read (the summary then says less)."""
+    store = getattr(bot, "backstory_links", None)
+    if store is None or not keys:
+        return None
+    try:
+        waiting = await store.waiting(campaign.guild_id, campaign.id)
+    except Exception:
+        log.exception("Couldn't count the ready connections")
+        return None
+    return sum(1 for w in waiting if w.ready and (w.subject_id, w.predicate, w.object_id) in keys)
 
 
 async def connected_pairs(memory: MemoryStore, campaign: Campaign) -> Callable[[str, str], bool]:
@@ -727,6 +808,10 @@ class ConnectionOffer(_Menu):
         self.add_item(_Button(partial(self._answer, True), label="🤫 Keep as secret", style=grey))
         self.add_item(_Button(self._no, label="❌ No", style=grey))
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=1))
+        self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=1)
+        self.add_item(self.all_button)
+        self.all_done: keep.KeptAll | None = None  # what Keep all kept, for Undo
+        self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=1)
 
     async def _ready(self, interaction: discord.Interaction, campaign: Campaign) -> list[Waiting]:
         """The connections to ask now, oldest first (the queue read and cleaned again)."""
@@ -741,6 +826,10 @@ class ConnectionOffer(_Menu):
         return [w for w in waiting if w.ready]
 
     def _set(self, ready: list[Waiting]) -> None:
+        self.all_button.label = (
+            f"✅ Keep all {len(ready)} ready" if len(ready) > 1 else "✅ Keep all"
+        )
+        self.all_button.disabled = len(ready) < 2
         self.shown = list(ready)
         self.left = len(ready)
         self.total = max(self.total, self.kept + self.left_out + self.left)
@@ -866,6 +955,67 @@ class ConnectionOffer(_Menu):
             await store.remove(campaign.guild_id, campaign.id, c)
             self.left_out += 1
             await self._show(interaction, await self._ready(interaction, campaign))
+
+    async def _keep_all(self, interaction: discord.Interaction) -> None:
+        """Keep every connection that is ready, in one press (#2642): the text is the DM's own.
+        Secret ones are kept as secret, never made public. Undo takes them all back."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            memory = _memory(interaction)
+            store = getattr(_bot(interaction), "backstory_links", None)
+            if campaign is None or memory is None or store is None:
+                return
+            ready = await self._ready(interaction, campaign)
+            seen = {(w.subject_id, w.predicate, w.object_id) for w in self.shown}
+            # only what this message has listed: one that turned ready meanwhile is still unseen
+            todo = [w for w in ready if (w.subject_id, w.predicate, w.object_id) in seen]
+            self.all_done = await keep.keep_all(memory, store, campaign.guild_id, campaign.id, todo)
+            changed(interaction, campaign)
+            self.kept += len(self.all_done.kept)
+            self.left_out += self.all_done.refused
+            self.current = None
+            self.clear_items()
+            self.add_item(self.undo_button)
+            refused = (
+                f" {self.all_done.refused} could not be kept: check them one by one."
+                if self.all_done.refused
+                else ""
+            )
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=(
+                        f"📜 Kept {len(self.all_done.kept)} connection"
+                        f"{'' if len(self.all_done.kept) == 1 else 's'}.{refused} "
+                        "Press ↩️ Undo to take them all back."
+                    ),
+                    view=self,
+                    allowed_mentions=NO_PINGS,
+                )
+
+    async def _undo_all(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            memory = _memory(interaction)
+            store = getattr(_bot(interaction), "backstory_links", None)
+            done = self.all_done
+            if campaign is None or memory is None or store is None or done is None:
+                return
+            back = await keep.undo_all(memory, store, campaign.guild_id, campaign.id, done)
+            changed(interaction, campaign)
+            self.all_done = None
+            self.kept -= back
+            self.stop()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=(
+                        f"↩️ Took back {back} connection{'' if back == 1 else 's'}. They wait "
+                        "again: press 📜 Check the connections to go through them."
+                    ),
+                    view=None,
+                    allowed_mentions=NO_PINGS,
+                )
 
     async def _skip(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()

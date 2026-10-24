@@ -725,6 +725,7 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
         "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
@@ -957,6 +958,19 @@ def create_app(
         if not recap["audio"]["current"]:
             return {"links": {}}
         return {"links": audio_links.links(recap_files, settings.secret_key, settings.api_url, ref)}
+
+    @app.get("/me/recaps/{ref}/audio/remake")
+    async def me_recap_audio_remake(ref: str, signed: Signed) -> dict[str, Any]:
+        """What "Make it again" would do for this recap now (#2630): only the voice (`how: "voice"`,
+        the changed paragraphs of `total`), everything again (`how: "all"` and `why`), nothing
+        (`same`) or a first making (`new`). A DM of the campaign only, like reading the recap."""
+        session, _token = signed
+        try:
+            recap = await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return audio_links.remake(recap_files, ref, recap, voice_tags=settings.recap_voice_tags)
 
     @app.post("/me/recaps/{ref}/audio/again")
     async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
