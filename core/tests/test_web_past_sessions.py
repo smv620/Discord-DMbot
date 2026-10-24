@@ -45,7 +45,8 @@ class Past(Base):
 
     async def listed(self, who: Any = None) -> list[dict[str, Any]]:
         got = await past_sessions.read_past_sessions(self.web, who or self.session, self.cref)
-        return got["sessions"]
+        sessions: list[dict[str, Any]] = got["sessions"]
+        return sessions
 
     async def refused(self, who: Any, ref: str | None = None) -> str:
         with self.assertRaises(RecapError) as caught:
