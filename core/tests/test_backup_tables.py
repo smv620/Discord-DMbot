@@ -236,6 +236,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " '{\"rules\": []}'::jsonb, true, %s, 1)",
                 (g, c, "a" * 32, DM),
             ),
+            "recap_upload_rights": (
+                "INSERT INTO recap_upload_rights (guild_id, campaign_id, user_id, confirmed_at)"
+                " VALUES (%s, %s, %s, 5)",
+                (g, c, DM),
+            ),
             "transcript_sessions": (
                 "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, line_count)"
                 " VALUES (%s, %s, %s, 100, 1)",
