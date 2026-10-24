@@ -49,6 +49,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "Make a recap for a past session",
+    text: "On a campaign's recaps page, Recaps for past sessions lists every session with its recap. Choose Make the recap for a session that has none, or Make it again for one that failed, was held back or that you want fresh. If the recap is already approved, DMbot asks once before replacing it. To add a recap someone else wrote, choose Add a recap someone wrote, paste it, pick a text file or give a Google Doc link, and say who wrote it. The first time, you say you have the right to use it; DMbot doesn't check. While a recap is made, the page shows which part it is on and how long it has run. Nothing goes to your players until you post it.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Your story timeline",
     text: "A campaign's Story timeline lists every session in order, with the day it was played, how long it ran, its recap and the names the players learned that session. Players see only the titles of recaps you posted.",
   },

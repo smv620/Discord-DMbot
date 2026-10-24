@@ -372,6 +372,10 @@ export interface Recap {
   uncheckedDraft?: string[];
   /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
   canApproveUnchecked?: boolean;
+  /** While it is being made: how far along (#2564, #2608). Missing from an API older than that. */
+  progress?: JobProgress;
+  /** A recap someone else wrote and the DM added (#2609): who wrote it, who added it. */
+  uploaded?: { writtenBy: string; uploadedBy: string } | null;
   /** Why it couldn't be made, if it couldn't. */
   error: string;
   canEdit: boolean;
@@ -398,6 +402,34 @@ export interface Recap {
   /** The public link, for the DM of a posted recap (#2118). `path` is `/r/<token>`; the page adds
    * its own address. Missing from an older API. */
   share?: RecapShare;
+}
+
+/** One past session as the recap maker lists it (#2608). */
+export interface PastSession {
+  sessionAt: number;
+  sessionNumber: number | null;
+  sessionSeconds: number | null;
+  recap: null | {
+    ref: string;
+    state: "working" | "ready" | "failed";
+    status: "draft" | "posting" | "posted" | "dropped";
+    held: boolean;
+    approved: boolean;
+  };
+}
+export interface PastSessions {
+  sessions: PastSession[];
+  /** The DM already said they may use text someone else wrote; asked once (#2609). */
+  rightConfirmed: boolean;
+}
+export interface AddRecapInput {
+  text?: string;
+  url?: string;
+  writtenBy: string;
+  title?: string;
+  confirmRight?: boolean;
+  /** Replace the recap that is there, after the DM said yes. */
+  replace?: boolean;
 }
 
 /** A recap's public link: on or off, and where it is. */
@@ -1118,6 +1150,12 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "approved-exists" // making a recap again when an approved one exists: ask first (#2608)
+  | "recap-exists" // adding a recap where one is already there: ask first (#2609)
+  | "no-transcript" // the session has no transcript to write from (#2608)
+  | "already-running" // a recap for that session is already being made (#2608)
+  | "right-not-confirmed" // adding a recap someone wrote without saying you may use it (#2609)
+  | "link-private" // a Google Doc the API can't read (#2609)
   | "network" // couldn't reach the API
   | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
@@ -1274,6 +1312,12 @@ export interface AccountApi {
   /** The same list with each campaign's recaps used this month (#1444). The page prefers it;
    * `thisMonth` is empty from an API older than #1428. */
   recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
+  /** A campaign's past sessions with what each one's recap is (DMs only; #2608). */
+  pastSessions?(campaignRef: string): Promise<PastSessions>;
+  /** Make a recap for a past session, or again; `replaceApproved` after the DM said yes to the question (#2608). */
+  makeRecap?(campaignRef: string, sessionAt: number, replaceApproved?: boolean): Promise<{ ref: string }>;
+  /** Add a recap someone wrote (#2609). */
+  addRecap?(campaignRef: string, sessionAt: number, input: AddRecapInput): Promise<{ ref: string }>;
   recap?(ref: string): Promise<Recap>;
   /** Save the DM's edit of the recap text and its housekeeping bullets. */
   saveRecap?(
@@ -1473,6 +1517,13 @@ export interface AccountApi {
 }
 
 const errorKinds: Record<string, ApiErrorKind> = {
+  approved_exists: "approved-exists",
+  recap_exists: "recap-exists",
+  no_transcript: "no-transcript",
+  already_running: "already-running",
+  right_not_confirmed: "right-not-confirmed",
+  link_not_public: "link-private",
+  not_the_dm: "not-allowed",
   no_free_slot: "no-free-slot",
   not_allowed: "not-allowed",
   sign_in_again: "sign-in-again",
@@ -1787,6 +1838,20 @@ export function httpApi(
       (await call("GET", "/me/export", undefined, true)) as Blob,
     recaps: async () =>
       ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
+    pastSessions: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/past-sessions`)) as PastSessions,
+    makeRecap: async (campaignRef, sessionAt, replaceApproved) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${sessionAt}/recap`,
+        replaceApproved ? { replaceApproved: true } : {},
+      )) as { ref: string },
+    addRecap: async (campaignRef, sessionAt, input) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${sessionAt}/recap/upload`,
+        input,
+      )) as { ref: string },
     recapList: async () => {
       const got = (await call("GET", "/me/recaps")) as {
         recaps: Recap[];

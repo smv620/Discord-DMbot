@@ -22,6 +22,7 @@ import type {
   Offer,
   Person,
   CampaignName,
+  PastSession,
   Recap,
   RecapChoices,
   RecordingEntry,
@@ -720,6 +721,26 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
+  let rightGiven = false; // the DM said they may use text someone else wrote (asked once)
+  const made = new Map<number, NonNullable<PastSession["recap"]>>();
+  const startMade = (sessionAt: number, writtenBy?: string): { ref: string } => {
+    const ref = `mock.made.${sessionAt}`;
+    const base = recaps[0]!;
+    const now = Math.floor(Date.now() / 1000);
+    recaps.push({
+      ...base,
+      ref,
+      sessionAt,
+      title: "A made recap",
+      working: true,
+      state: "writing",
+      progress: { stage: "writing", done: 1, total: 3, unit: "parts", startedAt: now, updatedAt: now, serverNow: now, state: "running", reason: null },
+      uploaded: writtenBy ? { writtenBy, uploadedBy: user.name } : null,
+    });
+    writing.set(ref, 2);
+    made.set(sessionAt, { ref, state: "ready", status: "draft", held: false, approved: false });
+    return { ref };
+  };
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const fixLooks = new Map<string, number>();
   const voiceLooks = new Map<string, { looks: number; size: number }>();
@@ -730,6 +751,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const settle = (r: Recap): void => {
     writing.delete(r.ref);
     Object.assign(r, { working: false, state: "ready", canTryAgain: r.status === "draft" && r.triesLeft > 0 });
+    if (r.progress) r.progress = { ...r.progress, state: "done" };
   };
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -756,6 +778,39 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         else writing.set(ref, left - 1);
       }
       return { ...r };
+    },
+    // Recaps for past sessions (#2608, #2609): one session with an approved recap, one with none, one whose
+    // recap failed. A recap made or added here is one more recap that settles after two reads.
+    async pastSessions(campaignRef) {
+      calls.push(`pastSessions:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      return {
+        rightConfirmed: rightGiven,
+        sessions: [
+          { sessionAt: 1791000000, sessionNumber: 4, sessionSeconds: 9300, recap: { ref: recaps[0]!.ref, state: "ready", status: "draft", held: false, approved: true } },
+          { sessionAt: 1790000000, sessionNumber: 3, sessionSeconds: 7200, recap: made.get(1790000000) ?? null },
+          { sessionAt: 1789000000, sessionNumber: 2, sessionSeconds: 5400, recap: { ref: "mock.failed.1789000000", state: "failed", status: "draft", held: false, approved: false } },
+        ],
+      };
+    },
+    async makeRecap(campaignRef, sessionAt, replaceApproved) {
+      calls.push(`makeRecap:${campaignRef}:${sessionAt}${replaceApproved ? ":replace" : ""}`);
+      await reachable();
+      signedIn();
+      if (sessionAt === 1791000000 && !replaceApproved) throw new ApiError("approved-exists");
+      return startMade(sessionAt);
+    },
+    async addRecap(campaignRef, sessionAt, input) {
+      calls.push(`addRecap:${campaignRef}:${sessionAt}:${input.url ? "link" : "text"}${input.replace ? ":replace" : ""}`);
+      await reachable();
+      signedIn();
+      if (!rightGiven && !input.confirmRight) throw new ApiError("right-not-confirmed");
+      if (sessionAt === 1791000000 && !input.replace) throw new ApiError("recap-exists");
+      if (input.url && input.url.includes("private")) throw new ApiError("link-private");
+      rightGiven = true;
+      return startMade(sessionAt, input.writtenBy);
     },
     async saveRecap(ref, summary, housekeeping) {
       calls.push(`saveRecap:${ref}`);
