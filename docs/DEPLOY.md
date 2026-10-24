@@ -339,7 +339,7 @@ Discord sign-in isn't set, because the API won't start without it):**
    | `^/admin(/\|$)` | the admin page | at setup (#836) |
    | `^/(webhooks/stripe$\|auth/\|me(/\|$)\|billing/)` | Stripe's events and the signed-in site | #1096 |
    | `^/mail/inbound$` | people's emailed replies, from Resend (docs/EMAIL.md) | #1431, #1717 |
-   | the support route | the website's support form; dev1 records its exact Path here | |
+   | `^/support(/\|$)` | the website's support pages (dev1 read it on 2026-10-24; the owner confirms it in the dashboard) | #1431 |
    | `^/recap-audio/` | the recap audio player and the Discord Listen link | 2026-10-24 |
 
    Any other path gets an empty 404 from Cloudflare before it reaches DMbot. #2625 replaces this
