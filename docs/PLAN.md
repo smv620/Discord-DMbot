@@ -1927,7 +1927,11 @@ names panel nor the speech-to-text hints can be a fixed list.
       node and connection. **After each session** (and each imported session) a held-back name that a
       recorded person said or typed at the table, by its name or another of its names as whole words, is shown
       to the players in one change; the DM's own table speech counts, the sidebar, DMbot, people who stopped
-      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). The DM
+      and the 🤫 spellings never do (a secret said aloud is the knowledge map review's question, #2410). **A secret name said at the table is no longer secret** (owner, 2026-10-24, #2591): once a recorded
+      person says or types it at the table (consented lines only, never the sidebar, the DM screen or DMbot),
+      the party knows the name, so the recap of that session may use it and the knowledge map review reveals it
+      with ↩️ Recant for the DM. Only the name is revealed: its secret connections, and anything else the DM
+      keeps secret about it, stay secret until the table states them. The DM
       screen says "Revealed at the table: A, B (Session N)" with ↩️ Undo. Connections are not revealed by this
       step: until the knowledge map review (#2410), the after-session report points to the held-back
       connections whose names are both revealed now.
@@ -4443,6 +4447,15 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   fails as our own failure (the DM's Try again is given back), rather than spending more tries. The
   same applies to the section count when the fix-up changes the sections: the length is checked again
   after it, and steered once if it left the range.
+  **Length is a target in the prompt, never a check** (owner, 2026-10-24, #2597; replaces the 50% under
+  and 20% / 35% over margins and the steered length retries above): the target is still worked out as
+  above and put in the writer's instructions, but whatever length comes back is used as it is. No
+  draft is failed, retried, rewritten or cut for being longer or shorter than the target, and a
+  sentence the fact check cuts never fails the recap for leaving it short. Why: going back and forth
+  over a draft that is a little long or short costs more than it gains. Only an empty or unreadable
+  answer is retried. The same holds for every AI write-up in DMbot (house-rule notes, support replies,
+  the DM sidebar's answers): limits are in the instructions, and only a platform's hard limit (Discord's
+  2,000 characters a message) splits an answer into parts, never cuts it.
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon
@@ -4455,17 +4468,35 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     draft and lists every sentence that states something the beats do not support (wrong place,
     wrong person, invented event or detail, contradiction), as a fixed-shape answer. A flagged draft
     is revised once with the list; a sentence still flagged after that is cut in code, and the
-    recap stands only if it still meets the minimum length. The grader's style scores never
+    recap stands (its length is never a reason to fail, #2597). The grader's style scores never
     outrank this check.
   - **Coverage:** the fact check also names the beats the draft leaves out that change the story
     (a new place, a new person met, a decision, a reveal). Those are given to the revision; the
-    length band, not coverage, decides when it stops.
+    revision is the one try, whatever the length (#2597).
   - Knowing the adventure's map (where a town lies, which way the party travels) needs the Shared
     story reader (docs/STORY_MEMORY.md); until a DM shares the adventure, the recap states no
     direction at all.
   **Two models, and style kept apart from content** (owner, 2026-10-20; details Supervisor's).
   - **A creative model writes, a small model formats.** The recap is written as plain text by the
-    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). The formatting model
+    creative model (`AI_MODEL_CREATIVE`, default Opus 5.5, `claude-opus-5-5`). *(Owner, 2026-10-23, #2575:)* **Gemini as
+    an option for the writer only**, off by default (`AI_PROVIDER_CREATIVE`), to compare on real recaps
+    with `recap_run --compare` (two drafts read blind). Every check after the writer is the same whichever
+    wrote it. It needs a **paid-tier** Gemini key (the free tier's terms allow using the data), the privacy
+    page naming Google as a processor when it writes, and its cost in docs/costs.md (#2574). Which writer
+    is the default is the owner's call after the comparison.
+    - **The Gemini writer reads the cleaned transcript** (owner, 2026-10-23, #2590): the whole
+      cleaned transcript of the session (never the raw one, never sound, never DM-screen content,
+      which the cleaned transcript doesn't hold), with PlotBot's guide to what matters (the beats,
+      the open threads and what the campaign's memory marks as important), so it picks out what is
+      important itself instead of writing from the beat sheet alone. What the writer reads is its
+      own setting (`RECAP_WRITER_READS`: `beats` or `transcript`), apart from who writes, so
+      `recap_run --compare` can test one change at a time. The checks after the writer read the
+      same input: the fact check counts a detail as supported when the transcript says it, and the
+      names, secrets, presence and coverage checks are unchanged. A secret name said at the table is
+      no longer secret (see "Revealed names"), so the writer may use it; a name never said aloud
+      stays on the secret list and the secret check still refuses a draft that uses it. The privacy
+      page says Google gets the cleaned transcript (#2589).
+    The formatting model
     (`AI_MODEL_FORMATTING`, default Haiku 5.5, `claude-haiku-5-5`) then puts that text into the
     recap's fixed shape with the structured-output schema: sections, moods, cues and music prompts.
     - **The formatter changes no word of the story.** Code compares the narration's words before and
@@ -5311,7 +5342,13 @@ Supervisor's details marked).**
      fails, nothing is removed and the offer opens again with a plain reason. As after loading a backup,
      the old server's channels (DM screen, voice, chat) don't carry over; the new owner picks them with
      `/dmbot start`. Rulesets the campaign follows keep being followed; a ruleset it published moves with
-     it and the new owner becomes its publisher.
+     it and the new owner becomes its publisher. *(Supervisor, 2026-10-23, #2550:)* **for now** a campaign
+     that **shares** a rule set (`status = 'shared'`) can't move to another server: the hand-over page says
+     so before anyone accepts, and it can still be handed over on its own server. Moving a shared set with
+     its followers is #2551. **How the move is done (#2550):** the campaign's rows are moved, not copied: a
+     single change of its `guild_id`, carried into every row by `ON UPDATE CASCADE` (CLAUDE.md, Code
+     standards), with the busy checks (a session, a recap job or import at work) and the new owner's paid
+     slot checked in the same step, so nothing can be lost or left behind.
 - **One DMbot account, several Discord accounts.**
   1. **The key is the DMbot account** (the account number; today's DMbot ID). Everything a person has
      belongs to the account: the plan and hours, the campaigns they own, the campaigns they DM or
