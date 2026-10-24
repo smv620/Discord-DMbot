@@ -125,6 +125,10 @@ class WebSettings:
     # PlotBot's check of each recap (#2122): the same DMBOT_PLOT_CHECK as the bot's, and only with
     # recaps on. Off, the plot routes say "unavailable" and Approve waits for nothing.
     plot_check_on: bool = False
+    # The bot's DMBOT_RECAP_VOICE_TAGS, to work out which paragraphs a change to the words would
+    # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
+    # bot does.
+    recap_voice_tags: bool = True
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
@@ -312,6 +316,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
             and get("RECAP_AUDIO_KEY_SET") == "1"
             and get("RECAP_AUDIO_VOICE_SET") == "1"
         ),
+        recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,

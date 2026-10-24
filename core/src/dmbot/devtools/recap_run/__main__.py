@@ -470,6 +470,8 @@ def _copy_out(source: Path, into: Path) -> None:
     into.mkdir(parents=True, exist_ok=True, mode=0o700)
     into.chmod(0o700)  # (mkdir's mode is narrowed by the umask and ignored for an existing folder)
     for path in sorted(source.iterdir()):
+        if not path.is_file():  # (the kept parts of a small change live in a folder, #2630)
+            continue
         target = into / path.name
         shutil.copyfile(path, target)
         target.chmod(0o600)
