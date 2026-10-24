@@ -32,6 +32,7 @@ from typing import Any
 
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
+from dmbot.memory.models import name_key
 from dmbot.names import not_names
 from dmbot.recaps.beats import Beat, sheet
 from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
@@ -777,14 +778,28 @@ def respelled(
     previous: str = "",
     setting: str | None = None,
     transcript: str = "",
+    aliases: Mapping[str, str] | None = None,
 ) -> tuple[Prose, tuple[str, ...]]:
     """The prose with near-miss names put right (#2027), and what is too close to a secret name.
-    The spellings to put in are the confirmed names and the beats' own names."""
-    from dmbot.recaps.unknown_names import respell
+    The spellings to put in are the confirmed names and the beats' own names. A character called
+    by another spelling the DM confirmed, or by a name that sounds like exactly one known name, is
+    first put back to its story-memory name (#2573), then the near misses are fixed."""
+    from dmbot.recaps.unknown_names import canonical, respell
 
     names = {*allowed_names, *(w for b in beats for w in b.who)}
+    plain = ordinary(transcript)
+    summary = prose.summary
+    if aliases:
+        summary = canonical(
+            summary,
+            aliases,
+            names=sorted(allowed_names),
+            secret_names=secret_names,
+            ordinary_words=plain,
+            sound_names=[*aliases.values()],
+        )
     done = respell(
-        prose.summary,
+        summary,
         names=sorted(names),
         secret_names=secret_names,
         known_words=_known(beats, allowed_names, previous, setting),
@@ -899,6 +914,31 @@ def length_move(before: tuple[int, int] | None, count: int, length: Length, last
     return "stuck" if count >= words_before - STILL_MARGIN else ""
 
 
+def _sentences_of(text: str) -> list[str]:
+    return [x for x in re.split(r"(?<=[.!?…])\s+|\n+", text) if x.strip()]
+
+
+def states_secret_tie(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]]) -> bool:
+    """Whether a sentence of `text` names both ends of a secret connection (#2591). A secret name
+    the table said aloud is no longer secret, but only the name: the connection stays the DM's.
+    Whole words, compared as names are everywhere; the two ends are told apart as the exposure
+    finder does, so a name the ends share ("the stranger") is not taken for a link. Never says
+    which, so the retry message carries no name."""
+    if not ties:
+        return False
+    # ("Veil's daughter" names Veil: the possessive goes before names are compared)
+    sentences = [f" {name_key(re.sub(r"['’]s\b", '', x))} " for x in _sentences_of(text)]
+    for subject, obj in ties:
+        a, b = {name_key(n) for n in subject}, {name_key(n) for n in obj}
+        a, b = a - b, b - a  # (a name both ends have says nothing about either)
+        if not a or not b:
+            continue
+        for sentence in sentences:
+            if any(f" {k} " in sentence for k in a) and any(f" {k} " in sentence for k in b):
+                return True
+    return False
+
+
 def check_prose(
     prose: Prose,
     *,
@@ -913,8 +953,14 @@ def check_prose(
     refused: Collection[str] = (),
     style: Collection[str] = (),
     corrections: Collection[str] = (),
+    pcs: Collection[str] = (),
+    secret_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
+    `secret_ties`: the campaign's secret connections (every name of each end): a sentence naming
+    both ends is refused (`states_secret_tie`), though a secret name the table said aloud may be
+    used on its own (#2591).
+    `pcs`: the campaign's player characters, for the presence check (`presence_problems`).
     `allowed_names`: the campaign's confirmed names that are not secret. `secret_names`: every
     secret name, which may appear nowhere in the recap. `transcript`: the cleaned lines, only to
     catch a copy. `length`: what the session's recap must come to; `last`: the last try, which may
@@ -980,8 +1026,15 @@ def check_prose(
         )
     if names_a_secret(" ".join([summary, *prose.music]), secret_names, allowed_names):
         problems.append("it names something the DM keeps secret: leave it out")
+    elif states_secret_tie(narration, secret_ties):
+        problems.append(
+            "a sentence links two names in a way the DM keeps secret: write about each on its "
+            "own, or leave the link out"
+        )
     elif refused and any(r in "".join(words(narration)) for r in refused):
         problems.append("a name is too like one the DM keeps secret: leave it out")
+    if not last:  # a recap that passes everything else is not ended by a doubtful scene check
+        problems.extend(presence_problems(narration, beats, pcs))
     copied = copied_run(narration, transcript)
     if copied:
         # The hint is the run's first words; a run that starts with a secret name gets none.
@@ -1003,6 +1056,95 @@ def check_prose(
             )
             break
     return problems
+
+
+_CONTENT_MIN = 4  # letters: shorter words are too common to say which beat a sentence is about
+_STEM = 5  # letters compared, so "travelled" meets "travels"
+PRESENCE_MIN_SHARED = 3  # stems a sentence and a beat share before the sentence is "about" it
+PRESENCE_MARGIN = 1  # ... and the best beat must beat the next one by this many
+MAX_PRESENCE_PROBLEMS = 2  # a retry message names a couple, not every sentence
+
+
+_GROUP = re.compile(r"\b(party|everyone|together|all of them|the group)\b", re.IGNORECASE)
+# What lets a sentence name only some of them: it says the whole group by another name. Not
+# "together": "Belleros and Greyfen together" still leaves the others out.
+_WAY_OUT = re.compile(r"\b(the party|everyone|the group|all of them)\b", re.IGNORECASE)
+
+
+def _norm(name: str) -> str:
+    return " ".join(words(name))
+
+
+def _mentions(sentence: str, pcs: Collection[str]) -> list[str]:
+    """The player characters a sentence names, in the order of `pcs`."""
+    said = f" {_norm(sentence)} "
+    return [pc for pc in pcs if f" {_norm(pc)} " in said]
+
+
+def _stems(text: str) -> set[str]:
+    return {w[:_STEM] for w in words(text) if len(w) >= _CONTENT_MIN}
+
+
+def presence_problems(narration: str, beats: Sequence[Beat], pcs: Collection[str]) -> list[str]:
+    """Who was there, held to the beats' `present` lists (#2573). A sentence is matched to the
+    beat it clearly shares the most words with (`PRESENCE_MIN_SHARED`, and ahead of the next beat
+    by `PRESENCE_MARGIN`: an unclear match is not judged), and then:
+    - when the beat says the group acted together ("the party", "together"), or itself names the
+      one left out, a sentence that names every character present but one, and does not say "the
+      party", "everyone" or "the group", is refused: it names almost everyone as the ones who were
+      there and leaves one out;
+    - a character named in a scene they were not present for (not in the beat's `present` nor in
+      its names) is refused.
+    A beat with no `present` list (a recap made before this, or nobody spoke) is not checked. The
+    DM's own word on who was there wins: it is the list on the beat. The messages name characters
+    only, never quote the sentence (it may open with a secret name). Pure."""
+    if not pcs or not beats:
+        return []
+    problems: list[str] = []
+    for sentence in sentences_of(narration):
+        named = _mentions(sentence, pcs)
+        if not named:
+            continue
+        mine = _stems(sentence)
+        scored = sorted(
+            ((len(mine & _stems(b.what)), b) for b in beats if b.present),
+            key=lambda pair: pair[0],
+            reverse=True,
+        )
+        if not scored or scored[0][0] < PRESENCE_MIN_SHARED:
+            continue
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < PRESENCE_MARGIN:
+            continue
+        best = scored[0][1]
+        there = {_norm(p) for p in best.present} | {_norm(w) for w in best.who}
+        absent = [pc for pc in named if _norm(pc) not in there]
+        left = [pc for pc in best.present if pc not in named]
+        if absent:
+            problems.append(
+                f"{absent[0]} was not there in one of the scenes: leave {absent[0]} out of the "
+                "sentence that tells it"
+            )
+        elif (
+            len(named) >= 2
+            and len(left) == 1
+            and (
+                _GROUP.search(best.what)  # the beat says the group acted together, or
+                or _norm(left[0]) in {_norm(w) for w in best.who}  # names the one left out
+            )
+            and not _WAY_OUT.search(sentence)
+        ):
+            problems.append(
+                f"a sentence names {', '.join(named)} as the ones who were there, but "
+                f'{left[0]} was there too: name {left[0]} as well, or say "the party"'
+            )
+        if len(problems) >= MAX_PRESENCE_PROBLEMS:
+            break
+    return problems
+
+
+def ordinary(transcript: str) -> frozenset[str]:
+    """Words that are plain English or that the table says in lower case: never a name."""
+    return frozenset(_english() | set(_LOWER_WORD.findall(transcript)))
 
 
 @functools.cache

@@ -305,6 +305,15 @@ class ImportStore:
                 (session_id,),
             )
 
+    async def set_total(self, guild_id: int, session_id: str, total: int) -> None:
+        """How many lines this session's cleaning has to get through, for the page's "n of m"
+        (#2564). Counts only; starting again from the top starts the count again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET step_total = %s, step_done = 0 WHERE session_id = %s",
+                (total, session_id),
+            )
+
     async def apply(
         self, guild_id: int, session_id: str, cleaned: Sequence[tuple[int, str | None, str]]
     ) -> None:
@@ -322,6 +331,11 @@ class ImportStore:
                     [c[2] for c in cleaned],
                     session_id,
                 ),
+            )
+            # (the row's own trigger stamps `updated_at`: this chunk is a step forward)
+            await conn.execute(
+                "UPDATE session_imports SET step_done = step_done + %s WHERE session_id = %s",
+                (len(cleaned), session_id),
             )
 
 
@@ -370,6 +384,7 @@ class ImportJob:
             await self.store.finish(guild_id, session_id, ok=False, reason=FAILED_NAMES)
             return
         rows = await self.store.rows(guild_id, session_id)
+        await self.store.set_total(guild_id, session_id, len(rows))
         windows_left = MAX_WINDOWS
         failures = 0
         partly = False

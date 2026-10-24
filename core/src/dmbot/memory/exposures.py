@@ -359,6 +359,18 @@ class ExposureStore:
             )
             return cur.rowcount
 
+    async def recanted(self, guild_id: int, campaign_id: str, session_at: int) -> frozenset[str]:
+        """The spelling keys of the secret names the DM took back for one session (#2591): a name
+        said at the table that the DM recanted is secret again, so that session's recap keeps it
+        out like any secret."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT spelling FROM secret_exposures WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_started_at = %s AND kind = 'name' AND status = 'recanted'",
+                (guild_id, campaign_id, session_at),
+            )
+            return frozenset(str(r["spelling"]) for r in await cur.fetchall())
+
     async def waiting(self, guild_id: int, campaign_id: str) -> list[Waiting]:
         """The exposures still waiting to be applied, from this and earlier sessions, names then
         connections, most said first (what a summary left out last time comes first again)."""
