@@ -50,6 +50,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "game_effects": ("game_effects",),
     # (only ready jobs are carried today, which is part of what #2552 lists)
     "recaps": ("recap_jobs",),
+    "recap_rights": ("recap_upload_rights",),
     "recap_accepted": ("recap_accepted",),  # each approved version of a recap (#2122)
     "plot_issues": ("plot_issues",),  # PlotBot's issues and the DM's answers (#2122)
     "plot_fine": ("plot_fine",),  # what the DM said was not a problem (#2122)
@@ -92,6 +93,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
     "check, nothing the DM wrote (0210, PLAN)",
+    "plot_chat": "the DM's talk with PlotBot about one issue, with its Save / Not that proposals: "
+    "a working conversation, nothing in the story until the DM presses Save (PLAN, #2123 slice 1)",
     "npc_notes": "each person's own private 'My notes' never go into a backup (PLAN:1427)",
     "npc_roster": "derived, made again from the names (its schema comment)",
     "house_rules_file": "the private share link of the DM's rules file (PLAN:677)",
