@@ -5557,3 +5557,26 @@ fails on our side (a cut-off answer, a check, the service) gives back the DM's T
 for no speakers, funds or stopped recording does not. The failing check's fixed name is in `last_error`
 (`(check: length)`) and the log. dev1 starts a session over with
 `python -m dmbot.devtools.recap_requeue GUILD CAMPAIGN SESSION_AT`.
+
+### A DM makes, redoes or adds the recap of any past session (owner, 2026-10-24, #2608, #2609, #2610)
+- **Make or redo** (#2608): a campaign's DM can make the recap of any past session, whether recaps were
+  off, it was interrupted, it failed or was held, or the DM just wants a new one. This is `/dmbot recap`
+  with a session picker, **🔁 Make the recap again** on a failed or held recap's line, and the website's
+  recap list. It is `recap_requeue`'s start-over, moved into core:
+  - the old job's draft, beats, critics' state, tries and hold go, and every step runs again;
+  - the transcript, the names and the story memory are never touched;
+  - a recap already approved or posted stays until the new one is approved, after one question.
+
+  The "last time" bridge is the recap of the session before it. It counts against the month's recaps,
+  except a redo of one that failed on our side. A session whose lines retention deleted can't be
+  written; the DM is pointed to upload instead. One job runs at a time per campaign, each showing its
+  progress.
+- **Upload one someone wrote** (#2609): the DM pastes it, uploads a `.txt` or `.md` file, or gives a
+  Google Doc link, up to 50,000 characters.
+  - **What it becomes:** that session's recap, labelled "Written by <name>, uploaded by <DM>", also for a
+    session DMbot never recorded. It never goes through the AI writer. It can be posted (with narration
+    within the plan), it is the next recap's bridge, and PlotBot may read it.
+  - **The DM decides:** unknown names go to Names to check, and a secret name or identity tie gives the
+    DM a note, never a block. Nothing enters the story memory without the DM's confirmation.
+  - **Right to use:** confirmed once per campaign and recorded. It stays in that campaign and its backup.
+  - **Replacing:** an earlier recap is kept as a version, never overwritten.
