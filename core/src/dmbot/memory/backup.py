@@ -77,6 +77,7 @@ from dmbot.memory.ontology import (
     PredicateTerm,
     TypeTerm,
     conditions_for,
+    god_is_an_npc,
 )
 from dmbot.memory.sounds import sound_codes
 
@@ -203,6 +204,7 @@ def _valid(column: str, value: object) -> bool:
         "hidden_from_players",
         "made_before_name_gate",
         "unrevealed",
+        "directional",
         "pinned",
     ):
         return isinstance(value, bool)
@@ -320,7 +322,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-    rows = _with_definition_fields(_from_before_kinds(rows))
+    rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(rows)))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
@@ -429,10 +431,26 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             top = known.get(name, 1) if isinstance(name, str) else 1
             if isinstance(version, int) and not isinstance(version, bool) and version > top:
                 version = 1
-            # from before #2404: every connection a file holds had been shown to the players
-            raw = {"unrevealed": False, **raw, "definition_version": version}
+            # from before #2404: every connection a file holds had been shown to the players;
+            # from before #2457: no family role had a direction
+            raw = {"unrevealed": False, "directional": False, **raw, "definition_version": version}
         out.append(raw)
     return out
+
+
+def _gods_are_npcs(rows: list[Any]) -> list[Any]:
+    """A backup made while a god was a role (#2562) reads as the migration moved it: an NPC,
+    with "god" kept in its description. Any other backup passes through as it is."""
+    return [
+        {
+            **r,
+            "role": "npc",
+            "description": god_is_an_npc(str(r.get("description") or "")),
+        }
+        if isinstance(r, dict) and r.get("table") == "entity" and r.get("role") == "god"
+        else r
+        for r in rows
+    ]
 
 
 def _from_before_kinds(rows: list[Any]) -> list[Any]:

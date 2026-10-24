@@ -45,14 +45,14 @@ NOTHING_TO_MATCH = (
 )
 HEAD = (
     "🔗 **Match names**\n"
-    "Is a name in your adventure the same person or place as one DMbot remembers from your "
+    "Is a name in your adventure the same character or place as one DMbot remembers from your "
     "game? You say; DMbot never guesses. Nothing changes in your game. Only you see this."
 )
 HOW = (
     "Top menu: these are the same. Bottom menu: these are not, and DMbot won't ask about them "
     "again (you can still link one by hand from its name card). Pairs you skip come back next time."
 )
-SAME_HOLDER = "Same person or place…"
+SAME_HOLDER = "Same character or place…"
 NOT_HOLDER = "Not the same…"
 UNDONE = "Undone."
 LABEL_MAX = 100  # a menu option's label

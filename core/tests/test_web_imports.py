@@ -16,6 +16,7 @@ import httpx
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.db import Database
 from dmbot.transcript import import_link
+from dmbot.transcript.import_job import ImportStore
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import imports
 from dmbot.web import recaps as web_recaps
@@ -24,7 +25,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
-from tests.test_web_api import ALICE, API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
 
 MIRA, TOMAS, NOBODY = 7001, 7002, 7003
 CRAIG = """Craig Recording of Tuesday
@@ -1010,9 +1011,11 @@ class TheRoutes(WithImports):
                 self.web, cast(Any, who), [THURSDAY], now=NOW, days=30
             )
             client = httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+                transport=httpx.ASGITransport(app=app),
+                base_url="https://web-api.internal.test",
+                headers=HEADERS,
             )
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             self.clients.append(client)
         self.dm, self.bob = self.clients
 
@@ -1039,9 +1042,11 @@ class TheRoutes(WithImports):
         )  # fmt: skip
         token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=on), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=on),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             body = {"files": files(("a.txt", CRAIG))}
             got = await client.post(f"/me/campaigns/{self.ref_c}/imports/preview", json=body)
             self.assertEqual(got.json()["recapsPossible"], True, got.text)
@@ -1066,9 +1071,11 @@ class TheRoutes(WithImports):
         )  # fmt: skip
         token = await web_sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=off), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=off),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             base = f"/me/campaigns/{self.ref_c}/imports"
             for method, path in (
                 ("POST", "/preview"), ("GET", "/members"), ("POST", "/check"), ("POST", ""),
@@ -1088,9 +1095,11 @@ class TheRoutes(WithImports):
                 self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30
             )
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+                transport=httpx.ASGITransport(app=app),
+                base_url="https://web-api.internal.test",
+                headers=HEADERS,
             ) as client:
-                client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
                 got = await client.post(
                     f"/me/campaigns/{self.ref_c}/imports/preview",
                     json={"files": files(("a.txt", CRAIG))},
@@ -1196,6 +1205,14 @@ class TheProgress(WithImports):
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
                     "recap": None,
+                    "progress": {
+                        "stage": "cleaning",
+                        "startedAt": got["sessions"][0]["progress"]["startedAt"],
+                        "updatedAt": got["sessions"][0]["progress"]["updatedAt"],
+                        "serverNow": got["import"]["serverNow"],
+                        "state": "running",
+                        "reason": None,
+                    },
                 }
             ],
         )
@@ -1255,6 +1272,209 @@ class TheProgress(WithImports):
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
+
+    async def test_the_progress_shape_moves_with_the_stages_and_never_goes_back(self) -> None:
+        """#2564: stage, counts, startedAt, updatedAt and serverNow, one shape per session and for
+        the whole import."""
+        imp, _, _ = await self.one_import(False)
+        first = (await self.stage(imp))["progress"]
+        self.assertEqual(
+            sorted(first), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertEqual(
+            (first["stage"], first["state"], first["reason"]), ("cleaning", "running", None)
+        )
+        await self.set_import(step_total=900, step_done=420)
+        mid = (await self.stage(imp))["progress"]
+        self.assertEqual((mid["done"], mid["total"], mid["unit"]), (420, 900, "lines"))
+        self.assertGreaterEqual(mid["updatedAt"], first["updatedAt"])  # a step stamps it
+        await self.set_import(state="done", scanned=True, scan_finished=True)
+        end = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        self.assertEqual(end["sessions"][0]["progress"]["state"], "done")
+        whole = end["import"]
+        self.assertEqual(
+            (whole["stage"], whole["state"], whole["done"], whole["total"], whole["unit"]),
+            ("done", "done", 1, 1, "sessions"),
+        )
+
+    async def test_a_job_that_has_not_moved_for_its_stage_limit_is_stalled(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        long_ago = int(time.time()) - 3 * 3600
+        await self.set_import(updated_at=long_ago, imported_at=long_ago)
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        part = got["sessions"][0]["progress"]
+        self.assertEqual(part["state"], "stalled")
+        self.assertTrue(part["reason"])
+        self.assertEqual(got["import"]["state"], "stalled")
+        # it can move again: the next step turns it back to running
+        await self.set_import(step_total=10, step_done=1)
+        again = (await self.stage(imp))["progress"]
+        self.assertEqual(again["state"], "running")
+
+    async def two_imports(self) -> tuple[str, list[str], list[int]]:
+        """Two sessions of one import, the later-dated one first in line to be cleaned."""
+        done = await self.confirm(
+            {
+                "mapping": MAPPING,
+                "sessions": [
+                    {"file": "a.txt", "date": "2026-09-14", "writeRecap": True},
+                    {"file": "b.txt", "date": "2026-09-21", "writeRecap": True},
+                ],
+            },
+            ("a.txt", CRAIG),
+            ("b.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT i.session_id, t.started_at FROM session_imports i"
+                " JOIN transcript_sessions t ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " ORDER BY t.started_at"
+            )
+            rows = await cur.fetchall()
+        return (
+            done["importId"],
+            [r["session_id"] for r in rows],
+            [int(r["started_at"]) for r in rows],
+        )
+
+    async def test_a_session_waiting_its_turn_is_not_stalled_while_the_import_moves(self) -> None:
+        imp, sessions, _ = await self.two_imports()
+        old = int(time.time()) - 3 * 3600
+        async with self.db.guild(THURSDAY.id) as conn:
+            # the later session finished cleaning long ago and waits for the earlier one's scan;
+            # the earlier one is being scanned right now
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done', imported_at = %s, updated_at = %s"
+                " WHERE session_id = %s",
+                (old, old, sessions[1]),
+            )
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done', scanned = TRUE, imported_at = %s,"
+                " updated_at = %s WHERE session_id = %s",
+                (old, int(time.time()) - 5, sessions[0]),
+            )
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        first, later = (s["progress"] for s in got["sessions"])
+        self.assertEqual((first["stage"], first["state"]), ("checking_names", "running"))
+        self.assertEqual((later["stage"], later["state"]), ("checking_names", "running"))
+        self.assertEqual(got["import"]["state"], "running")
+
+    async def test_when_nothing_in_the_import_has_moved_the_waiting_one_stalls_too(self) -> None:
+        imp, _sessions, _ = await self.two_imports()
+        old = int(time.time()) - 3 * 3600
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done', imported_at = %s, updated_at = %s",
+                (old, old),
+            )
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        self.assertEqual([s["progress"]["state"] for s in got["sessions"]], ["stalled", "stalled"])
+        self.assertEqual(got["import"]["state"], "stalled")
+
+    async def test_a_stored_reason_does_not_ride_along_on_a_stall(self) -> None:
+        imp, _, _ = await self.one_import(True)
+        old = int(time.time()) - 3 * 3600
+        await self.set_import(
+            state="done", scanned=True, reason="partly_labelled", imported_at=old, updated_at=old
+        )
+        part = (await self.stage(imp))["progress"]
+        self.assertEqual((part["state"], part["reason"]), ("stalled", "stalled"))
+
+    async def test_a_failed_session_does_not_hide_a_stalled_one_in_the_import(self) -> None:
+        imp, sessions, _ = await self.two_imports()
+        old = int(time.time()) - 3 * 3600
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET state = 'failed', reason = 'error', imported_at = %s,"
+                " updated_at = %s WHERE session_id = %s",
+                (old, old, sessions[0]),
+            )
+            await conn.execute(
+                "UPDATE session_imports SET imported_at = %s, updated_at = %s"
+                " WHERE session_id = %s",
+                (old, old, sessions[1]),
+            )
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        self.assertEqual(got["import"]["state"], "stalled")
+        self.assertEqual(got["sessions"][0]["progress"]["state"], "failed")
+
+    async def test_a_failed_job_says_why_and_a_waiting_one_never_stalls(self) -> None:
+        imp, _, _ = await self.one_import(True)
+        await self.set_import(state="failed", reason="no names")
+        part = (await self.stage(imp))["progress"]
+        self.assertEqual((part["state"], part["reason"]), ("failed", "no names"))
+        await self.set_import(state="done", scanned=True, scan_finished=True, recap_started=True)
+        long_ago = int(time.time()) - 5 * 3600
+        await self.set_import(updated_at=long_ago)
+        from dmbot.recaps.hold import HoldStore
+
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT t.started_at FROM transcript_sessions t")
+            at = int((await cur.fetchone() or {})["started_at"])
+        await HoldStore(self.db).hold(
+            THURSDAY.id, self.one.id, at, session_id="s", dm_user_id=ALICE.id,
+            channel_id=66, names_open=2,
+        )  # fmt: skip
+        waiting = (await self.stage(imp))["progress"]
+        self.assertEqual((waiting["stage"], waiting["state"]), ("waiting_for_names", "running"))
+
+    async def test_the_progress_is_exactly_codes_counts_and_times(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        await self.set_import(state="failed", reason="names_failed", step_total=5, step_done=2)
+        got = await imports.progress(self.web, self.session, self.ref_c, imp, outside=None)
+        part, whole = got["sessions"][0]["progress"], got["import"]
+        self.assertEqual(
+            sorted(part), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertEqual(
+            (part["stage"], part["state"], part["reason"]), ("failed", "failed", "names_failed")
+        )
+        self.assertEqual(
+            sorted(whole),
+            [
+                "done",
+                "reason",
+                "serverNow",
+                "stage",
+                "startedAt",
+                "state",
+                "total",
+                "unit",
+                "updatedAt",
+            ],
+        )
+        for value in (*part.values(), *whole.values()):
+            self.assertIsInstance(value, str | int | None)
+
+    async def test_the_trigger_stamps_steps_and_retaken_claims_not_idle_updates(
+        self,
+    ) -> None:
+        await self.one_import(False)
+        await self.set_import(updated_at=5)
+        await self.set_import(file_name="a.txt")  # nothing a step watches changed
+        self.assertEqual(await self.moved(), 5)
+        await self.set_import(step_done=3)
+        first = await self.moved()
+        self.assertGreater(first, 5)
+        await self.set_import(updated_at=5)
+        store = ImportStore(self.db)
+        await self.set_import(state="working", claimed_at=1)
+        await self.set_import(updated_at=5)
+        await store.resume(THURSDAY.id, older_than_s=0)  # working -> waiting
+        self.assertGreater(await self.moved(), 5)
+        await self.set_import(updated_at=5)
+        self.assertTrue(await store.claim(THURSDAY.id, await self.session_id()))
+        self.assertGreater(await self.moved(), 5)
+
+    async def moved(self) -> int:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT updated_at FROM session_imports")
+            return int((await cur.fetchone() or {})["updated_at"])
+
+    async def session_id(self) -> str:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT session_id FROM session_imports")
+            return str((await cur.fetchone() or {})["session_id"])
 
     async def listed_ref(self, at: int) -> str | None:
         """The reference the recap list gives for the session at `at` (a held recap included)."""

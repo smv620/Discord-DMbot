@@ -36,7 +36,9 @@ class Shared(Base):
         bob = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
         self.bob = self.client_for(bob)
         self.public = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, headers={}
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers={},
         )  # no cookie, no header: anyone
         self.files = AudioFiles(Path(self.dir.name))
         async with self.db.guild(THURSDAY.id) as conn:  # the speaker is recorded (consent given)
@@ -48,9 +50,11 @@ class Shared(Base):
 
     def client_for(self, token: str) -> httpx.AsyncClient:
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         return client
 
     async def asyncTearDown(self) -> None:

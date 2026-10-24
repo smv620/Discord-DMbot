@@ -27,7 +27,7 @@ NAMES = CampaignLookup.build(
         1,
         (
             entity(BELL, "Belleros", "npc"),
-            entity(AURIL, "Auril", "deity"),
+            entity(AURIL, "Auril", "npc"),
             entity(TOWN, "Bryn Shander", "place"),
             entity(ULF, "Ulfgar", "npc"),
         ),
@@ -126,7 +126,7 @@ class SameName(unittest.TestCase):
 
     def test_a_kind_that_differs_is_asked_never_changed(self) -> None:
         p = run("Auril | place\nAuril | town")
-        self.assertEqual(p.kinds, [KindDiffers(AURIL, "Auril", "deity", "place")])
+        self.assertEqual(p.kinds, [KindDiffers(AURIL, "Auril", "npc", "place")])
         self.assertEqual((p.new, p.more), ([], []))
 
     def test_other_or_no_kind_never_counts_as_different(self) -> None:
@@ -290,7 +290,7 @@ class Caps(unittest.TestCase):
         # "Frostmaiden" is Auril's: her new names count for Auril, and the message says
         # Auril (never the name the list used, which could be one a player can't see).
         others = [f"Frost{i}" for i in range(51)]
-        text = "\n".join(lines_for("Frostmaiden", "deity", others, []))
+        text = "\n".join(lines_for("Frostmaiden", "npc", others, []))
         self.assertIn("Auril has more than 50 other names", too_many(run(text), NAMES) or "")
 
     def test_five_thousand_in_one_list_is_fine_five_thousand_and_one_is_not(self) -> None:

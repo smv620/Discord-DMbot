@@ -25,7 +25,7 @@ from dmbot.db import Database
 from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
-from dmbot.recaps.draft import SUMMARY_MAX
+from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.models import Line
@@ -36,6 +36,7 @@ from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import (
     RecapError,
+    approve_unchecked,
     audio_again,
     decide,
     edit_recap,
@@ -64,6 +65,16 @@ def callers(needle: str) -> set[str]:
 
 
 class Base(DatabaseTest):
+    async def speaker_agreed(self) -> None:
+        """The speaker whose lines the recap used has agreed to be recorded: posting an unapproved
+        draft approves it first (#2122), and approving checks that."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (THURSDAY.id, fx.ALICE, NOW, TERMS_VERSION),
+            )
+
     async def asyncSetUp(self) -> None:
         if not SUPERUSER_URL:
             if REQUIRE_DB:
@@ -274,7 +285,7 @@ class TheDmsPage(Base):
         self.assertTrue(
             all(1 <= n <= len(one["uncheckedDraft"]) for n in one["uncheckedSentences"])
         )
-        self.assertFalse(one["canApproveUnchecked"])  # the approve is not on until the bot has it
+        self.assertTrue(one["canApproveUnchecked"])  # long past 3 days: the DM may approve it
         await self.store.update(THURSDAY.id, self.one.id, 100, state="ready", last_error="")
         again = await read_recap(self.web, self.session, self.ref)
         self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
@@ -491,6 +502,28 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
 
+    async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
+        self,
+    ) -> None:
+        """#2639 review: the contract WebDev's page reads, pinned against the real door: the
+        shared shape, counts and codes only, and nothing once the recap is posted."""
+        read = await read_recap(self.web, self.session, self.ref)
+        got = read["progress"]
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertTrue(got["stage"].startswith("recap_"))
+        self.assertIn(got["state"], ("running", "stalled", "failed", "done"))
+        listed = await list_recaps(self.web, self.session)
+        self.assertTrue(all("progress" in r for r in listed))
+        async with self.db.guild(THURSDAY.id) as conn:  # (posted by the bot's own path elsewhere)
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted' WHERE guild_id = %s AND session_at = %s",
+                (THURSDAY.id, 100),
+            )
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["progress"])
+
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
         got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
@@ -542,8 +575,8 @@ class TheDmsPage(Base):
         for summary, bullets in (
             ("  ", []),
             ("x" * (SUMMARY_MAX + 1), []),
-            ("ok", ["b"] * 13),
-            ("ok", ["b" * 141]),
+            ("ok", ["b"] * (HOUSEKEEPING_HARD + 1)),
+            ("ok", ["b" * (BULLET_HARD + 1)]),
         ):
             with self.assertRaises(RecapError) as caught:
                 await edit_recap(
@@ -581,6 +614,7 @@ class TheDmsPage(Base):
         self.assertEqual(await list_recaps(self.web, session), [])
 
     async def test_post_marks_it_for_the_bot_and_only_once(self) -> None:
+        await self.speaker_agreed()
         shown = await decide(self.web, self.session, self.ref, "post")
         self.assertEqual(shown["status"], "posting")
         self.assertFalse(shown["canEdit"] or shown["canPost"])
@@ -592,6 +626,7 @@ class TheDmsPage(Base):
     async def test_the_stored_posting_clock_is_readable_by_the_web_role(self) -> None:
         """#2435: the website's role can read the three columns (#2436 puts them in the answer);
         another DM's campaign is not readable at all."""
+        await self.speaker_agreed()
         await decide(self.web, self.session, self.ref, "post")
 
         async def stored(campaign: str) -> Any:
@@ -656,9 +691,11 @@ class TheRoutes(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
@@ -669,6 +706,31 @@ class TheRoutes(Base):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertNotIn(BOB.email, got.text)  # never another DM's address (#2334)
         return dict(got.json()["recapEmail"])
+
+    async def test_approve_unchecked_answers_in_the_pages_words(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        async def wait(age: int, campaign: str) -> None:
+            await self.store.update(
+                THURSDAY.id, campaign, 100, state="prose", last_error=cr.CHECK_WAIT,
+                critics=cr.Loop(waits=2, since=int(time.time()) - age).to_json(),
+            )  # fmt: skip
+
+        await wait(cr.UNCHECKED_AFTER_S - 600, self.one.id)
+        shown = {"textHash": text_hash("The Silver Lock", fx.SUMMARY)}
+        early = await self.client.post(f"/me/recaps/{self.ref}/approve-unchecked", json=shown)
+        self.assertEqual((early.status_code, early.json()["error"]), (409, "not_yet"))
+        await wait(cr.UNCHECKED_AFTER_S + 600, self.two.id)  # Bob's recap: not Alice's to touch
+        theirs = await self.client.post(f"/me/recaps/{self.other}/approve-unchecked", json=shown)
+        self.assertEqual((theirs.status_code, theirs.json()["error"]), (404, "not_found"))
+        await wait(cr.UNCHECKED_AFTER_S + 600, self.one.id)
+        nobody = await self.client.post(f"/me/recaps/{self.ref}/approve-unchecked")  # no hash
+        self.assertEqual((nobody.status_code, nobody.json()["error"]), (422, "bad_hash"))
+        done = await self.client.post(f"/me/recaps/{self.ref}/approve-unchecked", json=shown)
+        self.assertEqual(done.status_code, 200, done.text)
+        self.assertIn(cr.APPROVED_UNCHECKED, done.json()["criticNotes"])
+        again = await self.client.post(f"/me/recaps/{self.ref}/approve-unchecked", json=shown)
+        self.assertEqual(again.status_code, 200, again.text)  # a double click is no error
 
     async def test_the_recap_says_which_address_its_email_goes_to_and_where_it_came_from(
         self,
@@ -701,6 +763,7 @@ class TheRoutes(Base):
         self.assertFalse((await self.mail())["on"])
 
     async def test_list_read_edit_and_decide(self) -> None:
+        await self.speaker_agreed()
         listed = await self.client.get("/me/recaps")
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(len(listed.json()["recaps"]), 1)
@@ -729,7 +792,7 @@ class TheRoutes(Base):
         self.assertEqual((await self.client.post(f"/me/recaps/{self.ref}/zap")).status_code, 404)
         anonymous = httpx.AsyncClient(
             transport=self.client._transport,
-            base_url=API,
+            base_url="https://web-api.internal.test",
             headers=HEADERS,
         )
         self.assertEqual((await anonymous.get("/me/recaps")).status_code, 401)
@@ -751,9 +814,11 @@ class TheAudio(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.files = AudioFiles(Path(self.dir.name))
 
     async def asyncTearDown(self) -> None:
@@ -828,7 +893,9 @@ class TheAudio(Base):
         got = await self.client.get(f"/me/recaps/{self.other}/audio")  # Bob's campaign
         self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"))
         anonymous = httpx.AsyncClient(
-            transport=self.client._transport, base_url=API, headers=HEADERS
+            transport=self.client._transport,
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
         self.assertEqual((await anonymous.get(f"/me/recaps/{self.ref}/audio")).status_code, 401)
         await anonymous.aclose()
@@ -904,9 +971,11 @@ class TheAudio(Base):
         await self.make(self.one.id)
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.assertEqual((await client.get(f"/me/recaps/{self.ref}/audio")).json(), {"links": {}})
         await client.aclose()
 
@@ -1018,9 +1087,11 @@ class TheAudio(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         got = await client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_off"))
@@ -1071,9 +1142,11 @@ class TheAudio(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         got = await client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "not_in_plan"))
@@ -1179,9 +1252,11 @@ class TheApproval(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         async with self.db.guild(THURSDAY.id) as conn:  # the speaker is recorded (consent given)
             await conn.execute(
                 "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
@@ -1320,9 +1395,11 @@ class TheApproval(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as off:
-            off.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            off.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             url = f"/me/recaps/{self.ref}/approve"
             got = await off.post(url, json={"choice": "both"})
             self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_unavailable"))
@@ -1548,15 +1625,176 @@ class TheApproval(Base):
             payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=other), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=other),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         got = await self.approve("text")  # said yes for another outside company
         self.assertEqual((got.status_code, got.json()["error"]), (409, "stopped_recording"))
 
     async def test_the_door_has_one_caller(self) -> None:
         self.assertEqual(callers("dmbot_recap_approve"), {"schema.py", "web/recaps.py"})
+
+
+class TheApproveUnchecked(Base):
+    """A draft that waited 3 days for its check, approved as it is by its DM (#2305)."""
+
+    async def waiting(self, age: int, campaign: str | None = None, **kw: Any) -> None:
+        from dmbot.recaps.critics import CHECK_WAIT, Loop
+
+        await self.store.update(
+            THURSDAY.id, campaign or self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+            critics=Loop(waits=4, since=int(time.time()) - age, notes=("a note",)).to_json(), **kw,
+        )  # fmt: skip
+
+    async def approve(self, ref: str | None = None, *, hash_: str | None = None) -> dict[str, Any]:
+        """Press it with the hash of the words as they are now (what the page would have sent)."""
+        ref = ref or self.ref
+        if hash_ is None:
+            row = await self.read(ref)
+            hash_ = text_hash(row["title"], row["summary"])
+        return await approve_unchecked(self.web, self.session, ref, hash_)
+
+    async def read(self, ref: str) -> dict[str, Any]:
+        job = await self.state(self.one.id if ref == self.ref else self.two.id)
+        return {"title": job.title, "summary": job.summary}
+
+    async def test_a_dm_approves_a_draft_that_waited_3_days_and_the_worker_goes_on(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        seen = await self.approve()
+        job = await self.state(self.one.id)
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.approved_by), (True, ALICE.id))  # who is recorded
+        self.assertGreaterEqual(loop.approved_at, NOW)  # and when (the database's own clock)
+        self.assertEqual(loop.notes, ("a note", cr.APPROVED_UNCHECKED))  # earlier notes stay
+        self.assertEqual((job.last_error, job.next_at), ("", 0))  # the worker runs it now
+        self.assertEqual(job.state, "prose")  # (the worker makes it ready; nothing else changes)
+        self.assertEqual(seen["criticNotes"], list(loop.notes))
+        self.assertFalse(seen["canPost"])  # not postable until it is ready and approved as usual
+
+    async def test_before_3_days_it_is_refused_and_nothing_changes(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S - 600)
+        with self.assertRaises(RecapError) as caught:
+            await self.approve()
+        self.assertEqual(caught.exception.code, "not_yet")
+        self.assertFalse(cr.loop_from_json((await self.state(self.one.id)).critics).done)
+
+    async def test_a_recap_that_is_not_waiting_is_not_approved_this_way(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        for state in ("ready", "failed", "beats"):
+            await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+            await self.store.update(THURSDAY.id, self.one.id, 100, state=state)
+            with self.assertRaises(RecapError) as caught:
+                await self.approve()
+            self.assertEqual(caught.exception.code, "not_allowed", state)
+
+    async def test_a_loop_that_never_waited_is_not_approved(self) -> None:
+        from dmbot.recaps.critics import Loop
+
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="prose", critics=Loop(round=1).to_json()
+        )
+        with self.assertRaises(RecapError) as caught:
+            await self.approve()
+        self.assertEqual(caught.exception.code, "not_yet")
+
+    async def test_only_a_dm_of_the_campaign_may(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60, campaign=self.two.id)  # Bob's campaign
+        with self.assertRaises(RecapError) as caught:
+            await self.approve(self.other)  # Alice asks
+        self.assertEqual(caught.exception.code, "not_found")  # she cannot even see it
+        self.assertFalse(cr.loop_from_json((await self.state(self.two.id)).critics).done)
+
+    async def test_a_second_press_answers_the_same_and_does_nothing_more(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        first = await self.approve()
+        again = await self.approve()  # (a double click is not an error)
+        self.assertEqual(again["criticNotes"], first["criticNotes"])
+        notes = cr.loop_from_json((await self.state(self.one.id)).critics).notes
+        self.assertEqual(notes.count(cr.APPROVED_UNCHECKED), 1)
+
+    async def test_a_retry_clears_the_approval_with_the_rest(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        await self.approve()
+        await self.store.update(THURSDAY.id, self.one.id, 100, critics=None)  # Try again
+        self.assertEqual(cr.loop_from_json((await self.state(self.one.id)).critics).approved_by, 0)
+
+    async def test_a_draft_revised_since_the_page_showed_it_is_not_approved(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        shown = text_hash(*(await self.read(self.ref)).values())
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary="A different recap.")
+        with self.assertRaises(RecapError) as caught:
+            await self.approve(hash_=shown)  # the words the DM read are not the words now
+        self.assertEqual(caught.exception.code, "changed")
+        self.assertFalse(cr.loop_from_json((await self.state(self.one.id)).critics).done)
+        with self.assertRaises(RecapError) as bad:
+            await self.approve(hash_="")
+        self.assertEqual(bad.exception.code, "bad_hash")
+
+    async def test_a_recap_posted_or_dropped_or_posting_is_not_approved_this_way(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        for status in ("posting", "posted", "dropped"):
+            await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+            async with self.db.guild(THURSDAY.id) as conn:
+                await conn.execute("UPDATE recap_jobs SET status = %s", (status,))
+            with self.assertRaises(RecapError, msg=status):
+                await self.approve()
+
+    async def test_a_save_from_before_the_approval_changes_nothing_at_all(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        stale = cr.loop_from_json((await self.state(self.one.id)).critics)
+        await self.approve()
+        before = await self.state(self.one.id)
+        await self.store.update(  # the worker's waiting try, from before: its wait, its words
+            THURSDAY.id, self.one.id, 100, summary="Revised words.",
+            critics=replace(stale, waits=stale.waits + 1).to_json(),
+            next_at=NOW + 43200, last_error=cr.CHECK_WAIT,
+        )  # fmt: skip
+        after = await self.state(self.one.id)
+        self.assertEqual(
+            (after.summary, after.next_at, after.last_error, after.critics),
+            (before.summary, 0, "", before.critics),
+        )
+
+    async def test_a_write_by_a_step_that_began_before_the_approval_is_refused(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        await self.approve()
+        approved = cr.loop_from_json((await self.state(self.one.id)).critics).approved_at
+        await self.store.update_seen(THURSDAY.id, self.one.id, 100, 0, state="failed")
+        self.assertEqual((await self.state(self.one.id)).state, "prose")  # the stale step: nothing
+        await self.store.update_seen(THURSDAY.id, self.one.id, 100, approved, state="failed")
+        self.assertEqual(
+            (await self.state(self.one.id)).state, "failed"
+        )  # one that saw it: written
+
+    async def test_the_page_stops_offering_the_button_once_it_is_approved(self) -> None:
+        from dmbot.recaps import critics as cr
+
+        await self.waiting(cr.UNCHECKED_AFTER_S + 60)
+        self.assertTrue((await read_recap(self.web, self.session, self.ref))["canApproveUnchecked"])
+        done = await self.approve()
+        self.assertFalse(done["canApproveUnchecked"])
+        self.assertEqual(done["textHash"], text_hash(done["title"], done["summary"]))
 
 
 class TheAddressDoor(Base):
