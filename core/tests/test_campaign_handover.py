@@ -23,7 +23,7 @@ from dmbot.campaigns.store import (
 from dmbot.db import Database, drop_schema
 from dmbot.entitlements import RENEWAL_SLACK_SECONDS
 from dmbot.schema import MIGRATIONS
-from tests.pg import TEST_URL, DatabaseTest
+from tests.pg import TEST_URL, DatabaseTest, sender_pids
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 
 GUILD, OTHER_GUILD = 111, 222
@@ -265,8 +265,9 @@ class SiteDelivery(HandoverTest):
         try:
             await listener.execute("LISTEN dmbot_handover_offers")
             offer = await self.site_offer()
+            mine = sender_pids(self.db)
             gen = listener.notifies(timeout=1)  # already queued at commit
-            payloads = [n.payload async for n in gen]
+            payloads = [n.payload async for n in gen if n.pid in mine]
         finally:
             await listener.execute("UNLISTEN *")
             await self.db._pool.putconn(listener)
@@ -391,14 +392,20 @@ class Announcing(HandoverTest):
     async def heard(
         self, decide: Callable[[], Awaitable[object]], *, expect: int | None = None
     ) -> list[str]:
-        """What was announced. `expect`: stop once that many arrived (instead of waiting
-        out the timeout, about a second each)."""
+        """What this test's own connections announced (a parallel run's other workers notify on the
+        same channel with the same ids: `sender_pids`). `expect`: stop once that many arrived
+        (instead of waiting out the timeout, about a second each)."""
         listener = await self.db._pool.getconn()
         try:
             await listener.execute("LISTEN dmbot_handover_decided")
             await decide()
-            gen = listener.notifies(timeout=1, stop_after=expect)
-            payloads = [n.payload async for n in gen]
+            mine = sender_pids(self.db)
+            payloads: list[str] = []
+            async for n in listener.notifies(timeout=1):
+                if n.pid in mine:
+                    payloads.append(n.payload)
+                if expect is not None and len(payloads) >= expect:
+                    break
         finally:
             await listener.execute("UNLISTEN *")
             await self.db._pool.putconn(listener)

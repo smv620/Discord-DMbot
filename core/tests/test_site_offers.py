@@ -572,6 +572,48 @@ class Decisions(Harness):
         self.assertIn("didn't answer", text)
         self.assertEqual((guild.buyer.sent, guild.buyer.edits), ([], []))
 
+    async def test_a_moved_campaign_tells_both_people_and_a_failed_move_tells_the_owner(
+        self,
+    ) -> None:
+        # #2532 slice C: the old owner hears where it went; the new owner hears to run /dmbot start.
+        from dmbot.campaigns.moves import Moved
+
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        by_email = replace(
+            offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD, delivered_at=NOW
+        )
+        await self.offers._tell_moved(Moved("moved", by_email, "Frost*maiden"))
+        self.assertEqual(
+            self.guilds[GUILD].owner.sent,
+            [
+                handover.MOVED_OLD_OWNER.format(
+                    campaign="Frost\\*maiden", server="The Table", name="Bea"
+                )
+            ],
+        )
+        self.assertEqual(
+            self.guilds[OTHER_GUILD].buyer.sent,
+            [
+                handover.MOVED_NEW_OWNER.format(
+                    campaign="Frost\\*maiden", server="The Table", owner="Oskar"
+                )
+            ],
+        )
+        self.guilds[GUILD].owner.sent.clear()
+        self.guilds[OTHER_GUILD].buyer.sent.clear()
+        failed = replace(by_email, to_user_id=BUYER)
+        await self.offers._tell_moved(
+            Moved(
+                "reopened", failed, "Frost*maiden", "Your plan has no room for one more campaign."
+            )
+        )
+        # The owner is told it did not happen, never why; the person who accepted is told why.
+        [text] = self.guilds[GUILD].owner.sent
+        self.assertEqual(text, handover.MOVE_FAILED.format(campaign="Frost\\*maiden"))
+        self.assertNotIn("plan", text)
+        [theirs] = self.guilds[OTHER_GUILD].buyer.sent
+        self.assertIn("Your plan has no room for one more campaign.", theirs)
+
     async def test_declined_tells_the_owner(self) -> None:
         self.decided("declined")
         await self.decide_quietly(GUILD, 1)

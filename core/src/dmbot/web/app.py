@@ -734,6 +734,7 @@ def create_app(
             "no_slot": (402, "no_free_slot"),
             "owner": (403, "owner"),
             "bad_server": (422, "bad_server"),
+            "shares_rules": (409, "shares_rules"),
         }
         status, code = refusals.get(outcome, (409, "ended"))
         raise HTTPException(status_code=status, detail=code)

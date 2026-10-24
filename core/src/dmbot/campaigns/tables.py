@@ -148,3 +148,22 @@ def backed_up() -> frozenset[str]:
     return frozenset(
         t for tables in (*SECTION_TABLES.values(), *PART_TABLES.values()) for t in tables
     )
+
+
+# Columns of a campaign's tables that hold an id from one Discord server (a channel or a message),
+# with what a move does to them. Looked up through the new server's own guild they find nothing, so
+# the ones left alone are harmless until the DM screen is made again with /dmbot start; the others
+# are cleared so nothing tries to edit a message that is not there.
+SERVER_BOUND_COLUMNS: dict[str, str] = {
+    "campaigns.*_channel_id": "cleared by the move (and the pinned message id with them)",
+    "game_clocks.channel_id": "cleared by the move",
+    "game_clocks.message_id": "cleared by the move",
+    "game_clocks.players_channel_id": "cleared by the move",
+    "game_clocks.players_message_id": "cleared by the move",
+    "map_notes.message_id": "set to 0 by the move, which is what a restored note has",
+    "npcs_channel_messages.message_id": "rows removed by the move; the list is posted again",
+    "recap_holds.channel_id": "left: the new server finds no such channel until /dmbot start",
+    "active_sessions.screen_channel_id": "none: a campaign with a running session does not move",
+    "active_sessions.voice_channel_id": "none: a campaign with a running session does not move",
+    "campaign_handover_offers.message_id": "none: the offer is removed by the move",
+}

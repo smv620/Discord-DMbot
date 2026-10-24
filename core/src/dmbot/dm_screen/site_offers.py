@@ -28,9 +28,15 @@ import discord
 
 from dmbot.campaigns import Campaign, offer_notify
 from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
+from dmbot.campaigns.moves import HandoverMover, Moved
 from dmbot.dm_screen.handover import (
     ACCEPTED,
     DECLINED,
+    MOVE_ENDED_NEW_OWNER,
+    MOVE_FAILED,
+    MOVE_FAILED_NEW_OWNER,
+    MOVED_NEW_OWNER,
+    MOVED_OLD_OWNER,
     OFFER_EXPIRED,
     SCREEN_ACCEPTED,
     TOLD_ACCEPTED,
@@ -117,6 +123,7 @@ class SiteOffers:
         spawn: Callable[[Awaitable[None], str], object],
         deliver: Deliver = _deliver,
         post: Callable[[int, str], Awaitable[object]] | None = None,
+        mover: HandoverMover | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], int] = lambda: int(time.time()),
         clock: Callable[[], float] = time.monotonic,
@@ -128,6 +135,9 @@ class SiteOffers:
         self._spawn = spawn
         self._deliver = deliver
         self._post = post  # a message in a channel: the #dm-screen note on an accept
+        self._mover = mover  # moves a campaign to the new owner's other server (#2532, slice C)
+        if mover is not None:
+            mover.told = self._tell_moved
         self._sleep = sleep
         self._now = now
         self._clock = clock
@@ -143,6 +153,89 @@ class SiteOffers:
             lambda: self._spawn(self.sweep(), "offer-sweep"),
             lambda ids: self._spawn(self.send(*ids), "site-offer"),
         )
+
+    async def follow_moves(self, listen: Listen) -> None:
+        """Move a campaign when its new owner chose another server (#2532, slice C), until
+        cancelled. On every (re)connection a sweep takes up the ones announced meanwhile."""
+        await self._follow(
+            listen,
+            offer_notify.MOVE,
+            lambda: self._spawn(self.sweep_moves(), "move-sweep"),
+            lambda ids: self._spawn(self.move(*ids), "campaign-move"),
+        )
+
+    async def move(self, guild_id: int, offer_id: int) -> None:
+        """Move one campaign (the bot process of its server does it). Never raises."""
+        if self._mover is None:
+            return
+        await self._wait_until_ready()
+        try:
+            await self._mover.move(guild_id, offer_id)
+        except Exception as exc:  # the type only
+            log.warning("A campaign move failed to start: %s", type(exc).__name__)
+
+    async def sweep_moves(self) -> None:
+        """Take up every move that waits in this process's servers. Never raises."""
+        if self._mover is None:
+            return
+        await self._wait_until_ready()
+        for guild_id in list(self._guild_ids()):
+            try:
+                waiting = await self._mover.waiting(guild_id)
+            except Exception as exc:
+                log.warning("Couldn't look for campaign moves: %s", type(exc).__name__)
+                continue
+            for offer_id in waiting:
+                await self.move(guild_id, offer_id)
+
+    async def _tell_moved(self, moved: Moved) -> None:
+        """Tell the two people how the move went (best effort, after it is all over)."""
+        offer = moved.offer
+        old = self._get_guild(offer.guild_id)
+        target = offer.move_to_guild_id
+        new = None if target is None else self._get_guild(target)
+        name = md(moved.campaign_name)
+        if moved.result == "reopened" and old is not None:
+            with contextlib.suppress(discord.HTTPException):
+                member = await _member(old, offer.from_user_id)
+                await member.send(MOVE_FAILED.format(campaign=name), allowed_mentions=NO_PINGS)
+            if new is not None and offer.to_user_id:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(new, offer.to_user_id)
+                    await member.send(
+                        MOVE_FAILED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                        allowed_mentions=NO_PINGS,
+                    )
+        elif moved.result == "ended" and new is not None and offer.to_user_id:
+            # The owner changed meanwhile, so the former owner has nothing to hear: only the person
+            # who accepted is told, and the offer is over.
+            with contextlib.suppress(discord.HTTPException):
+                member = await _member(new, offer.to_user_id)
+                await member.send(
+                    MOVE_ENDED_NEW_OWNER.format(campaign=name, reason=moved.reason),
+                    allowed_mentions=NO_PINGS,
+                )
+        elif moved.result == "moved":
+            if old is not None and new is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(old, offer.from_user_id)
+                    await member.send(
+                        MOVED_OLD_OWNER.format(
+                            campaign=name,
+                            server=md(new.name),
+                            name=md(offer.to_name or "The new owner"),
+                        ),
+                        allowed_mentions=NO_PINGS,
+                    )
+            if new is not None:
+                with contextlib.suppress(discord.HTTPException):
+                    member = await _member(new, offer.to_user_id)
+                    await member.send(
+                        MOVED_NEW_OWNER.format(
+                            campaign=name, server=md(new.name), owner=md(offer.from_name)
+                        ),
+                        allowed_mentions=NO_PINGS,
+                    )
 
     async def follow_decided(self, listen: Listen) -> None:
         """Tell the other person when an offer is answered or taken back on the website
@@ -278,6 +371,9 @@ class SiteOffers:
         for offer_id in offer_ids:
             await self.send(guild_id, offer_id)
         await self.end_expired(guild_id)
+        if self._mover is not None:  # a move whose announcement was missed
+            for offer_id in await self._mover.waiting(guild_id):
+                await self.move(guild_id, offer_id)
 
     async def end_expired(self, guild_id: int) -> None:
         """Tell the owner of each offer whose days are up, and take the buttons off the
