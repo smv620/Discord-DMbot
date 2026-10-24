@@ -35,6 +35,7 @@ from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
+from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
     all_names,
@@ -115,6 +116,7 @@ from dmbot.web.recaps import (
     read_recap,
     redo_recap,
     share_recap,
+    upload_recap,
 )
 from dmbot.web.return_path import safe_return_path
 from dmbot.web.sessions import Session
@@ -154,6 +156,9 @@ class _Refused(Exception):
 
 def _system_clock() -> int:
     return int(time.time())
+
+
+UPLOAD_BODY_MAX = 256 * 1024  # 50,000 characters of any script, in JSON (#2609)
 
 
 def create_app(
@@ -750,6 +755,12 @@ def create_app(
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
         "needs_confirm": (409, "needs_confirm"),  # it has a recap: ask once, send `replace` (#2608)
         "busy": (409, "busy"),  # being written or sent now (#2608)
+        # Adding a recap written by someone at the table (#2609)
+        "needs_rights": (409, "needs_rights"),  # the campaign's first: ask once, send `rights`
+        "not_a_google_doc": (422, "not_a_google_doc"),
+        "doc_not_shared": (422, "doc_not_shared"),
+        "doc_too_big": (413, "doc_too_big"),
+        "doc_unreachable": (422, "doc_unreachable"),
         "no_lines": (409, "no_lines"),  # the session's transcript is gone: upload one (#2608)
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
         "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
@@ -810,6 +821,7 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    upload_limit = RateLimit(60, count=6)  # recaps written by the table, added on the page (#2609)
     name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
     voice_types = voice.TYPES
@@ -978,6 +990,26 @@ def create_app(
             raise HTTPException(status_code=422, detail="bad_action")
         try:
             return await redo_recap(db, session, ref, replace=replace)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/recaps/upload")
+    async def me_recap_upload(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Add a recap written by someone at the table as a session's recap (#2609). Body:
+        `{"session": <Unix seconds the session began>, "writtenBy": "Mira", "text": "..."}` or
+        `"link": "<a shared Google Doc>"` in place of `text`; optional `"title"`; `"replace": true`
+        once the DM said yes to replacing the session's recap (the old one is kept as an earlier
+        version); `"rights": true` once for the campaign ("written by someone at your table, and
+        you have their OK to use it"). A `.txt` or `.md` file is read by the page and sent as
+        `text`. 409 `needs_rights`, `needs_confirm`, `busy`; 422 `bad_text`; 413 `too_big`. The
+        recap comes back as in `GET /me/recaps/{ref}`, with `writtenBy` set."""
+        session, _token = signed
+        if upload_limit.take(f"recap-upload:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request, UPLOAD_BODY_MAX)
+        try:
+            return await upload_recap(db, session, ref, body, read_link=import_link.read_doc)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
