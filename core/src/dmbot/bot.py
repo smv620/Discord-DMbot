@@ -57,7 +57,7 @@ from dmbot import (
     usage,
 )
 from dmbot.account_move import AccountMoves
-from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature
+from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, GeminiClient
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
@@ -1294,8 +1294,19 @@ class DMBot(commands.AutoShardedBot):
             )
         else:
             log.info("AI is off (no ANTHROPIC_API_KEY)")
+        gemini = (
+            GeminiClient(settings.gemini_key, watch=self.ai_watch)
+            if settings.ai_provider_creative == "gemini" and settings.gemini_key
+            else None
+        )
+        if gemini is not None:
+            log.warning(
+                "The recap writer is %s (Gemini): GEMINI_API_KEY must belong to a Google account "
+                "with billing on, or Google may use the recaps' text (the free tier's terms).",
+                settings.ai_models.creative,
+            )
         self.ai_client = (
-            AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch)
+            AnthropicClient(settings.ai_key, settings.ai_models, watch=self.ai_watch, gemini=gemini)
             if settings.ai_key
             else None
         )
@@ -12863,6 +12874,27 @@ class DMBot(commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't drop old line-fix suggestions")
 
+    async def _settle_topics(self, table: Table, session_id: str) -> None:
+        """The off-topic filter leans to keeping (#2567): after the session, what it was not sure
+        about is kept. Counts go in the log (no words), so it can be tuned on real sessions. Never
+        stops the end of the session."""
+        if self.transcripts is None:
+            return
+        try:
+            done = await self.transcripts.settle_topics(
+                table.guild_id, session_id, {table.dm_user_id, *table.dm_user_ids}
+            )
+        except Exception:
+            log.exception("Couldn't settle the off-topic labels")
+            return
+        log.info(
+            "Off-topic filter: kept %d, turned back %d, left out %d, put back by a DM %d",
+            done.kept,
+            done.turned_back,
+            done.left_out,
+            done.put_back,
+        )
+
     async def finish_transcript(self, table: Table, ended_at: int | None = None) -> int:
         """After a session: save the last lines, mark it ended, and send the DM(s) and
         everyone recorded a private message with a download button. Returns how many
@@ -12885,6 +12917,7 @@ class DMBot(commands.AutoShardedBot):
                 log.exception("Couldn't finish the stored transcript")
                 return 0
             await self._drop_old_suggestions(table, session_id)
+            await self._settle_topics(table, session_id)
             if session is None or session.lines == 0:
                 return 0
             people = {table.dm_user_id, *table.dm_user_ids, *session.speakers}

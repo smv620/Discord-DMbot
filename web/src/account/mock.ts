@@ -30,6 +30,7 @@ import type {
   TranscriptVersion,
   WebEdge,
   WebGraph,
+  WebGroup,
   WebLink,
   WebLinkChange,
   WebNode,
@@ -523,7 +524,7 @@ interface WebState {
   nextLink: number;
 }
 
-function startWeb(big: boolean): WebState {
+function startWeb(big: boolean, lonely = false): WebState {
   const base = startNames();
   const nodes: WebNode[] = base.map((n) => ({ id: n.id, name: n.name, kind: n.kind, secret: n.secret }));
   if (big) {
@@ -563,6 +564,19 @@ function startWeb(big: boolean): WebState {
   // The first the party is wrong about (full view says so); the second is only a hunch.
   if (plain[0]) plain[0].belief = { confidence: 0.6, status: "Party theory", contradicted: true };
   if (plain[1]) plain[1].belief = { confidence: 0.3, status: "Accusation" };
+  // A young campaign (#2632): most names have no connection yet, and a second small group stands apart.
+  if (lonely) {
+    const extra: WebNode[] = [
+      { id: "lone-mill", name: "Old Mill", kind: "place", secret: false },
+      { id: "lone-tree", name: "Hollow Tree", kind: "place", secret: false },
+      { id: "lone-venn", name: "Brother Venn", kind: "npc", secret: false },
+      { id: "lone-wardens", name: "The Wardens", kind: "group", secret: false },
+      { id: "pair-brask", name: "Brask", kind: "npc", secret: false },
+      { id: "pair-ford", name: "Tolle Ford", kind: "place", secret: false },
+    ];
+    nodes.push(...extra);
+    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "ab" });
+  }
   return { nodes, links, nextLink: links.length + 1 };
 }
 
@@ -582,6 +596,7 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
     address: "dm@example.com",
     source: scenario === "table" ? "payment" : "signin",
@@ -603,7 +618,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const webs = new Map<string, WebState>();
   const web = (ref: string): WebState => {
     let found = webs.get(ref);
-    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref))));
+    if (!found) webs.set(ref, (found = startWeb(/\.web-big$/.test(ref), /\.web-lonely$/.test(ref))));
     return found;
   };
   /** Edges from connections: one per pair, labelled with the newest known connection (the newest at all
@@ -1047,6 +1062,60 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       return webGraphOf(ref, query);
     },
+    // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
+    async webOverview(ref, query) {
+      calls.push(`webOverview:${ref}${query.view ? `:view=${query.view}` : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const dm = view === "dm";
+      const visibility = webVisibility(ref);
+      if (!dm && query.view === "full" && visibility === "private") throw new ApiError("peek-off");
+      const all = dm ? query.view !== "players" : query.view === "full";
+      const state = web(ref);
+      const seen = state.nodes.filter((n) => all || (!n.secret && n.revealed !== false));
+      const ids = new Set(seen.map((n) => n.id));
+      const usable = state.links.filter(
+        (l) => ids.has(l.a) && ids.has(l.b) && (all || (!l.secret && l.revealed !== false)),
+      );
+      const degree = new Map<string, number>(seen.map((n) => [n.id, 0]));
+      for (const l of usable) {
+        degree.set(l.a, (degree.get(l.a) ?? 0) + 1);
+        degree.set(l.b, (degree.get(l.b) ?? 0) + 1);
+      }
+      const nodeOf = (n: WebNode): WebNode =>
+        all ? { ...n, revealed: n.revealed !== false } : { id: n.id, name: n.name, kind: n.kind };
+      const left = new Set(seen.filter((n) => (degree.get(n.id) ?? 0) > 0).map((n) => n.id));
+      const groups: WebGroup[] = [];
+      while (left.size > 0) {
+        const start = [...left][0]!;
+        const part = new Set([start]);
+        const queue = [start];
+        for (let i = 0; i < queue.length; i += 1) {
+          for (const l of usable) {
+            const there = l.a === queue[i] ? l.b : l.b === queue[i] ? l.a : null;
+            if (there !== null && !part.has(there)) {
+              part.add(there);
+              queue.push(there);
+            }
+          }
+        }
+        part.forEach((id) => left.delete(id));
+        const centre = [...part].sort((x, y) => (degree.get(y) ?? 0) - (degree.get(x) ?? 0))[0]!;
+        groups.push({ center: centre, centerName: state.nodes.find((n) => n.id === centre)!.name, size: part.size });
+      }
+      groups.sort((x, y) => y.size - x.size);
+      const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
+      return {
+        counts: { names: seen.length, connections: usable.length, connectedNames: seen.length - tray.length, notConnected: tray.length },
+        tray,
+        groups,
+        truncated: false,
+        canEdit: dm && all,
+        view: all ? "full" : "players",
+      };
+    },
     async webSize(ref, query: WebQuery) {
       calls.push(`webSize:${ref}:center=${query.center ?? ""}:hops=${query.hops}`);
       await reachable();
@@ -1353,7 +1422,38 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           next: null,
           transcriptsDeletedAt: 1_792_500_000,
         };
-      return mockTranscript(number, version);
+      return mockTranscript(number, version, putBackNow);
+    },
+    async transcriptStretch(campaignRef, number, skip) {
+      calls.push(`transcriptStretch:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (number !== 2 || skip.speaker !== MOCK_SKIP.speaker) throw new ApiError("not-found");
+      // (a line with markup in it: it must be shown as text, never as HTML)
+      return [
+        { when: "0:01:02", who: "Mia", text: "did you see the match" },
+        { when: "0:01:05", who: "Ash", text: "<b>no</b> I missed it" },
+        { when: "0:01:09", who: "Mia", text: "unreal" },
+      ];
+    },
+    // (a campaign address ending `.player` is a player's: the API refuses them both, as it refuses anyone who isn't a DM)
+    async transcriptPutBack(campaignRef, number, skip) {
+      calls.push(`transcriptPutBack:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const was = putBackNow;
+      putBackNow = true;
+      return was ? 0 : 3;
+    },
+    async transcriptLeaveOut(campaignRef, number, skip) {
+      calls.push(`transcriptLeaveOut:${campaignRef}:${number}:${skip.speaker}:${skip.fromMs}:${skip.toMs}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const was = putBackNow;
+      putBackNow = false;
+      return was ? 3 : 0;
     },
     async transcriptFile(campaignRef, number, version) {
       calls.push(`transcriptFile:${campaignRef}:${number}:${version}`);
@@ -2001,8 +2101,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
 }
 
 /** A pretend transcript in the shape the API gives: the file's header lines and its lines. */
-function mockTranscript(number: number, version: TranscriptVersion) {
+/** Session 2's cleaned reading has one left-out stretch (#2568): its marker is the third line. */
+const MOCK_SKIP = { line: 2, speaker: 1, fromMs: 62_000, toMs: 76_000, seconds: 14, lines: 3 };
+
+function mockTranscript(number: number, version: TranscriptVersion, putBack = false) {
   const heard = version === "heard";
+  const skipped = number === 2 && !heard;
   return {
     number,
     version,
@@ -2020,7 +2124,10 @@ function mockTranscript(number: number, version: TranscriptVersion) {
         ? "[0:00:40] (Speaker 2): Kazeth draws his sword."
         : "[0:00:40] (Speaker 2): Ka'zeth draws his sword.",
       ...(heard ? ["[0:01:02] (Speaker 1) {non-game_content}: did you see the match"] : []),
+      ...(skipped && !putBack ? ["[0:01:02] (Speaker 1) [14s of off-topic chat skipped]"] : []),
+      ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
+    ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
   };
 }
 

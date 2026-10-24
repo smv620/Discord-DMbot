@@ -21,7 +21,7 @@ from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, FakeDiscord, settings
 from tests.test_web_recording import HEADERS
 from tests.test_web_role import ensure_web_role, web_url
 
@@ -229,7 +229,9 @@ class Route(DatabaseTest):
             clock=lambda: self.now,
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         from urllib.parse import parse_qs, urlsplit
 
@@ -274,7 +276,7 @@ class Route(DatabaseTest):
         plain = await self.client.put("/me/improvement", json={"improve": False})
         self.assertEqual(plain.status_code, 403)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as stranger:
             self.assertEqual((await stranger.get("/me/improvement")).status_code, 401)
             put = await stranger.put("/me/improvement", json={"improve": False}, headers=HEADERS)
