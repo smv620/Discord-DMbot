@@ -27,6 +27,8 @@ from dmbot.web.sessions import Session
 
 MAX_HOPS = 4
 MAX_NODES = 1000  # the most names one answer draws, then `truncated`
+OVERVIEW_NAMES = 5000  # the most names the overview lists, then `truncated` (the tray is not drawn)
+OVERVIEW_PAIRS = 20000  # the most connected pairs it reads, in a fixed order, then `truncated`
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -196,9 +198,10 @@ TRAY_KIND_ORDER = {"place": 0, "npc": 1, "player_character": 2, "character": 3, 
 def overview_of(got: dict[str, Any]) -> dict[str, Any]:
     """The door's names and pairs shaped for the page (#2632): the counts for the line at the top,
     the names with no connection yet (the tray, by kind then name), and every group of two or more
-    linked names with the name to centre it on (its most connected one, the way the graph picks its
-    centre). Pure: the groups are found here, so the door stays a plain read. The tray lists names
-    only, so it is not drawn and does not count against `MAX_NODES`."""
+    linked names with the name to centre it on (its most connected one, counting the names it is
+    joined to; the graph door counts connections, so a tie can break differently). Pure: the
+    groups are found here, so the door stays a plain read. The tray lists names only, so it is not
+    drawn and does not count against `MAX_NODES`."""
     names: list[dict[str, Any]] = [
         {k: v for k, v in n.items() if k != "secret" or v is not None} for n in got["names"]
     ]
@@ -248,7 +251,8 @@ def overview_of(got: dict[str, Any]) -> dict[str, Any]:
         },
         "tray": tray,
         "groups": groups,
-        "truncated": int(got["total"]) > len(names),
+        # either cap cut something: the numbers are then a little low, and the page says so
+        "truncated": int(got["total"]) > len(names) or bool(got.get("pairsMore")),
         "canEdit": bool(got["canEdit"]),
         "view": got["view"],
         "visibility": got["visibility"],
@@ -257,7 +261,13 @@ def overview_of(got: dict[str, Any]) -> dict[str, Any]:
 
 
 async def read_overview(
-    db: Database, session: Session, ref: str, *, view: str | None = None
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    view: str | None = None,
+    max_names: int = OVERVIEW_NAMES,
+    max_pairs: int = OVERVIEW_PAIRS,
 ) -> dict[str, Any]:
     """Every name the caller may see, which are connected and in which groups (#2632): the numbers
     for the Story graph's count line, its "Not connected yet" tray and its other groups. The same
@@ -275,12 +285,13 @@ async def read_overview(
                 "SELECT set_config('dmbot.web_visit', %s, true)", (visit_of(session),)
             )
         cur = await conn.execute(
-            "SELECT dmbot_web_graph_overview(%s, %s) AS r", (guild_id, campaign_id)
+            "SELECT dmbot_web_graph_overview(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, max_names, max_pairs),
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
-    if got is not None and got["status"] == "peek_off":
-        raise RecapError("peek_off")
+    if got is not None and got["status"] in ("peek_off", "bad_visit"):
+        raise RecapError(str(got["status"]))
     if got is None or got["status"] != "ok":
         raise RecapError("not_found")
     return overview_of(dict(got))

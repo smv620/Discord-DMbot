@@ -26,15 +26,15 @@ export const webPage = {
   truncated: "Some names are left out because there are too many. Choose a smaller number to see the middle clearly.",
   // The overview above the map (#2632): every name, not only the ones drawn.
   overviewLine: (names: number, connections: number): string =>
-    `${names} ${names === 1 ? "name" : "names"} · ${connections} ${connections === 1 ? "connection" : "connections"}`,
-  overviewTruncated: "Only the first names are counted here because there are so many.",
+    `${names} ${names === 1 ? "name" : "names"}, ${connections} ${connections === 1 ? "connection" : "connections"}`,
+  overviewTruncated: "This campaign is very large, so the lists below show only the first part of it.",
   trayHeading: "Not connected yet",
-  trayLead: "These names have no connection yet. Pick one to see it.",
+  trayLead: "These names are not linked to anything yet. Tap one to check.",
   trayKind: (label: string, n: number): string => `${label} (${n})`,
   noConnectionsYet: (name: string): string => `${name} has no connections yet.`,
   groupsHeading: "Other groups of linked names",
-  groupsLead: "Names joined to each other form a group. Pick one to see its group.",
-  groupButton: (centre: string, size: number): string => `${centre} and ${size - 1} more`,
+  groupsLead: "Names linked to each other form a group. Tap a group to put it in the middle of the map.",
+  groupButton: (centre: string, size: number): string => `${centre}'s group (${size} names)`,
   groupHere: "shown now",
   howMany: (names: number, lines: number): string =>
     `${names} ${names === 1 ? "name" : "names"}, ${lines} ${lines === 1 ? "line" : "lines"}`,

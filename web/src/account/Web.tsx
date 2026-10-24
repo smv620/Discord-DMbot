@@ -113,6 +113,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       if (kind === "peek-off") {
         // The DM turned peeking off while it was on: back to the normal view, with the reason.
         switchTo(undefined);
+        setOverview(null);
+        void loadOverview();
         setMeta((now) => ({ ...now, visibility: "private", canPeek: false }));
         setNews({ ok: false, text: words.errors["peek-off"]!, n: ++sayings.current });
         await load(at, steps, true);
@@ -133,6 +135,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     switchTo(next);
     setLine(null);
     setAlone(null);
+    setOverview(null); // never leave the other view's names on screen while this one loads
     void load(center, hops, true);
     void loadOverview();
   }
@@ -201,6 +204,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   }
 
   useEffect(() => {
+    setOverview(null); // (another campaign's names are never shown under this one)
+    setAlone(null);
     void load(null, DEFAULT_HOPS);
     void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.

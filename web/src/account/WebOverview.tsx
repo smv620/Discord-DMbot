@@ -35,7 +35,7 @@ export default function WebOverview({
   const picked = tray.find((n) => n.id === alone);
   return (
     <section class="stack web-overview" aria-labelledby="web-overview-line">
-      <p id="web-overview-line" role="status">
+      <p id="web-overview-line">
         <strong>{words.overviewLine(counts.names, counts.connections)}</strong>
       </p>
       {overview.truncated && <p class="note">{words.overviewTruncated}</p>}
@@ -64,11 +64,15 @@ export default function WebOverview({
         </div>
       )}
       {tray.length > 0 && (
-        <div class="stack" aria-labelledby="web-tray-heading" role="group">
+        <section class="stack" aria-labelledby="web-tray-heading">
           <h2 id="web-tray-heading" class="small">
             {words.trayHeading} ({tray.length})
           </h2>
           <p class="small muted">{words.trayLead}</p>
+          {/* Right under the lead, so a tap on a name below is answered where the person is looking. */}
+          <p class="small" role="status">
+            {picked ? words.noConnectionsYet(picked.name) : ""}
+          </p>
           {kinds.map((k) => (
             <div key={k.key} class="stack">
               <h3 class="small">{words.trayKind(kindWords(k.key), k.names.length)}</h3>
@@ -91,11 +95,8 @@ export default function WebOverview({
               </ul>
             </div>
           ))}
-        </div>
+        </section>
       )}
-      <p class="small" role="status">
-        {picked ? words.noConnectionsYet(picked.name) : ""}
-      </p>
     </section>
   );
 }

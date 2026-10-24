@@ -3292,7 +3292,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ),
     # Every name the caller may see and which pairs are connected, for the Story graph's count line,
     # its "Not connected yet" tray and its other groups (#2632).
-    ("dmbot_web_graph_overview", "dmbot_web_graph_overview(BIGINT, TEXT)"),
+    ("dmbot_web_graph_overview", "dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -12378,6 +12378,8 @@ TOPIC_CHOICES = """
 # that door's own text (the checks, the view, `vis` and `rel_ids`), so the two can never disagree
 # about who sees what. A test compares them. Read-only: no row changes, no table, nothing in a
 # backup.
+# (Frozen at the graph door's text as of RELATION_DIRECTIONAL: a later migration that redefines
+# `dmbot_web_relationships` must change what this slices from, or the two doors would disagree.)
 _overview_door = RELATION_DIRECTIONAL[
     RELATION_DIRECTIONAL.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships(") :
 ]
@@ -12389,7 +12391,9 @@ _overview_checks = _overview_door[
 assert "vis := ARRAY(" in _overview_checks and "rel_ids := ARRAY(" in _overview_checks
 GRAPH_OVERVIEW = (
     """
-    CREATE OR REPLACE FUNCTION dmbot_web_graph_overview(g BIGINT, c TEXT) RETURNS JSONB
+    CREATE OR REPLACE FUNCTION dmbot_web_graph_overview(
+        g BIGINT, c TEXT, cap_names INT, cap_pairs INT
+    ) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         is_dm BOOLEAN;
@@ -12408,7 +12412,7 @@ GRAPH_OVERVIEW = (
             'visibility', screen, 'canPeek', is_dm OR screen IN ('peek', 'open'),
             'total', COALESCE(array_length(vis, 1), 0),
             'connections', COALESCE(array_length(rel_ids, 1), 0),
-            -- the names, as the graph's nodes tell them; at most 5000 (`total` says if more)
+            -- the names, as the graph's nodes tell them; at most `cap_names` (`total` says if more)
             'names', COALESCE((
                 SELECT jsonb_agg(x.j ORDER BY x.n, x.id) FROM (
                     SELECT e.id, lower(e.name) AS n, jsonb_build_object(
@@ -12428,26 +12432,35 @@ GRAPH_OVERVIEW = (
                         AS j
                     FROM memory_entities e
                     WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (vis)
-                    ORDER BY lower(e.name), e.id LIMIT 5000) x), '[]'::jsonb),
-            -- which two names each visible connection joins, once for each pair
+                    ORDER BY lower(e.name), e.id LIMIT GREATEST(cap_names, 1)) x), '[]'::jsonb),
+            -- which two names each visible connection joins, once for each pair, in a fixed order
+            -- so a cut list is the same on every load; `pairsMore` says if pairs were cut
             'pairs', COALESCE((
-                SELECT jsonb_agg(q.p) FROM (
-                    SELECT DISTINCT jsonb_build_array(LEAST(r.subject_id, r.object_id),
+                SELECT jsonb_agg(q.p ORDER BY q.a, q.b) FROM (
+                    SELECT DISTINCT LEAST(r.subject_id, r.object_id) AS a,
+                                    GREATEST(r.subject_id, r.object_id) AS b,
+                                    jsonb_build_array(LEAST(r.subject_id, r.object_id),
                                                       GREATEST(r.subject_id, r.object_id)) AS p
                     FROM memory_relations r
                     WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)
-                    LIMIT 20000) q), '[]'::jsonb));
+                    ORDER BY 1, 2 LIMIT GREATEST(cap_pairs, 1)) q), '[]'::jsonb),
+            'pairsMore', (
+                SELECT count(*) > GREATEST(cap_pairs, 1) FROM (
+                    SELECT DISTINCT LEAST(r.subject_id, r.object_id),
+                                    GREATEST(r.subject_id, r.object_id)
+                    FROM memory_relations r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (rel_ids)) d));
     END
     $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_graph_overview(BIGINT, TEXT)'
+            'ALTER FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_graph_overview(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT) FROM PUBLIC;
     """
 )
 

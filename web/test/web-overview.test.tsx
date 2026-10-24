@@ -24,8 +24,7 @@ describe("the count line", () => {
   it("says every name and every connection, not only the ones drawn", async () => {
     const api = await open();
     const overview = await api.webOverview!("100.cmp1.web-lonely", {});
-    const line = await screen.findByText(w.overviewLine(overview.counts.names, overview.counts.connections));
-    expect(line.closest("[role=status]")).toBeTruthy();
+    expect(await screen.findByText(w.overviewLine(overview.counts.names, overview.counts.connections))).toBeTruthy();
     expect(overview.counts.names).toBeGreaterThan(overview.counts.connectedNames); // (some have no connection)
   });
 });
@@ -33,7 +32,7 @@ describe("the count line", () => {
 describe("the Not connected yet tray", () => {
   it("lists the names with no connection, by kind, and says so when one is picked", async () => {
     await open();
-    const tray = await screen.findByRole("group", { name: new RegExp(w.trayHeading) });
+    const tray = await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
     expect(within(tray).getByText(w.trayLead)).toBeTruthy();
     expect(within(tray).getByRole("button", { name: "Old Mill" })).toBeTruthy();
     expect(within(tray).getByRole("button", { name: "Brother Venn" })).toBeTruthy();
@@ -49,7 +48,7 @@ describe("the Not connected yet tray", () => {
     const api = await open();
     const overview = await api.webOverview!("100.cmp1.web-lonely", {});
     const connected = new Set(overview.groups.map((g) => g.center));
-    const tray = screen.getByRole("group", { name: new RegExp(w.trayHeading) });
+    const tray = screen.getByRole("region", { name: new RegExp(w.trayHeading) });
     for (const id of connected) {
       const name = overview.groups.find((g) => g.center === id)!.centerName;
       expect(within(tray).queryByRole("button", { name })).toBeNull();

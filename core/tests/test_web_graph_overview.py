@@ -5,6 +5,7 @@ invented names throughout."""
 
 from __future__ import annotations
 
+import unittest
 from typing import Any
 
 from dmbot.memory.models import DM as DM_SOURCE
@@ -155,3 +156,116 @@ class Refusals(Overview):
         self.assertEqual(got["groups"], [])
         self.assertEqual(got["counts"]["connections"], 0)
         self.assertEqual(got["counts"]["notConnected"], got["counts"]["names"])
+
+
+class TheCaps(Overview):
+    async def test_a_name_cap_says_it_cut_and_keeps_the_true_totals(self) -> None:
+        await self.lonely(10)
+        got = await relationships.read_overview(self.web, self.session, self.cref, max_names=6)
+        self.assertTrue(got["truncated"])
+        self.assertEqual(got["counts"]["names"], 15)  # (the true number, not the six listed)
+        self.assertLessEqual(len(got["tray"]) + got["counts"]["connectedNames"], 6)
+        again = await relationships.read_overview(self.web, self.session, self.cref, max_names=6)
+        self.assertEqual(got, again)  # the same names are kept on every load
+
+    async def test_a_pair_cap_says_it_cut_and_keeps_the_same_pairs(self) -> None:
+        first = await relationships.read_overview(self.web, self.session, self.cref, max_pairs=2)
+        second = await relationships.read_overview(self.web, self.session, self.cref, max_pairs=2)
+        self.assertTrue(first["truncated"])  # four connections, two kept
+        self.assertEqual(first, second)
+        whole = await self.overview()
+        self.assertFalse(whole["truncated"])
+
+    async def test_two_connections_between_a_pair_and_one_each_way_make_one_pair(self) -> None:
+        await self.link("enemy_of", self.mira, self.keep, "second")
+        await self.link("owns", self.keep, self.mira, "reverse")
+        got = await self.overview()
+        self.assertEqual(got["counts"]["connections"], 6)  # connections, counted one by one
+        self.assertEqual([g["size"] for g in got["groups"]], [4])  # still one group of four
+
+    async def test_a_campaign_with_no_names_is_empty_lists(self) -> None:
+        await self.sql("DELETE FROM memory_relations WHERE guild_id = %s", self.g)
+        await self.sql("DELETE FROM memory_entities WHERE guild_id = %s", self.g)
+        got = await self.overview()
+        self.assertEqual((got["tray"], got["groups"]), ([], []))
+        self.assertEqual(got["counts"], {
+            "names": 0, "connections": 0, "connectedNames": 0, "notConnected": 0,
+        })  # fmt: skip
+
+
+class WhatAPlayerNeverGets(Overview):
+    async def test_the_overview_and_the_graph_agree_for_a_player(self) -> None:
+        limited = await self.add("Locked Door", "place")
+        await self.sql("UPDATE memory_entities SET audience_limited = true WHERE id = %s", limited)
+        await self.link("knows", self.mira, limited, "mira-door")
+        await self.link("owns", self.mira, self.hall, "mira-hall", secret=True)
+        theirs = await self.overview(self.player)
+        listed = {n["id"] for n in theirs["tray"]}
+        self.assertNotIn(limited, listed)
+        graph = await self.graph(self.player, center=self.mira, hops=4)
+        self.assertNotIn(limited, {n["id"] for n in graph["nodes"]})
+        group = theirs["groups"][0]
+        self.assertEqual(group["size"], len(graph["nodes"]))
+        self.assertEqual(
+            theirs["counts"]["connections"], sum(len(e["links"]) for e in graph["edges"])
+        )
+
+    async def test_a_player_in_a_private_campaign_cannot_ask_for_the_full_view(self) -> None:
+        await self.sql(
+            "UPDATE campaigns SET dm_screen_visibility = 'private' WHERE id = %s", self.one.id
+        )
+        with self.assertRaises(RecapError) as caught:
+            await self.overview(self.player, view="full")
+        self.assertEqual(caught.exception.code, "peek_off")
+
+
+class TheShapingAlone(unittest.TestCase):
+    """`overview_of` needs no database: it only shapes what the door sent."""
+
+    def shape(self, names: list[tuple[str, str, str]], pairs: list[list[str]]) -> dict[str, Any]:
+        return relationships.overview_of(
+            {
+                "names": [{"id": i, "name": n, "kind": k, "revealed": True} for i, n, k in names],
+                "pairs": pairs, "total": len(names), "connections": len(pairs),
+                "canEdit": True, "view": "full", "visibility": "private", "canPeek": True,
+            }
+        )  # fmt: skip
+
+    def test_nothing_at_all(self) -> None:
+        got = self.shape([], [])
+        self.assertEqual((got["tray"], got["groups"], got["truncated"]), ([], [], False))
+
+    def test_a_pair_that_names_a_missing_id_is_left_out(self) -> None:
+        got = self.shape([("a", "Ann", "npc"), ("b", "Bo", "npc")], [["a", "zz"], ["a", "b"]])
+        self.assertEqual(got["counts"]["connectedNames"], 2)
+        self.assertEqual([g["size"] for g in got["groups"]], [2])
+
+    def test_a_tie_for_the_centre_goes_to_the_earlier_name_then_the_smaller_id(self) -> None:
+        got = self.shape([("b", "bo", "npc"), ("a", "Ann", "npc")], [["a", "b"]])
+        self.assertEqual(got["groups"][0]["center"], "a")
+        got = self.shape([("y", "Same", "npc"), ("x", "Same", "npc")], [["x", "y"]])
+        self.assertEqual(got["groups"][0]["center"], "x")
+
+    def test_groups_come_largest_first_and_the_tray_by_kind_then_name(self) -> None:
+        names = [
+            ("a", "A", "npc"), ("b", "B", "npc"), ("c", "C", "npc"), ("d", "D", "npc"),
+            ("e", "Zeta", "npc"), ("f", "Lake", "place"), ("g", "Cave", "place"),
+            ("h", "Odd", "item"),
+        ]  # fmt: skip
+        got = self.shape(names, [["a", "b"], ["b", "c"], ["d", "d"]])
+        self.assertEqual(
+            [g["size"] for g in got["groups"]], [3]
+        )  # (a pair of one name is no group)
+        self.assertEqual(
+            [n["name"] for n in got["tray"]], ["Cave", "Lake", "D", "Zeta", "Odd"]
+        )  # places, then people, then the rest
+
+    def test_a_secret_flag_that_is_not_there_is_not_sent(self) -> None:
+        got = relationships.overview_of(
+            {
+                "names": [{"id": "a", "name": "A", "kind": "npc", "secret": None}],
+                "pairs": [], "total": 1, "connections": 0,
+                "canEdit": False, "view": "players", "visibility": "peek", "canPeek": True,
+            }
+        )  # fmt: skip
+        self.assertNotIn("secret", got["tray"][0])
