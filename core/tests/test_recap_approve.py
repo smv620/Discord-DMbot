@@ -31,6 +31,7 @@ def armed(act: str, user: int = DM_ID, *, problems: list[str] | None = None, aud
     bot.recap_approval_problems = AsyncMock(return_value=problems or [])
     bot.recap_audio_wanted = AsyncMock(return_value=audio)
     bot.recaps.approve = AsyncMock(return_value=approved)
+    bot.recap_audio_started = AsyncMock()
     return button, bot, interaction
 
 
@@ -111,6 +112,16 @@ class TheApproveButton(unittest.IsolatedAsyncioTestCase):
                 expected=approval.text_hash("The Silver Lock", "《Tense》 Mira drew her blade."),
             )
             self.assertEqual(told(interaction), APPROVED[choice])
+
+    async def test_an_audio_choice_says_it_is_being_made_and_links_the_page_text_only_does_not(
+        self,
+    ) -> None:
+        for act, audio in (("cv", True), ("cm", True), ("cb", True), ("ct", False)):
+            button, bot, interaction = armed(act, found=with_text())
+            await button.callback(interaction)
+            self.assertEqual(bot.recap_audio_started.await_count, 1 if audio else 0)
+            link = view_of(interaction).children[0]
+            self.assertIn("/account/recaps/", link.url)  # the page, one tap from the reply
 
     async def test_a_voice_or_music_choice_without_audio_in_the_plan_is_refused(self) -> None:
         for act in ("cv", "cm", "cb"):
