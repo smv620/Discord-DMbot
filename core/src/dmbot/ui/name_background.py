@@ -404,16 +404,35 @@ class BackgroundOffer(_Menu):
                 memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
             )
             queued = await queue_links(
-                bot, memory, campaign, found, [read.links], set(own), truth=truth
+                bot,
+                memory,
+                campaign,
+                found,
+                [read.links],
+                set(own),
+                truth=truth,
+                dropped=read.stats.dropped,
             )
             cut = read.cut
             log.info(
-                "Background read: %d names and %d connections suggested%s",
+                "Background read: %d names and %d connections suggested%s; %d connection lines "
+                "found, dropped for: %s",
                 sum(map(len, stored.values())),
                 queued,
                 ", an answer cut off" if cut else "",
+                read.stats.links_listed,
+                ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
             )
-            await summary(interaction, campaign, self.upload.label, stored, queued, cut=cut)
+            await summary(
+                interaction,
+                campaign,
+                self.upload.label,
+                stored,
+                queued,
+                cut=cut,
+                # (lines for connections that were already there are not "found" again)
+                links_found=read.stats.links_listed - read.stats.dropped["already_connected"],
+            )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -496,6 +515,19 @@ def _waiting_note(queued: int) -> str:
     return CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
 
 
+def _found_note(found: int, kept: int) -> str:
+    """How many connection lines DMbot saw in the text against how many it kept (#2563), so a
+    shorter list is never a silent one. A connection is kept only when both names were found and
+    the line is really in your text; DMbot never guesses one."""
+    if found <= kept:
+        return ""
+    return (
+        f"\n🔎 DMbot saw {found} connection{'' if found == 1 else 's'} in your text and kept "
+        f"{kept}. It keeps one only when both names were found and the words are really in your "
+        "text, so a few may be missing. You can add any you know from a name's card."
+    )
+
+
 async def summary(
     interaction: discord.Interaction,
     campaign: Campaign,
@@ -504,6 +536,7 @@ async def summary(
     queued: int = 0,
     *,
     cut: bool = False,
+    links_found: int = 0,
 ) -> None:
     total = sum(map(len, stored.values()))
     if not total:
@@ -513,6 +546,7 @@ async def summary(
                 CUT_NOTHING.format(label=_md(label))
                 if cut
                 else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
+                + _found_note(links_found, queued)
             ),
             allowed_mentions=NO_PINGS,
         )
@@ -534,6 +568,7 @@ async def summary(
                 if queued
                 else ""
             )
+            + _found_note(links_found, queued)
             + (CUT_NOTE if cut else "")
         ),
         view=view,
@@ -564,6 +599,7 @@ async def queue_links(
     own: set[str],
     *,
     truth: bool = False,
+    dropped: bg.Dropped | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -594,7 +630,9 @@ async def queue_links(
             return True  # an end that is no entry of the campaign (a name that was refused)
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
-    kept = bg.keep_connections(answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known)
+    kept = bg.keep_connections(
+        answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped
+    )
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret, c.words, truth)
         for c in kept

@@ -37,7 +37,7 @@ LIST_LIMIT = 20
 
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
-    " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
+    " r.housekeeping, r.music, r.tries, r.last_error, r.next_at, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
@@ -201,6 +201,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # The recap is written and waits for its last check (#2255): a note for the DM's card
         # (the words are `error`); not a failure and nothing to do.
         "waitingForCheck": row["last_error"] == critics.CHECK_WAIT and not ready,
+        # When DMbot tries the check again (Unix seconds), while it waits; else 0 (#2596).
+        "nextTryAt": (
+            int(row["next_at"] or 0) if row["last_error"] == critics.CHECK_WAIT and not ready else 0
+        ),
         # While it waits for its check: since when (Unix seconds, 0 before the first wait), and the
         # sentences the word list marks as likely to state a reason or a plan (their numbers, from
         # 1), which no check has read: for the DM's page, where they may read it and approve it
