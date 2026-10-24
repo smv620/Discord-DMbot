@@ -132,11 +132,17 @@ class LoreConnections(unittest.TestCase):
 class StoryColumn(unittest.TestCase):
     def test_the_column_limit_is_the_one_the_code_shortens_to(self) -> None:
         from dmbot import schema
-        from dmbot.recaps import draft
+        from dmbot.recaps import draft, store, uploaded
 
         self.assertEqual(draft.SUMMARY_MAX, STORY_COLUMN_MAX)
-        self.assertIn(f"char_length(summary) <= {STORY_COLUMN_MAX}", schema.RECAP_STORY_ROOM)
-        self.assertIn(f"char_length(original) <= {STORY_COLUMN_MAX}", schema.RECAP_STORY_ROOM)
+        self.assertEqual(uploaded.MAX_CHARS, STORY_COLUMN_MAX)
+        self.assertEqual(store._LIMITS["summary"], STORY_COLUMN_MAX)
+        # 0221 held 30,000; 0225 is the last migration to set the columns, so it holds the constant
+        self.assertIn("char_length(summary) <= 30000", schema.RECAP_STORY_ROOM)
+        for column in ("summary", "original"):
+            self.assertIn(f"char_length({column}) <= {STORY_COLUMN_MAX}", schema.RECAP_UPLOADED)
+        # and the door that stores an uploaded recap refuses past it
+        self.assertIn(f"char_length(body) > {STORY_COLUMN_MAX}", schema.RECAP_UPLOADED)
 
     def test_a_story_of_6000_characters_is_not_cut(self) -> None:
         from dmbot.recaps import draft
