@@ -2957,8 +2957,9 @@ RECAP_AGAIN = r"""
                 VALUES (g, c, at_, who, now_s, now_s, now_s);
             RETURN 'queued';
         END IF;
-        -- Being written, or going out: nothing to start over until it ends.
-        IF job.state NOT IN ('ready', 'failed') OR job.status = 'posting' THEN
+        -- Going out, or a worker has it right now: nothing to start over until that ends. A recap
+        -- that waits (a held one, or one between tries) is startable: that is the DM's way out.
+        IF job.status = 'posting' OR job.leased_to > now_s THEN
             RETURN 'busy';
         END IF;
         IF job.state = 'ready' AND job.status IN ('draft', 'posted') AND NOT replace_ok THEN
@@ -2988,7 +2989,10 @@ RECAP_AGAIN = r"""
             audio = 'off', audio_tries = 0, audio_next_at = 0, audio_text_hash = '',
             audio_credits = 0, audio_error = '', audio_asked_at = 0, posting_since = NULL,
             posting_step = NULL, posted_url = NULL, respelled_at = NULL,
-            dm_user_id = who, restarted_at = now_s, updated_at = now_s, previous = keep
+            dm_user_id = who, updated_at = now_s, previous = keep,
+            -- (only a recap the DM chose to redo counts again in the month: a failed or held one
+            -- was never counted, and its redo is the same recap)
+            restarted_at = CASE WHEN job.state = 'ready' THEN now_s ELSE job.restarted_at END
             WHERE guild_id = g AND campaign_id = c AND session_at = at_;
         RETURN 'queued';
     END

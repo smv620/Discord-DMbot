@@ -266,7 +266,9 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "canDrop": status == "draft",
         # Start the recap over (#2608): from a finished or failed one (not while it is being
         # written or sent). `restartedAt` is when the DM last did (Unix seconds, 0: never).
-        "canMakeAgain": state in ("ready", "failed") and status in ("draft", "posted"),
+        # (a recap waiting for its check or between tries can be started over too: the DM's way out)
+        "canMakeAgain": status in ("draft", "posted")
+        and (state in ("ready", "failed") or row["last_error"] == critics.CHECK_WAIT),
         "restartedAt": int(row.get("restarted_at") or 0),
         # A recap written by someone at the table (#2609): who wrote it, null for DMbot's own;
         # the DM who added it and when; the recaps it replaced, newest first (words and who wrote
