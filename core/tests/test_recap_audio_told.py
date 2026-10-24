@@ -84,6 +84,7 @@ def press(button: Any, user: int = DM_ID, *, files: Any = None) -> tuple[Any, An
             get=AsyncMock(return_value=SimpleNamespace(title="T")),
             audio_again=AsyncMock(return_value="queued"),
         ),
+        recap_audio_started=AsyncMock(),
         _recap_audio_files=AsyncMock(return_value=files or ([], "")),
     )
     response = SimpleNamespace(
@@ -159,3 +160,47 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         failed = recap_audio.audio_view(CID, AT, failed=True, review_url="https://x.example.com/a")
         labels = [_label(c) for c in failed.children]
         self.assertEqual(labels, ["Review", "Make the audio again", "Post to the table"])
+
+
+class TheWaitingLine(unittest.IsolatedAsyncioTestCase):
+    """The "Making the audio" line is kept current like every wait, then closed."""
+
+    async def asyncSetUp(self) -> None:
+        self.now = 1000.0
+        self.waits = recap_audio.AudioWaits(clock=lambda: self.now)
+        self.message = SimpleNamespace(edit=AsyncMock())
+        self.key = (GUILD, CID, AT)
+
+    def last_text(self) -> str:
+        return str(self.message.edit.await_args.kwargs["content"])
+
+    async def test_it_shows_the_step_the_time_so_far_and_the_last_change(self) -> None:
+        await self.waits.start(self.key, self.message)
+        waiting = self.waits._open[self.key][1]
+        self.now += 100
+        await waiting._refresh()
+        self.assertIn(recap_audio.MAKING_STEP, self.last_text())
+        self.assertIn("1 min 40 s so far", self.last_text())
+        self.now += 20
+        self.waits.moved(self.key)  # a try began: that is a change
+        self.now += 90
+        await waiting._refresh()
+        self.assertIn("Last change 1 min ago", self.last_text())
+        await self.waits.finish(self.key, "x")
+
+    async def test_finishing_leaves_a_last_word_not_a_making_line(self) -> None:
+        await self.waits.start(self.key, self.message)
+        await self.waits.finish(self.key, recap_audio.DONE_LINE)
+        self.assertEqual(self.last_text(), recap_audio.DONE_LINE)
+        self.assertNotIn("Making", self.last_text())
+        self.assertNotIn(self.key, self.waits.open_keys())
+        await self.waits.finish(self.key, "again")  # a second finish does nothing
+        self.assertEqual(self.last_text(), recap_audio.DONE_LINE)
+
+    async def test_a_stall_is_named_with_when_dmbot_stops(self) -> None:
+        await self.waits.start(self.key, self.message)
+        self.now += recap_audio.STALL_AFTER_S + 5
+        await self.waits._open[self.key][1]._refresh()
+        self.assertIn("No change for 10 min.", self.last_text())
+        self.assertIn("DMbot will stop by itself at 20 min", self.last_text())
+        await self.waits.finish(self.key, "x")

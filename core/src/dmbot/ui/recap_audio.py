@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from collections.abc import Callable
 from typing import Any
 
 import discord
@@ -20,11 +22,18 @@ import discord
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.ui.name_background import message_is_gone
 from dmbot.ui.recap_dm import GONE, NOT_YOURS, RecapButton
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
 
-MAKING = "🎧 Making the audio… it takes a few minutes. I'll say here when it's ready."
+MAKING = "🎧 Making the audio. It takes a few minutes. DMbot will say here when it's ready."
+MAKING_STEP = "Making the audio"
+DONE_LINE = "🎧 The audio is done. See below."
+STOPPED_LINE = "🎧 DMbot is not making the audio any more."
+STALL_AFTER_S = 600.0  # the audio is minutes of provider work: ten without a change is a stall
+STOPS_AT_S = 1200.0  # the audio step's own lease (recaps.store.AUDIO_LEASE_S)
 READY = "🎧 The audio for **{title}** is ready. Nothing has gone to the players."
 FAILED = (
     "⚠️ The audio for **{title}** could not be made. The text is fine and nothing went to the "
@@ -35,7 +44,7 @@ TOO_BIG = "The audio is too big to send here. Listen to it on your recap page."
 KEPT_LINE = "Kept, not posted."
 KEPT = "👍 Kept. Nothing was posted. You can post it any time from your recap page."
 AGAIN_WORDS = {
-    "queued": "🎧 Making the audio again. I'll say here when it's ready.",
+    "queued": "🎧 Making the audio again. DMbot will say on the DM screen when it's ready.",
     "too_soon": "The audio was asked for a moment ago. Try again in a few minutes.",
     "not_allowed": "I can't make the audio again now. Check your recap page.",
 }
@@ -189,6 +198,8 @@ class MakeAudioAgainButton(
             await _tell(interaction, FAILED_ASK)
             return
         await _tell(interaction, AGAIN_WORDS.get(outcome, FAILED_ASK))
+        if outcome == "queued":
+            await bot.recap_audio_started(campaign, self.session_at)
 
 
 def ready_text(title: str) -> str:
@@ -221,3 +232,66 @@ def audio_view(
     if not failed:
         view.add_item(KeepAudioButton(campaign_id, session_at, row=1))
     return view
+
+
+Key = tuple[int, str, int]  # server, campaign, session
+
+
+class AudioWaits:
+    """The "Making the audio" lines on the DM screen, one per recap, each kept current while the
+    audio is made (the wait rule): the step, the time so far and when it last changed, edited in
+    place, then closed with a plain last line when the notice (or a stop) takes over. Kept in
+    memory: after a restart the notice still comes, only the live line is gone."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._open: dict[Key, tuple[Any, WaitingMessage]] = {}
+
+    def __contains__(self, key: Key) -> bool:
+        return key in self._open
+
+    def open_keys(self) -> list[Key]:
+        return list(self._open)
+
+    async def start(self, key: Key, message: Any) -> None:
+        """Keep `message` (already posted with `MAKING`) current until `finish`."""
+        if key in self._open:
+            return
+
+        async def edit(text: str) -> None:
+            await message.edit(content=text, allowed_mentions=NO_PINGS)
+
+        waiting = WaitingMessage(
+            edit,
+            MAKING,
+            stall_after_s=STALL_AFTER_S,
+            stops_at_s=STOPS_AT_S,
+            gone=message_is_gone,
+            clock=self._clock,
+        )
+        waiting.step(MAKING_STEP)
+        await waiting.__aenter__()
+        self._open[key] = (message, waiting)
+
+    def moved(self, key: Key) -> None:
+        """The audio did something (a try began, credits were spent): that is a change."""
+        if key in self._open:
+            self._open[key][1].moved()
+
+    def step(self, key: Key, words: str) -> None:
+        if key in self._open:
+            self._open[key][1].step(words)
+
+    async def finish(self, key: Key, last: str) -> None:
+        """Stop the updates and leave `last` as the line's last word, so a stale "Making…" never
+        stays on the DM screen."""
+        entry = self._open.pop(key, None)
+        if entry is None:
+            return
+        message, waiting = entry
+        await waiting.__aexit__(None, None, None)
+        try:
+            await message.edit(content=last, allowed_mentions=NO_PINGS)
+        except Exception as exc:  # the DM may have dismissed it: nothing to do
+            if not message_is_gone(exc):
+                log.warning("Could not close the audio waiting line", exc_info=True)
