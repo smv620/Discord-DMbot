@@ -430,6 +430,12 @@ terminal output or Discord screenshots copied to it.
   #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
   comments claim the same number, the earlier keeps it and the later renumbers. Names order the
   list, so a gap is fine.
+- **AI output limits are generous** (owner, 2026-10-24, #2596, after #2086, #2341, #2345, #2365,
+  #2454, #2563 and #2594 were all answers cut off at a hand-sized `max_tokens`): background calls
+  never send less than the tier's floor in `ai.py` (about 16,000 tokens); the service charges for
+  what is written, not the limit. Only live table answers keep short caps, at least 4 times what they
+  need. A cut answer (`reply.cut`) is retried in smaller parts or reported as stopped early, never
+  as "nothing found". Bring limits down later only with logged numbers.
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests
