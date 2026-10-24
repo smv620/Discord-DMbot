@@ -787,12 +787,15 @@ def respelled(
     aliases: Mapping[str, str] | None = None,
 ) -> tuple[Prose, tuple[str, ...]]:
     """The prose with near-miss names put right (#2027), and what is too close to a secret name.
-    The spellings to put in are the confirmed names and the beats' own names. A character called
+    The spellings to put in are the campaign's list names and confirmed aliases only (#2628): never
+    a beat's or the transcript's, since speech-to-text spells the names it does not know the way
+    they sound. (A word the beats say stays "known", so a new name that is not on the list is
+    left as written.) A character called
     by another spelling the DM confirmed, or by a name that sounds like exactly one known name, is
     first put back to its story-memory name (#2573), then the near misses are fixed."""
     from dmbot.recaps.unknown_names import canonical, respell
 
-    names = {*allowed_names, *(w for b in beats for w in b.who)}
+    names = set(allowed_names)
     plain = ordinary(transcript)
     summary = prose.summary
     if aliases:

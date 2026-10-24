@@ -71,6 +71,8 @@ SERVICE = "The writing service wasn't available. You can try again."
 FUNDS = "DMbot's writing service is unavailable right now. We've been told. Try again later."
 CAP = "This recap has hit its limit for now. You can try again tomorrow."
 DAILY = "This campaign has used up today's recap writing. Try again tomorrow."
+NAMES_WAIT_S = 30 * 60  # the most step 1 waits for the name pass; then it goes on without it
+NAMES_RETRY_S = 30  # how often it looks again
 NO_NAMES = (
     "DMbot couldn't check your campaign's secret names, so it wrote nothing to be safe. "
     "Try again in a minute."
@@ -217,6 +219,7 @@ class RecapWorker:
         notify: Notify,
         unchecked: Notify | None = None,
         allowance: Callable[[int, str, Job], Awaitable[str | None]] | None = None,
+        names_ready: Callable[[int, str, Job], Awaitable[bool]] | None = None,
         clock: Callable[[], float] = time.time,
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
@@ -270,6 +273,7 @@ class RecapWorker:
         self._notify = notify
         self._unchecked = unchecked  # tells the DM once that a recap could not be checked
         self._allowance = allowance
+        self._names_ready = names_ready  # PlotBot's name pass on the transcript is done (#2628)
         self._now = clock
 
     async def run(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
@@ -360,6 +364,8 @@ class RecapWorker:
             return await self._store.get(gid, cid, job.session_at)
         if not await self._allowed(gid, cid, job):
             return await self._fail(gid, cid, job, "recaps aren't on for this campaign")
+        if await self._waiting_for_names(gid, cid, job):
+            return await self._store.get(gid, cid, job.session_at)
         first = job.state == "queued" and job.calls == 0 and job.split is None
         if self._allowance is not None and first:
             # The monthly allowance (#1428), before the first paid call of this recap. A count
@@ -400,6 +406,25 @@ class RecapWorker:
                 return await self._critique(gid, cid, job, inputs, consenting)
             return await self._finish(gid, cid, job, inputs, consenting)
         return await self._fail(gid, cid, job, "unknown stage")
+
+    async def _waiting_for_names(self, gid: int, cid: str, job: Job) -> bool:
+        """Step 1 waits for PlotBot's name pass on the transcript (#2628), so the beats, the recap
+        and the narration all use the list's spellings. A short, bounded wait that costs nothing
+        and fails nothing: the pass marks the session done whatever happens, and after
+        `NAMES_WAIT_S` the recap goes on regardless. True when the job was put off."""
+        if self._names_ready is None or job.state != "queued" or job.calls > 0:
+            return False
+        if int(self._now()) - job.created_at >= NAMES_WAIT_S:
+            return False
+        try:
+            ready = await self._names_ready(gid, cid, job)
+        except Exception:
+            log.exception("Recap: couldn't tell whether the names are checked")
+            return False
+        if ready:
+            return False
+        await self._store.update(gid, cid, job.session_at, next_at=int(self._now()) + NAMES_RETRY_S)
+        return True
 
     async def _call(
         self,

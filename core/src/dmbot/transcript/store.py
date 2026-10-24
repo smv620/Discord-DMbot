@@ -31,11 +31,14 @@ MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 # The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
 # ended sessions, speech only, saying the name's longest word, not already done by this fix.
-def _candidates() -> str:
+def _candidates(one_session: bool = False) -> str:
+    # `one_session` (the name pass, #2628): only the session whose id is the next parameter after
+    # the campaign's, whatever its end (it is being finished now), instead of every ended session.
     return (
         " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
-        " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.ended_at IS NOT NULL"
-        " AND l.sidebar IS NULL AND NOT l.typed"
+        " WHERE s.guild_id = %s AND s.campaign_id = %s"
+        + (" AND s.id = %s" if one_session else " AND s.ended_at IS NOT NULL")
+        + " AND l.sidebar IS NULL AND NOT l.typed"
         " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
         " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
         "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s)"
@@ -656,6 +659,7 @@ class TranscriptStore:
         *,
         now: int,
         forget_before: int,
+        session_id: str | None = None,
     ) -> PastRespell:
         """Write `new` where this campaign's past cleaned lines say `old` as a whole name, in
         ONE transaction (so a failure changes nothing), at most `MAX_RESPELLED` lines in session
@@ -665,7 +669,8 @@ class TranscriptStore:
         still writing) and only lines of speech (not the DM sidebar, not typed lines). A match
         inside a longer name in `longer` is left alone, and so is a line the change would make say
         a name in `hidden`. The places are kept under `batch` and the run for `undo_respell`;
-        places older than `forget_before` are dropped."""
+        places older than `forget_before` are dropped. `session_id`: only that session, ended or
+        not (the name pass of a session being finished, #2628)."""
         # The longest run of letters and digits: an apostrophe or dash in the name may be written
         # with a look-alike (a curly one), so a prefilter on a whole word would miss it.
         longest = max(re.findall(r"\w+", old), key=len, default="")
@@ -675,6 +680,9 @@ class TranscriptStore:
         rows: list[tuple[Any, ...]] = []
         sessions: set[str] = set()
         remaining = 0
+        scope: tuple[Any, ...] = (
+            (guild_id, campaign_id) if session_id is None else (guild_id, campaign_id, session_id)
+        )
         async with self._db.guild(guild_id) as conn:
             # Two presses of Finish at once take turns, so no two runs share a number.
             await conn.execute(
@@ -699,10 +707,10 @@ class TranscriptStore:
                 cur = await conn.execute(
                     "SELECT l.id, l.session_id, l.user_id, l.started_ms, s.started_at,"
                     " coalesce(l.text, l.heard) AS cleaned"
-                    + _candidates()
+                    + _candidates(session_id is not None)
                     + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
                     " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
-                    (guild_id, campaign_id, longest, campaign_id, batch, *after, PAGE),
+                    (*scope, longest, campaign_id, batch, *after, PAGE),
                 )
                 page = await cur.fetchall()
                 if not page:
@@ -737,9 +745,9 @@ class TranscriptStore:
             # never change (inside a longer name), so it is "up to" this many.
             cur = await conn.execute(
                 "SELECT count(*) AS n"
-                + _candidates()
+                + _candidates(session_id is not None)
                 + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
-                (guild_id, campaign_id, longest, campaign_id, batch, *after),
+                (*scope, longest, campaign_id, batch, *after),
             )
             remaining = int((await cur.fetchone() or {"n": 0})["n"])
             if updates:
@@ -757,6 +765,28 @@ class TranscriptStore:
                     )
         return PastRespell(len(updates), len(sessions), remaining, run if updates else 0)
 
+    # ---- PlotBot's name pass on a finished session (#2628) ------------------------------------
+
+    async def mark_names_repaired(self, guild_id: int, session_id: str, at: int) -> None:
+        """The session's name pass is done (or was not needed), so its recap may start."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET names_repaired_at = %s WHERE id = %s",
+                (max(at, 1), session_id),
+            )
+
+    async def names_repaired(self, guild_id: int, campaign_id: str, started_at: int) -> bool:
+        """Whether the name pass of the campaign's session that began at `started_at` is done.
+        A session with no transcript (nothing to repair) counts as done."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT min(names_repaired_at) AS at FROM transcript_sessions"
+                " WHERE guild_id = %s AND campaign_id = %s AND started_at = %s",
+                (guild_id, campaign_id, started_at),
+            )
+            row = await cur.fetchone()
+        return row is None or row["at"] is None or int(row["at"]) > 0
+
     async def respell_spellings(
         self, guild_id: int, campaign_id: str, batch: int
     ) -> tuple[str, str] | None:
@@ -770,6 +800,16 @@ class TranscriptStore:
             )
             row = await cur.fetchone()
         return None if row is None else (str(row["old_text"]), str(row["new_text"]))
+
+    async def respelled_olds(self, guild_id: int, campaign_id: str, batch: int) -> list[str]:
+        """The spellings a batch replaced, each once (for the keep-as-heard rule an Undo saves)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT old_text FROM transcript_respells WHERE guild_id = %s"
+                " AND campaign_id = %s AND batch = %s ORDER BY old_text",
+                (guild_id, campaign_id, batch),
+            )
+            return [str(r["old_text"]) for r in await cur.fetchall()]
 
     async def undo_respell(
         self, guild_id: int, campaign_id: str, batch: int, run: int | None = None
