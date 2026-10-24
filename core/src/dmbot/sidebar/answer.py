@@ -8,9 +8,10 @@ What it does, in order:
 2. **The context**, this one campaign's data only (`dmbot.sidebar.context`).
 3. **One fast-model call**, small context, a few hundred tokens out, timed and logged (the
    target is an answer in about 5 seconds).
-4. **The brevity rules in code** (`dmbot.sidebar.brevity`): too long, no Yes/No first or
-   padded gets one more try telling the model what to fix; if it is still too long it is cut
-   at a sentence end. A paragraph is never sent.
+4. **The brevity rules in code** (`dmbot.sidebar.brevity`): no Yes/No first, or padding, gets
+   one more try telling the model what to fix. Length is only an instruction in the prompt
+   (owner, 2026-10-24, #2597): an answer is never sent back or cut for it, and one over Discord's
+   limit goes out as several messages.
 5. **Only on topic.** Off-topic gets one fixed line. Never invents story, never decides.
 6. **The full text only when asked**: then the rule card (as `/dmbot rule` shows it, in parts)
    and a link to read it outside Discord, with no AI call.
@@ -684,8 +685,6 @@ class Sidebar:
             # names, and never over a house rule (those come first).
             text = entry_fact(named, question)
             fields = replace(fields, source=context.source_of(named), confidence=None, in_game=True)
-        if not brevity.within_limit(text):
-            text = brevity.shorten(text)
         if not text:
             raise AIError(NO_ANSWER)
         source, confidence = canonical_source(fields.source, ctx), fields.confidence

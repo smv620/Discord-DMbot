@@ -74,7 +74,7 @@ class TheLines(unittest.TestCase):
         self.assertIn("And so we continue, the epic adventure of The Ember Road", spoken)
 
     def test_the_editor_has_room_for_the_longest_draft_with_both_lines(self) -> None:
-        longest = round(length_for(8).last_high) * 8  # the most a draft may be, in characters
+        longest = length_for(8).room * 8  # the most the room allows, in characters
         opening, closing = fl.lines("x" * 100)
         self.assertLessEqual(longest + len(opening) + len(closing) + 4, SUMMARY_MAX)
         self.assertGreater(WORDS_CEILING, 0)

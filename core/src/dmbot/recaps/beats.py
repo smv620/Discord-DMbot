@@ -17,7 +17,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from dmbot.memory.extractor import quoted, transcript_of
-from dmbot.recaps.text import is_known_name, names_a_secret, proper_nouns, words
+from dmbot.recaps.text import at_word_end, is_known_name, names_a_secret, proper_nouns, words
 
 WINDOW_CHARS = 40_000  # characters of transcript in one call (about 10,000 tokens)
 OVERLAP_ROWS = 15  # lines two neighbouring windows share, so nothing at a seam is lost
@@ -247,7 +247,10 @@ def check(
     cut = {"no line": 0, "unknown name": 0, "secret": 0, "form": 0}
     for raw in raw_beats:
         what = " ".join(str(raw.get("what", "")).split())
-        if not what or len(what) > BEAT_MAX:
+        what = at_word_end(
+            what, BEAT_MAX
+        )  # a length is the prompt's target, never a reason to drop
+        if not what:
             cut["form"] += 1
             continue
         cited = raw.get("lines")

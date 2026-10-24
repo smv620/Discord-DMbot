@@ -784,13 +784,9 @@ class SidebarService:
         self._undelivered.pop(user_id, None)
         pieces = [piece for text in shown for piece in _parts(text)]
         if public:
-            # One message in the chat (no reply chain), kept inside Discord's limit.
-            message = self._chat_line(name, question, " ".join(shown), answer.question)
-            pieces = [
-                message[: MESSAGE_LIMIT - 1].rstrip() + "…"
-                if len(message) > MESSAGE_LIMIT
-                else message
-            ]
+            # One message in the chat (no reply chain). One over Discord's limit goes in parts and
+            # is never cut: the answer's length is a target in its instructions (#2597).
+            pieces = _parts(self._chat_line(name, question, " ".join(shown), answer.question))
         clash = answer.clash
         under: discord.ui.View | None
         if clash is not None and not public:

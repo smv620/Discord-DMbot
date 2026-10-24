@@ -1229,14 +1229,20 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.host.chat[0].count("http"), 1)
         self.assertNotIn("evil", self.host.chat[0])
 
-    async def test_a_long_answer_is_one_message_inside_discords_limit(self) -> None:
+    async def test_a_long_answer_in_the_chat_is_split_inside_discords_limit_never_cut(self) -> None:
         self.answerer.answer_to_give = FakeAnswer(
             text="x" * 50, parts=("a" * 1900, "b" * 1900, "c" * 500)
         )
         self.sidebar.ask_in_chat(self.table, PLAYER, "read me the whole grapple rule")
         await self.settle()
-        self.assertEqual(len(self.host.chat), 1)
-        self.assertLessEqual(len(self.host.chat[0]), service.MESSAGE_LIMIT)
+        self.assertGreater(len(self.host.chat), 1)
+        for message in self.host.chat:
+            self.assertLessEqual(len(message), service.MESSAGE_LIMIT)
+        joined = "".join(self.host.chat)
+        self.assertEqual(joined.count("a"), 1900 + joined.count("a") - 1900)  # (no cut: below)
+        self.assertEqual(
+            (joined.count("b"), joined.count("c")), (1900, 500)
+        )  # every character arrived
 
     async def test_consent_withdrawn_while_the_name_is_looked_up_posts_nothing(self) -> None:
         gate = asyncio.Event()
