@@ -462,3 +462,22 @@ def vars_of(c: bg.Connection) -> dict[str, Any]:
 
 
 del contextlib
+
+
+class TheProgress(unittest.IsolatedAsyncioTestCase):
+    async def test_progress_moves_from_reading_to_shaping_with_counts_only(self) -> None:
+        """#2559: the Discord message is told counts and a stage, never a word of the document."""
+        fake = ai([Reply(LIST, False)])
+        told: list[tuple[str, int, int]] = []
+        with mock.patch.object(lr, "SHAPE_LINES", 1):
+            await lr.read_lore(
+                fake, fake, TEXT, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
+            )
+        self.assertEqual(told[0], ("reading", 1, 0))  # the first pass-1 call
+        shaping = [t for t in told if t[0] == "shaping"]
+        self.assertEqual(shaping[0][1], 0)
+        total = shaping[0][2]
+        self.assertGreater(total, 1)
+        self.assertEqual([t[1] for t in shaping], list(range(total + 1)))
+        self.assertTrue(all(t[2] == total for t in shaping))
+        self.assertNotIn("Aldric", repr(told))
