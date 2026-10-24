@@ -1032,6 +1032,7 @@ def suggestion_text(
     spelled: bool = False,
     fix_to: str = "",
     places: str = "",
+    context: str = "",
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1060,7 +1061,11 @@ def suggestion_text(
     )  # the note is the spelling: shown once, in the question
     read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
     where = f"\n{places}" if places else ""  # where it was said (#2329), under the count
-    return f"📝 **{_md(entity.name)}**{heard}{where}{others}{read}\n{question}{more}"
+    # The sentence around a name read from the DM's text, held in memory since the reading (#2561).
+    # (links kept as plain text too: a masked link in the DM's text must not become clickable)
+    shown = discord.utils.escape_markdown(context, ignore_links=False)
+    around = f"\nAround it in your text: \u201c{shown}\u201d" if context else ""
+    return f"📝 **{_md(entity.name)}**{heard}{where}{around}{others}{read}\n{question}{more}"
 
 
 def _and(items: list[str]) -> str:
@@ -1165,7 +1170,18 @@ class SuggestionReview(_Menu):
             fix_to=self.fix_to,
             kind=self.known_kind,
             places=self.places.text(),
+            context=self._context(interaction, campaign, entity),
         )
+
+    @staticmethod
+    def _context(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
+        """The sentence around this name in the DM's text, while it is still held (#2561). Only for
+        the campaign's DMs: the text can hold secrets, and a server manager who is not a DM may
+        be at the table (`sees_secrets`)."""
+        held = getattr(interaction.client, "lore_context", None)
+        if held is None or not sees_secrets(campaign, interaction.user.id):
+            return ""
+        return str(held.get(campaign.guild_id, entity.id))
 
     async def _places(
         self,
@@ -1335,7 +1351,10 @@ class SuggestionReview(_Menu):
         memory: MemoryStore,
         note: str,
     ) -> None:
-        self.queue.pop(0)
+        decided = self.queue.pop(0)
+        held = getattr(interaction.client, "lore_context", None)
+        if held is not None:
+            held.forget(campaign.guild_id, decided)  # decided: its sentence is not needed (#2561)
         await self._next(interaction, campaign, memory, note=note)
 
     async def _yes(self, interaction: discord.Interaction) -> None:

@@ -28,6 +28,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -263,6 +264,8 @@ class Stats:
     shape_cut: int = 0
     names_kept: int = 0
     links_kept: int = 0
+    # Why connection lines were dropped, by reason (#2563): counts only.
+    dropped: Counter[str] = field(default_factory=Counter)
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,17 +366,19 @@ async def _shape(
     except AIError:  # this slice is lost, not the read: the rest is shaped and shown, as cut
         stats.shape_cut += 1
         log.info("Lore read: pass 2 failed for a slice of %d line(s)", len(names) + len(links))
+        stats.dropped["cut_before_check"] += len(links)
         return [], [], True
     stats.shape_calls += 1
     if not reply.cut:
         return (
             bg.read_answer(reply.text, text),
-            bg.read_connections(reply.text, text, set(own)),
+            bg.read_connections(reply.text, text, set(own), stats.dropped),
             False,
         )
     stats.shape_cut += 1
     lines = len(names) + len(links)
     if lines <= 1 or depth >= SPLIT_DEPTH:
+        stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
         return [], [], True
     if len(names) >= len(links):
         half = max(1, len(names) // 2)
@@ -443,9 +448,11 @@ async def read_lore(
     if skip_name is not None:
         listed.names = [n for n in listed.names if not skip_name(line_name(n))]
     if skip_pair is not None:
+        before = len(listed.links)
         listed.links = [
             x for x in listed.links if not ((e := line_ends(x)) is not None and skip_pair(*e))
         ]
+        stats.dropped["already_connected"] += before - len(listed.links)
     names: list[bg.Found] = []
     links: list[bg.Connection] = []
     by = SHAPE_LINES

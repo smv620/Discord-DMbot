@@ -171,8 +171,18 @@ async def build_me(
                     )
                 # The facts on each card (#2460): one read for the whole server.
                 facts = await conn.execute("SELECT dmbot_web_campaign_facts(%s) AS f", (guild.id,))
-                pending.append((guild, mine, offered, here, agreed, facts))
-        for guild, mine, offered, here, agreed, facts in pending:
+                # Whether DMbot is still in the server (#2554): a left server keeps its campaigns
+                # but nothing in Discord can be done there. No record of an install counts as in.
+                reach = await conn.execute(
+                    "SELECT (EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s"
+                    "           AND left_at IS NULL)"
+                    "        OR NOT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s))"
+                    " AS reachable",
+                    {"g": guild.id},
+                )
+                pending.append((guild, mine, offered, here, agreed, facts, reach))
+        for guild, mine, offered, here, agreed, facts, reach in pending:
+            reachable = bool((await reach.fetchone() or {}).get("reachable", True))
             found_facts = {str(f["id"]): f for f in ((await facts.fetchone() or {}).get("f") or [])}
             for row in await mine.fetchall():
                 campaigns.append(
@@ -193,6 +203,10 @@ async def build_me(
                         # Whether importing older sessions works in its server (#2259), so the
                         # page shows the importer only where it does.
                         "importsOn": imports_for(guild.id),
+                        "serverReachable": reachable,
+                        # The same rule as Discord's Delete (#1608, #2556): the owner, or any
+                        # game master while the campaign has no owner.
+                        "canDelete": row["owner_user_id"] in (session.user_id, None),
                         **_facts_of(found_facts.get(str(row["id"]))),
                     }
                 )
@@ -211,6 +225,8 @@ async def build_me(
                         "status": "active",
                         "role": "player",
                         "importsOn": False,
+                        "serverReachable": reachable,
+                        "canDelete": False,
                         **_facts_of(fact),
                     }
                 )
@@ -259,6 +275,32 @@ async def build_me(
                         "installedByYou": installer == session.user_id,
                     }
                 )
+
+        # The owner's own campaigns in servers the session's list does not have (left, removed,
+        # the server gone, DMbot out of it): a card each, so they can still be seen and deleted
+        # (#2554). A door keyed by the account; the policy that limits the website to the
+        # session's servers is not widened.
+        cur = await conn.execute("SELECT dmbot_web_owned_campaigns() AS found")
+        owned_row = await cur.fetchone()
+        shown = {c["ref"] for c in campaigns}
+        for item in (owned_row["found"] if owned_row else None) or []:
+            ref = f"{item['guildId']}.{item['id']}"
+            if ref in shown:
+                continue
+            campaigns.append(
+                {
+                    "id": str(item["id"]),
+                    "ref": ref,
+                    "name": item["name"],
+                    "serverName": "",  # not known: the page says DMbot can't reach this server
+                    "lastPlayedAt": _iso_time(item["lastPlayedAt"]),
+                    "status": "active",
+                    "role": "owner",
+                    "importsOn": False,
+                    "serverReachable": False,
+                    "canDelete": True,
+                }
+            )
 
         # "Experience points": every minute DMbot has run for this account, all time, through the
         # one door the website's role has to the hours meter (#1228, #1231).
