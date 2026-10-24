@@ -744,6 +744,15 @@ class TranscriptStore:
                 " ORDER BY id FOR UPDATE",
                 (guild_id, guild_id, user_id),
             )
+            # The time of the erase is kept (ids and a time, no words), so a copy made before it
+            # is restored without these lines (#2605). Written even when nothing is left to
+            # delete: a copy may still hold lines this server no longer does.
+            await conn.execute(
+                "INSERT INTO transcript_erasures (guild_id, user_id, erased_at)"
+                " VALUES (%s, %s, extract(epoch FROM now())::BIGINT)"
+                " ON CONFLICT (guild_id, user_id) DO UPDATE SET erased_at = EXCLUDED.erased_at",
+                (guild_id, user_id),
+            )
             await conn.execute(  # the name kept for the website's transcripts first (#2337)
                 "UPDATE transcript_sessions SET speaker_names = speaker_names - %s"
                 " WHERE guild_id = %s AND speaker_names ? %s",

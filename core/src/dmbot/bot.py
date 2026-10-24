@@ -321,7 +321,6 @@ from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
-from dmbot.recaps.dictionary_backup import DictionarySection
 from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
@@ -13089,7 +13088,6 @@ def register_backup_sections(
     campaigns.register_section(ImportSpeakersSection())  # and who its import labels were (#2105)
     campaigns.register_section(FollowedSetsSection())  # and the sets it follows (#1260)
     campaigns.register_section(RuleSetsSection())  # and the sets it publishes (#2552)
-    campaigns.register_section(DictionarySection())  # and its pronunciation dictionary (#2552)
     campaigns.register_section(ClockSection())  # and the game clock (#965)
     campaigns.register_section(EffectsSection())  # and its timed effects (#998)
     # and its session recaps (#1382), whose audio files go with the campaign (#1383)

@@ -258,11 +258,6 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " added_at) VALUES (%s, %s, %s, 77, %s, 1)",
                 (g, c, "b" * 32, DM),
             ),
-            "recap_dictionaries": (
-                "INSERT INTO recap_dictionaries (guild_id, campaign_id, dictionary_id, version_id,"
-                " rules_hash, updated_at) VALUES (%s, %s, 'd1', 'v1', %s, 1)",
-                (g, c, "c" * 64),
-            ),
             "game_clocks": (
                 "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest,"
                 " updated_at, picked_group) VALUES (%s, %s, 5, 5, 1, 1)",
