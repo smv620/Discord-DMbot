@@ -11876,6 +11876,14 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+RECAP_CALL_LOG = """
+    -- When each AI call of a recap job was made (UTC seconds), kept for two days, so the campaign's
+    -- daily tally counts only the last 24 hours of calls and not a waiting recap's whole lifetime
+    -- (#2308). A job from before this has none: it is counted as it was (its `spent`, while it was
+    -- updated in the last day). The column has a default and is added, not updated: no row changes.
+    ALTER TABLE recap_jobs ADD COLUMN spent_log BIGINT[] NOT NULL DEFAULT '{}';
+"""
+
 TIMELINE_STABLE = """
     -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
     -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
@@ -13224,6 +13232,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
     ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
+    (
+        "0205_recap_call_log",
+        RECAP_CALL_LOG,
+    ),  # when each recap call was made, for the day's tally (#2308)
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
