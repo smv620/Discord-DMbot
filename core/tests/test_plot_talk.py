@@ -58,7 +58,13 @@ class Parsing(unittest.TestCase):
         self.assertEqual((p.kind, p.state, p.label), ("condition", "open", "Ulfgar: alive"))
         self.assertEqual(
             p.data,
-            {"entity_id": "e1", "name": "Ulfgar", "condition": "alive", "from_session_at": 700},
+            {
+                "entity_id": "e1",
+                "name": "Ulfgar",
+                "condition": "alive",
+                "was": "dead",  # what PlotBot saw: Save refuses if it changed since (#2123)
+                "from_session_at": 700,
+            },
         )
         self.assertTrue(got.text.endswith(pt.NEXT_WITH_PROPOSALS))
         self.assertRegex(p.id, r"^[0-9a-f]{32}$")
