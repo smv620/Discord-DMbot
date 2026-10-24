@@ -31,7 +31,8 @@ PAGE_LIMIT = 100_000  # far past any campaign: 2 million names
 # `memory/background.LABELS`, as in 📝 Check new names) are shown in those words, so the website and
 # Discord agree (#2376). The rest are the website's own.
 KIND_LABELS: dict[str, str] = {
-    "player_character": "Player characters",
+    "player_character": "PCs",
+    "person": "At the table",  # a real person at the table, apart from the story kinds (#2618)
     "character": "Characters",
     "creature": "Creatures",
     "clue": "Clues",
