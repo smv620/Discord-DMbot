@@ -25,6 +25,7 @@ from typing import Any
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.pronouns import speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
@@ -133,6 +134,26 @@ class Connection:
     quote: str  # a line of the text that holds both names, as written
     secret: bool = False  # an end was found through a secret spelling: it is kept as secret only
     words: str = ""  # the label of the catch-all (`how` is then FALLBACK_PREDICATE), else ""
+
+
+@dataclass(frozen=True, slots=True)
+class Pick:
+    """A connection with one end that fits two or more names equally ("Mara"): it waits for the
+    DM to pick (#2650). `fixed` is the end that is a name, `fixed_is_a` whether it is the first
+    end; `word` is the other end as written and `candidates` the names it may be."""
+
+    fixed: str
+    fixed_is_a: bool
+    word: str
+    candidates: tuple[str, ...]
+    how: str
+    quote: str
+    secret: bool = False
+    words: str = ""
+
+
+MAX_PICK_CHOICES = 3  # the card has a button for each; more is left out as `which_one`
+MAX_PICKS = 50  # "Which Mara?" questions from one reading
 
 
 def cost_text(cents: int) -> str:
@@ -512,6 +533,8 @@ def keep_connections(
     skip: Callable[[Connection], bool] | None = None,
     dropped: Dropped | None = None,
     questions: list[str] | None = None,
+    speaker: str | None = None,
+    picks: list[Pick] | None = None,
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -523,7 +546,13 @@ def keep_connections(
 
     An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
     title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
-    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed."""
+    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed. With
+    `picks` given, a connection whose other end is a name waits for the DM's pick instead
+    (`which_waiting`, #2650): it is added there, with its candidates, and is not left out.
+
+    `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
+    are that character, and so are a bare "his" or "her"; with no speaker, a connection that
+    needs "I" is left out as `whose` (counted, never guessed)."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
@@ -541,6 +570,7 @@ def keep_connections(
     both_ways = {"kin_of", "ally_of", "enemy_of"}
     reader = Ends(ends, {*ends.values()})
     seen: set[tuple[str, str, str]] = set()
+    seen_picks: set[tuple[str, str, str, bool]] = set()
     out: list[Connection] = []
     answers = [list(piece) for piece in answers]
     total = sum(len(piece) for piece in answers)
@@ -548,7 +578,34 @@ def keep_connections(
     for piece in answers:
         for c in piece:
             looked += 1
-            first, second = reader.match(c.a), reader.match(c.b)
+            end_a, no_a = speaker_end(c.a, speaker)
+            end_b, no_b = speaker_end(c.b, speaker)
+            if no_a or no_b:
+                lost["whose"] += 1
+                continue
+            first, second = reader.match(end_a), reader.match(end_b)
+            if (
+                picks is not None
+                and len(picks) < MAX_PICKS
+                and first.ambiguous != second.ambiguous  # exactly one end is the question
+                and max(len(first.ambiguous), len(second.ambiguous)) <= MAX_PICK_CHOICES
+                and (second.name if first.ambiguous else first.name) is not None
+            ):
+                fixed, other = (first, second) if second.ambiguous else (second, first)
+                # (a pick is secret as a connection would be, so its card is kept so too)
+                secret = bool({name_key(c.a), name_key(c.b), fixed.key} & hidden)
+                word = c.b if second.ambiguous else c.a
+                again = (name_key(fixed.name or ""), c.how, name_key(word), bool(second.ambiguous))
+                if again in seen_picks:
+                    lost["same_pair"] += 1
+                    continue
+                seen_picks.add(again)
+                picks.append(
+                    Pick(fixed.name or "", bool(second.ambiguous), word, other.ambiguous
+                         or (), c.how, c.quote, secret, c.words)
+                )  # fmt: skip
+                lost["which_waiting"] += 1
+                continue
             if first.ambiguous or second.ambiguous:
                 lost["which_one"] += 1
                 if questions is not None:
