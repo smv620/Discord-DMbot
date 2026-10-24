@@ -5574,7 +5574,10 @@ experience points and the trial extension (owner, 2026-10-14; Supervisor's detai
 - Which cloud speech-to-text service (#128): Deepgram built first (#170); the bake-off
   confirms or changes it
 - The Cleaner's confidence thresholds and target accuracy, set from the test set (#127)
-- Whether to use an embeddings provider for meaning-based matching, and which (#126)
+- ~~Whether to use an embeddings provider for meaning-based matching, and which (#126)~~ **Decided (owner,
+  2026-10-24, #2643):** Voyage AI (`voyage-3.5`, reranker `rerank-2.5`). Cost is about 15¢ a month per
+  campaign at 10 hours of play. It is named on the privacy page before use, and what may be embedded is in
+  docs/STORY_MEMORY.md, section 9a.
 - Whether players may suggest corrections to their own transcript lines, with the DM
   approving (#127)
 - Whether the downloadable cleaned transcript marks changed words (default: no marks;
