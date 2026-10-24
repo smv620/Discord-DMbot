@@ -1574,6 +1574,71 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/stretch")
+    async def me_transcript_stretch(
+        ref: str, number: int, speaker: str, fromMs: int, toMs: int, signed: Signed
+    ) -> dict[str, Any]:
+        """The as-heard words of one stretch the off-topic filter skipped (#2567), for anyone who
+        may read the session's as-heard file."""
+        session, _token = signed
+        try:
+            return await transcript_pages.stretch(
+                db,
+                session,
+                ref,
+                number,
+                speaker,
+                fromMs,
+                toMs,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/put-back")
+    async def me_transcript_put_back(
+        ref: str, number: int, request: Request, signed: Signed
+    ) -> dict[str, Any]:
+        """A DM puts a skipped stretch back into the cleaned transcript (#2567)."""
+        return await _choose_stretch(ref, number, await small_json(request), signed, True)
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/leave-out")
+    async def me_transcript_leave_out(
+        ref: str, number: int, request: Request, signed: Signed
+    ) -> dict[str, Any]:
+        """A DM leaves a stretch out again (the undo of put-back, #2567)."""
+        return await _choose_stretch(ref, number, await small_json(request), signed, False)
+
+    async def _choose_stretch(
+        ref: str, number: int, body: dict[str, Any], signed: Any, put_back: bool
+    ) -> dict[str, Any]:
+        session, _token = signed
+        speaker, from_ms, to_ms = body.get("speaker"), body.get("fromMs"), body.get("toMs")
+        if (
+            not isinstance(speaker, str)
+            or type(from_ms) is not int
+            or type(to_ms) is not int  # (a JSON true is an int in Python)
+        ):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            return await transcript_pages.choose(
+                db,
+                session,
+                ref,
+                number,
+                speaker,
+                from_ms,
+                to_ms,
+                put_back=put_back,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
     async def me_transcript_download(
         ref: str, number: int, signed: Signed, version: str = "cleaned"
