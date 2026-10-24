@@ -35,8 +35,9 @@ async def delete(
     audio: AudioFiles | None,
 ) -> dict[str, Any]:
     """Delete the campaign for its owner. Raises `RecapError` with the refusal word. The recap
-    audio is removed by the bot's sweep (this container cannot); Discord's channels are left (the
-    website cannot tidy them), which the answer says."""
+    audio is removed by the bot's sweep (this container cannot). The bot also tidies the Discord
+    channels and tells the other game masters from a note the door left (`channelsLeft` is true
+    when the campaign had channels, which DMbot is now closing or removing)."""
     guild_id, campaign_id = _parse(ref)
     typed = body.get("name") if isinstance(body, dict) else None
     if not isinstance(typed, str) or not 0 < len(typed) <= 200:

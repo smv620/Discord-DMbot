@@ -6,11 +6,13 @@ can reach the server; the typed name; not during a session)."""
 from __future__ import annotations
 
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from dmbot.campaigns.web_delete import KEEP_UNTAKEN_S, Notice, WebDeleteNotices
 from dmbot.recaps.audio.files import AudioFiles
 from dmbot.web import campaign_delete, sessions
 from dmbot.web.app import create_app
@@ -354,3 +356,162 @@ class TheRoute(Deleting):
         self.assertEqual(lost.status_code, 200)  # a server the session does not have
         me = (await self.client.get("/me")).json()
         self.assertEqual([c["name"] for c in me["campaigns"]], [])
+
+
+class TheDeleteNotice(Deleting):
+    """What the website's delete leaves for the bot (#2554, part 1b)."""
+
+    async def test_the_delete_leaves_one_note_with_the_channels_and_the_other_game_masters(
+        self,
+    ) -> None:
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        await self.sql(
+            THURSDAY.id,
+            "UPDATE campaigns SET dm_screen_channel_id = 11, transcript_channel_id = 22,"
+            " npcs_channel_id = 33 WHERE id = %s",
+            self.one.id,
+        )
+        await self.delete(self.session, self.one, THURSDAY.id, "one")
+        notes = WebDeleteNotices(self.db)
+        got = await notes.take(THURSDAY.id)
+        self.assertEqual(len(got), 1)
+        note = got[0]
+        self.assertEqual(
+            (note.id, note.name, note.by_user_id, note.other_dms),
+            (self.one.id, "One", ALICE.id, (BOB.id,)),
+        )
+        self.assertEqual(
+            (note.dm_screen_channel_id, note.transcript_channel_id, note.npcs_channel_id),
+            (11, 22, 33),
+        )
+        self.assertIsNone(note.gametime_channel_id)
+        self.assertEqual(await notes.take(THURSDAY.id), [])  # taken once
+
+    async def test_a_refused_delete_leaves_no_note(self) -> None:
+        await self.refused(self.session, self.one, THURSDAY.id, "wrong name")
+        self.assertEqual(await WebDeleteNotices(self.db).take(THURSDAY.id), [])
+
+    async def test_a_note_is_only_seen_in_its_own_server(self) -> None:
+        await self.delete(self.session, self.lost, LOST, "lost world")
+        notes = WebDeleteNotices(self.db)
+        self.assertEqual(await notes.take(THURSDAY.id), [])
+        self.assertEqual(len(await notes.take(LOST)), 1)
+
+    async def test_an_untaken_note_is_dropped_after_a_week(self) -> None:
+        await self.delete(self.session, self.one, THURSDAY.id, "one")
+        later = WebDeleteNotices(self.db, clock=lambda: time.time() + KEEP_UNTAKEN_S + 60)
+        self.assertEqual(await later.sweep(THURSDAY.id), 1)
+        self.assertEqual(await WebDeleteNotices(self.db).take(THURSDAY.id), [])
+
+    async def test_the_bot_tidies_and_tells_the_other_game_masters(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        told: list[tuple[int, str]] = []
+        tidied: list[Notice] = []
+
+        async def dm_user(user_id: int, text: str) -> bool:
+            told.append((user_id, text))
+            return user_id != 3  # one that cannot be messaged must not stop the rest
+
+        async def retire(note: Notice, now: int, *, by_hand: bool = False) -> None:
+            tidied.append(note)
+
+        note = Notice(THURSDAY.id, "c1", "Frost*maiden `@everyone`", 1001, (2, 3, 4), 11, None,
+                      None, None, None, None, None)  # fmt: skip
+        me = SimpleNamespace(
+            _retire_campaign_channels=retire, _dm_user=dm_user, name_of=lambda g, u: "Ali_ce"
+        )
+        await DMBot._finish_web_delete(me, note)  # type: ignore[arg-type]
+        self.assertEqual(tidied, [note])
+        self.assertEqual([u for u, _ in told], [2, 3, 4])
+        text = told[0][1]
+        self.assertIn("deleted **Frost\\*maiden", text)
+        self.assertIn("Ali\\_ce", text)
+        self.assertNotIn("*maiden `", text)  # the asterisk and the backticks are escaped
+
+    async def test_a_failure_inside_one_note_does_not_lose_the_rest(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        def broken(g: int, u: int) -> str:
+            raise RuntimeError("no such member cache")
+
+        async def retire(note: Notice, now: int, *, by_hand: bool = False) -> None:
+            raise RuntimeError("discord is down")
+
+        me = SimpleNamespace(_retire_campaign_channels=retire, name_of=broken)
+        note = Notice(THURSDAY.id, "c1", "Gone", 1, (2,), None, None, None, None, None, None, None)
+        await DMBot._finish_web_delete(me, note)  # type: ignore[arg-type]  # (does not raise)
+
+    async def test_an_unreachable_server_names_the_deleter_by_mention_and_still_tells(self) -> None:
+        """The deleter is not cached for a server the bot has left: `name_of` gives `<@id>`."""
+        from dmbot.bot import DMBot
+
+        told: list[str] = []
+
+        async def dm_user(user_id: int, text: str) -> bool:
+            told.append(text)
+            return True
+
+        async def retire(note: Notice, now: int, *, by_hand: bool = False) -> None:
+            return None
+
+        from types import SimpleNamespace
+
+        me = SimpleNamespace(
+            _retire_campaign_channels=retire, _dm_user=dm_user, name_of=lambda g, u: f"<@{u}>"
+        )
+        note = Notice(555, "c1", "Gone", 1001, (2,), None, None, None, None, None, None, None)
+        await DMBot._finish_web_delete(me, note)  # type: ignore[arg-type]
+        self.assertEqual(told, ["🗑 <@1001> deleted **Gone**."])
+
+    async def test_the_server_stays_listed_while_its_note_waits(self) -> None:
+        await self.delete(self.session, self.lost, LOST, "lost world")
+        self.assertFalse(await self.campaigns.forget_guild_if_empty(LOST))  # a note is waiting
+        self.assertIn(LOST, await self.campaigns.guilds_with_campaigns())
+        await WebDeleteNotices(self.db).take(LOST)
+        self.assertTrue(await self.campaigns.forget_guild_if_empty(LOST))
+
+    async def test_a_server_the_bot_has_left_is_still_finished(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        taken: list[int] = []
+        finished: list[Notice] = []
+        forgotten: list[int] = []
+        note = Notice(555, "c1", "Gone", 1, (2,), 11, None, None, None, None, None, None)
+
+        class Notes:
+            async def take(self, guild_id: int) -> list[Notice]:
+                taken.append(guild_id)
+                return [note] if guild_id == 555 else []
+
+        class Campaigns:
+            async def guilds_with_campaigns(self) -> list[int]:
+                return [THURSDAY.id, 555]  # 555 is a server the bot is not in
+
+            async def forget_guild_if_empty(self, guild_id: int) -> bool:
+                forgotten.append(guild_id)
+                return True
+
+        async def finish(n: Notice) -> None:
+            finished.append(n)
+
+        me = SimpleNamespace(
+            web_delete_notices=Notes(), campaigns=Campaigns(), _finish_web_delete=finish
+        )
+        await DMBot.run_web_delete_notices(me)  # type: ignore[arg-type]
+        self.assertEqual(
+            (taken, finished, forgotten), ([THURSDAY.id, 555], [note], [THURSDAY.id, 555])
+        )
+
+    async def test_channels_of_a_server_the_bot_is_not_in_are_skipped_not_an_error(self) -> None:
+        from dmbot.retention_channels import retire_channels
+
+        note = Notice(555, "c1", "Gone", 1, (), 11, 22, 33, None, None, None, None)
+        counts = await retire_channels(None, note, 0, 100, by_hand=True)
+        self.assertEqual(counts.skipped, 3)

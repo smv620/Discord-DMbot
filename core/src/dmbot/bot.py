@@ -68,6 +68,7 @@ from dmbot.campaigns.models import (
     STORY_GUIDE,
     CampaignError,
 )
+from dmbot.campaigns.web_delete import Notice, WebDeleteNotices
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
     SAME_CHANNEL,
@@ -330,7 +331,7 @@ from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.retention import RetentionJob
-from dmbot.retention_channels import ChannelCounts, retire_channels
+from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
 from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
@@ -1124,6 +1125,7 @@ class DMBot(commands.AutoShardedBot):
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
+        self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
             int, asyncio.Task[None]
@@ -11282,6 +11284,10 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_delete_notices()
+            except Exception as exc:
+                log.warning("The website delete notices failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -11297,6 +11303,12 @@ class DMBot(commands.AutoShardedBot):
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
+                if self.web_delete_notices is not None:
+                    try:
+                        for guild_id in await self.campaigns.guilds_with_campaigns():
+                            await self.web_delete_notices.sweep(guild_id)
+                    except Exception as exc:
+                        log.warning("The delete notice sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
 
     async def run_name_answers(self) -> None:
@@ -11329,6 +11341,42 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
+
+    async def run_web_delete_notices(self) -> None:
+        """Finish the campaigns the website deleted (#2554): tidy their Discord channels and tell
+        the other game masters, the same as Discord's own delete. Every server that ever held a
+        campaign is looked at, not only the ones the bot is in now: a server the bot has left
+        gets its game masters told and its channels skipped. Nothing the note holds is logged."""
+        store = self.web_delete_notices
+        if store is None:
+            return
+        for guild_id in await self.campaigns.guilds_with_campaigns():
+            for notice in await store.take(guild_id):
+                await self._finish_web_delete(notice)
+            await self.campaigns.forget_guild_if_empty(guild_id)
+
+    async def _finish_web_delete(self, notice: Notice) -> None:
+        # (the whole body is guarded: a note is taken once, so one failing must not lose the rest
+        # of its batch)
+        with log_context(guild_id=notice.guild_id, campaign_id=notice.id):
+            try:
+                try:
+                    await self._retire_campaign_channels(notice, int(time.time()), by_hand=True)
+                except Exception:
+                    log.exception("Couldn't tidy a website-deleted campaign's channels")
+                name = discord.utils.escape_markdown(notice.name)
+                who = discord.utils.escape_markdown(
+                    self.name_of(notice.guild_id, notice.by_user_id)
+                )
+                text = delete_campaign.TOLD.format(who=who, name=name)
+                told = [await self._dm_user(other, text) for other in notice.other_dms]
+                log.info(
+                    "A campaign deleted on the website was finished: %d of %d game masters told",
+                    sum(told),
+                    len(told),
+                )
+            except Exception:
+                log.exception("Couldn't finish a website-deleted campaign")
 
     async def run_peek_notices(self) -> None:
         """Tell the DM, on the DM screen, that a player turned the peek on (#2404): one line for
@@ -12694,7 +12742,7 @@ class DMBot(commands.AutoShardedBot):
             await asyncio.gather(*(one(t) for t in self._all_tables()))
 
     async def _retire_campaign_channels(
-        self, campaign: Campaign, now: int, *, by_hand: bool = False
+        self, campaign: HasChannels, now: int, *, by_hand: bool = False
     ) -> ChannelCounts:
         """Retention (or the plan holder, `by_hand`, #1608) deleted this campaign: delete its DM
         screen and game-time channels and close its transcript and dmb-chat channels (#1598).

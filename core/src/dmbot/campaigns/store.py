@@ -489,14 +489,16 @@ class CampaignStore:
         return False
 
     async def forget_guild_if_empty(self, guild_id: int) -> bool:
-        """Drop a server from the list once it holds no campaigns. Check and delete are one
-        statement in the server's own scope, so a campaign made a moment ago keeps it listed."""
+        """Drop a server from the list once it holds no campaigns and no website-delete note
+        waiting for the bot (#2554). Check and delete are one statement in the server's own
+        scope, so a campaign made a moment ago keeps it listed."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM campaign_guilds WHERE guild_id = %s"
                 " AND NOT EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s)"
+                " AND NOT EXISTS (SELECT 1 FROM web_delete_notices WHERE guild_id = %s)"
                 " RETURNING guild_id",
-                (guild_id, guild_id),
+                (guild_id, guild_id, guild_id),
             )
             return await cur.fetchone() is not None
 
