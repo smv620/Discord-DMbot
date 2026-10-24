@@ -1717,11 +1717,11 @@ class Lists(NamesTest):
     async def test_keep_all_and_change_all(self) -> None:
         from dmbot.ui import names as panel
 
-        await panel.save_name(self.memory, self.campaign, "Auril", "deity", [], [])
+        await panel.save_name(self.memory, self.campaign, "Auril", "item", [], [])
         await panel.save_name(self.memory, self.campaign, "Ulfgar", "npc", [], [])
         sent = await self.add_many("Auril | place\nUlfgar | place")
         view = sent[1].kwargs["view"]
-        self.assertIn(panel.KIND_SHORT["deity"], sent[1].args[0])
+        self.assertIn(panel.KIND_SHORT["item"], sent[1].args[0])
         it = await self.press(view, "Change all")
         content = it.edit_original_response.call_args.kwargs["content"]
         self.assertEqual(content.count("✅ Changed 1 to place."), 2)
@@ -1779,7 +1779,7 @@ class Lists(NamesTest):
         for question in ("**Quilon** → **Quillon**?", "**Brynnwater** → **Brynwater**?",
                          "**Gorrack** → **Gorrak**?"):  # fmt: skip
             self.assertIn(question, near)
-        self.assertIn("**Varrow**: DMbot has god, your list says place.", sent[2].args[0])
+        self.assertIn("**Varrow**: DMbot has NPC, your list says place.", sent[2].args[0])
         self.assertIn("**Ashen Crown**: DMbot has group, your list says place.", sent[2].args[0])
 
     async def test_an_unknown_kind_is_asked_once_for_all_its_names(self) -> None:

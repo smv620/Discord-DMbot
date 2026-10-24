@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.devtools.recap_run import compare as cmp
 from dmbot.devtools.recap_run.__main__ import parse_args
@@ -179,3 +179,78 @@ class TheArguments(unittest.TestCase):
             parse_args(
                 ["--session", "1", "c", "2", "--compare", "--out", "x", "--gemini-model", "g"]
             )
+
+
+class TheReads(unittest.IsolatedAsyncioTestCase):
+    """Each side of a comparison can read the beats or the cleaned transcript (#2590)."""
+
+    COMPARE: ClassVar[list[str]] = [
+        "--session",
+        "1",
+        "c",
+        "2",
+        "--compare",
+        "--out",
+        "x",
+        "--gemini-model",
+        "g",
+    ]
+
+    def test_reads_is_one_word_for_both_sides_or_one_for_each(self) -> None:
+        paid = ["--paid-gemini-key"]
+        self.assertEqual(parse_args([*self.COMPARE, *paid]).reads_each, ("beats", "beats"))
+        args = parse_args([*self.COMPARE, *paid, "--reads", "transcript"])
+        self.assertEqual(args.reads_each, ("transcript", "transcript"))
+        args = parse_args([*self.COMPARE, *paid, "--reads", "beats,transcript"])
+        self.assertEqual(args.reads_each, ("beats", "transcript"))
+
+    def test_a_reads_word_that_is_not_known_is_refused(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args([*self.COMPARE, "--paid-gemini-key", "--reads", "everything"])
+        with self.assertRaises(SystemExit):
+            parse_args([*self.COMPARE, "--paid-gemini-key", "--reads", "beats,beats,beats"])
+
+    def test_writers_goes_only_with_compare(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(["--session", "1", "c", "2", "--writers", "gemini,gemini"])
+
+    async def test_each_writer_is_run_with_what_it_reads(self) -> None:
+        writers = [
+            cmp.Writer("Anthropic a", "c0", "f0", ("a", "fmt"), "beats"),  # type: ignore[arg-type]
+            cmp.Writer("Gemini b", "c1", "f1", ("b", "fmt"), "transcript"),  # type: ignore[arg-type]
+        ]
+        runner = Runner()
+        folder = Path(tempfile.mkdtemp()) / "cmp"
+        code = await cmp.run_compare(
+            runner, SimpleNamespace(), "fast", "careful", None,  # type: ignore[arg-type]
+            session_at=1, models=("fast", "careful"), writers=writers, folder=folder,
+            prices={}, checks_of=lambda o: [], leaks=lambda o: False, voice_tags=False,
+            order=(0, 1), emit=lambda line: None,
+        )  # fmt: skip
+        self.assertEqual(code, 0)
+        self.assertEqual([c["reads"] for c in runner.calls], ["beats", "transcript"])
+        # the key says what each read; the drafts and the report do not
+        key = (folder / "key.txt").read_text()
+        self.assertIn("A = Anthropic a", key)
+        for name in ("A.txt", "B.txt"):
+            self.assertNotIn("transcript", (folder / name).read_text().lower())
+
+    def test_the_default_pair_is_one_of_each_and_gemini_twice_is_allowed(self) -> None:
+        from dmbot.ai import DEFAULT_MODELS
+
+        env = {"ANTHROPIC_API_KEY": "k" * 20, "GEMINI_API_KEY": "g" * 20}
+        made: list[Any] = []
+        for which, reads in (
+            (("claude", "gemini"), ("beats", "beats")),
+            (("gemini", "gemini"), ("beats", "transcript")),
+        ):
+            made.clear()
+            writers = cmp.writers_from_env(
+                lambda name: env.get(name, ""), DEFAULT_MODELS, "claude-x", "gemini-y",
+                register=made.append, which=which, reads=reads,
+            )  # fmt: skip
+            assert writers is not None
+            self.assertEqual([w.reads for w in writers], list(reads))
+            self.assertEqual(len(made), 2)  # a client each, so nothing is shared
+        assert writers is not None
+        self.assertEqual([w.label.split()[0] for w in writers], ["Gemini", "Gemini"])
