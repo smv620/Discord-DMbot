@@ -4876,6 +4876,29 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     campaign applies, and it is counted in docs/costs.md.
   - **Early campaigns:** with little confirmed memory yet (the extractor is off until #1282), the
     check leans on the earlier accepted recaps. It grows more useful as memory fills.
+  - *Built, part 1 (CloudDev, 2026-10-23, #2122): the accepted versions.* When the DM approves a recap's text
+    (the website's Approve), the approval (the website's door `dmbot_recap_approve` and the Discord button, both through
+    `dmbot_recap_keep_version`, migration 0209) also writes that text to
+    `recap_accepted` as the session's next version: session, version, hash, title, text, who and when. The same text
+    approved again adds nothing, a changed text is the next version, and an old version is never overwritten (a session
+    keeps version 1 and the 19 newest, so its backup always restores; at the limit the oldest after
+    version 1 is dropped to make room, a stored version is never rewritten, and numbers only go up; Supervisor, 2026-10-23). It is
+    per campaign and server (row-level security), travels in the campaign's backup (`AcceptedSection`) and goes with
+    the campaign. `AcceptedStore.newest` gives the newest version of each session, for PlotBot, the pre-session note,
+    recall and the later plot checks to read (wired as each is built).
+  - *Built, part 2a (CloudDev, 2026-10-23, #2122): the issues and the Approve gate.* Migration 0210 adds
+    `plot_checks`, `plot_issues` and `plot_fine` (per campaign and server, row-level security) and two website
+    doors: `dmbot_plot_read` (state checking, ready or unavailable; the issues with their level, sentence and
+    quoted source; the approved versions) and `dmbot_plot_answer` (fix, changed, fine or leave, with the DM's
+    note; "fine" is remembered so the same point is not raised again). Routes `GET /me/recaps/{ref}/plot` and
+    `POST /me/recaps/{ref}/plot/{issue}/answer` are DM-only. Approve answers 409 `plot_open` (checked inside the approval door, under its lock) while an issue has
+    no answer. A check that has not finished in 30 minutes reads "unavailable" and no longer holds Approve, so a
+    missing worker never stops the DM. Behind `DMBOT_PLOT_CHECK` (off by default).
+    The Discord Approve button is held the same way (a plain line pointing to the recap page, and the store
+    refuses in the approval's own statement). The issues and the "not a problem" notes are in the campaign's backup
+    (`PlotIssuesSection`, `PlotFineSection`); `plot_checks` is left out on purpose, as it only records that a text was
+    checked and a restored campaign is checked afresh. The checker itself (part 2b)
+    and the chat (#2123) follow.
 - **A recap knows what was last time's recap, and PlotBot decides what matters** (owner,
   2026-10-21: "The PlotBot and Recap are the two most important features of the entire DMbot
   project"). The owner's problem: session 16 opened with a spoken recap of session 15, so the recap

@@ -37,7 +37,7 @@ from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
 from dmbot.recaps import unknown_names as un
 from dmbot.recaps.store import Job, RecapStore
-from dmbot.recaps.text import CUE, names_a_secret, narration_of, words
+from dmbot.recaps.text import CUE, names_a_secret, narration_of, strip_cues, words
 from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
@@ -123,6 +123,12 @@ class Inputs:
     aliases: Mapping[str, str] = field(default_factory=dict)
     pcs: Sequence[str] = ()
     party: Mapping[int, Sequence[str]] = field(default_factory=dict)
+    # A 🤫 spelling and its own entry's public names (every name of each end): a sentence naming
+    # both says who is who, so a draft that does is refused (#2591).
+    identity_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = ()
+    # The campaign's 🤫 relations, as the same pairs: the writer is told which pairs must not be
+    # connected, and the DM gets a note on a sentence that names both. Never a refusal (#2591).
+    relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = ()
     # The name the table uses for a character with a longer name (#2627): full name -> familiar
     # name, told to the writer beside the full one. Never a secret name; never a check.
     familiar: Mapping[str, str] = field(default_factory=dict)
@@ -854,6 +860,7 @@ class RecapWorker:
             inputs.day,
             retold,
             ending=sheet,
+            apart=rd.apart_pairs(inputs.relation_ties, inputs.allowed_names),
             familiar=inputs.familiar,
         )
         if job.problems:
@@ -952,6 +959,7 @@ class RecapWorker:
                 style=inputs.style,
                 corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                identity_ties=inputs.identity_ties,
             )
 
         problems = checked(False)
@@ -1128,6 +1136,7 @@ class RecapWorker:
                 style=inputs.style,
                 corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                identity_ties=inputs.identity_ties,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -1331,6 +1340,7 @@ class RecapWorker:
             style=inputs.style,
             corrections=inputs.corrections,
             pcs=inputs.pcs,
+            identity_ties=inputs.identity_ties,
         ):
             return None
         return cut
@@ -1570,6 +1580,7 @@ class RecapWorker:
             inputs.day,
             retold,
             ending=sheet,
+            apart=rd.apart_pairs(inputs.relation_ties, inputs.allowed_names),
             familiar=inputs.familiar,
         ) + rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
         attempt = 1  # the careful writer's room, as for a retry
@@ -1625,6 +1636,7 @@ class RecapWorker:
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=refused, style=inputs.style, corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                identity_ties=inputs.identity_ties,
             ):  # fmt: skip
                 revised = None
         if revised is not None:
@@ -1680,6 +1692,19 @@ class RecapWorker:
             previous=inputs.previous,
             setting=inputs.setting,
         )[: un.MAX_TO_CONFIRM]
+
+    @staticmethod
+    def _tie_notes(job: Job, finish: rd.Finish, inputs: Inputs) -> dict[str, Any]:
+        """The DM's notes on sentences that name both ends of a 🤫 relation (#2591), put with the
+        critics' soft notes, which only the DM's page shows. Nothing when there are none."""
+        found = rd.tie_notes(
+            "\n".join([strip_cues(job.summary), finish.title, *finish.housekeeping]),
+            inputs.relation_ties,
+        )
+        if not found:
+            return {}
+        loop = cr.loop_from_json(job.critics)
+        return {"critics": replace(loop, notes=(*dict.fromkeys((*loop.notes, *found)),)).to_json()}
 
     def _forget_draft(self, key: tuple[int, str, int]) -> None:
         self._rejected_prose.pop(key, None)
@@ -1766,6 +1791,7 @@ class RecapWorker:
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=[], style=inputs.style, corrections=inputs.corrections,
                 pcs=inputs.pcs,
+                identity_ties=inputs.identity_ties,
             )  # fmt: skip
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
@@ -1907,6 +1933,7 @@ class RecapWorker:
             errors=0,
             problems=[],
             last_error="",
+            **self._tie_notes(job, finish, inputs),
         )
         log.info("Recap: ready after %d call(s)", job.calls)
         # No audio is queued here (#2083): the DM reads the text, fixes its cues, approves it and

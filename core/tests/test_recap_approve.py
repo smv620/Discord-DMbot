@@ -110,6 +110,7 @@ class TheApproveButton(unittest.IsolatedAsyncioTestCase):
                 DM_ID,
                 choice,
                 expected=approval.text_hash("The Silver Lock", "《Tense》 Mira drew her blade."),
+                plot_gate=False,
             )
             self.assertEqual(told(interaction), APPROVED[choice])
 
@@ -166,7 +167,7 @@ class TheThreeWays(unittest.IsolatedAsyncioTestCase):
         button, bot, interaction = three("ak")
         await button.callback(interaction)
         bot.recaps.approve.assert_awaited_once_with(
-            5, "c" * 32, AT, DM_ID, "text", expected=TEXT_HASH, post=False
+            5, "c" * 32, AT, DM_ID, "text", expected=TEXT_HASH, post=False, plot_gate=False
         )
         self.assertEqual(told(interaction), screen.KEPT)
         bot.post_recaps.assert_not_awaited()
@@ -176,7 +177,7 @@ class TheThreeWays(unittest.IsolatedAsyncioTestCase):
         bot.recaps.get = AsyncMock(side_effect=[with_text(), with_text(status="posted")])
         await button.callback(interaction)
         bot.recaps.approve.assert_awaited_once_with(
-            5, "c" * 32, AT, DM_ID, "text", expected=TEXT_HASH, post=True
+            5, "c" * 32, AT, DM_ID, "text", expected=TEXT_HASH, post=True, plot_gate=False
         )
         bot.post_recaps.assert_awaited_once_with(5)
         self.assertEqual(interaction.followup.send.await_args.args[0], screen.POSTED)

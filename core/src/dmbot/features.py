@@ -42,6 +42,15 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on",),
     ),
     Feature(
+        "plot checks",
+        "Story checks on recaps",
+        "PlotBot compares each recap with the earlier ones and asks you about anything that "
+        "does not fit. You decide.",
+        lambda s: s.plot_check_on,
+        ("recaps_on", "plot_check_on"),
+        for_dms=False,
+    ),
+    Feature(
         "recap audio",
         "Spoken recaps",
         "DMbot reads a recap aloud, with music.",
