@@ -34,19 +34,18 @@ QUOTE_WORDS = 20
 MAX_ALSO = 4
 # What the AI calls a kind, and the kind DMbot keeps it as (the same words Add many reads).
 KINDS = {
-    "person": "npc",  # a named monster is a person here
+    "person": "npc",  # (the AI's word for any named character; a named monster is one too)
     "place": "place",
     "group": "faction",
-    "god": "deity",
+    "god": "npc",  # a god is an NPC (#2562)
     "item": "item",
     "event": "event",
     "idea": "concept",
 }
 LABELS = {  # for "Yes to all 14 places"
-    "npc": ("person", "people"),
+    "npc": ("NPC", "NPCs"),
     "place": ("place", "places"),
     "faction": ("group", "groups"),
-    "deity": ("god", "gods"),
     "item": ("item", "items"),
     "event": ("event", "events"),
     "concept": ("idea", "ideas"),

@@ -334,7 +334,7 @@ def format_help(*, secrets: bool) -> str:
         "it suggests the names and the connections your text states, and nothing is added "
         "until you say yes.\n"
         f"Template: one name per line, `{parts}`. Only the name is needed. Separate other "
-        "names with `,` or `;`. Kinds: NPC, place, group, creature, item, god, event, "
+        "names with `,` or `;`. Kinds: NPC, PC, place, group, item, event, "
         "other. Names with no kind wait in 📝 Check new names.\n"
         "If 📎 Upload a file shows no place to pick a file, type `/dmbot names` and add the "
         "file in its **file** box."

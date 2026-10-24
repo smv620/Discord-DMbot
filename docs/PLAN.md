@@ -2520,6 +2520,13 @@ plays). There is no third kind of character and no "person" in the story.
    for the DM, never guessed; a PC has a player (`plays`), and one with no player yet is asked about.
    Existing `god` and creature characters become NPCs with their description kept (nothing is deleted).
 4. *(Supervisor, build):* #2562 (core: the words, the roles, the rule) and the website's words with it.
+   *(Built, 2026-10-24, #2562.)* The rule lives in `memory/voice.py` and runs where a claim is judged
+   (`memory/claims.py`). It covers the relationships that carry a character's own attitude, loyalty or
+   vow: `ally_of`, `enemy_of`, `serves`, `sworn_to` (a list in code until the ontology's definitions,
+   which are hashed and versioned, gain a flag). A PC's own: only from its player's lines. The DM
+   saying it of a PC: offered to the DM with the note "told by the DM as something that happened to
+   them". A player saying it of someone else's character: not offered as true (The party's belief).
+   An NPC's: only from the DM. A group's attitude and every other relationship are unchanged.
 
 **Players and the DM in the names (owner, 2026-10-14).** DMbot also learns the names the table uses for
 the **real people** at it, so "Mike, what do you do?" followed by "I run at it with my sword" tells it

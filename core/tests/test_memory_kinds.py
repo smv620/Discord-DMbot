@@ -64,7 +64,7 @@ class Phrases(unittest.TestCase):
         )
 
     def test_auril_is_a_character_with_the_role_god(self) -> None:
-        self.assertEqual(kind_phrase(entity(role="god", name="Auril")), "character · god")
+        self.assertEqual(kind_phrase(entity(role="npc", name="Auril")), "character · NPC")
 
     def test_the_other_kinds_have_no_role_or_links(self) -> None:
         self.assertEqual(kind_phrase(entity("place")), "place")
@@ -76,7 +76,7 @@ class Phrases(unittest.TestCase):
     def test_a_player_character_and_a_character_with_no_role_yet(self) -> None:
         self.assertEqual(
             kind_phrase(entity(role="player_character", played_by=7)),
-            "character · player character",
+            "character · PC",
         )
         self.assertEqual(kind_phrase(entity()), "character")
 
@@ -107,10 +107,10 @@ class Phrases(unittest.TestCase):
     def test_the_key_the_lists_use(self) -> None:
         self.assertEqual(kind_key("character", "npc"), "npc")
         self.assertEqual(kind_key("character", "player_character"), "player_character")
-        self.assertEqual(kind_key("character", "god"), "deity")
+        self.assertEqual(kind_key("character", "npc"), "npc")
         self.assertEqual(kind_key("character", None), "character")
         self.assertEqual(kind_key("place", None), "place")
-        self.assertEqual(entity(role="god").kind_key, "deity")
+        self.assertEqual(entity(role="npc").kind_key, "npc")
         self.assertEqual(entity("place").kind_key, "place")
         self.assertTrue(entity(role="player_character").is_player_character)
         self.assertFalse(entity(role="npc").is_player_character)
@@ -136,13 +136,13 @@ class Cards(unittest.TestCase):
         who = entity(role="player_character", name="Testa", played_by=7)
         text = card_text(self.lookup(who, []), E1, [], secrets=False, player="Mia")
         assert text is not None
-        self.assertIn("**Testa** · character · player character · played by **Mia**", text)
+        self.assertIn("**Testa** · character · PC · played by **Mia**", text)
 
     def test_a_god_and_a_place(self) -> None:
-        auril = card_text(self.lookup(entity(role="god", name="Auril"), []), E1, [], secrets=False)
+        auril = card_text(self.lookup(entity(role="npc", name="Auril"), []), E1, [], secrets=False)
         place = card_text(self.lookup(entity("place", name="Tower"), []), E1, [], secrets=False)
         assert auril is not None and place is not None
-        self.assertIn("**Auril** · character · god", auril)
+        self.assertIn("**Auril** · character · NPC", auril)
         self.assertIn("**Tower** · place", place)
 
     def test_the_lookup_keeps_the_links_of_live_entries_only(self) -> None:
@@ -207,7 +207,7 @@ class OlderBackups(unittest.TestCase):
             {
                 "Snot": ("character", "npc", False),
                 "Testa": ("character", "player_character", False),
-                "Auril": ("character", "god", False),
+                "Auril": ("character", "npc", False),
                 "Rex": ("character", None, True),  # a named creature: the DM decides
                 "Fireball": ("concept", None, True),  # a spell becomes an idea to look at
                 "Bryn Shander": ("place", None, False),
@@ -330,14 +330,14 @@ class FindNames(unittest.TestCase):
         )
         self.assertEqual([line.name for line in parsed.lines], ["Fang"])
         self.assertEqual([n for n, _ in parsed.refused], [1, 2])
-        self.assertIn("not one person", parsed.refused[0][1])
+        self.assertIn("not one character", parsed.refused[0][1])
 
     def test_the_role_words_read_as_the_older_keys_the_store_knows(self) -> None:
         text = "Snot | NPC\nTesta | pc\nAuril | god\nRex | monster\nTower | place\nThing\n"
         kinds = {line.name: line.kind for line in parse(text, secrets=False).lines}
         self.assertEqual(
             kinds,
-            {"Snot": "npc", "Testa": "player_character", "Auril": "deity", "Rex": "creature",
+            {"Snot": "npc", "Testa": "player_character", "Auril": "npc", "Rex": "npc",
              "Tower": "place", "Thing": None},
         )  # fmt: skip
 
@@ -368,7 +368,7 @@ class UnnamedMonsters(unittest.TestCase):
         ):
             with self.subTest(name=name), self.assertRaises(MemoryRuleError) as raised:
                 ontology.check_named("creature", name)
-            self.assertIn("not one person", str(raised.exception))
+            self.assertIn("not one character", str(raised.exception))
 
     def test_a_proper_name_is_accepted(self) -> None:
         for name in ("Snot", "Auril", "Fang"):
