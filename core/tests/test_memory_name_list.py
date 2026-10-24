@@ -173,7 +173,7 @@ class Template(unittest.TestCase):
         self.assertEqual(names["Belleros"].others, ("Bell", "the old knight"))
         self.assertEqual(names["Belleros"].secrets, ("the hooded stranger",))
         self.assertEqual(names["Frostwolf tribe"].kind, "faction")
-        self.assertEqual(names["Auril"].kind, "deity")
+        self.assertEqual(names["Auril"].kind, "npc")
         self.assertIsNone(names["Ulfgar"].kind)  # no kind: DMbot asks later
         self.assertTrue(all(ord(c) < 0x2000 for c in TEMPLATE))  # no emoji in a text file
 
@@ -187,7 +187,7 @@ class Reading(unittest.TestCase):
     def test_kinds_in_plain_words_and_plurals(self) -> None:
         parsed = parse("A | Places\nB | monster\nC | wizard\nD | other", secrets=False)
         kinds = [(line.name, line.kind) for line in parsed.lines]
-        self.assertEqual(kinds, [("A", "place"), ("B", "creature"), ("C", None), ("D", "concept")])
+        self.assertEqual(kinds, [("A", "place"), ("B", "npc"), ("C", None), ("D", "concept")])
 
     def test_notes_descriptions_and_extra_columns_are_refused(self) -> None:
         text = "\n".join(
@@ -533,7 +533,7 @@ class BakeoffStoryNames(unittest.TestCase):
         self.assertEqual(setup["Belleros"].others, ("Bell",))
         self.assertEqual(setup["Oskar Vane"].others, ("Vane",))
         self.assertEqual(listed["Vane"].others, ("Oskar Vane",))
-        self.assertEqual((setup["Varrow"].kind, listed["Varrow"].kind), ("deity", "place"))
+        self.assertEqual((setup["Varrow"].kind, listed["Varrow"].kind), ("npc", "place"))
         self.assertEqual(
             (setup["Ashen Crown"].kind, listed["Ashen Crown"].kind), ("faction", "place")
         )

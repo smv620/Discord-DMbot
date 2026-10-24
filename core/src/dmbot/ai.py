@@ -124,6 +124,8 @@ class Feature(enum.StrEnum):
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
     IMAGE = "image"  # an image posted in the table chat, described once (#2450)
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
+    PLOT_CHECK = "plot_check"  # a recap against the earlier accepted ones, for the DM (#2122)
+    PLOT_TALK = "plot_talk"  # the DM talks an issue of that check through with PlotBot (#2123)
     # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
     NAME_PASS = "name_pass"
 
@@ -184,6 +186,10 @@ FEATURE_TIERS = {
     # layout has to be detailed enough to draw (#2450).
     Feature.IMAGE: AIModelTier.FAST,
     Feature.IMAGE_MAP: AIModelTier.CAREFUL,
+    # Advice for the DM only: code checks every finding against the earlier recaps (#2122).
+    Feature.PLOT_CHECK: AIModelTier.CAREFUL,
+    # Short advice and proposals the DM saves or declines; code checks every quotation (#2123).
+    Feature.PLOT_TALK: AIModelTier.CAREFUL,
     # Written into the transcript the whole server reads, but only a sure answer naming one of the
     # offered list names, and the DM can Undo (#2628).
     Feature.NAME_PASS: AIModelTier.CAREFUL,
@@ -279,6 +285,17 @@ def max_output(model: str) -> int:
         except ValueError:
             return GEMINI_MAX_OUTPUT
     return MAX_OUTPUT_TOKENS.get(model, DEFAULT_MAX_OUTPUT)
+
+
+# How much a model can read in one call, in tokens (#2590: a writer that reads a whole session).
+# Claude models: 200,000. Gemini models: 1,000,000 (Google's model pages, checked 2026-10-24).
+# A model not named gets the cautious figure.
+CLAUDE_CONTEXT = 200_000
+GEMINI_CONTEXT = 1_000_000
+
+
+def max_input(model: str) -> int:
+    return GEMINI_CONTEXT if model.startswith("gemini-") else CLAUDE_CONTEXT
 
 
 def answer_room(estimate: int, model: str, *, live: bool = False) -> int:

@@ -48,7 +48,8 @@ KIND_LABELS: dict[str, str] = {
 
 def _label(key: str) -> str:
     if key in LABELS:
-        return LABELS[key][1].capitalize()
+        plural = LABELS[key][1]
+        return plural[:1].upper() + plural[1:]  # (not capitalize(): it would turn NPCs into Npcs)
     return KIND_LABELS.get(key) or key.replace("_", " ").capitalize()
 
 

@@ -67,13 +67,11 @@ PC = "player_character"
 
 # What the DM can say a name is, in plain words. Keys are the memory rules' kinds.
 KINDS: dict[str, str] = {
-    "npc": "Someone you play (NPC)",
-    PC: "A player's character",
+    "npc": "NPC (a character you play)",
+    PC: "PC (a player's character)",
     "place": "A place",
     "faction": "A group (guild, cult, family…)",
-    "creature": "A named creature or monster",
     "item": "An item",
-    "deity": "A god or other power",
     "event": "Something that happened (event)",
     "clue": "A clue or secret",
     "people": "A whole people or kind (tabaxi, elves)",
@@ -86,13 +84,13 @@ KINDS: dict[str, str] = {
 }
 KIND_SHORT: dict[str, str] = {
     "npc": "NPC",
-    PC: "player's character",
+    PC: "PC",
     "character": "character",
     "place": "place",
     "faction": "group",
-    "creature": "creature",
+    "creature": "NPC",
     "item": "item",
-    "deity": "god",
+    "deity": "NPC",
     "spell": "spell",
     "event": "event",
     "clue": "clue",
@@ -993,14 +991,17 @@ def background_kind(entity: Entity) -> str:
     if entity.source != BACKGROUND_SOURCE:  # marked by where it came from, not by its words
         return ""
     if entity.type == "character":
-        return {"god": "deity", "npc": "npc"}.get(entity.role or "", "")
+        return "npc" if entity.role == "npc" else ""
     return entity.type if entity.type in ("place", "faction", "item", "event") else ""
 
 
 def a_kind(kind: str) -> str:
     """ "a place", "an item": the kind with its article."""
     word = kind_label(kind)
-    return f"{'an' if word[:1] in 'aeiou' else 'a'} {word}"
+    an = word.casefold().startswith(
+        ("a", "e", "i", "o", "u", "npc")
+    )  # ("an NPC": said "en-pee-see")
+    return f"{'an' if an else 'a'} {word}"
 
 
 def kind_label(kind: str) -> str:

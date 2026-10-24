@@ -54,6 +54,16 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "Fix a word, remake only the voice",
+    text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words and save. Before you approve the new text, a line beside the audio choice says what the new audio will be. After a small change: only the paragraphs you changed are spoken again, and the music stays. After a bigger change, or if the old parts weren't kept: the voice and the music are both made again, and the line says why. Choose your audio when you approve and it starts. On a recap that is already posted, the same line sits under the player, with a Remake the voice or Remake voice and music button. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are fixed, so they can't be edited. DMbot never changes your text on its own. In the editor, Fix a name everywhere replaces every use of a spelling in the box, apart from those two lines. Nothing is kept until you press Save.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Make a recap for a past session",
+    text: "On a campaign's recaps page, Recaps for past sessions lists every session with its recap. Choose Make the recap for a session that has none, or Make it again for one that failed, was held back or that you want fresh. If the recap is already approved, DMbot asks once before replacing it. To add a recap someone else wrote, choose Add a recap someone wrote, paste it, pick a text file or give a Google Doc link, and say who wrote it. The first time, you say you have the right to use it; DMbot doesn't check. While a recap is made, the page shows which part it is on and how long it has run. Nothing goes to your players until you post it.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Every name on the Story graph",
     text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },

@@ -22,6 +22,7 @@ import type {
   Offer,
   Person,
   CampaignName,
+  PastSession,
   Recap,
   RecapChoices,
   RecordingEntry,
@@ -535,7 +536,7 @@ function startWeb(big: boolean, lonely = false): WebState {
   const connect = (a: number, b: number, secret = false): void => {
     if (a === b || a >= nodes.length || b >= nodes.length) return;
     const id = `l${links.length + 1}`;
-    links.push({ id, a: nodes[a]!.id, b: nodes[b]!.id, words: words[links.length % words.length]!, secret, direction: links.length % 5 === 0 ? "both" : "ab" });
+    links.push({ id, a: nodes[a]!.id, b: nodes[b]!.id, words: words[links.length % words.length]!, secret, direction: links.length % 5 === 0 ? "both" : "a-b" });
   };
   for (let i = 0; i < nodes.length; i += 1) {
     connect(i, (i + 1) % nodes.length);
@@ -575,7 +576,7 @@ function startWeb(big: boolean, lonely = false): WebState {
       { id: "pair-ford", name: "Tolle Ford", kind: "place", secret: false },
     ];
     nodes.push(...extra);
-    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "ab" });
+    links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
   return { nodes, links, nextLink: links.length + 1 };
 }
@@ -763,6 +764,31 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "a".repeat(32), text: "Ka'zeth", kind: "full", saidAs: null },
     { id: "b".repeat(32), text: "Brynwater", kind: "full", saidAs: "Brin-water" },
   ];
+  let rightGiven = false; // the API asked once for the right to use text someone else wrote (#2609)
+  // Recaps made or added on the past-sessions list, by the session's start time. The pretend sessions: 4 has
+  // an approved recap, 3 has none, 2's recap failed, 1 has no transcript kept.
+  const made = new Map<number, string>();
+  const startMade = (sessionAt: number, writtenBy?: string): Recap => {
+    const ref = `100.cmp1.${sessionAt}`;
+    const base = recaps[0]!;
+    const now = Math.floor(Date.now() / 1000);
+    const next: Recap = {
+      ...base,
+      ref,
+      sessionAt,
+      title: "A made recap",
+      working: true,
+      state: "queued",
+      restartedAt: now,
+      serverNow: now,
+      writtenBy: writtenBy ?? null,
+      uploadedAt: writtenBy ? now : 0,
+    };
+    recaps.push(next);
+    writing.set(ref, 2);
+    made.set(sessionAt, ref);
+    return { ...next };
+  };
   const audioAsked = new Set<string>(); // a recap asked for again once: the next ask is "too soon"
   const fixLooks = new Map<string, number>();
   const voiceLooks = new Map<string, { looks: number; size: number }>();
@@ -773,6 +799,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const settle = (r: Recap): void => {
     writing.delete(r.ref);
     Object.assign(r, { working: false, state: "ready", canTryAgain: r.status === "draft" && r.triesLeft > 0 });
+    if (r.progress) r.progress = { ...r.progress, state: "done" };
   };
   const find = async (ref: string): Promise<Recap> => {
     await reachable();
@@ -799,6 +826,54 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         else writing.set(ref, left - 1);
       }
       return { ...r };
+    },
+    // Recaps for past sessions (#2610): the shapes of `GET past-sessions`, `POST /me/recaps/{ref}/again` and
+    // `POST /me/campaigns/{ref}/recaps/upload`, and their codes (#2613, #2614).
+    async pastSessions(campaignRef) {
+      calls.push(`pastSessions:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const ref = (at: number): string => `${campaignRef}.${at}`;
+      const ready = (approved: boolean): NonNullable<PastSession["recap"]> => ({
+        state: "ready", status: "draft", working: false, approved, writtenBy: null, canMakeAgain: true,
+      });
+      const mine = (at: number): PastSession["recap"] => {
+        const r = recaps.find((x) => x.ref === made.get(at));
+        return r
+          ? { state: r.state, status: "draft", working: r.working, approved: false, writtenBy: r.writtenBy ?? null, canMakeAgain: !r.working }
+          : null;
+      };
+      return {
+        sessions: [
+          { ref: ref(1791000000), sessionAt: 1791000000, sessionNumber: 4, sessionSeconds: 9300, hasTranscript: true, held: false, recap: ready(true) },
+          { ref: ref(1790000000), sessionAt: 1790000000, sessionNumber: 3, sessionSeconds: 7200, hasTranscript: true, held: false, recap: mine(1790000000) },
+          { ref: ref(1789000000), sessionAt: 1789000000, sessionNumber: 2, sessionSeconds: 5400, hasTranscript: true, held: false,
+            recap: { state: "failed", status: "draft", working: false, approved: false, writtenBy: null, canMakeAgain: true } },
+          { ref: ref(1788000000), sessionAt: 1788000000, sessionNumber: 1, sessionSeconds: 3600, hasTranscript: false, held: false, recap: null },
+        ],
+      };
+    },
+    async makeRecap(recapRef, replace) {
+      calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
+      await reachable();
+      signedIn();
+      const at = Number(recapRef.split(".").pop());
+      if (at === 1788000000) throw new ApiError("no-lines");
+      if (at === 1791000000 && !replace) throw new ApiError("needs-confirm");
+      if (made.has(at) && recaps.find((x) => x.ref === made.get(at))?.working) throw new ApiError("busy");
+      return startMade(at);
+    },
+    async addRecap(campaignRef, input) {
+      calls.push(`addRecap:${campaignRef}:${input.session}:${input.link ? "link" : "text"}${input.replace ? ":replace" : ""}${input.rights ? ":rights" : ""}`);
+      await reachable();
+      signedIn();
+      if (!rightGiven && !input.rights) throw new ApiError("needs-rights");
+      if (input.link && input.link.includes("private")) throw new ApiError("doc-not-shared");
+      if (input.link && !input.link.startsWith("https://docs.google.com/")) throw new ApiError("not-a-google-doc");
+      if (input.session === 1791000000 && !input.replace) throw new ApiError("needs-confirm");
+      rightGiven = true;
+      return startMade(input.session, input.writtenBy);
     },
     async saveRecap(ref, summary, housekeeping) {
       calls.push(`saveRecap:${ref}`);
@@ -1145,7 +1220,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (change.action === "add") {
         if (change.words.trim() === "") throw new ApiError("bad-name");
         if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
-        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "ab" });
+        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
         return edgeOf(change.a, change.b);
       }
       const link = state.links.find((l) => l.id === change.id);
@@ -1647,6 +1722,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         canAskAgain: false,
       };
       return { ...r };
+    },
+    // What making the audio again would do (#2630): a pretend small change, one paragraph of three.
+    async recapAudioRemake(ref) {
+      calls.push(`recapAudioRemake:${ref}`);
+      await find(ref);
+      return { how: "voice", why: "", changed: 1, total: 3 };
     },
     // "Tell DMbot what to fix" (#2114). The note is sorted into the same points every time; the
     // first look says "working", the next says "done", as the bot's queue would.
