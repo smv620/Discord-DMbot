@@ -49,7 +49,7 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
-    whatsNew: "What is waiting for you, on the Story graph",
+    whatsNew: "The website can show what is waiting for you, and answer \"Which Mara?\"",
     text: "Under the count line, Waiting for you lists what DMbot needs your answer on. Facts heard at the table: Yes, that's true, True, but keep it secret, or Not right. Connections found in a backstory are grouped by the upload they came from: Keep or Skip each one, or Keep all, which keeps the ready ones shown, up to 50 at a time. Skip is the same as No on Discord. A connection with a new name in it waits until you answer that name in Check new names. Same name, which one? has a button for each match and Neither. DMbot never decides these. Players never see this list.",
   },
   {
