@@ -27,7 +27,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider, PaymentError
 from dmbot.web.stripe import RECAP_AUDIO_ITEM, StripeConfig, StripeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
-from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, FakeDiscord, settings
 from tests.test_web_payments import DAY, HOOK_SECRET
 from tests.test_web_role import ensure_web_role, web_url
 
@@ -239,7 +239,9 @@ class Payments(DatabaseTest):
             settings(), self.db, FakeDiscord(), payments=self.provider, clock=lambda: self.now
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.events = 0
         start = await self.client.get("/auth/discord/start")

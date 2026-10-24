@@ -22,6 +22,7 @@ import {
   approveRefreshed,
   approveWords as w,
 } from "../src/content/recap-approve";
+import { panelWords } from "../src/content/recap-panel";
 import { cueProblemsHeading, text } from "../src/content/recaps";
 
 const live = vi.hoisted(() => ({ audio: false }));
@@ -268,12 +269,29 @@ describe("🎙️ approve and make audio to review", () => {
     };
     await open(api);
     expect(screen.getByText(w.review)).toBeTruthy();
+    // The words promise a player, so the player is there (#2617), and so is the button to post.
+    expect(screen.getByRole("heading", { name: panelWords.heading })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.postLater })).toBeTruthy();
     expect(screen.queryByText(w.notPosted)).toBeNull(); // not decided yet
     fireEvent.click(screen.getByRole("button", { name: w.keepAudio }));
     expect(await screen.findByText(w.notPosted)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.copy })).toBeTruthy();
     expect(screen.getByRole("button", { name: w.postLater })).toBeTruthy(); // still postable
     expect(api.calls.some((c) => c.startsWith("postRecap"))).toBe(false);
+  });
+
+  it("never says the audio is ready to listen to while narration is off", async () => {
+    live.audio = false;
+    const api = mockApi("table");
+    const recap = api.recap!.bind(api);
+    api.recap = async (ref) => ({
+      ...(await recap(ref)),
+      approval: { approved: true, choice: "both", approvedAt: 1791000100, canApprove: false },
+      audio: { state: "ready", error: "", current: true, canAskAgain: true },
+    });
+    await open(api);
+    expect(screen.queryByText(w.review)).toBeNull();
+    expect(screen.queryByRole("heading", { name: panelWords.heading })).toBeNull();
   });
 
   it("while the audio is being made, says so and offers nothing to post", async () => {
