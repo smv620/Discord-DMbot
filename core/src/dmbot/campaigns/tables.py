@@ -84,6 +84,8 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "web_backups": "a request for a copy for the website and the copy made for it, kept 15 "
+    "minutes: a copy of a copy, never content (#2554)",
     "recap_dictionaries": _VOICE_CO,
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
