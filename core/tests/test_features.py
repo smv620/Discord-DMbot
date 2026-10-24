@@ -111,6 +111,7 @@ class TheDMsListTest(unittest.TestCase):
             sidebar_on=True,
             story_extractor_on=True,
             live_heads_up=True,
+            plot_check_on=True,
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)

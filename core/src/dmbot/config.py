@@ -66,6 +66,9 @@ class Settings:
     # needs `gemini_key` (a billing-enabled Google key) and a Gemini name in AI_MODEL_CREATIVE.
     # Off unless set; with no key the writer stays on Anthropic and `ai_model_notice` says so.
     ai_provider_creative: str = "anthropic"
+    # What the recap writer reads (#2590): the beat sheet (default) or the cleaned transcript with
+    # PlotBot's guide. Apart from the provider, so each change is tested on its own.
+    recap_writer_reads: str = "beats"
     gemini_key: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
@@ -90,6 +93,8 @@ class Settings:
     table_images_on: bool = False
     table_images_per_day: int = 40
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
+    # PlotBot's check of each recap before it is accepted (#2122); needs recaps on. Off by default.
+    plot_check_on: bool = False
     # Importing older sessions (#2105): off for everyone until dev1 has checked a real import,
     # and on for the listed servers alone (#2259). The web API reads the same two settings.
     imports_on: bool = False
@@ -399,6 +404,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_models=ai_models,
         ai_model_notice=ai_notice,
         ai_provider_creative=ai_provider_creative,
+        recap_writer_reads=_recap_writer_reads(get),
         gemini_key=get("GEMINI_API_KEY"),
         memory_keep_days=keep_days,
         free_users=free_users,
@@ -411,6 +417,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        plot_check_on=recaps_raw in ("1", "true", "on")
+        and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
         time_suggestions=suggestions_raw in ("1", "true", "on"),
@@ -512,6 +520,14 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice
+
+
+def _recap_writer_reads(get: Callable[[str], str]) -> str:
+    """`RECAP_WRITER_READS`: `beats` (the default, also when empty) or `transcript` (#2590)."""
+    raw = _unquote(get("RECAP_WRITER_READS")).lower() or "beats"
+    if raw not in ("beats", "transcript"):
+        raise ConfigError("RECAP_WRITER_READS in .env must be beats or transcript.")
+    return raw
 
 
 def parse_creative_provider(

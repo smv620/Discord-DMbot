@@ -2913,6 +2913,116 @@ OWNER_LEFT = """
     REVOKE ALL ON FUNCTION dmbot_orphan_owned_campaigns(BIGINT) FROM PUBLIC;
 """
 
+RECAP_AGAIN = r"""
+    -- A DM makes or redoes the recap of any past session (#2608).
+    --   restarted_at  when the DM last started this recap over (Unix seconds); the month's
+    --                 allowance counts a restarted recap in the month it was restarted.
+    --   previous      the recap that was approved or posted before the DM started over, kept
+    --                 until the new one is approved (words, approval and where it was posted).
+    --                 Nothing is read from it once the new text is approved or posted.
+    ALTER TABLE recap_jobs ADD COLUMN restarted_at BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE recap_jobs ADD COLUMN previous JSONB;
+    -- The one door that starts a recap over. It is for the bot, which has checked nothing but
+    -- that `who` is the person asking; it checks that `who` is a DM of the campaign, that the
+    -- session still has its lines, and that nothing is being written for it now. Not granted to
+    -- the website: its door (`dmbot_recap_redo`) passes the signed-in person.
+    CREATE FUNCTION dmbot_recap_start_over(
+        g BIGINT, c TEXT, at_ BIGINT, who BIGINT, replace_ok BOOLEAN
+    ) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        keep JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g OR who IS NULL OR who <= 0
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = who) THEN
+            RETURN 'not_allowed';
+        END IF;
+        -- The session's words must still exist: retention may have deleted them.
+        IF NOT EXISTS (
+            SELECT 1 FROM transcript_sessions s
+            WHERE s.guild_id = g AND s.campaign_id = c AND s.started_at = at_
+              AND EXISTS (SELECT 1 FROM transcript_lines l
+                          WHERE l.guild_id = g AND l.session_id = s.id AND l.sidebar IS NULL)
+        ) THEN
+            RETURN 'no_lines';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND THEN
+            INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, created_at,
+                                    updated_at, restarted_at)
+                VALUES (g, c, at_, who, now_s, now_s, now_s);
+            RETURN 'queued';
+        END IF;
+        -- Going out, or a worker has it right now: nothing to start over until that ends. A recap
+        -- that waits (a held one, or one between tries) is startable: that is the DM's way out.
+        IF job.status = 'posting' OR job.leased_to > now_s THEN
+            RETURN 'busy';
+        END IF;
+        IF job.state = 'ready' AND job.status IN ('draft', 'posted') AND NOT replace_ok THEN
+            RETURN 'needs_confirm';
+        END IF;
+        keep := NULL;
+        IF job.state = 'ready' AND (job.status = 'posted' OR job.approved_hash <> '') THEN
+            keep := jsonb_build_object(
+                'title', job.title, 'summary', job.summary, 'original', job.original,
+                'housekeeping', to_jsonb(job.housekeeping), 'music', to_jsonb(job.music),
+                'game_day', job.game_day, 'status', job.status,
+                'approved_by', job.approved_by, 'approved_at', job.approved_at,
+                'approved_hash', job.approved_hash, 'audio_choice', job.audio_choice,
+                'speakers', to_jsonb(job.speakers), 'grade', job.grade,
+                'posted_url', job.posted_url, 'decided_at', job.decided_at);
+        ELSIF job.previous IS NOT NULL AND job.approved_hash = '' AND job.status = 'draft' THEN
+            keep := job.previous;  -- started over twice before the new one was approved
+        END IF;
+        UPDATE recap_jobs SET
+            state = 'queued', attempt = 0, errors = 0, restarts = 0, next_at = 0, leased_to = 0,
+            calls = 0, window_count = 0, window_done = 0, last_error = '', problems = '{}',
+            beats = '[]', title = '', summary = '', original = '', housekeeping = '{}',
+            music = '{}', game_day = NULL, status = 'draft', tries = 0, speakers = '{}',
+            grade = '{}', emailed_at = NULL, decided_at = NULL, to_confirm = '{}',
+            names_state = 0, corrections = '{}', approved_by = 0, approved_at = 0,
+            approved_hash = '', audio_choice = '', split = NULL, critics = NULL,
+            audio = 'off', audio_tries = 0, audio_next_at = 0, audio_text_hash = '',
+            audio_credits = 0, audio_error = '', audio_asked_at = 0, posting_since = NULL,
+            posting_step = NULL, posted_url = NULL, respelled_at = NULL,
+            dm_user_id = who, updated_at = now_s, previous = keep,
+            -- (only a recap the DM chose to redo counts again in the month: a failed or held one
+            -- was never counted, and its redo is the same recap)
+            restarted_at = CASE WHEN job.state = 'ready' THEN now_s ELSE job.restarted_at END
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN 'queued';
+    END
+    $fn$;
+    -- The website's door: the signed-in person, a DM of the campaign, in a server on their list.
+    CREATE FUNCTION dmbot_recap_redo(g BIGINT, c TEXT, at_ BIGINT, replace_ok BOOLEAN)
+    RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_allowed';
+        END IF;
+        RETURN dmbot_recap_start_over(g, c, at_, dmbot_current_user(), replace_ok);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_start_over(BIGINT, TEXT, BIGINT, BIGINT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_start_over(BIGINT, TEXT, BIGINT, BIGINT, BOOLEAN)
+        FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN) FROM PUBLIC;
+"""
+
 TRANSCRIPT_ERASURES = (
     """
     -- Who erased their transcripts in a server, and when (#2605). A backup made before that is
@@ -3167,6 +3277,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_support_message", "dmbot_support_message(BIGINT)"),
     # "Make the audio again" on a DM's recap (#1418): the only write to its audio columns.
     ("dmbot_recap_audio_again", "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_recap_redo", "dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN)"),  # #2608
     # Importing older sessions (#2105): each is held to a DM of the campaign.
     ("dmbot_import_agreed", "dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)"),
     (
@@ -3183,6 +3294,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_recap_shared", "dmbot_recap_shared(TEXT)"),
     # Approving a recap's text and picking its audio (#2083): the only write to those columns.
     ("dmbot_recap_approve", "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
+    # PlotBot's check of a recap: read and answered by a DM (#2122).
+    ("dmbot_plot_read", "dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT)"),
+    ("dmbot_plot_answer", "dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)"),
     # ... and approving a draft that waited 3 days for its check, as it is (#2305).
     (
         "dmbot_recap_approve_unchecked",
@@ -11762,6 +11876,14 @@ EXPOSURE_SUMMARY = """
         CHECK (status IN ('pending', 'settled', 'applying', 'applied', 'recanted'));
 """
 
+RECAP_CALL_LOG = """
+    -- When each AI call of a recap job was made (UTC seconds), kept for two days, so the campaign's
+    -- daily tally counts only the last 24 hours of calls and not a waiting recap's whole lifetime
+    -- (#2308). A job from before this has none: it is counted as it was (its `spent`, while it was
+    -- updated in the last day). The column has a default and is added, not updated: no row changes.
+    ALTER TABLE recap_jobs ADD COLUMN spent_log BIGINT[] NOT NULL DEFAULT '{}';
+"""
+
 TIMELINE_STABLE = """
     -- The story timeline's door only reads (#2462), so it is STABLE: the planner may reuse its
     -- answer inside one statement. 0196 created it VOLATILE, the default; changing the volatility
@@ -11920,6 +12042,20 @@ MAP_NOTES = """
     CREATE INDEX map_notes_person ON map_notes (guild_id, user_id);
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
+
+RECAP_STORY_ROOM = """
+    -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
+    -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
+    -- only a guard (`fit_summary` shortens past it and logs). The number is
+    -- `recaps.fixed_lines.STORY_COLUMN_MAX`; a test keeps the two equal. The constraint is
+    -- replaced, no row is rewritten, so no row-level security is touched.
+    ALTER TABLE recap_jobs
+        DROP CONSTRAINT recap_jobs_summary_check,
+        DROP CONSTRAINT recap_jobs_original_check,
+        ADD CONSTRAINT recap_jobs_summary_check CHECK (char_length(summary) <= 30000),
+        ADD CONSTRAINT recap_jobs_original_check CHECK (char_length(original) <= 30000);
+"""
+
 
 WEB_OWNED_CAMPAIGNS = """
     -- The website's two doors for a campaign's owner, in any server (#2554, docs/PLAN.md,
@@ -12130,6 +12266,69 @@ WEB_DELETE_NOTICES = (
     $do$;
     """
 )
+
+NPC_OR_PC = """
+    -- Every character is an NPC or a PC (owner, 2026-10-23, #2562): the role "god" goes. A god
+    -- becomes an NPC and keeps the word "god" in its description (unless it already says so),
+    -- on the entry and in the change log's snapshots, so Undo across this still puts back an
+    -- NPC. Nothing is deleted. The statements read and write memory_entities and memory_changes,
+    -- which have forced row-level security and are migrated unscoped, so each is opened for this
+    -- one migration only (CLAUDE.md, "A migration that changes rows must open row-level security
+    -- for itself").
+    CREATE POLICY migrate_backfill ON memory_entities FOR ALL USING (true) WITH CHECK (true);
+    CREATE POLICY migrate_backfill ON memory_changes FOR ALL USING (true) WITH CHECK (true);
+    UPDATE memory_entities SET
+        role = 'npc',
+        description = CASE
+            WHEN description ~* '\\m(god|goddess|deity)\\M' THEN description
+            ELSE btrim(left(description, 300 - 7) || ' A god.') END
+        WHERE role = 'god';
+    UPDATE memory_changes SET
+        before = CASE WHEN before->>'role' = 'god' THEN jsonb_set(
+            jsonb_set(before, '{role}', '"npc"'),
+            '{description}', to_jsonb(CASE
+                WHEN coalesce(before->>'description', '') ~* '\\m(god|goddess|deity)\\M'
+                THEN coalesce(before->>'description', '')
+                ELSE btrim(left(coalesce(before->>'description', ''), 300 - 7) || ' A god.') END))
+            ELSE before END,
+        after = CASE WHEN after->>'role' = 'god' THEN jsonb_set(
+            jsonb_set(after, '{role}', '"npc"'),
+            '{description}', to_jsonb(CASE
+                WHEN coalesce(after->>'description', '') ~* '\\m(god|goddess|deity)\\M'
+                THEN coalesce(after->>'description', '')
+                ELSE btrim(left(coalesce(after->>'description', ''), 300 - 7) || ' A god.') END))
+            ELSE after END
+        WHERE table_name = 'memory_entities'
+          AND (before->>'role' = 'god' OR after->>'role' = 'god');
+    DROP POLICY migrate_backfill ON memory_changes;
+    DROP POLICY migrate_backfill ON memory_entities;
+    DO $do$
+    DECLARE c TEXT;
+    BEGIN
+        FOR c IN SELECT conname FROM pg_constraint
+                 WHERE conrelid = 'memory_entities'::regclass AND contype = 'c'
+                   AND pg_get_constraintdef(oid) LIKE '%god%' LOOP
+            EXECUTE format('ALTER TABLE memory_entities DROP CONSTRAINT %I', c);
+        END LOOP;
+    END
+    $do$;
+    ALTER TABLE memory_entities ADD CONSTRAINT memory_entities_role_check
+        CHECK (role IS NULL OR role IN ('player_character', 'npc'));
+"""
+
+NAME_PASS = """
+    -- PlotBot's name pass on a finished session's cleaned transcript (#2628): when it was done
+    -- (Unix seconds), 0 when it has not been. The recap of a session waits for it (a bounded wait,
+    -- in code). Every session that exists now is marked done, so nothing old is asked again and no
+    -- old recap waits. A time only, no words.
+    ALTER TABLE transcript_sessions ADD COLUMN names_repaired_at BIGINT NOT NULL DEFAULT 0;
+    -- Migrations run with no server set, so row-level security hides every row: open the table to
+    -- this one UPDATE, dropped again inside the migration's transaction.
+    CREATE POLICY migrate_backfill ON transcript_sessions
+        FOR ALL USING (true) WITH CHECK (true);
+    UPDATE transcript_sessions SET names_repaired_at = GREATEST(COALESCE(ended_at, started_at), 1);
+    DROP POLICY migrate_backfill ON transcript_sessions;
+"""
 
 IMPORT_STEPS = """
     -- How far each imported session's cleaning has got and when anything about it last moved
@@ -12464,6 +12663,346 @@ GRAPH_OVERVIEW = (
     """
 )
 
+
+def _approve_with_versions() -> str:
+    """`dmbot_recap_approve` (RECAP_APPROVAL) as it was, plus a call to `dmbot_recap_keep_version`
+    (#2122). Taken from the earlier migration's text, so the two cannot drift apart."""
+    start = RECAP_APPROVAL.index("    CREATE FUNCTION dmbot_recap_approve(")
+    end = RECAP_APPROVAL.index("    $fn$;", start) + len("    $fn$;")
+    body = RECAP_APPROVAL[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+    declared = "        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;\n"
+    keep = "        RETURN 'approved';\n    END"
+    if declared not in body or keep not in body:  # (an earlier migration's text moved)
+        raise RuntimeError("dmbot_recap_approve changed: the version step needs a new anchor")
+    return body.replace(
+        keep,
+        "        -- The text the DM approved becomes the session's summary in the campaign notes.\n"
+        "        PERFORM dmbot_recap_keep_version(g, c, at_, dmbot_current_user(), now_s);\n"
+        + keep,
+        1,
+    )
+
+
+RECAP_ACCEPTED = (
+    """
+    -- Each version of a recap text the DM approved (#2122, docs/PLAN.md, "PlotBot checks every
+    -- recap"): it becomes that session's summary in the campaign notes, which PlotBot, the
+    -- pre-session note, recall and later checks read (the newest version per session). Never
+    -- overwritten: an approval of different text adds the next version. A new table, so no rows
+    -- change and no backfill policy; rows go with their campaign.
+    CREATE TABLE recap_accepted (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_at  BIGINT NOT NULL,
+        version     INTEGER NOT NULL CHECK (version >= 1),
+        text_hash   TEXT NOT NULL,
+        title       TEXT NOT NULL,
+        summary     TEXT NOT NULL,
+        accepted_by BIGINT NOT NULL,
+        accepted_at BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, session_at, version),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
+    );
+    """
+    + _isolate("recap_accepted")
+    + """
+    -- Keeps the job's current text as the session's next accepted version, unless it is the newest
+    -- one again. One place for both ways of approving (the website's door and the Discord button).
+    -- A session keeps version 1 and the 19 newest; at the limit the oldest after version 1 goes
+    -- to make room. A stored version is never rewritten, and version numbers only go up.
+    CREATE FUNCTION dmbot_recap_keep_version(g BIGINT, c TEXT, at_ BIGINT, by BIGINT, now_s BIGINT)
+    RETURNS VOID LANGUAGE plpgsql AS $fn$
+    DECLARE
+        job RECORD;
+        h TEXT;
+        last_hash TEXT;
+        last_version INT;
+        total INT;
+    BEGIN
+        SELECT r.title, r.summary INTO job FROM recap_jobs r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.session_at = at_;
+        IF NOT FOUND THEN
+            RETURN;
+        END IF;
+        h := encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')), 'hex');
+        SELECT a.text_hash, a.version INTO last_hash, last_version FROM recap_accepted a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_
+            ORDER BY a.version DESC LIMIT 1;
+        IF FOUND AND last_hash = h THEN
+            RETURN;
+        END IF;
+        SELECT count(*) INTO total FROM recap_accepted a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_;
+        IF total >= 20 THEN
+            DELETE FROM recap_accepted WHERE guild_id = g AND campaign_id = c
+                AND session_at = at_ AND version = (SELECT min(a.version) FROM recap_accepted a
+                    WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_
+                    AND a.version > 1);
+        END IF;
+        INSERT INTO recap_accepted (guild_id, campaign_id, session_at, version, text_hash, title,
+            summary, accepted_by, accepted_at)
+        VALUES (g, c, at_, COALESCE(last_version, 0) + 1, h, job.title, job.summary, by, now_s);
+    END
+    $fn$;
+    REVOKE ALL ON FUNCTION dmbot_recap_keep_version(BIGINT, TEXT, BIGINT, BIGINT, BIGINT)
+        FROM PUBLIC;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_keep_version(BIGINT, TEXT, BIGINT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+    + _approve_with_versions()
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+)
+
+
+def _approve_with_plot() -> str:
+    """`dmbot_recap_approve` as 0209 left it, plus the plot gate (#2122): when the website sets
+    `dmbot.plot_gate` for this transaction, a text whose finished check has an issue with no
+    answer is not approved ('plot_open'). It is read under the same lock as the approval, so an
+    issue found between the page's read and the press cannot slip through. A check that is
+    running, failed or missing never holds it (PlotBot advises; the DM decides)."""
+    body = _approve_with_versions()
+    anchor = "        -- While the audio is queued or being made nothing is approved over it"
+    if body.count(anchor) != 1:  # (an earlier migration's text moved)
+        raise RuntimeError("dmbot_recap_approve changed: the plot gate needs a new anchor")
+    gate = (
+        "        IF current_setting('dmbot.plot_gate', true) = 'on' AND EXISTS (\n"
+        "            SELECT 1 FROM plot_checks k JOIN plot_issues i\n"
+        "                ON i.guild_id = k.guild_id AND i.campaign_id = k.campaign_id\n"
+        "                AND i.session_at = k.session_at AND i.text_hash = k.text_hash\n"
+        "            WHERE k.guild_id = g AND k.campaign_id = c AND k.session_at = at_\n"
+        "                AND k.text_hash = expected AND k.state = 'done'\n"
+        "                AND i.answer_kind IS NULL) THEN\n"
+        "            RETURN 'plot_open';\n"
+        "        END IF;\n"
+    )
+    return body.replace(anchor, gate + anchor, 1)
+
+
+PLOT_ISSUES = (
+    """
+    -- PlotBot's check of a recap against the campaign (#2122, docs/PLAN.md, "PlotBot checks every
+    -- recap before it is accepted"). A check is for one text of a recap (its hash); the issues it
+    -- found belong to that text and to the DM alone. New tables, so no rows change and no backfill
+    -- policy; rows go with their campaign.
+    -- (`plot_checks` is left out of campaign backups on purpose: it only says that a text was
+    -- checked and when, and a restored campaign is checked afresh. The issues and the "not a
+    -- problem" notes are backed up: they hold the DM's answers.)
+    CREATE TABLE plot_checks (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_at  BIGINT NOT NULL,
+        text_hash   TEXT NOT NULL,
+        state       TEXT NOT NULL CHECK (state IN ('running', 'done', 'failed')),
+        tries       INTEGER NOT NULL DEFAULT 1,
+        calls       INTEGER NOT NULL DEFAULT 0,
+        created_at  BIGINT NOT NULL,
+        finished_at BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, session_at, text_hash),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE TABLE plot_issues (
+        guild_id       BIGINT NOT NULL,
+        campaign_id    TEXT NOT NULL,
+        id             TEXT NOT NULL,
+        session_at     BIGINT NOT NULL,
+        text_hash      TEXT NOT NULL,
+        kind           TEXT NOT NULL CHECK (kind IN ('contradiction', 'dead_acts', 'item_twice',
+                           'place', 'timeline', 'dropped_thread', 'promise', 'secret')),
+        level          TEXT NOT NULL CHECK (level IN ('possible', 'probable', 'likely')),
+        sentence       INTEGER NOT NULL CHECK (sentence >= 1),
+        sentence_text  TEXT NOT NULL,
+        reason         TEXT NOT NULL,
+        source_text    TEXT NOT NULL,
+        source_session TEXT,
+        fine_key       TEXT NOT NULL,
+        created_at     BIGINT NOT NULL,
+        answer_kind    TEXT CHECK (answer_kind IN ('fix', 'changed', 'fine', 'leave')),
+        answer_note    TEXT NOT NULL DEFAULT '',
+        answered_by    BIGINT,
+        answered_at    BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
+    );
+    CREATE INDEX plot_issues_by_text ON plot_issues (guild_id, campaign_id, session_at, text_hash);
+    -- "Not a problem": the DM's note, kept so the same issue is not raised again.
+    CREATE TABLE plot_fine (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        fine_key    TEXT NOT NULL,
+        note        TEXT NOT NULL,
+        by_user     BIGINT NOT NULL,
+        at          BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, fine_key),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE
+    );
+    """
+    + _isolate("plot_checks")
+    + _isolate("plot_issues")
+    + _isolate("plot_fine")
+    + """
+    -- The website reads a recap's plot check, and answers its issues, through these two doors:
+    -- only a DM of the campaign, in a server on the session's list. The website's role has no
+    -- right to the tables themselves. `wait_s`: how long a text may wait for its first check
+    -- before the page is told the check is unavailable (the bot may be off): PlotBot advises and
+    -- never holds a DM up for long.
+    CREATE FUNCTION dmbot_plot_read(g BIGINT, c TEXT, at_ BIGINT, wait_s BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        chk plot_checks%ROWTYPE;
+        h TEXT;
+        st TEXT;
+        issues JSONB;
+        vers JSONB;
+        open_n INT;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        h := encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')), 'hex');
+        SELECT * INTO chk FROM plot_checks
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ AND text_hash = h;
+        IF NOT FOUND THEN
+            st := CASE WHEN now_s - job.updated_at > wait_s THEN 'unavailable' ELSE 'checking' END;
+        ELSE
+            st := CASE chk.state WHEN 'done' THEN 'ready' WHEN 'running' THEN 'checking'
+                  ELSE 'unavailable' END;
+        END IF;
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                   'id', i.id, 'kind', i.kind, 'level', i.level, 'sentence', i.sentence,
+                   'sentenceText', i.sentence_text, 'reason', i.reason,
+                   'source', jsonb_build_object('text', i.source_text,
+                                                'session', i.source_session),
+                   'answer', CASE WHEN i.answer_kind IS NULL THEN NULL
+                                  ELSE jsonb_build_object('kind', i.answer_kind,
+                                                          'note', i.answer_note) END)
+                   ORDER BY i.sentence, i.id), '[]'::jsonb),
+               COUNT(*) FILTER (WHERE i.answer_kind IS NULL)
+            INTO issues, open_n
+            FROM plot_issues i
+            WHERE i.guild_id = g AND i.campaign_id = c AND i.session_at = at_
+              AND i.text_hash = h AND st = 'ready';
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                   'version', a.version, 'acceptedAt', a.accepted_at)
+                   ORDER BY a.version), '[]'::jsonb)
+            INTO vers FROM recap_accepted a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_;
+        RETURN jsonb_build_object('state', st, 'hash', h, 'issues', issues,
+            'versions', vers, 'open', COALESCE(open_n, 0),
+            'approvedCurrent', COALESCE((SELECT a.text_hash = h FROM recap_accepted a
+                WHERE a.guild_id = g AND a.campaign_id = c AND a.session_at = at_
+                ORDER BY a.version DESC LIMIT 1), false));
+    END
+    $fn$;
+    CREATE FUNCTION dmbot_plot_answer(
+        g BIGINT, c TEXT, at_ BIGINT, p_issue TEXT, p_kind TEXT, p_note TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        iss plot_issues%ROWTYPE;
+        h TEXT;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF p_kind IS NULL OR p_kind NOT IN ('fix', 'changed', 'fine', 'leave')
+           OR p_note IS NULL OR length(p_note) > 500 THEN
+            RETURN 'bad';
+        END IF;
+        IF NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN 'not_found';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM campaign_dms d
+                       WHERE d.guild_id = g AND d.campaign_id = c
+                         AND d.user_id = dmbot_current_user()) THEN
+            RETURN 'not_found';
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+            WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'not_found';
+        END IF;
+        SELECT * INTO iss FROM plot_issues
+            WHERE guild_id = g AND campaign_id = c AND id = p_issue AND session_at = at_
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'not_found';
+        END IF;
+        h := encode(sha256(convert_to(job.title || E'\\n' || job.summary, 'UTF8')), 'hex');
+        IF iss.text_hash <> h THEN
+            RETURN 'stale';  -- the text changed since: a new check has its own issues
+        END IF;
+        UPDATE plot_issues SET answer_kind = p_kind, answer_note = p_note,
+            answered_by = dmbot_current_user(), answered_at = now_s
+            WHERE guild_id = g AND campaign_id = c AND id = p_issue;
+        IF p_kind = 'fine' THEN
+            INSERT INTO plot_fine (guild_id, campaign_id, fine_key, note, by_user, at)
+            VALUES (g, c, iss.fine_key, p_note, dmbot_current_user(), now_s)
+            ON CONFLICT (guild_id, campaign_id, fine_key)
+            DO UPDATE SET note = EXCLUDED.note, by_user = EXCLUDED.by_user, at = EXCLUDED.at;
+        ELSE
+            DELETE FROM plot_fine
+                WHERE guild_id = g AND campaign_id = c AND fine_key = iss.fine_key;
+        END IF;
+        RETURN 'ok';
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
+    """
+    + _approve_with_plot()
+    + """
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -12693,15 +13232,25 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0202_image_lines", IMAGE_LINES),  # a line that describes an image in the table chat (#2450)
     ("0203_map_notes", MAP_NOTES),  # a map put into words, kept for MapBot (#2450)
     ("0204_relation_directional", RELATION_DIRECTIONAL),  # family roles read one way (#2457)
+    (
+        "0205_recap_call_log",
+        RECAP_CALL_LOG,
+    ),  # when each recap call was made, for the day's tally (#2308)
     ("0206_timeline_stable", TIMELINE_STABLE),  # the timeline door only reads (#2485)
     ("0207_recap_approve_unchecked", RECAP_APPROVE_UNCHECKED),  # approve an unchecked draft (#2305)
     ("0208_web_image_lines", WEB_IMAGE_LINES),  # the website tags a picture line (#2507)
+    ("0209_recap_accepted", RECAP_ACCEPTED),  # each approved version of a recap (#2122)
+    ("0210_plot_issues", PLOT_ISSUES),  # PlotBot's check of a recap and its issues (#2122)
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
     ("0220_line_topic_choices", TOPIC_CHOICES),  # a DM puts a left-out stretch back (#2567)
+    ("0221_recap_story_room", RECAP_STORY_ROOM),  # the recap story column holds 30,000 (#2601)
+    ("0222_npc_or_pc", NPC_OR_PC),  # every character is an NPC or a PC: a god is an NPC (#2562)
     ("0223_transcript_erasures", TRANSCRIPT_ERASURES),  # a restore skips erased lines (#2605)
+    ("0224_recap_again", RECAP_AGAIN),  # a DM makes or redoes any session's recap (#2608)
     ("0226_audio_told", RECAP_AUDIO_TOLD),  # the DM is told once when the audio is done (#2621)
+    ("0227_name_pass", NAME_PASS),  # PlotBot repairs names in a finished transcript (#2628)
     (
         "0228_graph_overview",
         GRAPH_OVERVIEW,
@@ -12711,6 +13260,10 @@ MIGRATIONS: tuple[Migration, ...] = (
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "recap_accepted",
+    "plot_checks",
+    "plot_issues",
+    "plot_fine",
     "transcript_erasures",
     "secret_exposures",
     "web_delete_notices",
