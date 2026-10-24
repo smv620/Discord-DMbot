@@ -16,12 +16,15 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, PropertyMock, patch
 
+import discord
+
 from dmbot.ai import AIError, Reply
 from dmbot.bot import DMBot
 from dmbot.dm_screen import links_ready
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import lore_read as lr
+from dmbot.memory import pronouns
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
 from dmbot.memory.end_match import Ends, head, stripped
 from dmbot.memory.models import CONFIRMED, NewName
@@ -557,3 +560,146 @@ class WhenKept(NamesTest):
         r = reader()
         self.assertEqual(r.match("Brannoc, the Pale").name, "Brannoc")
         self.assertEqual(r.match("Mara, the Pale").ambiguous, ("Mara Ashgrove", "Mara Vell"))
+
+
+class Pronouns(unittest.TestCase):
+    """#2650 item 1: "I", "my" and "me" are the character the DM chose; never a guess."""
+
+    def test_first_person_text_is_asked_about_and_third_person_text_is_not(self) -> None:
+        self.assertTrue(pronouns.says_i(BACKSTORY))
+        self.assertTrue(pronouns.says_i("I'm the one who stayed."))
+        self.assertFalse(
+            pronouns.says_i("Tavin grew up in Greywater Keep. His brother Ulric left.")
+        )
+        self.assertFalse(pronouns.says_i("Mirelle is in the hills."))  # "Mi" is not "me"
+
+    def test_i_and_my_are_the_chosen_character_and_his_and_her_only_as_a_whole_end(self) -> None:
+        ends = [
+            c("I", "ally_of", "Brannoc"),
+            c("my", "knows", "Greywater Keep"),
+            c("me", "kin_of", "Ulric"),
+            c("her", "knows", "Aldric"),
+            c("her mother Aldric", "knows", "Brannoc"),  # a longer end is matched as any end is
+        ]
+        lost: Counter[str] = Counter()
+        kept = bg.keep_connections([ends], LISTED, {}, dropped=lost, speaker="Tavin Ashgrove")
+        pairs = {(x.a, x.b) for x in kept}
+        self.assertIn(("Tavin Ashgrove", "Brannoc"), pairs)
+        self.assertIn(("Tavin Ashgrove", "Greywater Keep"), pairs)
+        self.assertIn(("Tavin Ashgrove", "Ulric Stonehand"), pairs)
+        self.assertIn(("Tavin Ashgrove", "Aldric"), pairs)
+        self.assertEqual(lost["whose"], 0)
+
+    def test_with_nobody_chosen_they_are_left_out_and_counted_never_guessed(self) -> None:
+        ends = [c("I", "ally_of", "Brannoc"), c("my", "knows", "Greywater Keep"),
+                c("Ulric", "kin_of", "Brannoc")]  # fmt: skip
+        lost: Counter[str] = Counter()
+        kept = bg.keep_connections([ends], LISTED, {}, dropped=lost)
+        self.assertEqual([(x.a, x.b) for x in kept], [("Ulric Stonehand", "Brannoc")])
+        self.assertEqual(lost["whose"], 2)
+        note = ui_bg._found_note(3, 1, ready=1, dropped=lost)
+        self.assertIn('2 about "I" left out: say whose backstory it is', note)
+        self.assertNotIn("not read in time", note)  # the parts still add up to what was found
+
+    def test_the_reading_is_told_who_is_speaking_or_not_to_guess(self) -> None:
+        self.assertIn(
+            "Tavin Ashgrove's own backstory", lr.read_instructions(None, "Tavin Ashgrove")
+        )
+        self.assertIn("never guess who is speaking", lr.read_instructions(None, None))
+
+
+class WhoseBackstory(NamesTest):
+    """With Postgres: the question, the choice, and a kept connection."""
+
+    I_TEXT = "I serve the Order of the Grey Hand. My brother Brannoch Vale taught me."
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        _ai_busy.clear()
+        _ai_reads.clear()
+        self.ai = lore_fake.lore_ai(reply())
+        self.bot.background_ai = self.ai  # type: ignore[assignment]
+        self.bot.background_read_ai = self.ai  # type: ignore[assignment]
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        self.bot.campaigns.record_confirmation = AsyncMock()  # type: ignore[method-assign]
+        self.store = BackstoryLinks(self.db)
+        self.bot.backstory_links = self.store
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Tavin Ashgrove", "character", CONFIRMED, role="npc"),
+             NewName("Greywater Keep", "place", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        names = [
+            name("Order of the Grey Hand", "group", "the Order of the Grey Hand"),
+            name("Brannoch Vale", "person", "Brannoch Vale taught me"),
+        ]
+        links = [
+            link("I", "works for", "Order of the Grey Hand", "I serve the Order of the Grey Hand"),
+            link("my", "family", "Brannoch Vale", "My brother Brannoch Vale taught me"),
+        ]
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+
+    async def asyncTearDown(self) -> None:
+        _ai_busy.clear()
+        _ai_reads.clear()
+        await super().asyncTearDown()
+
+    async def relations(self) -> list[Any]:
+        return await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+
+    async def waiting(self) -> list[Any]:
+        return await self.store.waiting(GUILD, self.campaign.id)
+
+    async def confirm_all(self) -> None:
+        waiting = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
+        for kind in {e.type for e in waiting}:
+            ids = [e.id for e in waiting if e.type == kind]
+            await self.memory.confirm_kinds(GUILD, self.campaign.id, ids, kind, source="dm")
+
+    async def offered(self) -> Any:
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(self.I_TEXT, "Tavin's backstory"))
+        return it.response.sent[0][1]["view"], it.response.sent[0][0]
+
+    async def test_a_text_that_says_i_asks_whose_it_is_and_a_third_person_one_does_not(
+        self,
+    ) -> None:
+        view, text = await self.offered()
+        self.assertIn("Whose backstory is this?", text)
+        select = next(i for i in view.children if isinstance(i, discord.ui.Select))
+        labels = [o.label for o in select.options]
+        self.assertEqual(labels[0], ui_bg.NOT_ONE)
+        self.assertIn("Tavin Ashgrove", labels)
+        self.assertNotIn("Greywater Keep", labels)  # a place is no one's backstory
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload("Mirelle serves the Order.", "notes"))
+        self.assertNotIn("Whose backstory", it.response.sent[0][0])
+
+    async def test_a_pick_makes_i_and_my_that_character_through_to_a_kept_connection(self) -> None:
+        view, _ = await self.offered()
+        select = next(i for i in view.children if isinstance(i, discord.ui.Select))
+        tavin = next(o.value for o in select.options if o.label == "Tavin Ashgrove")
+        pick = self.it()
+        with patch.object(type(select), "values", new_callable=PropertyMock, return_value=[tavin]):
+            await select.callback(pick)
+        self.assertEqual(view.speaker, "Tavin Ashgrove")
+        press = self.it()
+        await view._read(press)
+        self.assertEqual(len(await self.waiting()), 2)
+        await self.confirm_all()
+        done = await keep.keep_all(
+            self.memory, self.store, GUILD, self.campaign.id, await self.waiting()
+        )
+        self.assertEqual(len(done.kept), 2)
+        ents = {e.id: e.name for e in await self.memory.entities(GUILD, self.campaign.id)}
+        rels = await self.relations()
+        self.assertEqual({ents[r.subject_id] for r in rels}, {"Tavin Ashgrove"})
+
+    async def test_no_pick_leaves_the_i_connections_out_and_says_so(self) -> None:
+        view, _ = await self.offered()
+        press = self.it()
+        await view._read(press)
+        self.assertEqual(await self.waiting(), [])
+        self.assertIn('about "I" left out: say whose backstory it is', shown(press))

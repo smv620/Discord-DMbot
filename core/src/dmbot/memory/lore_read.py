@@ -98,8 +98,24 @@ NAMES
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
-def read_instructions(own: Mapping[str, str] | None = None) -> str:
-    """Pass 1: what the careful model is asked to do. The text follows as data."""
+def _speaking(speaker: str | None) -> str:
+    """The sentence about "I" and "my" (#2650): they are the character the DM chose, or, when
+    nobody said whose backstory it is, they stay as written."""
+    if speaker:
+        return (
+            f" (this is {speaker}'s own backstory: 'I', 'my' and 'me' mean {speaker}, so write "
+            f"{speaker} for them)."
+        )
+    return (
+        " (when the text says 'I', 'my' or 'me', write that word as the end, for example 'I': "
+        "never guess who is speaking)."
+    )
+
+
+def read_instructions(own: Mapping[str, str] | None = None, speaker: str | None = None) -> str:
+    """Pass 1: what the careful model is asked to do. The text follows as data. `speaker`: the
+    character the DM said the backstory belongs to (#2650); without one, "I" and "my" stay as
+    written, because who is speaking is the DM's to say, never a guess."""
     kinds = ", ".join(bg.KINDS)
     theirs = "".join(f'; "{label}" ({key})' for key, label in (own or {}).items())
     return (
@@ -121,8 +137,9 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "- RELATIONSHIPS: only what the text says plainly between two of those names, in plain "
         "words (leads, is a member of, is in, is a friend of, is an enemy of, owns, works for, "
         f"knows, is family of, pays{theirs}). Write each relationship's two ends as the full "
-        "names you listed under NAMES, never as 'my brother', 'the twins' or a title (a "
-        "character's own backstory says 'I' or 'my': write that character's listed name). "
+        "names you listed under NAMES, never as 'my brother', 'the twins' or a title"
+        + _speaking(speaker)
+        + " "
         f"'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text, and holds "
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
@@ -300,11 +317,12 @@ async def read_list(
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
     tick: Callable[[int], None] | None = None,
+    speaker: str | None = None,
 ) -> tuple[PlainList, bool]:
     """Pass 1: the whole text in one call, retried once with twice the room, then continued from
     the list so far while it is still cut off at the cap. Returns the list and whether it is
     still missing its end."""
-    system = read_instructions(own)
+    system = read_instructions(own, speaker)
     model = str(getattr(ai, "model", ""))
     room = read_room(text, model)
     cap = min(ROOM_CAP, max_output(model) if model else ROOM_CAP)
@@ -445,6 +463,7 @@ async def read_lore(
     skip_name: Callable[[str], bool] | None = None,
     skip_pair: Callable[[str, str], bool] | None = None,
     progress: Callable[[str, int, int], None] | None = None,
+    speaker: str | None = None,
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
@@ -466,7 +485,7 @@ async def read_lore(
 
         tick = _tick
 
-    listed, cut = await read_list(read_ai, text, own, gate, stats, tick)
+    listed, cut = await read_list(read_ai, text, own, gate, stats, tick, speaker)
     if skip_name is not None:
         listed.names = [n for n in listed.names if not skip_name(line_name(n))]
     if skip_pair is not None:

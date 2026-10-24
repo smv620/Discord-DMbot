@@ -25,6 +25,7 @@ from typing import Any
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.pronouns import speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
 
@@ -498,6 +499,7 @@ def keep_connections(
     skip: Callable[[Connection], bool] | None = None,
     dropped: Dropped | None = None,
     questions: list[str] | None = None,
+    speaker: str | None = None,
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -509,7 +511,11 @@ def keep_connections(
 
     An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
     title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
-    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed."""
+    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed.
+
+    `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
+    are that character, and so are a bare "his" or "her"; with no speaker, a connection that
+    needs "I" is left out as `whose` (counted, never guessed)."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
@@ -534,7 +540,12 @@ def keep_connections(
     for piece in answers:
         for c in piece:
             looked += 1
-            first, second = reader.match(c.a), reader.match(c.b)
+            end_a, no_a = speaker_end(c.a, speaker)
+            end_b, no_b = speaker_end(c.b, speaker)
+            if no_a or no_b:
+                lost["whose"] += 1
+                continue
+            first, second = reader.match(end_a), reader.match(end_b)
             if first.ambiguous or second.ambiguous:
                 lost["which_one"] += 1
                 if questions is not None:

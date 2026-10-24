@@ -25,7 +25,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import lore_context, lore_read
+from dmbot.memory import lore_context, lore_read, pronouns
 from dmbot.memory.backstory_links import UPLOAD_MAX, NewLink, Waiting
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
@@ -241,14 +241,26 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
-    await _send(interaction, offer_text(upload, False), BackgroundOffer(campaign.id, upload))
+    memory = _memory(interaction)
+    choices = (
+        await characters(memory, campaign)
+        if memory is not None and pronouns.says_i(upload.text)
+        else []
+    )
+    await _send(
+        interaction,
+        offer_text(upload, False, ask=bool(choices)),
+        BackgroundOffer(campaign.id, upload, choices),
+    )
 
 
 TRUTH_OFF = "Lore: may change"
 TRUTH_ON = "Lore: 📌 100% truth"
 
 
-def offer_text(upload: Upload, truth: bool) -> str:
+def offer_text(
+    upload: Upload, truth: bool, *, ask: bool = False, speaker: str | None = None
+) -> str:
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
     a session goes against it."""
@@ -265,20 +277,84 @@ def offer_text(upload: Upload, truth: bool) -> str:
         "DMbot's AI suggests names and the connections your text states, each with its line. "
         "You check each one.\n\n"
         f"**Treat this lore as:** {how} Tap the lore button to switch.\n\n"
-        f"{rights_text()}"
+        + (whose_text(speaker) if ask else "")
+        + f"{rights_text()}"
     )
 
 
+NOT_ONE = "Not one character's"
+NOT_ONE_VALUE = "-"
+
+
+def whose_text(speaker: str | None) -> str:
+    """The question for a text that says "I" or "my" (#2650). Never guessed: until the DM picks,
+    a connection that needs "I" is left out and counted."""
+    if speaker:
+        return f'**Whose backstory is this?** {_md(speaker)}\'s. "I" and "my" mean them.\n\n'
+    return (
+        '**Whose backstory is this?** It says "I" or "my". Pick the character, or DMbot '
+        "leaves those connections out.\n\n"
+    )
+
+
+async def characters(memory: MemoryStore, campaign: Campaign) -> list[tuple[str, str]]:
+    """The campaign's confirmed characters (id, name) the DM may pick from, by name, at most as
+    many as one menu holds. Players' own names (people) and every other kind are not offered."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    found = {
+        e.id: e.name
+        for e in lookup.entities.values()
+        if e.type in pronouns.CHARACTER_TYPES and e.status == CONFIRMED and not e.merged_into
+    }
+    ordered = sorted(found.items(), key=lambda item: item[1].casefold())
+    return ordered[: pronouns.MAX_CHOICES]
+
+
 class BackgroundOffer(_Menu):
-    def __init__(self, campaign_id: str, upload: Upload) -> None:
+    def __init__(
+        self, campaign_id: str, upload: Upload, choices: Sequence[tuple[str, str]] = ()
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.upload = upload
+        self.choices = dict(choices)  # entity id -> name
+        self.speaker: str | None = None  # whose backstory it is, once the DM says (#2650)
+        if self.choices:
+            self.add_item(self._select())
         self.truth = False  # asked once per upload (#2447): "may change in play" by default
         self.add_item(_Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary))
         self.switch = _Button(self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary)
         self.add_item(self.switch)
         self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+
+    def _select(self) -> discord.ui.Select[Any]:
+        options = [discord.SelectOption(label=NOT_ONE, value=NOT_ONE_VALUE, default=True)] + [
+            discord.SelectOption(label=logic.shorten(name, 100), value=entity_id)
+            for entity_id, name in self.choices.items()
+        ]
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="Whose backstory is this?", options=options, row=1
+        )
+        select.callback = self._whose  # type: ignore[method-assign]
+        self.whose = select
+        return select
+
+    async def _whose(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # on every press
+            await _tell(interaction, ONLY_DMS)
+            return
+        picked = self.whose.values[0]
+        self.speaker = self.choices.get(picked)
+        for option in self.whose.options:
+            option.default = option.value == picked
+        await interaction.response.edit_message(
+            content=offer_text(self.upload, self.truth, ask=True, speaker=self.speaker),
+            view=self,
+            allowed_mentions=NO_PINGS,
+        )
 
     async def _flip(self, interaction: discord.Interaction) -> None:
         """Asserted (a claim the story can still change) or 📌 100% truth (the DM's word that it
@@ -292,7 +368,11 @@ class BackgroundOffer(_Menu):
         self.truth = not self.truth
         self.switch.label = TRUTH_ON if self.truth else TRUTH_OFF
         await interaction.response.edit_message(
-            content=offer_text(self.upload, self.truth), view=self, allowed_mentions=NO_PINGS
+            content=offer_text(
+                self.upload, self.truth, ask=bool(self.choices), speaker=self.speaker
+            ),
+            view=self,
+            allowed_mentions=NO_PINGS,
         )
 
     async def _read(self, interaction: discord.Interaction) -> None:
@@ -305,6 +385,7 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         truth = self.truth  # as it was when Find names was pressed, not when the AI is done
+        speaker = self.speaker
         bot = _bot(interaction)
         ai = bot.background_ai
         memory = _memory(interaction)
@@ -395,6 +476,7 @@ class BackgroundOffer(_Menu):
                     skip_name=lambda name: name_key(name) in known,
                     skip_pair=skip_pair,
                     progress=on_step,
+                    speaker=speaker,
                 )
             found = bg.merge(
                 [read.names],
@@ -418,6 +500,7 @@ class BackgroundOffer(_Menu):
                 questions=questions,
                 keys=keys,
                 upload=upload_label(self.upload.label, time.time()),
+                speaker=speaker,
             )
             ready = await count_ready(bot, campaign, keys)
             cut = read.cut
@@ -554,9 +637,10 @@ def _found_note(
     lost = dropped or {}
     known = sum(lost.get(k, 0) for k in KNOWN_ALREADY)
     left = sum(lost.get(k, 0) for k in LEFT_OUT)
+    whose = lost.get("whose", 0)
     unread = sum(lost.get(k, 0) for k in NOT_READ)
     # whatever else is missing (cut at the time limit, not shaped) is "not read"
-    unread += max(0, found - kept - known - left - unread)
+    unread += max(0, found - kept - known - left - whose - unread)
     ready_n = kept if ready is None else min(ready, kept)
     waits = kept - ready_n
     asked = ", ".join(f"Which {_md(q)}?" for q in questions[:3])
@@ -565,6 +649,7 @@ def _found_note(
         f"{waits} wait for names you haven't confirmed" if waits else "",
         f"{known} already known" if known else "",
         f"{left} left out" + (f" ({asked})" if asked else "") if left else "",
+        f'{whose} about "I" left out: say whose backstory it is' if whose else "",
         f"{unread} not read in time" if unread else "",
     ]
     return (
@@ -661,6 +746,7 @@ async def queue_links(
     questions: list[str] | None = None,
     keys: set[tuple[str, str, str]] | None = None,
     upload: str = "",
+    speaker: str | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -695,7 +781,7 @@ async def queue_links(
 
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
-        questions=questions,
+        questions=questions, speaker=speaker,
     )  # fmt: skip
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload)
