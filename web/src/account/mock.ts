@@ -24,6 +24,10 @@ import type {
   CampaignName,
   PastSession,
   Recap,
+  ReportAnswer,
+  ReportDifference,
+  ReportContradiction,
+  SessionReport,
   RecapChoices,
   RecordingEntry,
   SupportQuestion,
@@ -740,6 +744,70 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // Recaps made or added on the past-sessions list, by the session's start time. The pretend sessions: 4 has
   // an approved recap, 3 has none, 2's recap failed, 1 has no transcript kept.
   const made = new Map<number, string>();
+  // The after-session report (#2661) the pretend API keeps by campaign and session.
+  const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
+  const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
+    const ev = (kind: "claim" | "line" | "clue" | "event", session: number, available: boolean, quote?: string) => ({
+      kind, session, available, ...(quote ? { quote } : {}),
+    });
+    const contradictions: ReportContradiction[] = [
+      {
+        id: "c1", reason: "Both say where the ferryman is, and they differ.", gameTimeKnown: true,
+        first: { text: "The ferryman is dead.", view: "The DM's view", session: 3, evidence: [ev("claim", 3, true, "found him in the reeds")] },
+        second: { text: "The ferryman rowed the party across the river.", view: "The DM's view", session: 4, evidence: [ev("line", 4, false)] },
+        answer: null,
+      },
+      {
+        id: "c2", reason: "Two different owners for the Brass Compass.", gameTimeKnown: false,
+        first: { text: "Captain Brask owns the Brass Compass.", view: "The DM's view", session: 2, evidence: [ev("event", 2, true)] },
+        second: { text: "Mira Voss owns the Brass Compass.", view: "The DM's view", session: 4, evidence: [ev("line", 4, false), ev("clue", 4, true)] },
+        answer: null, remindedFrom: 3,
+      },
+    ];
+    const diff = (id: string, view: string, believes: string, truth: string, reason: string, open: ReportDifference["open"]): ReportDifference => ({
+      id, view, believes, truth, reason, evidence: [ev("line", 4, false), ev("claim", 3, true, "swore on the Circle")], answer: null, open,
+    });
+    const differences = {
+      disguised: [diff("d-lie", "The party", "Aldric is loyal to the Lantern Circle.", "Aldric serves the Ashen Crown.", "Aldric has hidden it on purpose.", { a: "n2", b: "n12" })],
+      misunderstood: [diff("d-mix", "Tamsin, a player character", "The shrine key opens the keep.", "The shrine key opens the shrine only.", "They saw it fit a lock and guessed the rest.", { a: "n1", b: "n20" })],
+      false: [diff("d-plan", "The party", "Old Pell is a priest.", "Old Pell is a smuggler.", "Nothing said so, but they all say it.", null)],
+    };
+    return { contradictions, differences };
+  };
+  const reportOf = (campaignRef: string, at: number): SessionReport => {
+    const key = `${campaignRef}:${at}`;
+    const got = reports.get(key) ?? { made: !campaignRef.endsWith(".report-none") && !campaignRef.endsWith(".report-failed"), tries: 0, answers: new Map<string, ReportAnswer>() };
+    reports.set(key, got);
+    const session = { at, number: 4 };
+    const none = { contradictions: 0, disguised: 0, misunderstood: 0, false: 0, open: 0, answered: 0 };
+    if (got.failed) {
+      return { session, state: "failed", progress: { stage: "grading", done: 2, total: 5, unit: "items", startedAt: 1791000000, updatedAt: 1791000040, serverNow: 1791000100, state: "failed", reason: "The AI helper stopped answering." }, counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
+    }
+    if (!got.made) return { session, state: "none", counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
+    if (got.looks === undefined && got.tries > 0) {
+      got.looks = 0;
+    }
+    if (got.looks !== undefined && got.looks < 2) {
+      got.looks += 1;
+      return { session, state: "making", progress: { stage: got.looks === 1 ? "reading" : "grading", done: got.looks === 1 ? null : 2, total: got.looks === 1 ? null : 5, unit: "items", startedAt: 1791000000, updatedAt: 1791000000 + got.looks * 10, serverNow: 1791000000 + got.looks * 12, state: "running" }, counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
+    }
+    if (campaignRef.endsWith(".report-empty")) return { session, state: "ready", counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
+    const items = reportItems();
+    const withAnswer = <T extends { id: string; answer: ReportAnswer | null }>(x: T): T => ({ ...x, answer: got.answers.get(x.id) ?? null });
+    const contradictions = items.contradictions.map(withAnswer);
+    const differences = {
+      disguised: items.differences.disguised.map(withAnswer),
+      misunderstood: items.differences.misunderstood.map(withAnswer),
+      false: items.differences.false.map(withAnswer),
+    };
+    const all = [...contradictions, ...differences.disguised, ...differences.misunderstood, ...differences.false];
+    const answered = all.filter((x) => x.answer).length;
+    return {
+      session, state: "ready",
+      counts: { contradictions: contradictions.length, disguised: differences.disguised.length, misunderstood: differences.misunderstood.length, false: differences.false.length, open: all.length - answered, answered },
+      contradictions, differences,
+    };
+  };
   const startMade = (sessionAt: number, writtenBy?: string): Recap => {
     const ref = `100.cmp1.${sessionAt}`;
     const base = recaps[0]!;
@@ -825,6 +893,43 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           { ref: ref(1788000000), sessionAt: 1788000000, sessionNumber: 1, sessionSeconds: 3600, hasTranscript: false, held: false, recap: null },
         ],
       };
+    },
+    // The after-session report (#2661), the shapes agreed on the issue. A campaign ending in `.report-none`
+    // starts with no report (Make it, then a short wait with progress); `.report-failed` fails the first
+    // time; `.report-empty` has nothing to check; `.player` is refused. Answers keep their place until a
+    // reload, and Undo puts an item back.
+    async sessionReport(campaignRef, at) {
+      calls.push(`sessionReport:${campaignRef}:${at}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      return reportOf(campaignRef, at);
+    },
+    async makeSessionReport(campaignRef, at) {
+      calls.push(`makeSessionReport:${campaignRef}:${at}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.endsWith(".player")) throw new ApiError("not-allowed");
+      const got = reports.get(`${campaignRef}:${at}`) ?? { made: false, tries: 0, answers: new Map<string, ReportAnswer>() };
+      reports.set(`${campaignRef}:${at}`, got);
+      got.tries += 1;
+      got.made = !(campaignRef.endsWith(".report-failed") && got.tries === 1);
+      got.failed = !got.made;
+      return reportOf(campaignRef, at);
+    },
+    async answerReport(campaignRef, at, id, action) {
+      calls.push(`answerReport:${campaignRef}:${at}:${id}:${action}`);
+      await reachable();
+      signedIn();
+      const got = reports.get(`${campaignRef}:${at}`);
+      if (!got) throw new ApiError("gone");
+      if (action === "undo") {
+        got.answers.delete(id);
+        return;
+      }
+      if (id === "c-gone" || (got.answers.has(id) && got.answers.get(id)?.action !== "remind")) throw new ApiError("gone");
+      if (id === "d-mix" && action === "fix") throw new ApiError("cannot-write");
+      got.answers.set(id, { action, at: 1791000500 });
     },
     async makeRecap(recapRef, replace) {
       calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
