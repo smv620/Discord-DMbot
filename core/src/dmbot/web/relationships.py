@@ -379,9 +379,8 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
     """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "pin", pinned}`, `{action: "remove", confirm: true}`, or, on a connection
-    PlotBot proposed, `{action: "confirm"}` or `{action: "reject"}` (#2635). Returns the answer's
-    id."""
+    secret}`, `{action: "pin", pinned}` or `{action: "remove", confirm: true}`. Returns the
+    answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -406,11 +405,6 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
             db, session, ref, entity=None, action="link-pin", target=link_id,
             text="", flag=bool(body["pinned"]),
         )  # fmt: skip
-    if action in ("confirm", "reject"):  # the DM's Confirm / Not right on a proposed connection
-        return await _queue(
-            db, session, ref, entity=None, action=f"link-{action}", target=link_id,
-            text="", flag=False,
-        )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:
             raise RecapError("needs_confirm")
@@ -419,6 +413,39 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
             text="", flag=True,
         )  # fmt: skip
     raise RecapError("bad_action")
+
+
+# Answers to the connections that wait for the DM (#2635, #2642): body `{kind, action, id, secret}`.
+# `kind` "claim" (said at the table; actions confirm, reject; `secret` is "truth but secret") or
+# "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
+# `keep_all` keeps every one that is ready and takes no id).
+WAITING_QUEUE = {
+    ("claim", "confirm"): "claim-confirm",
+    ("claim", "reject"): "claim-reject",
+    ("backstory", "keep"): "backstory-keep",
+    ("backstory", "skip"): "backstory-skip",
+    ("backstory", "keep_all"): "backstory-keep-all",
+}
+
+
+async def queue_waiting(db: Database, session: Session, ref: str, body: object) -> str:
+    """Queue the DM's answer to one waiting connection, or Keep all. DM only (the door checks), and
+    the bot applies the very calls the DM screen's buttons make. Returns the answer's id."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    action = WAITING_QUEUE.get((str(body.get("kind")), str(body.get("action"))))
+    if action is None:
+        raise RecapError("bad_action")
+    secret = body.get("secret", False)
+    if not isinstance(secret, bool):
+        raise RecapError("bad_action")
+    target = "" if action == "backstory-keep-all" else str(body.get("id") or "")
+    if action != "backstory-keep-all" and not ID_PATTERN.match(target):
+        raise RecapError("not_found")
+    return await _queue(
+        db, session, ref, entity="", action=action, target=target, text="",
+        flag=secret and action in ("claim-confirm", "backstory-keep"),
+    )  # fmt: skip
 
 
 async def queue_reveal(db: Database, session: Session, ref: str, body: object) -> str:
@@ -458,9 +485,20 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
-    if got is None or not str(got["action"]).startswith("link-"):
+    if got is None or not str(got["action"]).startswith(("link-", "claim-", "backstory-")):
         raise RecapError("not_found")
     edge = None
+    if str(got["action"]).startswith(("claim-", "backstory-")):
+        # a waiting connection answered: how it ended, and for Keep all how many were kept
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "edge": None,
+            "removed": False,
+            "kept": int(got["resultId"])
+            if got["action"] == "backstory-keep-all" and got["resultId"]
+            else None,
+        }
     if got["state"] == "done" and got["resultId"] and got["resultOther"]:
         around = await read_web(db, session, ref, center=got["resultId"], hops=1)
         pair = sorted((got["resultId"], got["resultOther"]))

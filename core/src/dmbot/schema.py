@@ -10291,7 +10291,8 @@ WEB_LINK_ACTIONS = r"""
             RETURN jsonb_build_object('status', 'needs_confirm');
         END IF;
         IF is_link AND act <> 'link-add' THEN
-            -- the connection itself: it must be a confirmed one of this campaign, between two
+            -- an edit to a connection (words, secret, remove, pin): it must be a confirmed one
+            -- of this campaign, between two
             -- confirmed names; the entry the action is filed under is its first name
             SELECT r.subject_id INTO subject FROM memory_relations r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.id = tgt AND r.status = 'confirmed'
@@ -11460,46 +11461,91 @@ LINK_PIN_ACTION = (
 """
 )
 
-LINK_DECIDE_ACTIONS = """
-    -- The website's Confirm and Not right on a connection PlotBot proposed (#2635): 'link-confirm'
-    -- and 'link-reject', `target_id` the proposed connection, no words, `flag` false. The bot
-    -- applies them with the call the connection card's edits use, so the change log and Undo
-    -- agree. No row changes: a wider list of actions and the door that checks it.
+WAITING_ACTIONS = (
+    "claim-confirm", "claim-reject", "backstory-keep", "backstory-skip", "backstory-keep-all",
+)  # fmt: skip
+_WAITING_LIST = ", ".join(f"'{a}'" for a in WAITING_ACTIONS)
+_WAITING_NEED_TARGET = ", ".join(f"'{a}'" for a in WAITING_ACTIONS[:4])  # keep-all has none
+
+LINK_DECIDE_ACTIONS = (
+    """
+    -- The website's answers to the connections that wait for the DM (#2635, #2642), through the
+    -- queue of the other name actions. PlotBot's waiting connections are of two kinds, and neither
+    -- is a proposed row of `memory_relations`:
+    --   'claim-confirm' / 'claim-reject': `target_id` is a waiting `memory_claims` row (said at the
+    --       table); `flag` on a confirm is "truth but secret". The bot makes the same call as the
+    --       DM screen's ✅ and ❌ (`ClaimStore.confirm` / `reject`), so consent, the plan and
+    --       instruction checks, the DM's own word and Undo are the same.
+    --   'backstory-keep' / 'backstory-skip': `target_id` is a waiting `backstory_links` row (from
+    --       the DM's own backstory); `flag` on a keep is "keep as secret". 'backstory-keep-all'
+    --       keeps every one that is ready (no target). The bot keeps them as the one-by-one cards
+    --       do (the DM's word, unrevealed), and answers how many in `result_id`.
+    -- `entity_id` is empty for these: they belong to no one name. A backstory link gets an id of
+    -- its own, so the page and the queue can point at one. No existing row changes (the column has
+    -- a default, filled for old rows by the table rewrite).
+    ALTER TABLE backstory_links
+        ADD COLUMN id TEXT NOT NULL DEFAULT replace(gen_random_uuid()::TEXT, '-', '')
+            CHECK (id ~ '^[0-9a-f]{32}$');
+    CREATE UNIQUE INDEX backstory_links_id ON backstory_links (guild_id, campaign_id, id);
     ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
     ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
         ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
          'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',
-         'link-confirm', 'link-reject'));
+         """
+    + _WAITING_LIST
+    + """));
 """
+)
 # Built from the door as it stands now (with `link-pin`, 0193), not from an older text: a door
 # built from before would drop the actions added since (the lesson of #2456).
 _decide_door = _pin_door
-for _old, _new, _times in (
+_waiting_check = """        IF act LIKE 'claim-%' OR act LIKE 'backstory-%' THEN
+            -- a waiting connection: it must still be waiting in this campaign (the bot checks
+            -- again when it applies it, and both of its ends are confirmed names then)
+            subject := '';
+            IF act LIKE 'claim-%' AND NOT EXISTS (
+                   SELECT 1 FROM memory_claims m WHERE m.guild_id = g AND m.campaign_id = c
+                   AND m.id = tgt AND m.status = 'proposed') THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            ELSIF act IN ('backstory-keep', 'backstory-skip') AND NOT EXISTS (
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c
+                   AND b.id = tgt) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+        ELSIF is_link AND act <> 'link-add' THEN"""
+for _old, _new in (
     (
-        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
-        "'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
-        "                'link-confirm', 'link-reject')",
-        3,
+        "                'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        f"                'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        f"                {_WAITING_LIST})",
     ),
     (
-        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin')",
-        "'hide', 'merge', 'remove', 'link-secret', 'link-remove', 'link-pin',\n"
-        "                'link-confirm', 'link-reject')",
-        1,
+        "'link-secret', 'link-remove', 'link-pin')\n               AND clean <> '')",
+        f"'link-secret', 'link-remove', 'link-pin',\n"
+        f"                       {_WAITING_LIST})\n               AND clean <> '')",
     ),
     (
-        "r.id = tgt AND r.status = 'confirmed'",
-        "r.id = tgt\n              AND r.status = CASE WHEN act IN ('link-confirm', 'link-reject')"
-        " THEN 'proposed' ELSE 'confirmed' END",
-        1,
+        "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        f"                       {_WAITING_NEED_TARGET})",
     ),
     (
-        "(act = 'link-words' AND COALESCE(fl, false))",
-        "(act IN ('link-words', 'link-confirm', 'link-reject') AND COALESCE(fl, false))",
-        1,
+        "OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', "
+        "'link-pin')",
+        "OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', "
+        f"'link-pin',\n                       {_WAITING_NEED_TARGET})",
     ),
+    (
+        "('secret', 'hide', 'link-add', 'link-secret', 'link-pin') AND fl IS NULL",
+        "('secret', 'hide', 'link-add', 'link-secret', 'link-pin', 'claim-confirm',\n"
+        "                       'backstory-keep') AND fl IS NULL",
+    ),
+    ("        IF is_link AND act <> 'link-add' THEN", _waiting_check),
 ):
-    assert _decide_door.count(_old) == _times, (_old, _decide_door.count(_old))
+    assert _decide_door.count(_old) == 1, (_old, _decide_door.count(_old))
     _decide_door = _decide_door.replace(_old, _new)
 LINK_DECIDE_ACTIONS = (
     LINK_DECIDE_ACTIONS

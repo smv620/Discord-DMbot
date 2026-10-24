@@ -9,6 +9,8 @@ from typing import Any
 import httpx
 
 from dmbot.memory import web_actions as wa
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import MemoryRuleError
 from dmbot.web import relationships, sessions
@@ -16,6 +18,7 @@ from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
+from tests.test_memory_claims import said
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import Web
@@ -25,12 +28,16 @@ class Editing(Web):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.actions = wa.ActionStore(self.db)
+        self.claims = ClaimStore(self.memory)
+        self.backstory = BackstoryLinks(self.db)
 
-    async def apply_all(self, dms: Any = None) -> list[wa.Outcome]:
+    async def apply_all(
+        self, dms: Any = None, waiting: wa.Waiting | None = None
+    ) -> list[wa.Outcome]:
         done = []
         while (action := await self.actions.claim_next(self.g)) is not None:
             outcome = await wa.apply(
-                self.memory, self.g, {ALICE.id} if dms is None else dms, action
+                self.memory, self.g, {ALICE.id} if dms is None else dms, action, waiting
             )
             await self.actions.finish(
                 self.g, action, error=outcome.error, result_id=outcome.result_id,
@@ -281,72 +288,219 @@ class TheEdits(Editing):
         self.assertEqual((await self.poll(off))["state"], "done")
         self.assertEqual(await self.memory.pinned_connections(self.g, self.one.id), set())
 
-    async def proposed(self, predicate: str = "ally_of") -> str:
-        """A connection PlotBot proposed between Mira and the Far Hall, not yet the DM's."""
-        made = await self.memory.add_relation(
-            self.g, self.one.id, self.mira, predicate, self.hall, source="extractor",
-            confidence=0.7, status="proposed",
+    # ---- the connections that wait for the DM (#2635, #2642) ----------------------------------
+
+    async def claim(
+        self, subject: str = "Mira Voss", obj: str = "Far Hall", *, speaker: int = 7
+    ) -> str:
+        """A claim PlotBot found at the table, waiting for the DM: not a relation."""
+        await self.claims.propose(
+            self.g, self.one.id, [said(subject, "knows", obj)], {"1": speaker},
+            opted_in={speaker}, prompt_version="p1", model="m1", session_started_at=500,
         )  # fmt: skip
-        return made.value[0].id
+        found = await self.claims.waiting(self.g, self.one.id, opted_in={speaker})
+        return found[-1].id
 
-    async def retry(self, link: str, action: str) -> wa.Outcome:
-        """The bot applies the same queued action again, as after a stopped first try."""
-        again = wa.Action(
-            id="a" * 32, campaign_id=self.one.id, entity_id=self.mira, user_id=ALICE.id,
-            action=action, target_id=link,
-        )  # fmt: skip
-        return await wa.apply(self.memory, self.g, {ALICE.id}, again)
+    async def queue(self, **body: Any) -> str:
+        return await relationships.queue_waiting(self.web, self.session, self.cref, body)
 
-    async def status_of(self, link: str) -> str:
-        found = await self.memory.relation(self.g, self.one.id, link)
-        assert found is not None
-        return found.status
+    async def refused_queue(self, who: Any = None, **body: Any) -> str:
+        with self.assertRaises(RecapError) as caught:
+            await relationships.queue_waiting(self.web, who or self.session, self.cref, body)
+        return caught.exception.code
 
-    async def test_a_dm_confirms_a_proposed_connection_and_a_retry_is_done(self) -> None:
-        link = await self.proposed()
+    async def apply_waiting(self, opted_in: set[int] | None = None) -> list[wa.Outcome]:
+        async def now() -> set[int]:
+            return {7} if opted_in is None else opted_in
+
+        return await self.apply_all(waiting=wa.Waiting(self.claims, self.backstory, now))
+
+    async def test_a_claim_confirmed_from_the_website_is_the_same_fact_as_the_discord_button(
+        self,
+    ) -> None:
+        mine, theirs = await self.claim(), await self.claim("Rook", "Greywater Keep")
+        # Discord's ✅ on one, the website's on the other
+        done = await self.claims.confirm(self.g, self.one.id, theirs, opted_in={7})
+        answer = await self.queue(kind="claim", action="confirm", id=mine)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        web_claim = await self.claims.get(self.g, self.one.id, mine)
+        assert web_claim is not None and done.claim.fact_id
+        self.assertEqual(web_claim.status, "confirmed")
+        both = {r.id: r for r in await self.memory.relations(self.g, self.one.id)}
+        a, b = both[web_claim.fact_id or ""], both[done.claim.fact_id]
+        self.assertEqual((a.source, a.confidence, a.status), (b.source, b.confidence, b.status))
+        self.assertEqual((a.source, a.confidence), ("dm", 1.0))  # the DM's own word
+        self.assertFalse(a.secret)
+
+    async def test_truth_but_secret_and_undo_work_as_on_the_dm_screen(self) -> None:
+        claim = await self.claim()
         before = await self.memory.version(self.g, self.one.id)
-        answer = await self.edit(link, action="confirm")
-        self.assertEqual([o.error for o in await self.apply_all()], [""])
-        done = await self.poll(answer)
-        self.assertEqual(done["state"], "done")
-        self.assertEqual({done["edge"]["a"], done["edge"]["b"]}, {self.mira, self.hall})
-        self.assertEqual(await self.status_of(link), "confirmed")
-        log = await self.log_since(before)
-        self.assertTrue(log and all(r["source"] == "dm" for r in log))
-        # a retried job (the first try did its work, then stopped before it was marked done)
-        self.assertEqual((await self.retry(link, "link-confirm")).error, "")
-
-    async def test_a_dm_says_not_right_and_undo_puts_it_back(self) -> None:
-        link = await self.proposed()
-        before = await self.memory.version(self.g, self.one.id)
-        answer = await self.edit(link, action="reject")
-        self.assertEqual([o.error for o in await self.apply_all()], [""])
-        done = await self.poll(answer)
-        self.assertEqual((done["state"], done["removed"]), ("done", True))
-        self.assertEqual(await self.status_of(link), "rejected")
+        await self.queue(kind="claim", action="confirm", id=claim, secret=True)
+        await self.apply_waiting()
+        (rel,) = [r for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+                  if r.predicate == "knows" and r.object_id == self.hall]  # fmt: skip
+        self.assertTrue(rel.secret)
         batch = (await self.log_since(before))[-1]["batch"]
-        await self.memory.undo(self.g, self.one.id, batch, source=DM_SOURCE)
-        self.assertEqual(await self.status_of(link), "proposed")  # (Undo from Discord's card)
-        await self.edit(link, action="reject")
-        await self.apply_all()
-        self.assertEqual((await self.retry(link, "link-reject")).error, "")
-        # decided the other way after it ended: nothing to confirm any more
-        self.assertEqual((await self.retry(link, "link-confirm")).error, wa.NOT_FOUND)
-
-    async def test_only_a_proposed_connection_can_be_decided_and_only_by_a_dm(self) -> None:
-        stands = self.links["mira-keep"]  # confirmed already: the door refuses both
-        for action in ("confirm", "reject"):
-            self.assertEqual(await self.refused_edit(link=stands, action=action), "not_found")
-        link = await self.proposed()
-        self.assertEqual(
-            await self.refused_edit(self.player, link=link, action="confirm"), "not_allowed"
+        await self.memory.undo(
+            self.g,
+            self.one.id,
+            batch,
+            source=DM_SOURCE,
+            after=lambda w: self.claims.reopen_in(w, claim),
         )
-        self.assertEqual(await self.status_of(link), "proposed")
-        # a DM who stopped being one when the bot got to it changes nothing
-        answer = await self.edit(link, action="confirm")
-        self.assertEqual([o.error for o in await self.apply_all(dms=set())], [wa.NOT_ALLOWED])
-        self.assertEqual((await self.poll(answer))["error"], wa.NOT_ALLOWED)
-        self.assertEqual(await self.status_of(link), "proposed")
+        again = await self.claims.get(self.g, self.one.id, claim)
+        assert again is not None
+        self.assertEqual(again.status, "proposed")  # waiting again, as after a Discord Undo
+
+    async def test_a_claim_whose_speaker_stopped_being_recorded_is_deleted_not_written(
+        self,
+    ) -> None:
+        claim = await self.claim()
+        answer = await self.queue(kind="claim", action="confirm", id=claim)
+        outcomes = await self.apply_waiting(opted_in=set())  # nobody consents now
+        self.assertEqual([o.error for o in outcomes], [wa.NOT_FOUND])
+        self.assertEqual((await self.poll(answer))["error"], wa.NOT_FOUND)
+        self.assertIsNone(await self.claims.get(self.g, self.one.id, claim))
+        self.assertEqual(
+            [
+                r
+                for r in await self.memory.relations(self.g, self.one.id)
+                if r.predicate == "knows" and r.object_id == self.hall
+            ],
+            [],
+        )
+
+    async def test_a_claim_turned_down_is_not_asked_again_and_a_double_click_gives_one_fact(
+        self,
+    ) -> None:
+        no, yes = await self.claim(), await self.claim("Rook", "Greywater Keep")
+        await self.queue(kind="claim", action="reject", id=no)
+        await self.queue(kind="claim", action="confirm", id=yes)
+        before = len(await self.memory.relations(self.g, self.one.id))
+        self.assertEqual([o.error for o in await self.apply_waiting()], ["", ""])
+        # the same press queued twice (a double click) while the first waited
+        again = wa.Action(
+            id="b" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+            action="claim-confirm", target_id=yes,
+        )  # fmt: skip
+        second = await wa.apply(self.memory, self.g, {ALICE.id}, again, self.waiting_deps())
+        self.assertEqual(second.error, "")  # already so: done, not a second fact
+        self.assertEqual(len(await self.memory.relations(self.g, self.one.id)), before + 1)
+        rejected = await self.claims.get(self.g, self.one.id, no)
+        assert rejected is not None
+        self.assertEqual(rejected.status, "rejected")
+
+    async def knows_hall(self) -> list[Any]:
+        found = await self.memory.relations(self.g, self.one.id, include_secret=True)
+        return [r for r in found if r.predicate == "knows" and r.object_id == self.hall]
+
+    def waiting_deps(self) -> wa.Waiting:
+        async def now() -> set[int]:
+            return {7}
+
+        return wa.Waiting(self.claims, self.backstory, now)
+
+    async def waiting_link(self, a: str, b: str, *, secret: bool = False) -> str:
+        await self.backstory.add(
+            self.g, self.one.id, [NewLink(a, "knows", b, "quote", secret=secret)]
+        )
+        found = [
+            w
+            for w in await self.backstory.waiting(self.g, self.one.id)
+            if w.subject_id == a and w.object_id == b
+        ]
+        return found[0].id
+
+    async def test_a_backstory_connection_is_kept_or_skipped_from_the_website(self) -> None:
+        keep = await self.waiting_link(self.mira, self.hall)
+        skip = await self.waiting_link(self.rook, self.hall)
+        await self.queue(kind="backstory", action="keep", id=keep)
+        await self.queue(kind="backstory", action="skip", id=skip)
+        self.assertEqual([o.error for o in await self.apply_waiting()], ["", ""])
+        (rel,) = [r for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+                  if r.predicate == "knows" and r.object_id == self.hall]  # fmt: skip
+        self.assertEqual((rel.source, rel.status, rel.subject_id), ("dm", "confirmed", self.mira))
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
+
+    async def test_keep_all_writes_every_ready_one_and_the_discord_undo_takes_them_back(
+        self,
+    ) -> None:
+        for a in (self.mira, self.rook, self.keep):
+            await self.waiting_link(a, self.hall)
+        answer = await self.queue(kind="backstory", action="keep_all")
+        before = await self.memory.version(self.g, self.one.id)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["kept"]), ("done", 3))
+        kept = [r for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+                if r.predicate == "knows" and r.object_id == self.hall]  # fmt: skip
+        self.assertEqual(len(kept), 3)
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
+        log = await self.log_since(before)
+        for batch in {r["batch"] for r in log}:  # each is its own change, undone as one
+            await self.memory.undo(self.g, self.one.id, batch, source=DM_SOURCE)
+        self.assertEqual(
+            [
+                r
+                for r in await self.memory.relations(self.g, self.one.id)
+                if r.predicate == "knows" and r.object_id == self.hall
+            ],
+            [],
+        )
+
+    async def test_a_secret_backstory_connection_is_kept_secret_and_keep_as_secret_hides_more(
+        self,
+    ) -> None:
+        loud = await self.waiting_link(self.mira, self.hall, secret=True)
+        quiet = await self.waiting_link(self.rook, self.hall)
+        await self.queue(kind="backstory", action="keep", id=loud)  # asked to keep it plainly
+        await self.queue(kind="backstory", action="keep", id=quiet, secret=True)
+        await self.apply_waiting()
+        by = {r.subject_id: r.secret for r in await self.knows_hall()}
+        self.assertEqual(by, {self.mira: True, self.rook: True})
+
+    async def test_a_backstory_connection_to_a_name_not_confirmed_yet_is_not_kept(self) -> None:
+        waiting_name = (
+            await self.memory.add_entity(
+                self.g, self.one.id, type="character", name="Pending One", source="scan"
+            )
+        ).value.id
+        link = await self.waiting_link(self.mira, waiting_name)
+        await self.queue(kind="backstory", action="keep", id=link)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [wa.NOT_FOUND])
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 1)
+
+    async def test_only_a_dm_can_answer_and_an_unknown_or_decided_one_is_not_found(self) -> None:
+        claim = await self.claim()
+        link = await self.waiting_link(self.mira, self.hall)
+        for body in (
+            {"kind": "claim", "action": "confirm", "id": claim},
+            {"kind": "backstory", "action": "keep", "id": link},
+            {"kind": "backstory", "action": "keep_all"},
+        ):
+            self.assertEqual(await self.refused_queue(self.player, **body), "not_allowed", body)
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="confirm", id="a" * 32), "not_found"
+        )
+        self.assertEqual(
+            await self.refused_queue(kind="backstory", action="skip", id="b" * 32), "not_found"
+        )
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="keep", id=claim), "bad_action"
+        )
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="confirm", id="x"), "not_found"
+        )
+        # a relation is not a waiting connection: the old proposed-row path is gone
+        self.assertEqual(
+            await self.refused_queue(kind="relation", action="confirm", id=claim), "bad_action"
+        )
+        # a decided claim is no longer waiting
+        await self.claims.reject(self.g, self.one.id, claim)
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="confirm", id=claim), "not_found"
+        )
 
     async def test_only_a_dm_can_queue_a_pin_and_it_needs_a_yes_or_no(self) -> None:
         link = await self.free_link("sworn to")
