@@ -731,7 +731,7 @@ class TheRoutes(Base):
         bad = await self.client.put(f"/me/recaps/{self.ref}", json={"summary": 5})
         self.assertEqual(bad.status_code, 422)
         big = await self.client.put(
-            f"/me/recaps/{self.ref}", json={"summary": "x" * 8000, "housekeeping": []}
+            f"/me/recaps/{self.ref}", json={"summary": "x" * (SUMMARY_MAX + 1), "housekeeping": []}
         )
         self.assertEqual((big.status_code, big.json()["error"]), (422, "bad_text"))
         self.assertEqual((await self.client.post(f"/me/recaps/{self.ref}/zap")).status_code, 404)

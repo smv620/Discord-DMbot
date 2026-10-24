@@ -381,8 +381,8 @@ class TheProse(unittest.TestCase):
             self.assertGreater(length.room, length.target)  # the room is a ceiling above the target
             self.assertGreater(length.max_tokens, length.room)
         # the database's cap on the whole text; the story's share leaves the fixed lines their room
-        self.assertEqual(rd.SUMMARY_MAX, 6000)
-        self.assertEqual(rd.STORY_MAX, 6000 - 400)
+        self.assertEqual(rd.SUMMARY_MAX, 30_000)
+        self.assertEqual(rd.STORY_MAX, 30_000 - rd.FIXED_LINES_ROOM)
 
     def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
         def lines(*times_ms: int, words: int = 3) -> list[Said]:
@@ -729,12 +729,12 @@ class TheSchemas(unittest.TestCase):
 class TheHardLimits(unittest.TestCase):
     def test_a_draft_over_the_databases_limit_is_shortened_in_code_not_refused(self) -> None:
         para = "《Calm》 " + "Mira walked on. " * 40
-        long = "\n\n".join([para] * 20)  # about 12,000 characters, twenty sections
-        fixed = rd.fix_prose(rd.Prose(long, ("m",) * 20), 99)
+        long = "\n\n".join([para] * 60)  # about 39,000 characters, sixty sections
+        fixed = rd.fix_prose(rd.Prose(long, ("m",) * 60), 99)
         self.assertLessEqual(len(fixed.summary), rd.STORY_MAX)
         self.assertGreater(len(fixed.summary), rd.STORY_MAX - 1000)  # whole paragraphs kept
         self.assertEqual(len(fixed.music), len(CUE.findall(fixed.summary)))  # music still matches
-        one = rd.fit_summary("《Calm》 " + "word " * 3000)
+        one = rd.fit_summary("《Calm》 " + "word " * 9000)
         self.assertLessEqual(len(one), rd.STORY_MAX)
         self.assertEqual(rd.fit_summary("short"), "short")
 
