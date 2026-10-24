@@ -244,7 +244,7 @@ class SessionPick(discord.ui.View):
         menu: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="Pick a session", options=options
         )
-        menu.callback = self._picked  # type: ignore[method-assign,assignment]
+        menu.callback = self._picked  # type: ignore[method-assign]
         self.menu = menu
         self.add_item(menu)
 
@@ -261,7 +261,7 @@ class CampaignPick(discord.ui.View):
             placeholder="Pick a campaign",
             options=[discord.SelectOption(label=c.name[:100], value=c.id) for c in campaigns[:25]],
         )
-        menu.callback = self._picked  # type: ignore[method-assign,assignment]
+        menu.callback = self._picked  # type: ignore[method-assign]
         self.menu = menu
         self.add_item(menu)
 
