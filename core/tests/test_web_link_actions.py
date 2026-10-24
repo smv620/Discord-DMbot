@@ -4,6 +4,7 @@ re-checked when applied, and read back only by the DM who made them. Invented na
 
 from __future__ import annotations
 
+import unittest
 from typing import Any
 from unittest.mock import patch
 
@@ -23,6 +24,25 @@ from tests.test_memory_claims import said
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import Web
+
+
+class TheSecretOffer(unittest.TestCase):
+    """`canSecret` is the DM screen's own condition rule, in code (#2654): a fact can be kept
+    secret, a condition ("Roan is dead") cannot, whatever its case or spacing."""
+
+    def row(self, relationship: str, obj: str) -> dict[str, Any]:
+        return {
+            "subject": "Roan", "relationship": relationship, "object": obj,
+            "details": "", "how": "dm_said",
+        }  # fmt: skip
+
+    def test_a_plain_fact_can_be_secret(self) -> None:
+        self.assertTrue(relationships._can_be_secret(self.row("is", "a blacksmith")))
+
+    def test_a_condition_cannot_however_it_is_spelled(self) -> None:
+        for relationship, obj in (("is", "dead"), (" IS ", "dead"), ("is", "  Dead")):
+            with self.subTest(relationship=relationship, obj=obj):
+                self.assertFalse(relationships._can_be_secret(self.row(relationship, obj)))
 
 
 class Editing(Web):
