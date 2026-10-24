@@ -189,6 +189,103 @@ async def read_size(
     return {"names": int(got["names"])}
 
 
+# The overview's order for the "Not connected yet" tray: the kinds a table asks about first.
+TRAY_KIND_ORDER = {"place": 0, "npc": 1, "player_character": 2, "character": 3, "organization": 4}
+
+
+def overview_of(got: dict[str, Any]) -> dict[str, Any]:
+    """The door's names and pairs shaped for the page (#2632): the counts for the line at the top,
+    the names with no connection yet (the tray, by kind then name), and every group of two or more
+    linked names with the name to centre it on (its most connected one, the way the graph picks its
+    centre). Pure: the groups are found here, so the door stays a plain read. The tray lists names
+    only, so it is not drawn and does not count against `MAX_NODES`."""
+    names: list[dict[str, Any]] = [
+        {k: v for k, v in n.items() if k != "secret" or v is not None} for n in got["names"]
+    ]
+    by_id = {str(n["id"]): n for n in names}
+    parent = {i: i for i in by_id}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    degree = dict.fromkeys(by_id, 0)
+    for a, b in got["pairs"]:
+        if a not in by_id or b not in by_id or a == b:
+            continue
+        degree[a] += 1
+        degree[b] += 1
+        parent[find(a)] = find(b)
+    members: dict[str, list[str]] = {}
+    for i in by_id:
+        if degree[i]:
+            members.setdefault(find(i), []).append(i)
+
+    def order(i: str) -> tuple[int, str, str]:
+        return (-degree[i], str(by_id[i]["name"]).lower(), i)
+
+    groups = []
+    for ids in members.values():
+        centre = min(ids, key=order)
+        groups.append({"center": centre, "centerName": by_id[centre]["name"], "size": len(ids)})
+    groups.sort(key=lambda g: (-int(g["size"]), str(g["centerName"]).lower(), str(g["center"])))
+    tray = sorted(
+        (n for n in names if not degree[str(n["id"])]),
+        key=lambda n: (
+            TRAY_KIND_ORDER.get(str(n["kind"]), 9),
+            str(n["name"]).lower(),
+            str(n["id"]),
+        ),
+    )
+    return {
+        "counts": {
+            "names": int(got["total"]),
+            "connections": int(got["connections"]),
+            "connectedNames": sum(1 for i in by_id if degree[i]),
+            "notConnected": len(tray),
+        },
+        "tray": tray,
+        "groups": groups,
+        "truncated": int(got["total"]) > len(names),
+        "canEdit": bool(got["canEdit"]),
+        "view": got["view"],
+        "visibility": got["visibility"],
+        "canPeek": bool(got["canPeek"]),
+    }
+
+
+async def read_overview(
+    db: Database, session: Session, ref: str, *, view: str | None = None
+) -> dict[str, Any]:
+    """Every name the caller may see, which are connected and in which groups (#2632): the numbers
+    for the Story graph's count line, its "Not connected yet" tray and its other groups. The same
+    people see the same names as in `read_web` (the door shares that door's checks); `view` as
+    there."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if view is not None and view not in VIEWS:
+        raise RecapError("bad_view")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        if view is not None:
+            await conn.execute("SELECT set_config('dmbot.web_view', %s, true)", (view,))
+            await conn.execute(
+                "SELECT set_config('dmbot.web_visit', %s, true)", (visit_of(session),)
+            )
+        cur = await conn.execute(
+            "SELECT dmbot_web_graph_overview(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is not None and got["status"] == "peek_off":
+        raise RecapError("peek_off")
+    if got is None or got["status"] != "ok":
+        raise RecapError("not_found")
+    return overview_of(dict(got))
+
+
 async def peek(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """A player turned the peek on (after the page's warning): the DM is told once for this visit,
     on the DM screen, by the bot. Refused with `peek_off` when the campaign's DM screen is private;

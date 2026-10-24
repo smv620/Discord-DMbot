@@ -49,6 +49,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "Every name on the Story graph",
+    text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Under it, Not connected yet lists the names that have no connection, by kind; pick one to see that it has none. If the names form more than one group, Other groups of linked names has a button for each; pick one to put that group in the middle of the map. Players see only what they are allowed to see.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Your story timeline",
     text: "A campaign's Story timeline lists every session in order, with the day it was played, how long it ran, its recap and the names the players learned that session. Players see only the titles of recaps you posted.",
   },
