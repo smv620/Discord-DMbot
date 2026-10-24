@@ -66,6 +66,16 @@ def callers(needle: str) -> set[str]:
 
 
 class Base(DatabaseTest):
+    async def speaker_agreed(self) -> None:
+        """The speaker whose lines the recap used has agreed to be recorded: posting an unapproved
+        draft approves it first (#2122), and approving checks that."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (THURSDAY.id, fx.ALICE, NOW, TERMS_VERSION),
+            )
+
     async def asyncSetUp(self) -> None:
         if not SUPERUSER_URL:
             if REQUIRE_DB:
@@ -475,6 +485,28 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
 
+    async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
+        self,
+    ) -> None:
+        """#2639 review: the contract WebDev's page reads, pinned against the real door: the
+        shared shape, counts and codes only, and nothing once the recap is posted."""
+        read = await read_recap(self.web, self.session, self.ref)
+        got = read["progress"]
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertTrue(got["stage"].startswith("recap_"))
+        self.assertIn(got["state"], ("running", "stalled", "failed", "done"))
+        listed = await list_recaps(self.web, self.session)
+        self.assertTrue(all("progress" in r for r in listed))
+        async with self.db.guild(THURSDAY.id) as conn:  # (posted by the bot's own path elsewhere)
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted' WHERE guild_id = %s AND session_at = %s",
+                (THURSDAY.id, 100),
+            )
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["progress"])
+
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
         got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
@@ -565,6 +597,7 @@ class TheDmsPage(Base):
         self.assertEqual(await list_recaps(self.web, session), [])
 
     async def test_post_marks_it_for_the_bot_and_only_once(self) -> None:
+        await self.speaker_agreed()
         shown = await decide(self.web, self.session, self.ref, "post")
         self.assertEqual(shown["status"], "posting")
         self.assertFalse(shown["canEdit"] or shown["canPost"])
@@ -576,6 +609,7 @@ class TheDmsPage(Base):
     async def test_the_stored_posting_clock_is_readable_by_the_web_role(self) -> None:
         """#2435: the website's role can read the three columns (#2436 puts them in the answer);
         another DM's campaign is not readable at all."""
+        await self.speaker_agreed()
         await decide(self.web, self.session, self.ref, "post")
 
         async def stored(campaign: str) -> Any:
@@ -712,6 +746,7 @@ class TheRoutes(Base):
         self.assertFalse((await self.mail())["on"])
 
     async def test_list_read_edit_and_decide(self) -> None:
+        await self.speaker_agreed()
         listed = await self.client.get("/me/recaps")
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(len(listed.json()["recaps"]), 1)
