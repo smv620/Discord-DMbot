@@ -158,7 +158,7 @@ describe("the facts #433 asks for", () => {
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, OVH US, Cloudflare, GitHub and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
   });
