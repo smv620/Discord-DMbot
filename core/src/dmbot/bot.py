@@ -61,7 +61,7 @@ from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, Gemin
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import AudioChecker, Verdict
-from dmbot.campaigns import Campaign, CampaignStore
+from dmbot.campaigns import Campaign, CampaignStore, web_backup
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     SHARED_STORY,
@@ -1162,6 +1162,7 @@ class DMBot(commands.AutoShardedBot):
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
+        self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
             int, asyncio.Task[None]
@@ -11740,6 +11741,10 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_web_delete_notices()
             except Exception as exc:
                 log.warning("The website delete notices failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_backups()
+            except Exception as exc:
+                log.warning("The website backups failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -11755,10 +11760,13 @@ class DMBot(commands.AutoShardedBot):
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
-                if self.web_delete_notices is not None:
+                if self.web_delete_notices is not None or self.web_backups is not None:
                     try:
                         for guild_id in await self.campaigns.guilds_with_campaigns():
-                            await self.web_delete_notices.sweep(guild_id)
+                            if self.web_delete_notices is not None:
+                                await self.web_delete_notices.sweep(guild_id)
+                            if self.web_backups is not None:
+                                await self.web_backups.sweep(guild_id)
                     except Exception as exc:
                         log.warning("The delete notice sweep failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
@@ -11793,6 +11801,26 @@ class DMBot(commands.AutoShardedBot):
                     log.info("Name answer: %s", why or "done")  # the word only
                     if not why and self.lookup is not None:
                         self.lookup.mark_stale(guild.id, answer.campaign_id)  # lists read it fresh
+
+    async def export_campaign(self, guild_id: int, campaign_id: str) -> Any:
+        """A campaign's complete copy, as Discord's Download makes it (#2554)."""
+        return await self.campaigns.export(guild_id, campaign_id)
+
+    async def run_web_backups(self) -> None:
+        """Build the copies the website asked for (#2554, part 1b): every server that ever held a
+        campaign, the ones the bot has left included, because a copy needs only the database. A
+        few per server per round; the file is never logged."""
+        store = self.web_backups
+        if store is None:
+            return
+        for guild_id in await self.campaigns.guilds_with_campaigns():
+            for _ in range(web_backup.PER_ROUND):
+                item = await store.claim_next(guild_id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+                    why = await web_backup.build(self, guild_id, item, store)
+                    log.info("Website backup: %s", why or "done")  # the word only
 
     async def run_web_delete_notices(self) -> None:
         """Finish the campaigns the website deleted (#2554): tidy their Discord channels and tell

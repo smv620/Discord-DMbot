@@ -38,6 +38,7 @@ from dmbot.recaps import voice
 from dmbot.web import (
     admin_api,
     all_names,
+    campaign_backup,
     campaign_delete,
     campaign_settings,
     email_change,
@@ -1482,6 +1483,54 @@ def create_app(
         except RecapError as err:
             status, detail = delete_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    backup_refusals = {
+        "not_found": (404, "not_found"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/backup", status_code=202)
+    async def me_campaign_backup(ref: str, signed: Signed) -> dict[str, str]:
+        """Ask for a complete copy of the campaign (#2554): the owner in any server, a game master
+        in a server on the session's list. DMbot builds it from its database (so a server it
+        cannot reach works). Poll `.../backup/{id}`; the copy is kept 15 minutes at most."""
+        session, _token = signed
+        try:
+            return {"id": await campaign_backup.request(db, session, ref)}
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}")
+    async def me_campaign_backup_status(ref: str, backup_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own copy stands, in the shared progress shape (stage, startedAt,
+        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size` and `expiresAt`."""
+        session, _token = signed
+        try:
+            return await campaign_backup.status(db, session, ref, backup_id)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}/file")
+    async def me_campaign_backup_file(ref: str, backup_id: str, signed: Signed) -> Response:
+        """The copy, once; it is removed as it is sent. It holds the DM's secrets: a download for
+        the person, with `Cache-Control: no-store`."""
+        session, _token = signed
+        try:
+            raw, name = await campaign_backup.fetch(db, session, ref, backup_id)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        return Response(
+            raw,
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe}"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.post("/me/campaigns/{ref}/settings", status_code=202)
     async def me_campaign_setting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
