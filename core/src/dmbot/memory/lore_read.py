@@ -120,8 +120,11 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "general (elves, goblins).\n"
         "- RELATIONSHIPS: only what the text says plainly between two of those names, in plain "
         "words (leads, is a member of, is in, is a friend of, is an enemy of, owns, works for, "
-        f"knows, is family of, pays{theirs}). 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text, and holds both names (one that does not is dropped).\n"
+        f"knows, is family of, pays{theirs}). Write each relationship's two ends as the full "
+        "names you listed under NAMES, never as 'my brother', 'the twins' or a title (a "
+        "character's own backstory says 'I' or 'my': write that character's listed name). "
+        f"'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text, and holds "
+        "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
         "- Keep the three headings, and write nothing else.\n\n" + EXAMPLES
@@ -359,15 +362,20 @@ async def _shape(
     halved and shaped again (a few times); a one-line slice still cut is reported as cut."""
     model = str(getattr(ai, "model", ""))
     room = min(SHAPE_ROOM, max_output(model) if model else SHAPE_ROOM)
+    lines = len(names) + len(links)
     try:
         reply = await _call(
             gate, ai, shape_instructions(own), shape_request(names, links), room, bg.schema(own)
         )
-    except AIError:  # this slice is lost, not the read: the rest is shaped and shown, as cut
+    except AIError:
+        # A slice that failed is tried again in halves before anything is lost (#2642, as #2596
+        # does for a cut answer): only a one-line slice, or one already halved too far, is lost.
         stats.shape_cut += 1
-        log.info("Lore read: pass 2 failed for a slice of %d line(s)", len(names) + len(links))
-        stats.dropped["cut_before_check"] += len(links)
-        return [], [], True
+        log.info("Lore read: pass 2 failed for a slice of %d line(s)", lines)
+        if lines <= 1 or depth >= SPLIT_DEPTH:
+            stats.dropped["cut_before_check"] += len(links)
+            return [], [], True
+        return await _halves(ai, text, names, links, own, gate, stats, depth)
     stats.shape_calls += 1
     if not reply.cut:
         return (
@@ -376,10 +384,23 @@ async def _shape(
             False,
         )
     stats.shape_cut += 1
-    lines = len(names) + len(links)
     if lines <= 1 or depth >= SPLIT_DEPTH:
         stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
         return [], [], True
+    return await _halves(ai, text, names, links, own, gate, stats, depth)
+
+
+async def _halves(
+    ai: Any,
+    text: str,
+    names: list[str],
+    links: list[str],
+    own: Mapping[str, str],
+    gate: AbstractAsyncContextManager[Any],
+    stats: Stats,
+    depth: int,
+) -> tuple[list[bg.Found], list[bg.Connection], bool]:
+    """A slice the model could not shape whole, shaped again in two halves."""
     if len(names) >= len(links):
         half = max(1, len(names) // 2)
         slices = [(names[:half], links), (names[half:], [])]
