@@ -44,7 +44,7 @@ _COLUMNS = (
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
     # The posting clock's columns (#2435): the page's `postingSince`, `postingStep` and `postedUrl`
     # are made from them in `_view` (WebDev's #2436 owns those keys).
-    " r.posting_since, r.posting_step, r.posted_url,"
+    " r.posting_since, r.posting_step, r.posted_url, r.restarted_at, r.previous,"
     # How far the work has got (#2636): `progress` in `_view` is made from these (counts and times).
     " r.created_at, r.updated_at, r.window_count, r.window_done, r.calls, r.errors,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
@@ -180,6 +180,20 @@ def _mail_view(row: dict[str, Any]) -> dict[str, Any]:
     return {"address": address, "source": source, "on": bool(row.get("mail_on", True))}
 
 
+def _previous_view(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The earlier approved or posted recap, while it is still held for the DM (#2608): only until
+    the new text is approved or posted, as `Job.keeps_previous` says."""
+    kept = row.get("previous")
+    if not isinstance(kept, dict) or row.get("approved_hash") or row["status"] != "draft":
+        return None
+    return {
+        "title": kept.get("title", ""),
+        "text": strip_cues(str(kept.get("summary", ""))),
+        "status": kept.get("status", ""),  # draft (approved) or posted
+        "postedUrl": kept.get("posted_url") or "",
+    }
+
+
 def _view(row: dict[str, Any]) -> dict[str, Any]:
     state, status = row["state"], row["status"]
     ready = state == "ready" and status == "draft"
@@ -244,6 +258,15 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         and row["tries"] < MAX_TRIES,
         "triesLeft": max(0, MAX_TRIES - row["tries"]),
         "canDrop": status == "draft",
+        # Start the recap over (#2608): from a finished or failed one (not while it is being
+        # written or sent). `restartedAt` is when the DM last did (Unix seconds, 0: never).
+        # (a recap waiting for its check or between tries can be started over too: the DM's way out)
+        "canMakeAgain": status in ("draft", "posted")
+        and (state in ("ready", "failed") or row["last_error"] == critics.CHECK_WAIT),
+        "restartedAt": int(row.get("restarted_at") or 0),
+        # The recap that was approved or posted before the DM started over, kept until the new
+        # one is approved (#2608); null otherwise. `Keep the earlier one` is `/keep` below.
+        "previous": _previous_view(row),
         "audio": _audio_view(
             row,
             ready=status in ("draft", "posting", "posted") and state == "ready",
@@ -757,5 +780,34 @@ async def audio_again(
             raise RecapError("needs_approval")
         if outcome != "queued":
             raise RecapError("not_allowed")
+        *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
+async def redo_recap(
+    db: Database, session: Session, ref: str, *, replace: bool = False
+) -> dict[str, Any]:
+    """Make the recap of a session, or make it again (#2608), through the database's door, which
+    holds it to a DM of the campaign, a session that still has its lines, and a recap that is not
+    being written or sent. `ref` may name a session with no recap yet. An existing recap needs
+    `replace` (the page asks once); an approved or posted one stays, in `previous`, until the new
+    one is approved. The bot writes it next round, with the plan and the month's allowance checked
+    there. Returns the recap as `GET /me/recaps/{ref}`."""
+    parsed = parse_ref(ref)
+    if parsed is None:
+        raise RecapError("not_found")
+    gid, cid, at = parsed
+    _guild_of(session, gid)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, gid)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_redo(%s, %s, %s, %s) AS r", (gid, cid, at, replace)
+        )
+        found = await cur.fetchone()
+        outcome = found["r"] if found else "not_allowed"
+        if outcome != "queued":
+            raise RecapError(
+                outcome if outcome in ("needs_confirm", "busy", "no_lines") else "not_allowed"
+            )
         *_, row = await _one(conn, ref, session)
     return _view(row)
