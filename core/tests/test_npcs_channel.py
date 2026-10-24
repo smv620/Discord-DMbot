@@ -228,7 +228,7 @@ class Keeping(unittest.IsolatedAsyncioTestCase):
         entries = [entry(n, f"P{n:02}", also_called=("Red",)) for n in range(1, 41)]
         await sync(chan, entries)
         await sync(chan, entries)
-        changed = [dataclasses.replace(e, kind="god") for e in entries]  # 40 cosmetic edits
+        changed = [dataclasses.replace(e, kind="npc") for e in entries]  # 40 cosmetic edits
         changed[39] = dataclasses.replace(changed[39], also_called=())  # the last: a name goes
         done = await sync(chan, changed)
         self.assertEqual(done.edited, 25)
@@ -264,7 +264,7 @@ class Keeping(unittest.IsolatedAsyncioTestCase):
         entries = [entry(n) for n in range(1, 31)]
         for _ in range(2):
             await sync(chan, entries)
-        changed = [dataclasses.replace(e, kind="god") for e in entries]
+        changed = [dataclasses.replace(e, kind="npc") for e in entries]
         first = await sync(chan, changed)
         self.assertEqual((first.edited, first.left_for_next_time), (25, 5))
         second = await sync(chan, changed)
@@ -298,7 +298,7 @@ class Keeping(unittest.IsolatedAsyncioTestCase):
         for msg in chan.messages:
             msg.delete = AsyncMock(side_effect=denied)  # type: ignore[method-assign]
             msg.edit = AsyncMock(side_effect=denied)  # type: ignore[method-assign]
-        done = await sync(chan, [dataclasses.replace(entry(1), kind="god")])
+        done = await sync(chan, [dataclasses.replace(entry(1), kind="npc")])
         self.assertEqual(sum(m.delete.await_count for m in chan.messages), 1)  # type: ignore[attr-defined]
         self.assertEqual(sum(m.edit.await_count for m in chan.messages), 1)  # type: ignore[attr-defined]
         self.assertGreater(done.left_for_next_time, 0)
@@ -439,9 +439,9 @@ class WhatPlayersMayKnow(MemoryTest):
         self.assertEqual((len(mira.ties), mira.ties_more), (5, 2))
 
     async def test_a_god_is_called_a_god(self) -> None:
-        await self.add("Tymora", type="character", role="god")
+        await self.add("Tymora", type="character", role="npc")
         got = next(e for e in await self.roster() if e.name == "Tymora")
-        self.assertEqual(got.kind, "god")
+        self.assertEqual(got.kind, "NPC")
 
     # ---- what it never shows ---------------------------------------------------------
 

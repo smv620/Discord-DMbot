@@ -17,7 +17,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from dmbot.memory import link
@@ -59,7 +59,9 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
+from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
+from dmbot.word_end import at_word_end
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -175,13 +177,15 @@ class Confirmed:
     batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
 
 
-def _field(value: object) -> str | None:
+def _field(value: object, *, name: bool = False) -> str | None:
     """A short piece of the extractor's answer: one line of text within the limit, or None
     when it is not text or is empty."""
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
-    return text[:FIELD_MAX] if text else None
+    if name:  # a name is never shortened (#2607): a cut one is another name
+        return text if 0 < len(text) <= FIELD_MAX else None
+    return at_word_end(text, FIELD_MAX) if text else None
 
 
 _LIST_START = re.compile(r'\{\s*"claims"\s*:\s*\[')
@@ -233,10 +237,11 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
         if not isinstance(item, dict):
             bad += 1
             continue
-        subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
-        obj = _field(item.get("object")) or ""
+        subject = _field(item.get("subject"), name=True)
+        relationship = _field(item.get("relationship"))
+        obj = _field(item.get("object"), name=True) or ""
         said = item.get("details")  # words only: a list or a number is no detail
-        details = " ".join(said.split())[:DETAIL_MAX] if isinstance(said, str) else ""
+        details = at_word_end(" ".join(said.split()), DETAIL_MAX) if isinstance(said, str) else ""
         how = item.get("how")
         if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
             how = how.strip().rstrip(".").lower()
@@ -345,6 +350,8 @@ class Names:
 
     by_key: Mapping[str, tuple[tuple[str, str], ...]]
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
+    # Each character's (role, its player) by entry id, for who speaks for it (#2562)
+    roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -372,7 +379,12 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         for a in aliases
         if a.get("secret") and str(a["entity_id"]) in kinds and str(a["key"]) not in open_keys
     )
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden)
+    roles = {
+        str(e["id"]): (e.get("role"), e.get("played_by"))
+        for e in entities
+        if str(e["type"]) == "character"
+    }
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
 
 
 def judge(
@@ -419,7 +431,51 @@ def judge(
         return f"{term.label} doesn't fit those two"
     if term.object_types and not onto.is_any(o_kind, term.object_types):
         return f"{term.label} doesn't fit those two"
+    # Who speaks for a character (#2562): a PC's own choice and feeling come from its player, an
+    # NPC's from the DM. A player's word about someone else's character is what they believe, never
+    # the character's own, so it is not offered to the DM as a truth.
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) == PARTY:
+        return PARTY_REASON
     return ""
+
+
+def _voice_of(
+    names: Names,
+    who: tuple[str, str],
+    other: tuple[str, str],
+    said_from_object: bool,
+    term: PredicateTerm,
+    claim: Extracted,
+    speakers: Sequence[int | None],
+    dms: Collection[int],
+) -> str:
+    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about."""
+    holder = other if said_from_object else who
+    if holder[1] != "character":
+        return OWN  # (a group's attitude stays the DM's)
+    role, plays = names.roles.get(holder[0], (None, None))
+    return voice(role, term.key, claim.how, speakers, plays, dms)
+
+
+def effect_note(
+    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence[int | None],
+    dms: Collection[int],
+) -> str:  # fmt: skip
+    """The words to add to a claim's details when the DM said it of a player character: it is
+    something that happened to them, told by the DM, not their own choice (#2562). "" otherwise."""
+    who = names.one(claim.subject)
+    other = names.one(claim.object)
+    if isinstance(who, str) or isinstance(other, str):
+        return ""
+    term, said_from_object, _ = place_relationship(onto, claim.relationship, who[1], other[1])
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) != EFFECT:
+        return ""
+    holder = other if said_from_object else who
+    return (
+        EFFECT_NOTE.format(name=claim.object if said_from_object else claim.subject)
+        if holder
+        else ""
+    )
 
 
 def _repeat_key(subject: str, relationship: str, obj: str, how: str) -> tuple[Any, ...]:
@@ -642,6 +698,8 @@ class ClaimStore:
                 else:
                     waiting += 1
                     asked.add(key)
+                if not reason and (note := effect_note(claim, onto, names, cited, dms)):
+                    claim = replace(claim, details=f"{claim.details} {note}".strip())
                 rows.append(
                     self._row(
                         claim, cited, prompt_version, model, session_started_at, w.now,

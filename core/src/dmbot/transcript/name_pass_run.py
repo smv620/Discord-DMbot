@@ -16,18 +16,41 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.transcript import name_pass as np
 from dmbot.transcript.respell import contains, respell
+from dmbot.transcript.topics import GAME
 
 if TYPE_CHECKING:
     from dmbot.transcript.store import TranscriptStore
 
 log = logging.getLogger(__name__)
 
-Ask = Callable[[str, str], Awaitable[str]]  # (instructions, question) -> PlotBot's reply text
+# (instructions, question) -> PlotBot's reply: its text, or an object with `.text` and `.cut` (the
+# model stopped at its limit, #2649), so a cut answer is told apart from a plain "unsure".
+Ask = Callable[[str, str], Awaitable[Any]]
+
+
+async def pass_lines(
+    store: TranscriptStore,
+    guild_id: int,
+    session_id: str,
+    agreed: Collection[int] | None,
+    game_only: bool = False,
+) -> list[str]:
+    """The cleaned lines the pass reads: speech from people who still agree, not the DM sidebar,
+    not typed lines and, for an imported session, only what the filter kept as game talk. One
+    place, so the live pass and dev1's tool read the same lines (#2649)."""
+    return [
+        x.text
+        for x in await store.lines(guild_id, session_id)
+        if not x.sidebar
+        and not x.typed
+        and (agreed is None or x.user_id in agreed)
+        and (not game_only or x.topic == GAME)
+    ]
 
 
 async def run(
@@ -43,18 +66,15 @@ async def run(
     now: int,
     forget_before: int,
     dry_run: bool = False,
+    game_only: bool = False,
 ) -> np.Report:
-    stored = [
-        x
-        for x in await store.lines(guild_id, session_id)
-        if not x.sidebar and not x.typed and (agreed is None or x.user_id in agreed)
-    ]
-    texts = [x.text for x in stored]
+    texts = await pass_lines(store, guild_id, session_id, agreed, game_only)
     found = np.survey(texts, lookup, people)
     if not found.items:
         return np.Report(guarded=found.guarded)
     reply = await ask(np.SYSTEM, np.question(found.items))
-    verdict = np.decide(reply, found.items)
+    cut = bool(getattr(reply, "cut", False))
+    verdict = np.decide(reply if isinstance(reply, str) else str(reply.text), found.items)
     hidden = [n.text for n in lookup.names if n.secret or n.entity_id in lookup.hidden]
     # One list name may be meant by several heard spellings: they are one fix with one Undo.
     by_name: dict[str, tuple[str, Counter[str]]] = {}
@@ -82,9 +102,12 @@ async def run(
     ]
     fixed.sort(key=lambda f: (-f.times, f.name))
     log.info("Name pass: %d asked, %d sure", len(found.items), len(verdict.sure))  # counts only
+    if cut:  # every word the cut answer did not reach is "unsure": safe, and now it shows (#2596)
+        log.warning("Name pass: the answer was cut off (%d words asked)", len(found.items))
     return np.Report(
         tuple(fixed),
         tuple(verdict.unsure),
         tuple(verdict.new),
         found.guarded,
+        cut,
     )

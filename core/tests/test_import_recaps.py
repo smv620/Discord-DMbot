@@ -147,6 +147,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         recap_holds=None,
         post=AsyncMock(return_value=True),
         _import_names={},
+        _import_reports={},
         _import_unhonoured={},
         _import_queued={},
         _import_unchecked={},
