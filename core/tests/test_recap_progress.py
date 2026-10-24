@@ -119,13 +119,12 @@ class AsThePipelineWorks(WorkerHarness):
         seen: list[dict[str, Any]] = []
         save = self.store.update
 
-        async def spy(*args: Any, **kw: Any) -> Any:
+        async def spy(*args: Any, **kw: Any) -> None:
             self.clock.now += 10
-            out = await save(*args, **kw)
+            await save(*args, **kw)
             job = await self.store.get(1, self.one.id, 100)
             assert job is not None
             seen.append(self.progress_of(job, int(self.clock.now)))
-            return out
 
         self.store.update = spy  # type: ignore[method-assign]
         return seen
