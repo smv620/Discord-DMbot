@@ -318,6 +318,34 @@ Discord sign-in isn't set, because the API won't start without it):**
    An older email's reply address (on the main domain) still reads, if it ever arrives: the
    token proves the ticket, not the domain.
 
+   **Recap audio (#2616, #2625; added by the owner on 2026-10-24).** The recap page's audio player
+   and the Discord Listen link fetch the files from `https://api.getdmbot.com/recap-audio/…`, so the
+   tunnel has one more route like the ones above, with this Path, copied exactly:
+
+       ^/recap-audio/
+
+   It is safe to leave open: every audio link is signed and runs out, and the route checks that
+   signature and nothing else. Without this route, Cloudflare answers an empty 404 and the player
+   stays silent.
+   To check it from outside, run
+   `curl -s https://api.getdmbot.com/recap-audio/x/full`.
+   It must answer the app's own `{"detail":"not_found"}`, not an empty page.
+
+   **The routes the tunnel has today** (all Subdomain `api`, Domain `getdmbot.com`, Service type HTTP,
+   URL `web-api:8080`). Keep this list in step with Cloudflare:
+
+   | Path | What it is for | Added |
+   |---|---|---|
+   | `^/admin(/\|$)` | the admin page | at setup (#836) |
+   | `^/(webhooks/stripe$\|auth/\|me(/\|$)\|billing/)` | Stripe's events and the signed-in site | #1096 |
+   | `^/mail/inbound$` | people's emailed replies, from Resend (docs/EMAIL.md) | #1431, #1717 |
+   | the support route | the website's support form; dev1 records its exact Path here | |
+   | `^/recap-audio/` | the recap audio player and the Discord Listen link | 2026-10-24 |
+
+   Any other path gets an empty 404 from Cloudflare before it reaches DMbot. #2625 replaces this
+   list with one route, `^/`, and a tested list of open paths in the code. Until dev1 deploys that,
+   a new public path needs its own route here.
+
 **You (the owner), on the server, once dev1 says the update is in:**
 
 4. Copy the token again from the tunnel's page in Cloudflare (open
