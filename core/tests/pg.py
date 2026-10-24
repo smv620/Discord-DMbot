@@ -367,7 +367,7 @@ def sender_pids(*dbs: Database) -> set[int]:
     hears the same-looking notices (same server id, same first offer number) that other workers'
     tests send from their own schemas. A notice carries its sender's pid, so a test keeps only the
     ones sent by its own pools (read this once the work is done, when its connections are idle)."""
-    return {conn.info.backend_pid for db in dbs for conn in db._pool._pool}  # type: ignore[attr-defined]
+    return {conn.info.backend_pid for db in dbs for conn in db._pool._pool}
 
 
 class DatabaseTest(unittest.IsolatedAsyncioTestCase):
