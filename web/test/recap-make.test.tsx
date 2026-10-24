@@ -11,6 +11,9 @@ import { mockApi } from "../src/account/mock";
 import RecapMake from "../src/account/RecapMake";
 import { makeWords as w } from "../src/content/recap-make";
 
+/** A label as an exact pattern (the words hold brackets). */
+const rx = (label: string): RegExp => new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+
 vi.mock("../src/content/recap-make", async (original) => ({
   ...(await original<typeof import("../src/content/recap-make")>()),
   RECAP_MAKE_LIVE: true,
@@ -90,8 +93,8 @@ describe("adding a recap someone wrote", () => {
     fireEvent.click(screen.getAllByRole("button", { name: w.add })[1]!); // the session with no recap
     const form = await screen.findByRole("heading", { name: w.form.heading });
     expect(document.activeElement).toBe(form);
-    fireEvent.input(screen.getByLabelText(new RegExp(w.form.text)), { target: { value: "The party crossed the river." } });
-    fireEvent.input(screen.getByLabelText(new RegExp(w.form.who)), { target: { value: "Maren" } });
+    fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "The party crossed the river." } });
+    fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
     extra?.();
   }
 
@@ -101,7 +104,7 @@ describe("adding a recap someone wrote", () => {
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
     expect((await screen.findByRole("alert")).textContent).toBe(w.errors["right-not-confirmed"]);
     expect(api.calls.some((c) => c.startsWith("addRecap"))).toBe(false);
-    fireEvent.click(screen.getByLabelText(new RegExp(w.form.right)));
+    fireEvent.click(screen.getByLabelText(rx(w.form.right)));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
     expect(await screen.findByText(w.stage["writing"] as string)).toBeTruthy();
     expect(api.calls).toContain("addRecap:100.cmp1:1790000000:text");
@@ -109,7 +112,7 @@ describe("adding a recap someone wrote", () => {
 
   it("does not ask again once it was given", async () => {
     const api = await open();
-    await fill(() => fireEvent.click(screen.getByLabelText(new RegExp(w.form.right))));
+    await fill(() => fireEvent.click(screen.getByLabelText(rx(w.form.right))));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
     await screen.findByText(w.stage["writing"] as string);
     cleanup();
@@ -117,16 +120,16 @@ describe("adding a recap someone wrote", () => {
     await screen.findByRole("heading", { name: w.heading });
     fireEvent.click(screen.getAllByRole("button", { name: w.add })[2]!);
     await screen.findByRole("heading", { name: w.form.heading });
-    expect(screen.queryByLabelText(new RegExp(w.form.right))).toBeNull();
+    expect(screen.queryByLabelText(rx(w.form.right))).toBeNull();
   });
 
   it("asks before replacing a recap that is there", async () => {
     const api = await open();
     fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!); // the approved one
     await screen.findByRole("heading", { name: w.form.heading });
-    fireEvent.input(screen.getByLabelText(new RegExp(w.form.text)), { target: { value: "Their version." } });
-    fireEvent.input(screen.getByLabelText(new RegExp(w.form.who)), { target: { value: "Maren" } });
-    fireEvent.click(screen.getByLabelText(new RegExp(w.form.right)));
+    fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+    fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+    fireEvent.click(screen.getByLabelText(rx(w.form.right)));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
     expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.yesReplace }));
@@ -138,10 +141,41 @@ describe("adding a recap someone wrote", () => {
     fireEvent.click(screen.getAllByRole("button", { name: w.add })[1]!);
     await screen.findByRole("heading", { name: w.form.heading });
     fireEvent.click(screen.getByLabelText(w.form.link));
-    fireEvent.input(screen.getByLabelText(new RegExp(w.form.link_)), { target: { value: "https://docs.example.com/private" } });
-    fireEvent.input(screen.getByLabelText(new RegExp(w.form.who)), { target: { value: "Maren" } });
-    fireEvent.click(screen.getByLabelText(new RegExp(w.form.right)));
+    fireEvent.input(screen.getByLabelText(rx(w.form.link_)), { target: { value: "https://docs.example.com/private" } });
+    fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+    fireEvent.click(screen.getByLabelText(rx(w.form.right)));
     fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
     expect((await screen.findByRole("alert")).textContent).toBe(w.errors["link-private"]);
+  });
+});
+
+describe("a recap that is already being made", () => {
+  it("is watched when the page opens, and a failure can be closed to try again", async () => {
+    const api = mockApi("table");
+    const now = Math.floor(Date.now() / 1000);
+    let looks = 0; // the first look finds it being made; after it failed, the list says so
+    api.pastSessions = async () => ({
+      rightConfirmed: true,
+      sessions: [
+        {
+          sessionAt: 1790000000,
+          sessionNumber: 3,
+          sessionSeconds: 7200,
+          recap: { ref: "mock.working.1", state: looks++ === 0 ? "working" : "failed", status: "draft", held: false, approved: false },
+        },
+      ],
+    });
+    api.recap = async (ref) => ({
+      ...(await mockApi("table").recap!("200000000000000001.cmp1.1791000000")),
+      ref,
+      working: false,
+      state: "failed",
+      error: "",
+      progress: { stage: "writing", startedAt: now, updatedAt: now, serverNow: now, state: "failed", reason: "recap_failed" },
+    });
+    render(<RecapMake api={api} campaignRef="100.cmp1" />);
+    expect(await screen.findByText(w.failedReason["recap_failed"] as string)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.close }));
+    expect(await screen.findByRole("button", { name: w.again })).toBeTruthy();
   });
 });

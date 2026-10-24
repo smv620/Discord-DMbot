@@ -82,6 +82,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       setRunning({ at, ref: got.ref });
     } catch (error) {
       if (kindOf(error) === "approved-exists") setAsking({ at, what: "again" });
+      else if (kindOf(error) === "already-running") await load(); // the list then shows it working and watches it
       else {
         setAsking(null);
         setProblem(say(error));
@@ -129,20 +130,27 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
         <ul class="campaigns">
           {sessions.map((s) => {
             const here = running?.at === s.sessionAt;
-            const working = here || s.recap?.state === "working";
+            // A recap that is already being made when the page opens is watched like one just started.
+            const watching = here ? running!.ref : s.recap?.state === "working" ? s.recap.ref : null;
+            const working = watching !== null;
             return (
               <li key={s.sessionAt}>
                 <span class="campaign-name">
                   {w.session(s.sessionNumber, sessionDay(s.sessionAt), length(s.sessionSeconds))}
                 </span>
                 <span class="tags">
-                  <span class="tag">{here ? (w.state["working"] as string) : stateOf(s)}</span>
+                  <span class="tag">{working ? (w.state["working"] as string) : stateOf(s)}</span>
                 </span>
-                {here && running ? (
+                {watching ? (
                   <Making
+                    key={watching}
                     api={api}
-                    recapRef={running.ref}
+                    recapRef={watching}
                     onDone={() => {
+                      setRunning(null);
+                      void load();
+                    }}
+                    onClose={() => {
                       setRunning(null);
                       void load();
                     }}
@@ -159,7 +167,15 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       >
                         {asking.what === "again" ? w.yesAgain : w.yesReplace}
                       </button>
-                      <button type="button" class="button secondary" disabled={busy} onClick={() => setAsking(null)}>
+                      <button
+                        type="button"
+                        class="button secondary"
+                        disabled={busy}
+                        onClick={() => {
+                          if (asking.what === "replace") setAdding(null); // a clean cancel, not an empty form
+                          setAsking(null);
+                        }}
+                      >
                         {w.keep}
                       </button>
                     </div>
@@ -205,7 +221,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
 
 /** Watches one recap being made: the shared wait panel, asked again a little less often while nothing
  * moves, and given up on (with a way to look again) after a long time. */
-function Making({ api, recapRef, onDone }: { api: AccountApi; recapRef: string; onDone: () => void }) {
+function Making({ api, recapRef, onDone, onClose }: { api: AccountApi; recapRef: string; onDone: () => void; onClose: () => void }) {
   const [recap, setRecap] = useState<Recap | null>(null);
   const [gone, setGone] = useState("");
   const started = useRef(Date.now());
@@ -215,7 +231,7 @@ function Making({ api, recapRef, onDone }: { api: AccountApi; recapRef: string; 
     let wait = POLL_START_MS;
     let last = -1;
     const tick = async (): Promise<void> => {
-      if (!api.recap) return;
+      if (!api.recap) return setGone(w.errors["server"] as string);
       try {
         const next = await api.recap(recapRef);
         if (!live) return;
@@ -258,7 +274,14 @@ function Making({ api, recapRef, onDone }: { api: AccountApi; recapRef: string; 
         reason={failed ? (p?.reason ? (w.failedReason[p.reason] ?? workWords.failed) : recap?.error || null) : null}
       />
       {gone && <p class="note">{gone}</p>}
-      {(failed || gone) && <a href={`/account/recaps/${encodeURIComponent(recapRef)}`}>{w.open}</a>}
+      {(failed || gone) && (
+        <div class="row">
+          <button type="button" class="button secondary" onClick={onClose}>
+            {w.close}
+          </button>
+          <a href={`/account/recaps/${encodeURIComponent(recapRef)}`}>{w.open}</a>
+        </div>
+      )}
     </div>
   );
 }
@@ -289,9 +312,14 @@ function AddForm({
 
   const readFile = async (file: File | undefined): Promise<void> => {
     setNote("");
+    setText(""); // an earlier file's words are never sent after a later one failed
     if (!file) return;
-    if (file.size > MAX_FILE_BYTES) return setNote(w.errors["bad-text"] as string);
-    setText(await file.text());
+    if (file.size > MAX_FILE_BYTES) return setNote(w.fileTooBig);
+    try {
+      setText(await file.text());
+    } catch {
+      setNote(w.errors["server"] as string);
+    }
   };
   const send = async (event: Event): Promise<void> => {
     event.preventDefault();
