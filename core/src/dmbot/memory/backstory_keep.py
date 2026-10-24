@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class KeptAll:
-    kept: list[tuple[Waiting, int | None]] = field(default_factory=list)  # (the connection, its batch)
+    kept: list[tuple[Waiting, int | None]] = field(default_factory=list)  # (link, batch)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
 
 
