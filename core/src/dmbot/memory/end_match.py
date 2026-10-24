@@ -129,6 +129,13 @@ def stripped(end: str) -> list[str]:
     return words
 
 
+def bare(end: str) -> str:
+    """The name an end asks about, without its title or description, as a person would say the
+    question: "Sister Mara" and "Mara, my cousin" are "Mara" (#2650)."""
+    words = stripped(head(end))
+    return " ".join(w.capitalize() for w in words) or end
+
+
 class Ends:
     """The names an end may stand for. `exact` maps a name key to its name (this reading's names,
     their other public spellings, the campaign's confirmed names); `names` are the names whose

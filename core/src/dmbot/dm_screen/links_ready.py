@@ -26,7 +26,9 @@ NAME_SHOWN = 30  # an upload's name is cut to this many characters
 def _plain(text: str) -> str:
     """One line with no markdown and no mention (an upload's name is the DM's own text)."""
     one_line = " ".join(text.split())
-    return discord.utils.escape_markdown(discord.utils.escape_mentions(one_line), as_needed=False)
+    return str(
+        discord.utils.escape_markdown(discord.utils.escape_mentions(one_line), as_needed=False)
+    )
 
 
 def _short(text: str) -> str:
@@ -80,8 +82,18 @@ class ReadyButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        from dmbot.ui.name_background import ask_connections  # (ui imports this package: late)
+        from dmbot.ui.dmbot_commands import _tell  # (ui imports this package: late)
+        from dmbot.ui.name_background import ONLY_DMS, ask_connections
+        from dmbot.ui.names import _campaign_for
 
+        # The DM screen can be seen by players (peek or open): only a DM of the campaign goes on,
+        # checked on every press (#2651).
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if interaction.user.id not in campaign.dm_user_ids:
+            await _tell(interaction, ONLY_DMS)
+            return
         await ask_connections(interaction, self.campaign_id)
 
 

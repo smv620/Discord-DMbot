@@ -1201,6 +1201,7 @@ class DMBot(commands.AutoShardedBot):
         # Waiting backstory connections that may have become ready (#2650): the campaigns to look
         # at, so a burst of name answers is one look a few seconds on.
         self._links_ready_pending: set[str] = set()
+        self._links_guilds: dict[str, int] = {}  # campaign -> its server, once found
         self._npcs_recall: RecallService | None = None
         self._npcs_messages = npcs_messages  # which message shows which entry (#1761)
         self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
@@ -12648,9 +12649,13 @@ class DMBot(commands.AutoShardedBot):
         if store is None or memory is None:
             return
         found = None
+        known = self._links_guilds.get(campaign_id)
         for guild in list(self.guilds):
+            if known is not None and guild.id != known:
+                continue  # (the server it was last found in, so most looks are one lookup)
             campaign = await self.campaigns.get(guild.id, campaign_id)
             if campaign is not None:
+                self._links_guilds[campaign_id] = guild.id
                 found = (guild.id, campaign)
                 break
         if found is None:

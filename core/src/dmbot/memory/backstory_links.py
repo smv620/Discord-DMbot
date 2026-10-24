@@ -23,6 +23,9 @@ from dmbot.db import Database
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
 MAX_CANDIDATES = 10
+# What `pick_which` says: the answer was taken, the question is gone (or the pick was not one of
+# its candidates), or too many connections wait already, so the question stays.
+DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
@@ -197,6 +200,8 @@ class BackstoryLinks:
                 added += cur.rowcount
         return added
 
+    # (A question's candidates are cleaned lazily: a refused or merged name is dropped or followed
+    # when the question is next read, not when the name changes.)
     async def which_waiting(self, guild_id: int, campaign_id: str) -> list[WhichWaiting]:
         """The questions still worth asking, oldest first. A candidate that was refused or merged
         away is dropped (or follows the merge); a question left with fewer than two candidates,
@@ -243,11 +248,11 @@ class BackstoryLinks:
 
     async def pick_which(
         self, guild_id: int, campaign_id: str, which_id: str, entity_id: str | None
-    ) -> bool:
+    ) -> str:
         """The DM's answer: one of the candidates (the connection joins the waiting ones, ready
-        as soon as both its names are answered) or None for "Neither" (it is dropped). False when
-        the question is gone or the pick is not one of its candidates. Under the campaign lock, so
-        two presses answer once."""
+        as soon as both its names are answered) or None for "Neither" (it is dropped). `GONE` when
+        the question is gone or the pick is not one of its candidates, `FULL` when the queue is.
+        Under the campaign lock, so two presses answer once."""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
@@ -258,7 +263,7 @@ class BackstoryLinks:
             )
             row = await cur.fetchone()
             if row is None:
-                return False
+                return GONE
             if entity_id is not None:
                 entities = await self._entities(
                     conn, guild_id, campaign_id, {entity_id, *row["candidates"]}
@@ -266,16 +271,19 @@ class BackstoryLinks:
                 ends = {self._end(entities, c) for c in row["candidates"]}
                 end = self._end(entities, entity_id)
                 if end is None or end not in ends or entities[end]["status"] == "rejected":
-                    return False
+                    return GONE
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
                     " AND campaign_id = %s",
                     (guild_id, campaign_id),
                 )
-                full = (
-                    int((await cur.fetchone())["n"]) >= MAX_WAITING
-                )  # (the cap holds for picks too)
-                if end != row["other_id"] and not full:
+                counted = await cur.fetchone()
+                full = counted is not None and int(counted["n"]) >= MAX_WAITING
+                if full and end != row["other_id"]:
+                    return (
+                        FULL  # the cap holds for picks too: nothing was inserted, nothing deleted
+                    )
+                if end != row["other_id"]:
                     a, b = (
                         (row["other_id"], end)
                         if row["other_is_subject"]
@@ -294,7 +302,7 @@ class BackstoryLinks:
                 "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s AND id = %s",
                 (guild_id, campaign_id, which_id),
             )
-        return True
+        return DONE
 
     async def waiting(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
@@ -423,6 +431,17 @@ class BackstoryLinks:
                 ids.append(str(row["id"]))
                 counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
         return Taken(counts, ids)
+
+    async def mark_told(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
+        """These connections were just announced some other way (an upload's own summary)."""
+        if not ids:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE backstory_links SET told = true WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = ANY(%s)",
+                (guild_id, campaign_id, list(ids)),
+            )
 
     async def untell(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
         """Say again later: the notice for these could not be posted."""

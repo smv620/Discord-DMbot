@@ -468,7 +468,9 @@ class WhenKept(NamesTest):
             await self.bot._links_ready_look(self.campaign.id)
             await self.bot._links_ready_look(self.campaign.id)
         self.bot.post.assert_awaited_once()
-        channel, text, view = self.bot.post.await_args.args
+        call = self.bot.post.await_args
+        assert call is not None
+        channel, text, view = call.args
         self.assertEqual(channel, 555)
         self.assertIn("2 connections are ready to check", text)
         self.assertEqual(view.children[0].item.label, links_ready.LABEL)
@@ -561,6 +563,22 @@ class WhenKept(NamesTest):
         self.assertEqual(r.match("Brannoc, the Pale").name, "Brannoc")
         self.assertEqual(r.match("Mara, the Pale").ambiguous, ("Mara Ashgrove", "Mara Vell"))
 
+    async def test_an_upload_of_confirmed_names_is_not_announced_again_by_the_notice(self) -> None:
+        """#2651: the upload's own summary says they are ready; the DM screen must not say it
+        again a few seconds later."""
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Mirelle", "character", CONFIRMED, role="npc"),
+             NewName("Brannoch Vale", "character", CONFIRMED, role="npc"),
+             NewName("Order of the Grey Hand", "faction", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        await self.read()
+        waiting = await self.waiting()
+        self.assertTrue(waiting and all(w.ready and w.told for w in waiting))
+        self.assertEqual((await self.store.take_ready_notices(GUILD, self.campaign.id)).counts, {})
+
 
 class Pronouns(unittest.TestCase):
     """#2650 item 1: "I", "my" and "me" are the character the DM chose; never a guess."""
@@ -573,13 +591,13 @@ class Pronouns(unittest.TestCase):
         )
         self.assertFalse(pronouns.says_i("Mirelle is in the hills."))  # "Mi" is not "me"
 
-    def test_i_and_my_are_the_chosen_character_and_his_and_her_only_as_a_whole_end(self) -> None:
+    def test_i_my_and_me_are_the_chosen_character_but_his_and_her_never_are(self) -> None:
         ends = [
             c("I", "ally_of", "Brannoc"),
             c("my", "knows", "Greywater Keep"),
             c("me", "kin_of", "Ulric"),
-            c("her", "knows", "Aldric"),
-            c("her mother Aldric", "knows", "Brannoc"),  # a longer end is matched as any end is
+            c("her", "knows", "Aldric"),  # someone else in a first-person text: never a guess
+            c("his", "knows", "Brannoc"),
         ]
         lost: Counter[str] = Counter()
         kept = bg.keep_connections([ends], LISTED, {}, dropped=lost, speaker="Tavin Ashgrove")
@@ -587,8 +605,8 @@ class Pronouns(unittest.TestCase):
         self.assertIn(("Tavin Ashgrove", "Brannoc"), pairs)
         self.assertIn(("Tavin Ashgrove", "Greywater Keep"), pairs)
         self.assertIn(("Tavin Ashgrove", "Ulric Stonehand"), pairs)
-        self.assertIn(("Tavin Ashgrove", "Aldric"), pairs)
-        self.assertEqual(lost["whose"], 0)
+        self.assertEqual(len(kept), 3)  # her and his are not kept as the picked character
+        self.assertEqual(lost["name_not_found"], 2)
 
     def test_with_nobody_chosen_they_are_left_out_and_counted_never_guessed(self) -> None:
         ends = [c("I", "ally_of", "Brannoc"), c("my", "knows", "Greywater Keep"),
@@ -602,8 +620,8 @@ class Pronouns(unittest.TestCase):
         self.assertNotIn("not read in time", note)  # the parts still add up to what was found
 
     def test_the_reading_is_told_who_is_speaking_or_not_to_guess(self) -> None:
-        for speaker in ("Tavin Ashgrove", None):
-            text = lr.read_instructions(None, speaker)
+        for _ in range(1):
+            text = lr.read_instructions(None)
             self.assertIn("write that word as the end", text)
             self.assertNotIn(
                 "Tavin Ashgrove", text
@@ -791,19 +809,20 @@ class WhichMara(NamesTest):
         )
         return lost
 
-    async def ask(self) -> tuple[Any, Any]:
+    async def ask(self) -> tuple[Any, Any, str]:
         it = self.it()
         asked = await ui_bg.offer_which(it, self.campaign.id)
         self.assertTrue(asked)
         sent = it.followup.send.await_args
-        return it, sent.kwargs["view"], sent.args[0]
+        assert sent is not None
+        return it, sent.kwargs["view"], str(sent.args[0])
 
     async def test_it_waits_and_the_card_names_both_maras_and_uses_the_bare_name(self) -> None:
         lost = await self.queue()
         self.assertEqual((lost["which_waiting"], lost["which_one"]), (1, 0))
         self.assertEqual(await self.store.count(GUILD, self.campaign.id), 1)
         _, view, text = await self.ask()
-        self.assertIn("Which Sister Mara is this?", text)
+        self.assertIn("Which Mara is this?", text)
         self.assertEqual(
             [b.label for b in view.children][:3], ["Mara Ashgrove", "Mara Vell", "❌ Neither"]
         )
@@ -830,7 +849,7 @@ class WhichMara(NamesTest):
         (question,) = await self.store.which_waiting(GUILD, self.campaign.id)
         a = await self.store.pick_which(GUILD, self.campaign.id, question.id, None)
         b = await self.store.pick_which(GUILD, self.campaign.id, question.id, None)
-        self.assertEqual((a, b), (True, False))
+        self.assertEqual((a, b), ("done", "gone"))
         self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
 
@@ -840,7 +859,7 @@ class WhichMara(NamesTest):
         refused = await self.store.pick_which(
             GUILD, self.campaign.id, question.id, self.ids["Ulric Stonehand"]
         )
-        self.assertFalse(refused)
+        self.assertEqual(refused, "gone")
         self.assertEqual(len(await self.store.which_waiting(GUILD, self.campaign.id)), 1)
 
     async def test_a_candidate_that_is_refused_leaves_nothing_to_ask(self) -> None:
@@ -852,6 +871,25 @@ class WhichMara(NamesTest):
             )
         self.assertEqual(await self.store.which_waiting(GUILD, self.campaign.id), [])
         self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
+
+    async def test_a_full_queue_keeps_the_question_and_says_full(self) -> None:
+        from unittest.mock import patch as _patch
+
+        await self.queue()
+        (question,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        with _patch("dmbot.memory.backstory_links.MAX_WAITING", 0):
+            result = await self.store.pick_which(
+                GUILD, self.campaign.id, question.id, question.candidates[0][0]
+            )
+        self.assertEqual(result, "full")
+        self.assertEqual(len(await self.store.which_waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_the_ready_button_is_for_the_dm_only(self) -> None:
+        button = links_ready.ReadyButton(self.campaign.id)
+        stranger = self.it(999)
+        await button.callback(stranger)
+        self.assertIn("campaign's DM", str(stranger.response.sent))
+        stranger.followup.send.assert_not_awaited()  # nothing from the queue was shown
 
 
 class PickEdges(unittest.TestCase):

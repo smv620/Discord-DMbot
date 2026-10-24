@@ -26,7 +26,16 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import lore_context, lore_read, pronouns
-from dmbot.memory.backstory_links import UPLOAD_MAX, NewLink, NewWhich, Waiting, WhichWaiting
+from dmbot.memory.backstory_links import (
+    DONE,
+    FULL,
+    UPLOAD_MAX,
+    NewLink,
+    NewWhich,
+    Waiting,
+    WhichWaiting,
+)
+from dmbot.memory.end_match import bare
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -287,7 +296,7 @@ NO_CHARACTERS = (
     '\n\nIt says "I" or "my", but no character is confirmed yet. Confirm the character first, '
     'or connections that say "I" are left out.'
 )
-NOT_ONE = "No one in particular"
+NOT_ONE = "Not one character's"
 NOT_ONE_VALUE = "-"
 
 
@@ -296,8 +305,8 @@ def whose_text(speaker: str | None) -> str:
     a connection that needs "I" is left out and counted."""
     if speaker:
         return (
-            f'**Whose backstory is this?** {_md(speaker)}\'s. "I", "my" and a bare "his" or '
-            '"her" mean them. (Change it in the menu.)\n\n'
+            f'**Whose backstory is this?** {_md(speaker)}\'s. "I" and "my" mean them. '
+            "(Change it in the menu.)\n\n"
         )
     return (
         '**Whose backstory is this?** It says "I" or "my". Pick the character in the menu below. '
@@ -490,7 +499,6 @@ class BackgroundOffer(_Menu):
                     skip_name=lambda name: name_key(name) in known,
                     skip_pair=skip_pair,
                     progress=on_step,
-                    speaker=speaker,
                 )
             found = bg.merge(
                 [read.names],
@@ -856,16 +864,20 @@ async def _queue_picks(
 
 async def count_ready(bot: Any, campaign: Campaign, keys: set[tuple[str, str, str]]) -> int | None:
     """Of the connections this reading queued (`keys`), how many are ready to check now: both
-    names are confirmed. None when the queue can't be read (the summary then says less)."""
+    names are confirmed. None when the queue can't be read (the summary then says less). Those
+    are marked told here (#2651): the summary of this very upload says they are ready, so the DM
+    screen does not say it again a few seconds later."""
     store = getattr(bot, "backstory_links", None)
     if store is None or not keys:
         return None
     try:
         waiting = await store.waiting(campaign.guild_id, campaign.id)
+        ready = [w for w in waiting if w.ready and (w.subject_id, w.predicate, w.object_id) in keys]
+        await store.mark_told(campaign.guild_id, campaign.id, [w.id for w in ready if w.id])
     except Exception:
         log.exception("Couldn't count the ready connections")
         return None
-    return sum(1 for w in waiting if w.ready and (w.subject_id, w.predicate, w.object_id) in keys)
+    return len(ready)
 
 
 async def connected_pairs(memory: MemoryStore, campaign: Campaign) -> Callable[[str, str], bool]:
@@ -992,15 +1004,16 @@ class WhichOffer(_Menu):
         how = link_words(c.predicate, c.detail)
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
+        asked = _md(bare(c.word))  # (the end as written stays in the quote line)
         pair = (
-            f"**{_md(c.other)}** {how} **{_md(c.word)}**"
+            f"**{_md(c.other)}** {how} **{asked}**"
             if c.other_is_subject
-            else f"**{_md(c.word)}** {how} **{_md(c.other)}**"
+            else f"**{asked}** {how} **{_md(c.other)}**"
         )
         names = ", ".join(_md(name) for _, name in c.candidates[:3])
         place = f" ({self.picked + self.dropped + 1} of {self.total})" if self.total > 1 else ""
         return (
-            f"🔎 **Which {_md(c.word)} is this?**{place}\n"
+            f"🔎 **Which {asked} is this?**{place}\n"
             f"{pair}\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
             f"It could be {names}. Tap the right one. Neither leaves this connection out."
@@ -1041,7 +1054,15 @@ class WhichOffer(_Menu):
                 await self._show(interaction, now)  # it changed: carry on with what is there
                 return
             chosen = None if index is None else same.candidates[index][0]
-            if await store.pick_which(campaign.guild_id, campaign.id, same.id, chosen):
+            result = await store.pick_which(campaign.guild_id, campaign.id, same.id, chosen)
+            if result == FULL:
+                await _tell(
+                    interaction,
+                    "Too many connections are waiting. Keep or skip some with 📜 Check the "
+                    "connections first, then answer this one.",
+                )
+                return
+            if result == DONE:
                 if chosen is None:
                     self.dropped += 1
                 else:
