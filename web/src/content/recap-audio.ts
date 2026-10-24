@@ -28,7 +28,7 @@ export const pricingRow = {
   // nothing of the cost is not honest (#1390).
   included:
     RECAP_AUDIO_PRICE_CENTS === null
-      ? "Comes with Guild and Pro."
+      ? "Comes with Guild and Pro. The other plans do not have it."
       : "Comes with Guild and Pro. Add it to Table or Two Tables by the month.",
   line: "After a session, DMbot reads your recap aloud in a narrator's voice, with music behind it. You decide what your table hears.",
 };

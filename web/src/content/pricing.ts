@@ -80,7 +80,7 @@ function campaignsLine(p: PlanFacts): string {
  * not in recap-audio.ts, which imports this file (a cycle would crash the page once it is on). */
 export const plansAnswer = (featureList: string, tryItName: string): string =>
   `Every plan has the same DMbot. Plans differ only in hours and campaigns (the free ${tryItName} has no backups or downloads): it ${featureList}. Narrated recaps with music are an extra: Guild and Pro include them${
-    RECAP_AUDIO_PRICE_CENTS === null ? "." : ", and you can add them to the other paid plans."
+    RECAP_AUDIO_PRICE_CENTS === null ? "; the other plans do not have them." : ", and you can add them to the other paid plans."
   }`;
 
 const tryItName = data.plans["try-it"].name;

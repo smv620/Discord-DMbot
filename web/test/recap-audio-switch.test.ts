@@ -13,7 +13,7 @@ describe("the add-on's switch", () => {
       // Narration is on (#2617) while the owner has not set the add-on's price (#1385): the words say only
       // that Guild and Pro include it, and nothing about buying it.
       const answer = plansAnswer("writes down what is said", "Try It");
-      expect(answer).toContain("Guild and Pro include them.");
+      expect(answer).toContain("Guild and Pro include them; the other plans do not have them.");
       expect(answer).not.toMatch(/add them|by the month|\$/);
     }
   });
