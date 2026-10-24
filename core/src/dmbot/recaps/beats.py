@@ -401,13 +401,7 @@ def from_json(data: object) -> list[Beat]:
                     str(item.get("where") or ""),
                     str(item.get("note") or ""),
                     item.get("keep") is True,
-                    tuple(
-                        str(p)
-                        for p in (
-                            item.get("present") if isinstance(item.get("present"), list) else []
-                        )
-                        if isinstance(p, str)
-                    ),
+                    _present_of(item.get("present")),
                 )
             )
         except (KeyError, TypeError, ValueError):

@@ -58,7 +58,7 @@ class TheirNames(unittest.TestCase):
 
     def test_the_prose_is_put_right_before_the_name_check(self) -> None:
         beat = bt.Beat(1, "Sarek lit the fire.", ("Sarek",), (1,), "event")
-        prose = rd.Prose("《Calm》 Sarek lit the fire.", ["soft strings"])
+        prose = rd.Prose("《Calm》 Sarek lit the fire.", ("soft strings",))
         fixed, _ = rd.respelled(
             prose,
             beats=[beat],
@@ -207,7 +207,7 @@ class TheCheck(unittest.TestCase):
     def test_the_prose_check_reports_it_in_plain_words(self) -> None:
         text = "《Calm》 Belleros, Greyfen and Tavin travelled to the river and made camp."
         got = rd.check_prose(
-            rd.Prose(text, ["soft"]), beats=[CAMP], transcript="", allowed_names=PCS,
+            rd.Prose(text, ("soft",)), beats=[CAMP], transcript="", allowed_names=PCS,
             secret_names=[], pcs=PCS,
         )  # fmt: skip
         self.assertTrue(any("was there too" in p for p in got))
@@ -265,7 +265,7 @@ class TheDoubts(unittest.TestCase):
 
     def test_the_last_try_is_not_ended_by_the_scene_check(self) -> None:
         text = "《Calm》 Belleros, Greyfen and Tavin travelled to the river and made camp."
-        prose = rd.Prose(text, ["soft"])
+        prose = rd.Prose(text, ("soft",))
         kw = dict(beats=[CAMP], transcript="", allowed_names=PCS, secret_names=[], pcs=PCS)
         self.assertTrue(any("was there too" in p for p in rd.check_prose(prose, **kw)))  # type: ignore[arg-type]
         self.assertFalse(
@@ -321,5 +321,6 @@ class TheAliasEdges(unittest.TestCase):
         self.assertEqual(aliases, {})
 
     def test_a_bad_played_by_costs_the_presence_list_not_the_recap(self) -> None:
-        names = SimpleNamespace(entities={"e1": entity("Tavin", "x")}, names=[], fixes={})
+        bad = entity("Tavin", "x")  # type: ignore[arg-type]  # a bad stored value, on purpose
+        names = SimpleNamespace(entities={"e1": bad}, names=[], fixes={})
         self.assertEqual(recap_people(names, ["Tavin"]), ({}, [], {}))

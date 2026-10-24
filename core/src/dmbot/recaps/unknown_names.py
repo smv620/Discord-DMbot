@@ -183,8 +183,8 @@ def canonical(
                 joined = _letters(bare)
                 if len(words(bare)) != size or not joined or bare in seen or joined in targets:
                     continue
-                spelled = exact.get(joined)
-                if spelled is None and size == 1 and len(joined) >= MIN_LETTERS:
+                target = exact.get(joined)
+                if target is None and size == 1 and len(joined) >= MIN_LETTERS:
                     if set(words(bare)) <= ordinary:
                         continue
                     codes = set(sound_codes(bare))
@@ -201,11 +201,11 @@ def canonical(
                         for letters, name in starts.get(c[0], ())
                         if _distance(joined, letters) <= MAX_START_DISTANCE
                     }
-                    spelled = next(iter(hits)) if len(hits) == 1 else None
-                if spelled is not None:
+                    target = next(iter(hits)) if len(hits) == 1 else None
+                if target is not None:
                     seen.add(bare)
                     flexible = r"\s+".join(re.escape(w) for w in bare.split())
-                    out = re.sub(rf"(?<![\w'’-]){flexible}(?![\w-])", _put(spelled), out)
+                    out = re.sub(rf"(?<![\w'’-]){flexible}(?![\w-])", _put(target), out)
     return out
 
 
