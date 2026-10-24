@@ -42,6 +42,12 @@ WORDS = re.compile(
 # a fixed or deleted phrase leaves the list (the stale-entry check below).
 ALLOWED: list[tuple[str, str, str]] = [
     (
+        "recaps/pipeline.py",
+        "model",
+        "the name of an attribute read off the AI client to size the transcript (#2590): a "
+        "lookup key, never shown to a person",
+    ),
+    (
         "rules/house_file_link.py",
         "api",
         "OneDrive's host name (api.onedrive.com), compared to name the site a link is on: an "

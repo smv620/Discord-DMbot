@@ -35,6 +35,9 @@ ENDINGS = (
 CLOSING = "And so we continue, the {ending} of {name}."
 OPENING_BARE = "Previously…"
 CLOSING_BARE = "And so we continue, the {ending}."
+# What the database's recap columns hold (`recap_jobs.summary` and `original`, migration 0221 holds
+# the same number): a guard, not a target, so no story is cut for its length in practice (#2601).
+STORY_COLUMN_MAX = 30_000
 ROOM = 400  # characters the web editor allows beyond the longest draft: both lines and their gap
 
 _CUE_BRACKETS = re.compile(r"[《》()]")

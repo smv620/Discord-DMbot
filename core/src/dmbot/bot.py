@@ -288,7 +288,10 @@ from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
     DM,
     FIX,
+    GOING,
+    HINTED,
     KEEP,
+    OPEN,
     PROPOSED,
     Heard,
     MemoryRuleError,
@@ -323,14 +326,23 @@ from dmbot.recaps import feedback as recap_feedback
 from dmbot.recaps import hold as recap_hold
 from dmbot.recaps import post as recap_post
 from dmbot.recaps import requests as recap_requests
+from dmbot.recaps.accepted import AcceptedSection, AcceptedStore
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio import names as audio_names
 from dmbot.recaps.audio.eleven import ElevenLabs, HttpTransport
 from dmbot.recaps.audio.files import FILE_NAMES, MUSIC, VOICE, AudioFiles
 from dmbot.recaps.audio.worker import AudioInputs, AudioWorker
-from dmbot.recaps.inputs import load_inputs, recap_name_sets, recap_said
+from dmbot.recaps.inputs import (
+    EVERY_NAME,
+    load_inputs,
+    recap_name_sets,
+    recap_recanted,
+    recap_said,
+)
 from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs, RecapWorker
+from dmbot.recaps.plot import PlotRunner, PlotStore
+from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.significance import Memory
@@ -501,6 +513,12 @@ from dmbot.ui.names import (
 )
 from dmbot.ui.optional_rules import dmbot_optional_rules  # noqa: F401 (registers it)
 from dmbot.ui.people_review import PeopleReviewButton, people_review_view, waiting_text
+from dmbot.ui.recap_again import (
+    AgainButton,
+    KeepButton,
+    again_view,
+    dmbot_recap,  # noqa: F401 (registers it)
+)
 from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
@@ -1425,7 +1443,19 @@ class DMBot(commands.AutoShardedBot):
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
                 critics=True,  # the critics read each draft until they agree (#2255)
+                reads=settings.recap_writer_reads,
             )
+        # PlotBot's check of each ready recap against the earlier accepted ones (#2122): advice for
+        # the DM's recap page only. Off unless DMBOT_PLOT_CHECK is on (it needs the recaps).
+        self.plot_runner: PlotRunner | None = (
+            PlotRunner(
+                PlotStore(recaps.db),
+                AcceptedStore(recaps.db),
+                self.ai_client.tier(FEATURE_TIERS[Feature.PLOT_CHECK], Feature.PLOT_CHECK),
+            )
+            if settings.plot_check_on and self.ai_client and recaps is not None
+            else None
+        )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
         self.recap_audio_files = AudioFiles(settings.data_dir / "recap-audio")
@@ -1661,6 +1691,7 @@ class DMBot(commands.AutoShardedBot):
             recap_audio.ListenButton, recap_audio.KeepAudioButton, recap_audio.MakeAudioAgainButton
         )  # the audio's end, said once (#2621)
         self.add_dynamic_items(ShareButton)  # Share a recap (#2118)
+        self.add_dynamic_items(AgainButton, KeepButton)  # Make a recap again (#2608)
         self.add_dynamic_items(
             ShortRecapButton
         )  # "write a recap anyway?" for a short session (#2104)
@@ -1735,6 +1766,11 @@ class DMBot(commands.AutoShardedBot):
             *(
                 [self._watched(self._recap_loop(), "recaps")]
                 if self.recap_worker is not None
+                else []
+            ),
+            *(
+                [self._watched(self._plot_loop(), "plot-checks")]
+                if self.plot_runner is not None
                 else []
             ),
             *(
@@ -9249,6 +9285,42 @@ class DMBot(commands.AutoShardedBot):
             await self._say_writing(campaign, channel_id, session_at)
         return True
 
+    async def recap_again(
+        self, campaign: Campaign, session_at: int, user_id: int, *, replace_ok: bool = False
+    ) -> str:
+        """A DM makes the recap of a session, or makes it again (#2608). The outcome word: the
+        store's (`queued`, `needs_confirm`, `busy`, `no_lines`, `not_allowed`) or `off` (recaps are
+        switched off for DMbot), `no_plan` or `unchecked` (the plan could not be checked: nothing
+        is spent). Asked for, so the campaign's own recap switch does not stop it; the plan and the
+        month's allowance do, as for every recap (the worker checks the allowance and fails
+        closed). Says on the DM screen that it is being written."""
+        if self.recaps is None or not self.settings.recaps_on:
+            return "off"
+        if user_id not in campaign.dm_user_ids:
+            return "not_allowed"
+        gid = campaign.guild_id
+        if not await self.plan_allows("recap", gid, campaign, fail_open=False):
+            if await self.plan_allows("recap", gid, campaign, fail_open=True):
+                return "unchecked"  # not a no: nothing was spent, so try again
+            return "no_plan"
+        waits = await self.recaps.others_working(gid, campaign.id, session_at)
+        outcome = await self.recaps.start_over(
+            gid, campaign.id, session_at, user_id, replace_ok=replace_ok
+        )
+        if outcome == "queued" and campaign.dm_screen_channel_id is not None:
+            try:
+                await self._say_writing(
+                    campaign,
+                    campaign.dm_screen_channel_id,
+                    session_at,
+                    note="Waiting its turn: another recap of this campaign is first."
+                    if waits
+                    else "",
+                )
+            except Exception:
+                log.exception("Recap again: couldn't say on the DM screen that it is queued")
+        return outcome
+
     async def recap_unchecked(self, gid: int, cid: str, job: Any) -> None:
         """A recap that DMbot could not finish checking for three days (#2255): said once on the
         DM screen, with the link to the recap page. Nothing goes to the table. Fixed words only."""
@@ -9257,7 +9329,11 @@ class DMBot(commands.AutoShardedBot):
             return
         link = page_link(self.settings.site_url, gid, cid, job.session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
-        await self.post(campaign.dm_screen_channel_id, f"{critics.UNCHECKED_TOLD}{where}")
+        await self.post(
+            campaign.dm_screen_channel_id,
+            f"{critics.UNCHECKED_TOLD}{where}",
+            view=again_view(cid, job.session_at, keep=job.keeps_previous),
+        )
 
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
@@ -9355,6 +9431,30 @@ class DMBot(commands.AutoShardedBot):
         if asked is not None:
             await self.decision_lines.close(ask_key(table.campaign_id, asked), EXPIRED)
 
+    async def _recanted(self, gid: int, cid: str, session_at: int | None) -> Collection[str]:
+        """The secret names the DM took back for a session (#2591). If they can't be read, every
+        secret name said aloud counts as recanted: stricter, never looser."""
+        try:
+            return await recap_recanted(self.exposures, gid, cid, session_at)
+        except Exception:
+            log.exception("Recap: couldn't read the recanted secret names")
+            return EVERY_NAME
+
+    async def _relation_ties(
+        self, gid: int, cid: str
+    ) -> tuple[tuple[tuple[str, ...], tuple[str, ...]], ...]:
+        """The campaign's 🤫 relations as pairs of name sets (#2591). The writer is told the pairs
+        (never the relation's words) and the DM gets a note on the sentence that names both. They
+        advise: if they can't be read the recap goes on without them, the DM decides."""
+        if self.memory is None:
+            return ()
+        try:
+            found = await secret_connections(self.memory, gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't read the secret connections")
+            return ()
+        return tuple((c.subject, c.object) for c in found)
+
     async def recap_secret_names(
         self, campaign: Campaign, session_at: int | None = None
     ) -> list[str] | None:
@@ -9370,7 +9470,9 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Recap: couldn't read the campaign's secret names")
             return None
         return recap_name_sets(
-            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+            lookup,
+            await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
+            await self._recanted(campaign.guild_id, campaign.id, session_at),
         )[1]
 
     async def recap_allowed_names(
@@ -9388,7 +9490,9 @@ class DMBot(commands.AutoShardedBot):
             log.exception("Recap: couldn't read the campaign's confirmed names")
             return []
         return recap_name_sets(
-            lookup, await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at)
+            lookup,
+            await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
+            await self._recanted(campaign.guild_id, campaign.id, session_at),
         )[0]
 
     async def recap_inputs(self, gid: int, cid: str, job: Job) -> Inputs | None:
@@ -9407,11 +9511,36 @@ class DMBot(commands.AutoShardedBot):
             styles=self.recap_styles,
             notes=self.recap_notes,
             importance=self.importance,
+            recanted=await self._recanted(gid, cid, job.session_at),
+            relation_ties=await self._relation_ties(gid, cid),
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
         # What the DM corrected in this one recap, for this try only (#2076).
-        return None if found is None else dataclasses.replace(found, corrections=job.corrections)
+        if found is None:
+            return None
+        threads = (
+            await self._open_threads(gid, cid)
+            if self.settings.recap_writer_reads == "transcript"
+            else ()
+        )
+        return dataclasses.replace(found, corrections=job.corrections, threads=threads)
+
+    async def _open_threads(self, gid: int, cid: str) -> tuple[str, ...]:
+        """The names of the story threads still open (not resolved or abandoned), for PlotBot's
+        guide to a writer that reads the transcript (#2590). Names only; none if they can't be
+        read (the guide is then shorter, nothing else changes)."""
+        if self.memory is None:
+            return ()
+        try:
+            found = await self.memory.threads(gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't read the open story threads")
+            return ()
+        live = (OPEN, GOING, HINTED)
+        return tuple(
+            t.thread.name for t in found if t.state is not None and t.state.condition in live
+        )
 
     async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:
         """The confirmed story memory around the beats' names for PlotBot's notes (#2254). Two
@@ -9673,6 +9802,7 @@ class DMBot(commands.AutoShardedBot):
             await recap_said(
                 getattr(self, "transcripts", None), gid, cid, getattr(job, "session_at", None)
             ),
+            await self._recanted(gid, cid, getattr(job, "session_at", None)),
         )
         hidden = set(secret)
         return AudioInputs(
@@ -9722,7 +9852,13 @@ class DMBot(commands.AutoShardedBot):
                 await self.post(
                     campaign.dm_screen_channel_id,
                     "📜 I couldn't write this session's recap. "
-                    f"Try again from your recap page{where}",
+                    f"Try again from your recap page{where}"
+                    + (
+                        "\nThe recap you had before is kept: press ↩️ to bring it back."
+                        if job.keeps_previous
+                        else ""
+                    ),
+                    view=again_view(cid, job.session_at, keep=job.keeps_previous),
                 )
         if campaign is not None and job.state == "ready" and job.to_confirm:
             await self._queue_recap_names(gid, cid, job, campaign)
@@ -11490,6 +11626,25 @@ class DMBot(commands.AutoShardedBot):
                 await self.run_audio_notices()
             except Exception:
                 log.exception("The recap audio failed")
+            await asyncio.sleep(RECAP_ROUND_S)
+
+    async def run_plot_checks(self) -> None:
+        """One round of PlotBot's checks of ready recaps (#2122), a few at a time."""
+        if self.plot_runner is None:
+            return
+        for guild in list(self.guilds):
+            try:
+                with log_context(guild_id=guild.id):
+                    await self.plot_runner.round(guild.id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Plot checks failed for a server: %s", type(exc).__name__)
+
+    async def _plot_loop(self) -> None:
+        """Every minute: PlotBot's checks of ready recaps (#2122). Its own task, because a check
+        waits on the AI for up to two minutes and must never hold up a recap job or a DM's Post."""
+        await asyncio.sleep(120)
+        while True:
+            await self.run_plot_checks()
             await asyncio.sleep(RECAP_ROUND_S)
 
     async def _recap_loop(self) -> None:
@@ -13398,6 +13553,9 @@ def register_backup_sections(
     campaigns.register_section(EffectsSection())  # and its timed effects (#998)
     # and its session recaps (#1382), whose audio files go with the campaign (#1383)
     campaigns.register_section(RecapSection(forget_audio=forget_audio))
+    campaigns.register_section(AcceptedSection())  # the recaps the DM approved (#2122)
+    campaigns.register_section(PlotIssuesSection())  # PlotBot's issues and the DM's answers
+    campaigns.register_section(PlotFineSection())  # ... and what the DM said was not a problem
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
 
