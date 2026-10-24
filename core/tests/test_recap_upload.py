@@ -7,6 +7,7 @@ Needs Postgres."""
 from __future__ import annotations
 
 import json
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -18,7 +19,7 @@ from dmbot.recaps import uploaded as up
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.store import RecapRightsSection, RecapSection
 from tests import recap_fixtures as fx
-from tests.test_recap_jobs import Base
+from tests.test_recap_jobs import NOW, Base
 
 TEXT = "Mira and Garrick crossed the Silver Lock at dawn.\n\nThe ferryman said nothing."
 
@@ -133,9 +134,31 @@ class Uploading(Base):
         assert job is not None
         self.assertEqual([e["written_by"] for e in job.earlier], ["Mira", ""])  # newest first
 
-    async def test_a_recap_being_written_is_busy(self) -> None:
+    async def test_a_recap_a_worker_has_or_that_is_going_out_is_busy_and_a_waiting_one_is_not(
+        self,
+    ) -> None:
         await self.store.enqueue(1, self.one.id, 700, dm_user_id=fx.DM)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (int(time.time()) + 600,))
         self.assertEqual(await self.put(replace_ok=True), "busy")
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET leased_to = 0")  # waiting, not held by anyone
+        self.assertEqual(await self.put(replace_ok=True), "stored")
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET status = 'posting'")
+        self.assertEqual(await self.put(replace_ok=True), "busy")
+
+    async def test_an_uploaded_recap_is_not_one_of_the_months_recaps(self) -> None:
+        now = float(NOW)  # (the store's clock: the month the plain job below was made in)
+        await self.put()
+        await self.put(at=900)
+        self.assertEqual((await self.store.used_in_month(1, self.one.id, now)).recaps, 0)
+        await self.store.enqueue(1, self.one.id, 5000, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 5000, state="ready", title="t", summary="s")
+        self.assertEqual((await self.store.used_in_month(1, self.one.id, now)).recaps, 1)
+        job = await self.store.get(1, self.one.id, 700)
+        assert job is not None
+        self.assertEqual(job.restarted_at, 0)  # (nothing was started over)
 
     async def test_it_can_be_posted_and_is_the_next_sessions_bridge(self) -> None:
         await self.put(at=700)

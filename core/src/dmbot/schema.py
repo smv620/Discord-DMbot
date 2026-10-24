@@ -3098,12 +3098,13 @@ RECAP_UPLOADED = (
             INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, state, title,
                                     summary, original, status, created_at, updated_at, emailed_at,
                                     written_by, uploaded_by, uploaded_at, approved_by,
-                                    approved_at, approved_hash, restarted_at)
+                                    approved_at, approved_hash)
                 VALUES (g, c, at_, who, 'ready', ttl, body, body, 'draft', now_s, now_s, now_s,
-                        author, who, now_s, who, now_s, digest, now_s);
+                        author, who, now_s, who, now_s, digest);
             RETURN 'stored';
         END IF;
-        IF job.state NOT IN ('ready', 'failed') OR job.status = 'posting' THEN
+        -- Going out, or a worker has it right now. A recap that waits is the DM's to replace.
+        IF job.status = 'posting' OR job.leased_to > now_s THEN
             RETURN 'busy';
         END IF;
         IF job.state = 'ready' AND job.summary <> '' AND NOT replace_ok THEN
@@ -3132,7 +3133,7 @@ RECAP_UPLOADED = (
             audio_credits = 0, audio_error = '', audio_asked_at = 0, posting_since = NULL,
             posting_step = NULL, posted_url = NULL, respelled_at = NULL, previous = NULL,
             written_by = author, uploaded_by = who, uploaded_at = now_s, earlier = kept,
-            checked_at = 0, dm_user_id = who, restarted_at = now_s, updated_at = now_s
+            checked_at = 0, dm_user_id = who, updated_at = now_s
             WHERE guild_id = g AND campaign_id = c AND session_at = at_;
         RETURN 'stored';
     END

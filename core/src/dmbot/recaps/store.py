@@ -773,7 +773,10 @@ class RecapStore:
         start, end = month_bounds(now)
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT COALESCE(sum((CASE WHEN state = 'ready' THEN 1 ELSE 0 END) + tries), 0)"
+                # (a recap written by the table is not one of DMbot's recaps: it costs nothing and
+                # is not counted; its narration still is)
+                "SELECT COALESCE(sum(CASE WHEN uploaded_by > 0 THEN 0 ELSE"
+                " (CASE WHEN state = 'ready' THEN 1 ELSE 0 END) + tries END), 0)"
                 " AS recaps, COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
                 " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0)"
                 " AS narrated FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
