@@ -85,3 +85,15 @@ def is_known_name(name: str, allowed_names: Collection[str]) -> bool:
     """The name is one of the confirmed names (all its words are in one of them)."""
     mine = set(words(name))
     return bool(mine) and any(mine <= set(words(a)) for a in allowed_names)
+
+
+def at_word_end(text: str, limit: int) -> str:
+    """`text` shortened to at most `limit` characters at a word end, for a hard limit of a service
+    or of storage; the text itself when it fits. Never a reason to ask the AI again (#2597)."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if text[limit].isspace():
+        return cut.rstrip()
+    head, _, _ = cut.rpartition(" ")
+    return (head or cut).rstrip()

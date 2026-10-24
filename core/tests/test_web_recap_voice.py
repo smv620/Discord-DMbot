@@ -787,7 +787,7 @@ class TheRoutes(WithClips):
         from dmbot.web.app import create_app
         from dmbot.web.payments import FakeProvider
         from tests.test_recap_web import HEADERS
-        from tests.test_web_api import API, SITE, FakeDiscord, settings
+        from tests.test_web_api import SITE, FakeDiscord, settings
         from tests.test_web_recap_requests import fx_alice
 
         app = create_app(
@@ -798,9 +798,11 @@ class TheRoutes(WithClips):
             self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.url = f"/me/recaps/{self.ref}/voice"
 
     async def asyncTearDown(self) -> None:
@@ -863,7 +865,7 @@ class TheRoutes(WithClips):
         from dmbot.web.app import create_app
         from dmbot.web.payments import FakeProvider
         from tests.test_recap_web import HEADERS
-        from tests.test_web_api import API, SITE, FakeDiscord, settings
+        from tests.test_web_api import SITE, FakeDiscord, settings
         from tests.test_web_recap_requests import fx_alice
 
         app = create_app(
@@ -874,9 +876,11 @@ class TheRoutes(WithClips):
             self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as client:
-            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             asked = await client.post(
                 self.url, content=CLIP, headers={"content-type": "audio/webm"}
             )
