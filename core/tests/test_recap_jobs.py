@@ -19,6 +19,7 @@ from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
+from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
@@ -173,7 +174,7 @@ class Keeping(Base):
             {**good, "extra": 1},
             {**good, "session_at": 0},
             {**good, "title": ""},
-            {**good, "summary": "x" * 7000},
+            {**good, "summary": "x" * (STORY_COLUMN_MAX + 1)},
             {**good, "housekeeping": "no"},
             {**good, "game_day": -1},
             "nope",

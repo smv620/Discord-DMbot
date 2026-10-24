@@ -29,6 +29,7 @@ from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
+from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.transcript.respell import respell
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
@@ -55,7 +56,7 @@ COLUMNS = (
 )
 
 
-_LIMITS = {"title": 120, "summary": 6000, "original": 6000}  # the table's own limits
+_LIMITS = {"title": 120, "summary": STORY_COLUMN_MAX, "original": STORY_COLUMN_MAX}  # the table's
 
 
 @dataclass(frozen=True, slots=True)
@@ -1250,7 +1251,7 @@ class RecapSection:
             day = row["game_day"]
             if day is not None and (type(day) is not int or day <= 0):
                 raise CampaignError(DAMAGED)
-            for key, limit in (("title", 120), ("summary", 6000)):
+            for key, limit in (("title", 120), ("summary", STORY_COLUMN_MAX)):
                 if not isinstance(row[key], str) or not 1 <= len(row[key]) <= limit:
                     raise CampaignError(DAMAGED)
             for key in ("housekeeping", "music"):

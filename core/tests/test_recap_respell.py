@@ -114,8 +114,8 @@ class Recaps(Base):
         await self.make(self.one, 200)
         async with self.db.guild(1) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET summary = %s WHERE session_at = 100", ("Branok " * 855,)
-            )  # 5985 characters: one more letter each would pass 6000
+                "UPDATE recap_jobs SET summary = %s WHERE session_at = 100", ("Branok " * 4285,)
+            )  # 29,995 characters: one more letter each would pass 30,000
         done = await self.respell()
         self.assertEqual((done.waiting, done.skipped), (1, 1))
         long = await self.store.get(1, self.one.id, 100)

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -57,7 +58,7 @@ class TheReader(unittest.TestCase):
         (found,) = bg.read_answer(reply, TEXT)
         self.assertEqual((found.name, found.quote), ("Oakmere", ""))
 
-    def test_a_long_quote_is_dropped(self) -> None:
+    def test_a_long_quote_is_shortened_to_its_front_not_dropped(self) -> None:
         long = " ".join(["Brannoch"] * 25)
         (found,) = bg.read_answer(
             json.dumps(
@@ -65,7 +66,22 @@ class TheReader(unittest.TestCase):
             ),
             long,
         )
-        self.assertEqual(found.quote, "")
+        self.assertEqual(found.quote, " ".join(["Brannoch"] * bg.QUOTE_WORDS))  # still verbatim
+
+    def test_a_name_over_the_limits_is_dropped_never_shortened(self) -> None:
+        name = " ".join(["Brannoch"] * 12)  # more than the most words a name has (#2607)
+        item = {"name": name, "kind": "person", "also": [], "quote": ""}
+        self.assertEqual(bg.read_answer(json.dumps({"names": [item]}), name), [])
+
+    def test_a_connection_end_over_the_limit_is_dropped_and_counted_as_bad_names(self) -> None:
+        end = " ".join(["Brannoch"] * 12)
+        text = f"{end} is a friend of Vale Keep."
+        item = {"a": end, "b": "Vale Keep", "how": "friend", "quote": text.rstrip(".")}
+        lost: bg.Dropped = Counter()
+        self.assertEqual(
+            bg.read_connections(json.dumps({"connections": [item]}), text, (), lost), []
+        )
+        self.assertEqual(lost["bad_names"], 1)
 
     def test_bad_answers_are_ignored(self) -> None:
         for reply in ("", "not json", "[]", '{"names": "x"}', '{"names": [1, "a"]}'):
