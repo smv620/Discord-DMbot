@@ -176,8 +176,8 @@ describe("secrets for someone who is not a DM", () => {
           label: "is secretly the heir of",
           more: 1,
           links: [
-            { id: "l1", words: "serves", secret: false, direction: "ab" },
-            { id: "l2", words: "is secretly the heir of", secret: true, direction: "ab" },
+            { id: "l1", words: "serves", secret: false, direction: "a-b" },
+            { id: "l2", words: "is secretly the heir of", secret: true, direction: "a-b" },
           ],
         },
       ],
@@ -266,13 +266,13 @@ describe("how many more connections a line has", () => {
           label: "serves",
           more: 3,
           links: [
-            { id: "l1", words: "serves", secret: false, direction: "ab" },
-            { id: "l2", words: "owes", secret: false, direction: "ab" },
-            { id: "l3", words: "fears", secret: true, direction: "ab" },
-            { id: "l4", words: "hunts", secret: true, direction: "ab" },
+            { id: "l1", words: "serves", secret: false, direction: "a-b" },
+            { id: "l2", words: "owes", secret: false, direction: "a-b" },
+            { id: "l3", words: "fears", secret: true, direction: "a-b" },
+            { id: "l4", words: "hunts", secret: true, direction: "a-b" },
           ],
         },
-        { a: "a", b: "c", label: "guards", more: 0, links: [{ id: "l5", words: "guards", secret: false, direction: "ab" }] },
+        { a: "a", b: "c", label: "guards", more: 0, links: [{ id: "l5", words: "guards", secret: false, direction: "a-b" }] },
       ],
       truncated: false,
       maxHops: 3,
@@ -281,17 +281,20 @@ describe("how many more connections a line has", () => {
     return api;
   };
 
-  it("says (+3) in the list and on the map for a DM", async () => {
+  it("says (+3) on the map, and gives each connection its own line in the list, for a DM", async () => {
     render(<Web api={stub(true)} path={at()} />);
     await screen.findByText("3 names, 2 lines");
-    expect(screen.getByText(/Mira ↔ Garrick: serves \(\+3\)/)).toBeTruthy();
+    for (const w of ["Mira serves Garrick", "Mira owes Garrick", "Mira fears Garrick", "Mira hunts Garrick"]) {
+      expect(screen.getByText(new RegExp(w))).toBeTruthy();
+    }
+    expect(document.body.textContent).not.toContain("↔");
     expect(document.querySelector(".web-edge-text")?.textContent).toContain("(+3)");
   });
 
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
     render(<Web api={stub(false)} path={at()} />);
     await screen.findByText("2 names, 1 line");
-    expect(screen.getByText(/Mira ↔ Garrick: owes \(\+1\)/)).toBeTruthy();
+    expect(screen.getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
   });
