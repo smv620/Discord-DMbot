@@ -295,11 +295,11 @@ class TheList(unittest.IsolatedAsyncioTestCase):
             for n in range(230)
         ]
         rules.append(one("Do thing 000.", "Table rule number 000 is that we do thing 000"))  # twice
-        rules.append(one("x" * 501, "Table rule number 001 is that we do thing 001"))  # too long
+        rules.append(one("x" * 501, "Table rule number 001 is that we do thing 001"))  # long: kept
         found = await self.read(FakeAI(answer(rules)), text, existing=[("Do thing 001.", None)])
         self.assertEqual(len(found.rules), 199)  # (200 in all with its own rule)
-        self.assertEqual((found.repeats, found.too_long), (2, 1))
-        self.assertEqual(found.over_cap, 30)  # 229 new - the 199 that fit beside the one it has
+        self.assertEqual(found.repeats, 2)
+        self.assertEqual(found.over_cap, 31)  # 230 new - the 199 that fit beside the one it has
 
     async def test_a_cut_answer_is_asked_again_with_twice_the_room(self) -> None:
         cut = Reply('{"published_book": false, "rules": [{"text"', True, 10, 10, "m")
@@ -355,7 +355,7 @@ class TheList(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sent.startswith("<document>") and sent.rstrip().endswith("</document>"))
         self.assertEqual(sent.count("</document>"), 1)  # the file cannot close the tag early
 
-    async def test_a_quote_over_the_limit_and_an_instead_of_over_500_are_dropped(self) -> None:
+    async def test_a_long_quote_and_a_long_instead_of_are_shortened_not_dropped(self) -> None:
         text = "Table rule one is " + "very " * 80 + "important and we keep to it always."
         long_quote = text.casefold()
         assert len(long_quote) > house_ai.QUOTE_MAX
@@ -364,11 +364,17 @@ class TheList(unittest.IsolatedAsyncioTestCase):
                 one("Keep to it.", long_quote),
                 one("Keep it.", "table rule one is very very very", "x" * 501),
                 one("Keep to the rule.", "table rule one is very very very"),
+                one("Made up.", "a quote that is nowhere in the file at all, no matter how long"),
             ]
         )
         found = await self.read(FakeAI(many), text)
-        self.assertEqual([c.text for c in found.rules], ["Keep to the rule."])
-        self.assertEqual((found.unquoted, found.too_long), (1, 1))
+        # nothing is dropped for its length (a long quote is shortened from its end and still has
+        # to be in the file; a long rule is shortened at a word end); a made-up quote is refused
+        self.assertEqual(
+            [c.text for c in found.rules], ["Keep to it.", "Keep it.", "Keep to the rule."]
+        )
+        self.assertLessEqual(len(found.rules[1].instead_of or ""), RULE_MAX)
+        self.assertEqual(found.unquoted, 1)
 
     async def test_a_failing_declined_or_garbled_answer_is_unread(self) -> None:
         for bad in (
