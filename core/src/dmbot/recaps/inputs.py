@@ -14,6 +14,7 @@ from typing import Any
 
 from dmbot.memory.extractor import readable
 from dmbot.memory.models import name_key
+from dmbot.recaps import familiar as fam
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import split as sp
 from dmbot.recaps.pipeline import Inputs
@@ -113,6 +114,22 @@ def recap_people(
     return aliases, pcs, {u: tuple(v) for u, v in party.items()}
 
 
+def familiar_for(
+    names: Any, allowed: Collection[str], lines: Any, previous: str, aliases: dict[str, str]
+) -> dict[str, str]:
+    """{full name: the name the table uses} for the characters the recap may name (#2627), from
+    what the table said in the session (never the DM sidebar) and the earlier recap. A character
+    is a player character or an NPC on the names list; places and things have no familiar name."""
+    entities = getattr(names, "entities", {})
+    ok = set(allowed)
+    characters = sorted({e.name for e in entities.values() if e.type == "character"} & ok)
+    spoken = [line.text for line in lines if not getattr(line, "sidebar", "")]
+    secret = recap_name_sets(names, said_in(lines))[1]
+    return fam.familiar_names(
+        characters, [*spoken, previous], aliases=aliases, secret_names=secret, allowed_names=ok
+    )
+
+
 async def load_inputs(
     *,
     campaigns: Any,
@@ -152,19 +169,22 @@ async def load_inputs(
     scores = await importance.get(guild_id, campaign_id) if importance is not None else {}
     allowed_now, _ = recap_name_sets(names, said_in(lines))
     aliases, pcs, party = recap_people(names, allowed_now)
+    previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
+    familiar = familiar_for(names, allowed_now, lines, previous, aliases)
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),
         allowed_names=recap_name_sets(names, said_in(lines))[0],
         secret_names=recap_name_sets(names, said_in(lines))[1],
         # Last time's recap without its fixed lines: the writer is not shown lines to copy (#2253).
-        previous=fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else "",
+        previous=previous,
         campaign_name=campaign.name,
         earlier=earlier,
         importance=dict(scores),
         aliases=aliases,
         pcs=pcs,
         party=party,
+        familiar=familiar,
         # Which of the ten closing lines: by this session's place in the campaign (#2253).
         ending=fixed_lines.ending_for(sum(1 for s in sessions if s.started_at < session_at)),
         day=clock_day_of(stored.clock.minute) if stored is not None else None,
