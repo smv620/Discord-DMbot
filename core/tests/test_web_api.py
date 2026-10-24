@@ -260,15 +260,20 @@ class WebApi(DatabaseTest):
         store = CampaignStore(self.db, clock=lambda: self.now)
         mine = await store.create(THURSDAY.id, "The Brynwater Crossing", ALICE.id)
         await store.create(THURSDAY.id, "Someone Else's Game", 9999)
-        await store.create(444, "Not In My Servers", ALICE.id)  # Alice isn't in server 444
+        lost = await store.create(444, "Not In My Servers", ALICE.id)  # Alice isn't in server 444
         await self.sign_in()
         me = (await self.client.get("/me")).json()
         self.assertEqual(me["user"], {"id": "1001", "name": "Belleros"})
         self.assertIsNone(me["plan"])
         self.assertEqual(
             [(c["id"], c["name"], c["serverName"]) for c in me["campaigns"]],
-            [(mine.id, "The Brynwater Crossing", "Thursday Table")],
+            [
+                (mine.id, "The Brynwater Crossing", "Thursday Table"),
+                # (the owner's campaign in a server Alice's list lacks: listed, as unreachable)
+                (lost.id, "Not In My Servers", ""),
+            ],
         )
+        self.assertEqual([c["serverReachable"] for c in me["campaigns"]], [True, False])
         # Servers Alice manages; Gorrak's Hall isn't one. DMbot is in Thursday Table.
         self.assertEqual(
             me["servers"],

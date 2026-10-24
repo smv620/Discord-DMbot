@@ -137,7 +137,12 @@ class WebRole(DatabaseTest):
     async def test_me_works_through_it(self) -> None:
         session = await self.alice()
         me = await build_me(self.web, session, now=self.now)
-        self.assertEqual([c["name"] for c in me["campaigns"]], [self.mine.name])
+        # The owner's campaign in a server the session does not have is listed too, flagged as
+        # unreachable (#2554), through the owner's own door; the website role still sees no more.
+        self.assertEqual(
+            [(c["name"], c["serverReachable"]) for c in me["campaigns"]],
+            [(self.mine.name, True), (self.hidden.name, False)],
+        )
 
     async def test_it_can_record_an_install_only_for_a_listed_server(self) -> None:
         session = await self.alice()
@@ -465,7 +470,9 @@ class WebRole(DatabaseTest):
             state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
             await client.get("/auth/discord/callback", params={"state": state, "code": "good-code"})
             me = (await client.get("/me")).json()
-            self.assertEqual([c["name"] for c in me["campaigns"]], [self.mine.name])
+            self.assertEqual(
+                [c["name"] for c in me["campaigns"]], [self.mine.name, self.hidden.name]
+            )
             body = json.dumps(
                 {
                     "id": "evt-1",

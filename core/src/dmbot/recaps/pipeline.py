@@ -113,6 +113,11 @@ class Inputs:
     # How connected each name is in The truth, hidden connections too (#2411): numbers by name,
     # used only to rank which beats the writer keeps. No connection and no fact is in it.
     importance: Mapping[str, float] = field(default_factory=dict)
+    # Who is who, from the story memory (#2573): another spelling -> the name (a character the
+    # speech to text heard as a stranger), every player character, and each player's characters.
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    pcs: Sequence[str] = ()
+    party: Mapping[int, Sequence[str]] = field(default_factory=dict)
 
 
 UNMATCHED = "Couldn't write a recap that matched the session."
@@ -656,6 +661,10 @@ class RecapWorker:
             secret_names=inputs.secret_names,
             dm_ids=inputs.dm_ids,
             transcript_words={w for s in said for w in words(s.text)},
+            aliases=inputs.aliases,
+            party=inputs.party,
+            pcs=inputs.pcs,
+            ordinary_words=rd.ordinary("\n".join(s.text for s in said)),
         )
         usable = len(kept) >= bt.MIN_BEATS and not any("in no beat" in p for p in problems)
         # (a long session reads in windows; the check is of the whole sheet: it marks the last)
@@ -807,7 +816,7 @@ class RecapWorker:
         message = rd.prose_message(
             rd.pick_beats(sheet, length.beats, importance=inputs.importance),
             inputs.previous,
-            inputs.allowed_names,
+            [n for n in inputs.allowed_names if n not in inputs.aliases],  # (#2573)
             inputs.day,
             retold,
             ending=sheet,
@@ -886,6 +895,7 @@ class RecapWorker:
             previous=inputs.previous,
             setting=inputs.setting,
             transcript="\n".join(s.text for s in said),
+            aliases=inputs.aliases,
         )  # near-miss names put right, in code (#2027)
         transcript = "\n".join(s.text for s in said)
         last = job.attempt >= PROSE_LAST_ATTEMPT
@@ -907,6 +917,7 @@ class RecapWorker:
                 refused=refused,
                 style=inputs.style,
                 corrections=inputs.corrections,
+                pcs=inputs.pcs,
             )
 
         problems = checked(False)
@@ -1097,6 +1108,7 @@ class RecapWorker:
                 previous=inputs.previous,
                 setting=inputs.setting,
                 transcript=transcript,
+                aliases=inputs.aliases,
             )
             if not rd.check_prose(
                 prose,
@@ -1111,6 +1123,7 @@ class RecapWorker:
                 refused=refused,
                 style=inputs.style,
                 corrections=inputs.corrections,
+                pcs=inputs.pcs,
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
@@ -1314,6 +1327,7 @@ class RecapWorker:
             refused=[],
             style=inputs.style,
             corrections=inputs.corrections,
+            pcs=inputs.pcs,
         ):
             return None
         return cut
@@ -1549,7 +1563,7 @@ class RecapWorker:
         message = rd.prose_message(
             rd.pick_beats(sheet, length.beats, importance=inputs.importance),
             inputs.previous,
-            inputs.allowed_names,
+            [n for n in inputs.allowed_names if n not in inputs.aliases],  # (#2573)
             inputs.day,
             retold,
             ending=sheet,
@@ -1599,12 +1613,14 @@ class RecapWorker:
                 previous=inputs.previous,
                 setting=inputs.setting,
                 transcript=transcript,
+                aliases=inputs.aliases,
             )
             if rd.check_prose(
                 revised, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=refused, style=inputs.style, corrections=inputs.corrections,
+                pcs=inputs.pcs,
             ):  # fmt: skip
                 revised = None
         if revised is not None:
@@ -1744,6 +1760,7 @@ class RecapWorker:
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=[], style=inputs.style, corrections=inputs.corrections,
+                pcs=inputs.pcs,
             )  # fmt: skip
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
@@ -1829,6 +1846,7 @@ class RecapWorker:
                 secret_names=inputs.secret_names,
                 previous=inputs.previous,
                 transcript=transcript,
+                aliases=inputs.aliases,
             )
             for text in (parsed[0], *parsed[1])
         ]
