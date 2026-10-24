@@ -12,6 +12,7 @@ import httpx
 from dmbot.campaigns import CampaignStore
 from dmbot.web import grants, sessions
 from dmbot.web.discord import DiscordUser
+from tests.pg import sender_pids
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_api import ALICE, GORRAK, QUILLON, THURSDAY
@@ -333,8 +334,11 @@ class Plans(LinkBase):
             got = await self.post(bob, "decline", token=token)
             self.assertEqual(got.status_code, 200, got.text)
             seen = []
-            async for note in listener.notifies(timeout=5, stop_after=1):
-                seen.append(note.payload)
+            mine = sender_pids(self.db, self.web)  # (other workers notify on this channel too)
+            async for note in listener.notifies(timeout=5):
+                if note.pid in mine:
+                    seen.append(note.payload)
+                    break
         [row] = await self.offers()
         self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])
 
@@ -368,7 +372,8 @@ class Plans(LinkBase):
             await listener.execute("LISTEN dmbot_handover_decided")
             first = await self.post(bob, "decline", token=token)
             second = await self.post(bob, "decline", token=token)
-            seen = [n.payload async for n in listener.notifies(timeout=2)]
+            mine = sender_pids(self.db, self.web)
+            seen = [n.payload async for n in listener.notifies(timeout=2) if n.pid in mine]
         self.assertEqual((first.status_code, second.status_code), (200, 409))
         [row] = await self.offers()
         self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])  # one notice, not two
