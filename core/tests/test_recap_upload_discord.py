@@ -56,7 +56,7 @@ class TheCommand(Base):
         )
         interaction, send = talk(self.store, self.one, user)
         interaction.client = bot
-        await ru.dmbot_recap_upload.callback(interaction, file)
+        await ru.recap_upload_command.callback(interaction, file)
         return interaction, send
 
     async def test_only_text_files_are_taken(self) -> None:

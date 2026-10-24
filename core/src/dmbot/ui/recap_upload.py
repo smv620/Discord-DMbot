@@ -246,7 +246,7 @@ async def show_sessions(interaction: discord.Interaction, campaign: Any, text: s
 
 @dmbot_group.command(name="recap-upload", description="Add a recap someone at your table wrote")
 @app_commands.describe(file="A .txt or .md file with the recap (leave out to paste it instead)")
-async def dmbot_recap_upload(
+async def recap_upload_command(
     interaction: discord.Interaction, file: discord.Attachment | None = None
 ) -> None:
     guild = interaction.guild
