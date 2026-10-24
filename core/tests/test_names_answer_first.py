@@ -496,7 +496,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         first, second = questions.children
         assert isinstance(first, name_lists.KindSelect)
         assert isinstance(second, name_lists.KindSelect)
-        first._values, second._values = ["npc"], ["creature"]
+        first._values, second._values = ["npc"], ["place"]
         self.gate = asyncio.Event()
         saving = asyncio.create_task(questions.picked(first, self.it()))
         await asyncio.sleep(0)

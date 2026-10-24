@@ -489,7 +489,7 @@ def _name(value: Any) -> str | None:
     """A short single-line name, or None (anything long is likely text, not a name)."""
     if not isinstance(value, str):
         return None
-    text = " ".join(value.split())
+    text = " ".join(value.split())  # (a name is never shortened, #2607: a cut one is another name)
     return text if 0 < len(text) <= NAME_MAX else None
 
 

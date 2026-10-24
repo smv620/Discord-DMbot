@@ -353,13 +353,13 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "You need Shared story on and an adventure that DMbot has read (Give your adventure, then Read it now). To say that a name from your table is someone or somewhere in your adventure, open the name's card and press 📖 In my adventure…, then pick them from the list. The card then shows In your adventure. In each file of your adventure, a name links to one entry, and an entry to one name. A person can only match a person or group, and a place a place. To remove a link, press 📖 In my adventure… again, then Take off. Made a mistake? Press Undo that. DMbot never links names by itself. To be asked, press 🔗 Match names on the Shared story card. DMbot lists up to ten pairs that share a name, without using AI. Pick the ones that are the same in the Same person or place… menu and the ones that are not in the Not the same… menu. A not-the-same answer is remembered, and pairs you skip come back next time. Only the DM sees the links; players never do.",
+    text: "You need Shared story on and an adventure that DMbot has read (Give your adventure, then Read it now). To say that a name from your table is someone or somewhere in your adventure, open the name's card and press 📖 In my adventure…, then pick them from the list. The card then shows In your adventure. In each file of your adventure, a name links to one entry, and an entry to one name. A character can only match a character or group, and a place a place. To remove a link, press 📖 In my adventure… again, then Take off. Made a mistake? Press Undo that. DMbot never links names by itself. To be asked, press 🔗 Match names on the Shared story card. DMbot lists up to ten pairs that share a name, without using AI. Pick the ones that are the same in the Same character or place… menu and the ones that are not in the Not the same… menu. A not-the-same answer is remembered, and pairs you skip come back next time. Only the DM sees the links; players never do.",
     names: [
       { name: "In my adventure…", file: "ui/name_card.py" },
       { name: "Take off", file: "ui/book_link.py" },
       { name: "Undo that", file: "ui/book_link.py" },
       { name: "Match names", file: "dm_screen/adventure_card.py" },
-      { name: "Same person or place…", file: "ui/book_link.py" },
+      { name: "Same character or place…", file: "ui/book_link.py" },
       { name: "Not the same…", file: "ui/book_link.py" },
     ],
   },

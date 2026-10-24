@@ -216,7 +216,7 @@ class Deciding(Setup):
     async def test_a_person_cannot_be_the_same_as_a_place(self) -> None:
         ids, varn, _ = await self.setUpBook()
         _, more = await self.book([("place", "Saltmere", 1)])
-        with self.assertRaisesRegex(MemoryRuleError, "person in your adventure"):
+        with self.assertRaisesRegex(MemoryRuleError, "character in your adventure"):
             await links.decide(
                 self.memory, GUILD_A, self.c, [(more["Saltmere"], varn, links.SAME)], DM
             )
