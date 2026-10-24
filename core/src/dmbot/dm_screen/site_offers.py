@@ -36,6 +36,7 @@ from dmbot.dm_screen.handover import (
     TOLD_ACCEPTED,
     TOLD_DECLINED,
     TOLD_EXPIRED,
+    TOLD_EXPIRED_EMAIL,
     TOLD_EXPIRED_UNSENT,
     TOLD_WITHDRAWN,
     deliver_offer,
@@ -426,7 +427,10 @@ async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Ca
     who left the server or closed their messages counts as told; any other Discord error
     is raised (try again later). The buttons are best effort: pressing them after the
     end only says it ended."""
-    told = TOLD_EXPIRED if offer.delivered_at is not None else TOLD_EXPIRED_UNSENT
+    if offer.via_email:
+        told = TOLD_EXPIRED_EMAIL
+    else:
+        told = TOLD_EXPIRED if offer.delivered_at is not None else TOLD_EXPIRED_UNSENT
     try:
         owner = await _member(guild, offer.from_user_id)
         await owner.send(
@@ -435,7 +439,7 @@ async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Ca
         )
     except (discord.Forbidden, discord.NotFound):
         pass
-    if offer.message_id is None:  # sent before messages were kept
+    if offer.via_email or offer.message_id is None:  # no Discord message to change
         return
     with contextlib.suppress(discord.HTTPException):
         person = await _member(guild, offer.to_user_id)

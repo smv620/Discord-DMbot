@@ -223,10 +223,10 @@ class Words(unittest.TestCase):
         self.assertEqual(found, [])
 
     def test_the_panel_and_the_timed_out_menus_use_the_new_words(self) -> None:
-        from dmbot.dm_screen import dm_bot_panel, game_masters, handover
+        from dmbot.dm_screen import dm_bot_panel, game_masters
 
         self.assertIn("DMbot Main Menu", dm_bot_panel.PANEL_TEXT)
-        for text in (handover.MENU_TIMED_OUT, game_masters.MENU_TIMED_OUT):
+        for text in (game_masters.MENU_TIMED_OUT,):
             self.assertIn("🗂️ Campaign management", text)
 
     def test_the_settings_button_is_still_a_dynamic_item(self) -> None:

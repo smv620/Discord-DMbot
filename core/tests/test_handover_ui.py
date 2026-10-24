@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
-from dmbot import hours
+from dmbot import handover_email, hours
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import NO_OWNER_YET, NOT_THE_OWNER, OFFER_WAITING
@@ -171,6 +171,94 @@ class Words(unittest.TestCase):
 
 
 class Offering(unittest.IsolatedAsyncioTestCase):
+    """Hand over by email (#2532): the button opens a form; the form's submit checks the owner and
+    offers by email. Discord has no member picker and sends no offer message any more."""
+
+    def form(self) -> handover.HandoverEmailForm:
+        form = handover.HandoverEmailForm(CAMPAIGN_ID)
+        form.email._value = "new.owner@example.com"
+        return form
+
+    def sent(self, outcome: str = "emailed") -> Any:
+        return patch(
+            "dmbot.dm_screen.handover.handover_email.offer_by_email",
+            AsyncMock(return_value=outcome),
+        )
+
+    async def test_the_button_opens_the_email_form_for_the_owner_only(self) -> None:
+        it = interaction(OWNER)
+        it.client.settings.handover_email_on = True  # (the switch is on)
+        it.response.send_modal = AsyncMock()
+        await HandoverButton(CAMPAIGN_ID).callback(it)
+        (form,) = it.response.send_modal.await_args.args
+        self.assertIsInstance(form, handover.HandoverEmailForm)
+        for who, got, reply in (
+            (OTHER, campaign(), NOT_THE_OWNER),
+            (OWNER, campaign(owner=None), NO_OWNER_YET),
+            (OWNER, None, handover.ENDED_CAMPAIGN),
+        ):
+            it = interaction(who)
+            it.client.settings.handover_email_on = True
+            it.client.campaigns.get.return_value = got
+            it.response.send_modal = AsyncMock()
+            await HandoverButton(CAMPAIGN_ID).callback(it)
+            it.response.send_modal.assert_not_awaited()
+            self.assertEqual(said(it), reply)
+
+    async def test_only_the_owner_can_send_the_form(self) -> None:
+        for who, got, reply in (
+            (OTHER, campaign(), NOT_THE_OWNER),
+            (OWNER, campaign(owner=None), NO_OWNER_YET),
+            (OWNER, None, handover.ENDED_CAMPAIGN),
+        ):
+            it = interaction(who)
+            it.client.campaigns.get.return_value = got
+            with self.sent() as offered:
+                await self.form().on_submit(it)
+            self.assertEqual(said(it), reply)
+            offered.assert_not_awaited()
+
+    async def test_the_owner_is_told_only_that_it_was_emailed(self) -> None:
+        it = interaction(OWNER)
+        with self.sent("emailed") as offered:
+            await self.form().on_submit(it)
+        answered_first(self, it)
+        kwargs = offered.await_args.kwargs
+        self.assertEqual(
+            (kwargs["owner_id"], kwargs["guild_id"], kwargs["raw_email"]),
+            (OWNER, GUILD, "new.owner@example.com"),
+        )
+        text = said(it)
+        self.assertIn(handover_email.SENT, text)
+        self.assertNotIn("new.owner@example.com", text)  # the address is never shown back
+        for leak in ("account", "plan has", "Try It", "does not have"):
+            self.assertNotIn(leak, text)  # nothing about the address having an account or a plan
+
+    async def test_every_other_outcome_has_its_own_plain_words(self) -> None:
+        for outcome, words in (
+            ("bad_email", handover_email.BAD_EMAIL),
+            ("too_soon", handover_email.TOO_SOON),
+            ("not_allowed", handover_email.NOT_ALLOWED),
+            ("email_failed", handover_email.FAILED),
+        ):
+            it = interaction(OWNER)
+            with self.sent(outcome):
+                await self.form().on_submit(it)
+            self.assertEqual(said(it), words)
+
+    async def test_a_break_still_says_so(self) -> None:
+        it = interaction(OWNER)
+        with self.assertLogs("dmbot.dm_screen.handover", "ERROR"):
+            await self.form().on_error(it, RuntimeError("discord"))
+        self.assertEqual(said(it), handover.FAILED)
+
+    async def test_the_card_for_an_offer_by_email_names_no_one(self) -> None:
+        by_email = dataclasses.replace(offer(), to_user_id=0, to_name="", via_email=True)
+        self.assertIn("Offered by email; waiting", handover.owner_line(campaign(), by_email))
+
+
+# With DMBOT_HANDOVER_EMAIL off (the default until the accept page is live) the member picker stays.
+class PickingBy(unittest.IsolatedAsyncioTestCase):
     async def test_only_the_owner_gets_the_picker(self) -> None:
         it = interaction(OTHER)
         await HandoverButton(CAMPAIGN_ID).callback(it)
