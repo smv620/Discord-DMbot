@@ -25,7 +25,7 @@ from dmbot.db import Database
 from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
-from dmbot.recaps.draft import SUMMARY_MAX
+from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.models import Line
@@ -525,8 +525,8 @@ class TheDmsPage(Base):
         for summary, bullets in (
             ("  ", []),
             ("x" * (SUMMARY_MAX + 1), []),
-            ("ok", ["b"] * 13),
-            ("ok", ["b" * 141]),
+            ("ok", ["b"] * (HOUSEKEEPING_HARD + 1)),
+            ("ok", ["b" * (BULLET_HARD + 1)]),
         ):
             with self.assertRaises(RecapError) as caught:
                 await edit_recap(

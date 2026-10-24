@@ -23,7 +23,7 @@ def client(
     body: Any = BODY, model: str = "claude-sonnet-5-5"
 ) -> tuple[AnthropicClient, FakeSession]:
     session = FakeSession(FakeResponse(200, body))
-    return AnthropicClient("sk-secret", AIModels.same(model), session=session), session
+    return AnthropicClient("sk-secret", AIModels.same(model), session=session), session  # type: ignore[arg-type]
 
 
 class TheRoom(unittest.IsolatedAsyncioTestCase):

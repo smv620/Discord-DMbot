@@ -320,7 +320,7 @@ class TheProse(unittest.TestCase):
     def test_sentences_cut_by_the_fact_check_never_fail_the_recap_for_leaving_it_short(
         self,
     ) -> None:
-        prose = rd.Prose(fx.SUMMARY, ("m",) * len(rd.CUE.findall(fx.SUMMARY)))
+        prose = rd.Prose(fx.SUMMARY, ("m",) * len(CUE.findall(fx.SUMMARY)))
         cut = rd.cut_sentences(prose, [2])
         left = len(words(narration_of(cut.summary)))
         self.assertLess(left, len(words(narration_of(fx.SUMMARY))))
@@ -733,9 +733,7 @@ class TheHardLimits(unittest.TestCase):
         fixed = rd.fix_prose(rd.Prose(long, ("m",) * 20), 99)
         self.assertLessEqual(len(fixed.summary), rd.STORY_MAX)
         self.assertGreater(len(fixed.summary), rd.STORY_MAX - 1000)  # whole paragraphs kept
-        self.assertEqual(
-            len(fixed.music), len(rd.CUE.findall(fixed.summary))
-        )  # music still matches
+        self.assertEqual(len(fixed.music), len(CUE.findall(fixed.summary)))  # music still matches
         one = rd.fit_summary("《Calm》 " + "word " * 3000)
         self.assertLessEqual(len(one), rd.STORY_MAX)
         self.assertEqual(rd.fit_summary("short"), "short")
@@ -747,7 +745,7 @@ class TheHardLimits(unittest.TestCase):
             [p for p in prose_problems(raw.summary, "\n".join(raw.music)) if "section" in p], []
         )  # (the raw draft is not refused for the count)
         fixed = rd.fix_prose(raw, 6)
-        self.assertEqual(len(rd.CUE.findall(fixed.summary)), 6)
+        self.assertEqual(len(CUE.findall(fixed.summary)), 6)
         self.assertEqual(len(fixed.music), 6)
         for n in range(9):  # every word survives, the extra cues only come out
             self.assertIn(f"step {n}.", fixed.summary)
