@@ -28,7 +28,7 @@ from dmbot.campaigns.models import (
     clean_name,
     name_key,
 )
-from dmbot.campaigns.parts import PART_READ_BYTES
+from dmbot.campaigns.parts import PART_READ_BYTES, TOO_MANY_PARTS, LeftOut
 from dmbot.campaigns.store import (
     MAX_BACKUP_BYTES,
     NOT_A_BACKUP,
@@ -613,11 +613,13 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
     dm = interaction.user.id in campaign.dm_user_ids
     name = discord.utils.escape_markdown(campaign.name)
     limit = logic.upload_limit(guild.filesize_limit)
+    why = ""
     try:
         data, parts = await bot.campaigns.export_set(guild.id, campaign.id)
         raw: bytes | None = await asyncio.to_thread(encode_backup, data)
-    except BackupTooBig:
+    except BackupTooBig as exc:
         raw, parts = None, []  # bigger than a restore takes: no copy that can't come back
+        why = TOO_MANY_PARTS if str(exc) == TOO_MANY_PARTS else ""  # (the one reason said plainly)
     # The transcripts come in extra files (#2552); a copy none of the files of which this server
     # takes is not made.
     if raw is None or len(raw) > limit or any(len(p) > limit for p in parts):
@@ -628,8 +630,13 @@ async def send_backup(interaction: discord.Interaction, campaign_id: str) -> Non
         )
         await _tell(
             interaction,
-            f"💾 **{name}** is too big for DMbot to copy yet. Nothing was lost: the campaign "
-            "is still here. Tell whoever runs DMbot so they can save a copy for you.",
+            f"💾 **{name}** is too big for DMbot to copy yet. "
+            + (
+                f"{why}"
+                if why
+                else "Nothing was lost: the campaign is still here. Tell whoever runs DMbot so "
+                "they can save a copy for you."
+            ),
         )
         return
     file = discord.File(io.BytesIO(raw), filename=logic.backup_filename(campaign.name, _now()))
@@ -801,6 +808,7 @@ class RestoreChoice(_Menu):
                 )
                 await _replace(interaction, playing_now, None)
                 return
+            erased_lines = LeftOut()
             try:
                 campaign = await bot.campaigns.import_backup(
                     guild.id,
@@ -808,6 +816,7 @@ class RestoreChoice(_Menu):
                     interaction.user.id,
                     replace_campaign_id=replace_id,
                     parts=self.parts,
+                    left_out=erased_lines,
                 )
             except CampaignError as exc:
                 await _replace(interaction, str(exc), None)
@@ -835,7 +844,16 @@ class RestoreChoice(_Menu):
             if self.wanted and not self.parts
             else ""
         )
-        await _replace(interaction, f"{done} Use `/dmbot start` to play it.{left_out}", None)
+        erased = (
+            f" {erased_lines.lines} line{'' if erased_lines.lines == 1 else 's'} of people who "
+            "have since deleted their transcripts "
+            f"{'was' if erased_lines.lines == 1 else 'were'} left out, as they asked."
+            if erased_lines.lines
+            else ""
+        )
+        await _replace(
+            interaction, f"{done}{erased} Use `/dmbot start` to play it.{left_out}", None
+        )
 
 
 class ConfirmReplace(_Menu):
@@ -990,6 +1008,22 @@ async def dmbot_backup(interaction: discord.Interaction) -> None:
     transcripts_6="The sixth transcripts file",
     transcripts_7="The seventh transcripts file",
     transcripts_8="The eighth transcripts file",
+    transcripts_9="The ninth transcripts file",
+    transcripts_10="The tenth transcripts file",
+    transcripts_11="The 11th transcripts file",
+    transcripts_12="The 12th transcripts file",
+    transcripts_13="The 13th transcripts file",
+    transcripts_14="The 14th transcripts file",
+    transcripts_15="The 15th transcripts file",
+    transcripts_16="The 16th transcripts file",
+    transcripts_17="The 17th transcripts file",
+    transcripts_18="The 18th transcripts file",
+    transcripts_19="The 19th transcripts file",
+    transcripts_20="The 20th transcripts file",
+    transcripts_21="The 21st transcripts file",
+    transcripts_22="The 22nd transcripts file",
+    transcripts_23="The 23rd transcripts file",
+    transcripts_24="The 24th transcripts file",
 )
 async def dmbot_restore(
     interaction: discord.Interaction,
@@ -1002,15 +1036,31 @@ async def dmbot_restore(
     transcripts_6: discord.Attachment | None = None,
     transcripts_7: discord.Attachment | None = None,
     transcripts_8: discord.Attachment | None = None,
+    transcripts_9: discord.Attachment | None = None,
+    transcripts_10: discord.Attachment | None = None,
+    transcripts_11: discord.Attachment | None = None,
+    transcripts_12: discord.Attachment | None = None,
+    transcripts_13: discord.Attachment | None = None,
+    transcripts_14: discord.Attachment | None = None,
+    transcripts_15: discord.Attachment | None = None,
+    transcripts_16: discord.Attachment | None = None,
+    transcripts_17: discord.Attachment | None = None,
+    transcripts_18: discord.Attachment | None = None,
+    transcripts_19: discord.Attachment | None = None,
+    transcripts_20: discord.Attachment | None = None,
+    transcripts_21: discord.Attachment | None = None,
+    transcripts_22: discord.Attachment | None = None,
+    transcripts_23: discord.Attachment | None = None,
+    transcripts_24: discord.Attachment | None = None,
 ) -> None:
-    extra = [
-        a
-        for a in (
-            transcripts_1, transcripts_2, transcripts_3, transcripts_4,
-            transcripts_5, transcripts_6, transcripts_7, transcripts_8,
-        )
-        if a is not None
-    ]  # fmt: skip
+    boxes = (
+        transcripts_1, transcripts_2, transcripts_3, transcripts_4, transcripts_5, transcripts_6,
+        transcripts_7, transcripts_8, transcripts_9, transcripts_10, transcripts_11,
+        transcripts_12, transcripts_13, transcripts_14, transcripts_15, transcripts_16,
+        transcripts_17, transcripts_18, transcripts_19, transcripts_20, transcripts_21,
+        transcripts_22, transcripts_23, transcripts_24,
+    )  # fmt: skip
+    extra = [a for a in boxes if a is not None]
     guild = interaction.guild
     if guild is None:
         await _tell(interaction, NOT_IN_SERVER)

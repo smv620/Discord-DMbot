@@ -43,7 +43,15 @@ SESSIONS_MAX = 5000  # sessions in one part
 LINES_MAX = 400_000  # lines in one session
 DAMAGED = "This transcripts file is damaged. Use the files DMbot made, all of them."
 TOO_BIG_PART = "This transcripts file is too big for DMbot to read."
+# A restore command takes at most 25 files (Discord's limit on a command's boxes): the copy, and
+# these. A campaign that needs more is not copied, and the DM is told so (#2606).
+RESTORE_BOXES = 24
 SESSION_TOO_BIG = "This campaign has a session too big for DMbot to copy yet. Nothing was lost."
+TOO_MANY_PARTS = (
+    f"This campaign's transcripts need more than {RESTORE_BOXES} files, which is the most a "
+    "restore can take at once, so DMbot can't copy it yet. Nothing was lost. You can shorten "
+    "the time transcripts are kept (Keep transcripts for) and copy again."
+)
 
 # What each row's JSON leaves out: ids that are made again and the scope columns.
 _SESSION_DROP = ("id", "guild_id", "campaign_id")
