@@ -45,6 +45,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "recap_style_examples": ("recap_style_examples",),
     "import_speakers": ("import_speakers",),
     "rule_set_follows": ("rule_set_follows",),
+    "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
+    "recap_dictionaries": ("recap_dictionaries",),
     "game_clock": ("game_clocks", "game_clock_groups"),
     "game_effects": ("game_effects",),
     # (only ready jobs are carried today, which is part of what #2552 lists)
@@ -59,6 +61,8 @@ _RUNTIME = "runtime state or a log, not content (Supervisor, #2553)"
 _WAIT = "a wait or a pointer, kept out by its schema comment"
 _PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
 _PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
+_QUEUE = "a request still waiting for an answer: a restored campaign starts with none"
+_KEY = "a key to a publisher's set, which must not travel in a file anyone in the server may get"
 NOT_IN_BACKUP: dict[str, str] = {
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
@@ -95,6 +99,14 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
+    # Decided on #2552 (Supervisor, 2026-10-23):
+    "session_usage": "the hours meter: a restore must not reset or double it",
+    "waiting_name_questions": _QUEUE,
+    "pack_suggestions": _QUEUE,
+    "pack_suggestions_sent": _QUEUE,
+    "fightbot_players": "live state: who is in a fight right now",
+    "rule_set_suggestions": _KEY,
+    "rule_set_suggestions_sent": _KEY,
 }
 
 # Tables a backup should carry and does not yet. This is #2552's remaining work: each one moves to
@@ -105,18 +117,7 @@ OWED_TO_BACKUP: tuple[str, ...] = (
     "transcript_lines",
     "transcript_respells",
     "transcript_suggestions",
-    "session_imports",
-    "session_usage",
-    "fightbot_players",
-    "waiting_name_questions",
-    "pack_suggestions",
-    "pack_suggestions_sent",  # with its suggestions: both carried or both not
-    "recap_dictionaries",
-    "rule_sets",
-    "rule_set_versions",
-    "rule_set_editors",
-    "rule_set_suggestions",
-    "rule_set_suggestions_sent",  # with its suggestions
+    "session_imports",  # with the transcripts it belongs to
 )
 
 

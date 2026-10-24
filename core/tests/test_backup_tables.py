@@ -208,6 +208,26 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " '{\"rules\": []}'::jsonb, true, %s, 1)",
                 (g, c, "a" * 32, DM),
             ),
+            "rule_sets": (
+                "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
+                " created_at) VALUES (%s, %s, %s, 'house_rules', 'Mine', 'shared', %s, 1)",
+                (g, c, "b" * 32, DM),
+            ),
+            "rule_set_versions": (
+                "INSERT INTO rule_set_versions (guild_id, campaign_id, set_id, version, content,"
+                " created_by, created_at) VALUES (%s, %s, %s, 1, '{\"rules\": []}'::jsonb, %s, 1)",
+                (g, c, "b" * 32, DM),
+            ),
+            "rule_set_editors": (
+                "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by,"
+                " added_at) VALUES (%s, %s, %s, 77, %s, 1)",
+                (g, c, "b" * 32, DM),
+            ),
+            "recap_dictionaries": (
+                "INSERT INTO recap_dictionaries (guild_id, campaign_id, dictionary_id, version_id,"
+                " rules_hash, updated_at) VALUES (%s, %s, 'd1', 'v1', %s, 1)",
+                (g, c, "c" * 64),
+            ),
             "game_clocks": (
                 "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest,"
                 " updated_at, picked_group) VALUES (%s, %s, 5, 5, 1, 1)",
