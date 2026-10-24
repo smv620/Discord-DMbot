@@ -731,10 +731,12 @@ class AnthropicClient:
             room = answer_room(max_tokens, model, live=live)
             try:
                 if self._gemini is not None and step is AIModelTier.CREATIVE:
+                    # (Gemini keeps the caller's own limit: the room is worked out for Claude
+                    # models, and its thinking already counts against this limit, #2575)
                     reply = await self._gemini.request(
                         system,
                         text,
-                        room,
+                        max_tokens,
                         step,
                         model,
                         asked=tier,
