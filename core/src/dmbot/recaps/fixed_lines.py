@@ -35,6 +35,10 @@ ENDINGS = (
 CLOSING = "And so we continue, the {ending} of {name}."
 OPENING_BARE = "Previously…"
 CLOSING_BARE = "And so we continue, the {ending}."
+# What the database's recap columns hold (`recap_jobs.summary` and `original`; migration 0225, the
+# last to set them, holds the same number, and 0221 held 30,000 before it): a guard, not a target,
+# so no story is cut for its length in practice (#2601, #2609).
+STORY_COLUMN_MAX = 50_000
 ROOM = 400  # characters the web editor allows beyond the longest draft: both lines and their gap
 
 _CUE_BRACKETS = re.compile(r"[《》()]")
@@ -62,6 +66,12 @@ def usable_name(name: str, secret_names: Collection[str]) -> str:
     if not clean or names_a_secret(clean, secret_names, []):
         return ""
     return clean
+
+
+def is_closing(paragraph: str) -> bool:
+    """Whether a paragraph is the recap's fixed closing line (#2627): the same wording as
+    `CLOSING` and `CLOSING_BARE`, whichever ending and campaign name it was made with."""
+    return paragraph.strip().startswith(CLOSING_BARE.split("{")[0])
 
 
 def ending_for(earlier_sessions: int) -> int:

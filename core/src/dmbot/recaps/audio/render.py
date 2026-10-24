@@ -36,8 +36,11 @@ from dmbot.recaps.audio.script import EMOTION, Script
 log = logging.getLogger(__name__)
 
 HEAD_SECONDS = 2.0  # music before the first word
-TAIL_SECONDS = 4.0  # music after the last
+TAIL_SECONDS = 1.5  # the music runs this long past the last spoken word (owner, 2026-10-24, #2629)
 GAP_SECONDS = 0.4  # breath between paragraphs
+# The silence before the closing line (owner, 2026-10-24, #2627): a dramatic pause, with the
+# music playing on under it.
+CLOSING_GAP_SECONDS = 1.5
 FFMPEG_SECONDS = 300
 
 Runner = Callable[[list[str]], Awaitable[int]]
@@ -163,7 +166,11 @@ class Renderer:
         # 1. The voice, a paragraph at a time; the moods' times come from its timestamps.
         pcm = bytearray(_silence(HEAD_SECONDS))
         starts: dict[int, float] = {}
-        for paragraph in script.paragraphs if speaking else ():
+        closing = 0.0  # how long the last paragraph (the closing line) takes to say
+        for number, paragraph in enumerate(script.paragraphs if speaking else ()):
+            if number:
+                # a breath between paragraphs, none after the last; a longer pause before the end
+                pcm += _silence(CLOSING_GAP_SECONDS if paragraph.closing else GAP_SECONDS)
             begun = len(pcm) / (2 * SPEECH_RATE)
             await guard()  # before each paid call: consent, secrets and the cap, again
             speech = await self._provider.speech(
@@ -177,7 +184,8 @@ class Renderer:
                 if cue.kind == EMOTION and speech.starts:
                     at = speech.starts[min(cue.tagged_offset, len(speech.starts) - 1)]
                     starts.setdefault(cue.offset, begun + at)
-            pcm += speech.pcm + _silence(GAP_SECONDS)
+            pcm += speech.pcm
+            closing = len(speech.pcm) / (2 * SPEECH_RATE)
         if not speaking:
             # No voice was asked for: the music is as long as the voice would have been, from the
             # same estimate the cap uses, and the mix is built over that much silence.
@@ -192,7 +200,10 @@ class Renderer:
         music_mp3 = into / "in-music.mp3"
         if scoring:
             plan = music.composition_request(
-                script, seconds=math.ceil(seconds), starts=starts if speaking else None
+                script,
+                seconds=math.ceil(seconds),
+                starts=starts if speaking else None,
+                closing_seconds=closing or None,
             )
             total_ms = sum(s["duration_ms"] for s in plan["composition_plan"]["sections"])
             await guard()
@@ -208,7 +219,12 @@ class Renderer:
                 data = await self._provider.ambience(beds[0].as_request())
                 await asyncio.to_thread(_keep, bed, data)
         # 4. The mix.
-        mixing = mix.plan(seconds, with_music=scoring, with_ambience=bed is not None)
+        mixing = mix.plan(
+            seconds,
+            with_music=scoring,
+            with_ambience=bed is not None,
+            ending=music.ending_of(script, seconds=math.ceil(seconds)),
+        )
         argv = mix.command(
             mixing,
             voice=str(voice_wav),

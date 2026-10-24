@@ -21,6 +21,7 @@ import { campaignPage as campaignWords } from "../content/campaign-page";
 import { panelWords, remakeSentence, remakeWords } from "../content/recap-panel";
 import { stageWords } from "../content/work-progress";
 import { RECAP_AUDIO_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { RECAP_MAKE_LIVE, makeWords } from "../content/recap-make";
 import {
   ApiError,
   type AccountApi,
@@ -35,6 +36,7 @@ import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
+import RecapMake from "./RecapMake";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapFixName from "./RecapFixName";
@@ -201,6 +203,8 @@ function List({ api, campaign }: { api: AccountApi; campaign: string | null }) {
           ))}
         </ul>
       )}
+      {/* Recaps for past sessions (#2610): one campaign's DMs only, and only behind its own switch. */}
+      {RECAP_MAKE_LIVE && RECAPS_LIVE && campaign && <RecapMake api={api} campaignRef={campaign} />}
       {/* Behind the same switch as the list's other promises (#1423): nothing while recaps are off. */}
       {RECAPS_LIVE &&
         allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map((line) => (
@@ -716,6 +720,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       <p class="small">
         {sessionLine(recap, [recap.serverName])}
       </p>
+      {RECAP_MAKE_LIVE && recap.writtenBy && (
+        <p class="small">{makeWords.uploaded(recap.writtenBy, recap.uploadedAt ? sessionDay(recap.uploadedAt) : null)}</p>
+      )}
       {recap.transcriptsDeletedAt && (
         <p class="small">
           {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}

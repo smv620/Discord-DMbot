@@ -133,6 +133,9 @@ export const siteButtons = [
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note
   // The recap page's share controls (#2119), on the website, not in Discord.
+  // The recap maker for past sessions (#2610), on the website, not in Discord.
+  "Make the recap",
+  "Add a recap someone wrote",
   "Make a link",
   "Turn the link off",
   "Make a new link",

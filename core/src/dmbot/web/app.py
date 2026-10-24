@@ -35,9 +35,11 @@ from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
 from dmbot.recaps import voice
+from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
     all_names,
+    campaign_backup,
     campaign_delete,
     campaign_settings,
     email_change,
@@ -47,6 +49,7 @@ from dmbot.web import (
     imports,
     npc_pages,
     offers,
+    past_sessions,
     relationships,
     sessions,
     shared_recaps,
@@ -91,6 +94,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
+from dmbot.web.plot import answer_issue, read_plot
 from dmbot.web.public_paths import TUNNEL_HEADER, is_public, request_host
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
@@ -111,7 +115,9 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    redo_recap,
     share_recap,
+    upload_recap,
 )
 from dmbot.web.return_path import safe_return_path
 from dmbot.web.sessions import Session
@@ -151,6 +157,9 @@ class _Refused(Exception):
 
 def _system_clock() -> int:
     return int(time.time())
+
+
+UPLOAD_BODY_MAX = 256 * 1024  # 50,000 characters of any script, in JSON (#2609)
 
 
 def create_app(
@@ -717,6 +726,9 @@ def create_app(
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
         "too_soon": (429, "too_soon"),
+        "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
+        "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
         "not_yet": (409, "not_yet"),  # a draft is approved unchecked only after 3 days (#2305)
         "changed": (409, "changed"),  # the draft was revised since the page showed it (#2305)
         "bad_hash": (422, "bad_hash"),
@@ -742,6 +754,15 @@ def create_app(
         "needs_approval": (409, "needs_approval"),  # the text changed since it was approved
         "stopped_recording": (409, "stopped_recording"),  # a player in it is no longer recorded
         "no_tries": (409, "no_tries"),  # the recap has had all its tries (#2113)
+        "needs_confirm": (409, "needs_confirm"),  # it has a recap: ask once, send `replace` (#2608)
+        "busy": (409, "busy"),  # being written or sent now (#2608)
+        # Adding a recap written by someone at the table (#2609)
+        "needs_rights": (409, "needs_rights"),  # the campaign's first: ask once, send `rights`
+        "not_a_google_doc": (422, "not_a_google_doc"),
+        "doc_not_shared": (422, "doc_not_shared"),
+        "doc_too_big": (413, "doc_too_big"),
+        "doc_unreachable": (422, "doc_unreachable"),
+        "no_lines": (409, "no_lines"),  # the session's transcript is gone: upload one (#2608)
         "not_in_server": (403, "not_in_server"),  # an NPC page is for the server's people (#2265)
         "bad_page": (400, "bad_page"),  # a page past the end of the All names list (#2294)
         "bad_sort": (400, "bad_sort"),
@@ -801,6 +822,7 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    upload_limit = RateLimit(60, count=6)  # recaps written by the table, added on the page (#2609)
     name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
     voice_types = voice.TYPES
@@ -951,6 +973,90 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/past-sessions")
+    async def me_past_sessions(ref: str, signed: Signed) -> dict[str, Any]:
+        """A campaign's past sessions with what each one's recap is (#2610), for its DMs: newest
+        first, each with the `ref` that "make it again" takes. A player gets `not_allowed`."""
+        session, _token = signed
+        try:
+            return await past_sessions.read_past_sessions(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/recaps/{ref}/again")
+    async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Make the recap of a session, or make it again (#2608): `{"replace": true}` once the DM
+        has said yes to "This session already has a recap. Make a new one?". `ref` may be a
+        session that has no recap yet. 409 `needs_confirm`, `busy` or `no_lines`; the recap comes
+        back as in `GET /me/recaps/{ref}`, queued."""
+        session, _token = signed
+        if not settings.recaps_on:
+            raise HTTPException(status_code=409, detail="not_allowed")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        replace = body.get("replace", False) if isinstance(body, dict) else False
+        if not isinstance(replace, bool):
+            raise HTTPException(status_code=422, detail="bad_action")
+        try:
+            return await redo_recap(db, session, ref, replace=replace)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/recaps/upload")
+    async def me_recap_upload(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """Add a recap written by someone at the table as a session's recap (#2609). Body:
+        `{"session": <Unix seconds the session began>, "writtenBy": "Mira", "text": "..."}` or
+        `"link": "<a shared Google Doc>"` in place of `text`; optional `"title"`; `"replace": true`
+        once the DM said yes to replacing the session's recap (the old one is kept as an earlier
+        version); `"rights": true` once for the campaign ("written by someone at your table, and
+        you have their OK to use it"). A `.txt` or `.md` file is read by the page and sent as
+        `text`. 409 `needs_rights`, `needs_confirm`, `busy`; 422 `bad_text`; 413 `too_big`. The
+        recap comes back as in `GET /me/recaps/{ref}`, with `writtenBy` set."""
+        session, _token = signed
+        if upload_limit.take(f"recap-upload:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await bounded_json(request, UPLOAD_BODY_MAX)
+        try:
+            return await upload_recap(db, session, ref, body, read_link=import_link.read_doc)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/recaps/{ref}/plot")
+    async def me_recap_plot(ref: str, signed: Signed) -> Any:
+        """PlotBot's check of this recap (#2122): its issues and the DM's answers, the accepted
+        versions, and whether Approve must wait. DMs only; anyone else gets `not_found`."""
+        session, _token = signed
+        try:
+            return await read_plot(db, session, ref, on=settings.plot_check_on)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/plot/{issue}/answer")
+    async def me_recap_plot_answer(ref: str, issue: str, signed: Signed, request: Request) -> Any:
+        """The DM's answer to one issue: `{"kind": "fix" | "changed" | "fine" | "leave",
+        "note"?: text}`. The updated issue. 409 `stale` when the text changed since the check."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        kind = body.get("kind") if isinstance(body, dict) else None
+        note = body.get("note", "") if isinstance(body, dict) else ""
+        if not isinstance(kind, str) or not isinstance(note, str):
+            raise HTTPException(status_code=422, detail="bad_answer")
+        try:
+            return await answer_issue(db, session, ref, issue, kind, note)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/recaps/{ref}/approve")
     async def me_recap_approve(ref: str, signed: Signed, request: Request) -> Any:
         """✅ Approve the text and pick what to make (#2083): `{"choice": "voice" | "music" |
@@ -981,6 +1087,7 @@ def create_app(
                 audio_unavailable=str(facts["audioUnavailable"]),
                 post=post,
                 outside_engine=settings.outside_engine,
+                plot_gate=settings.plot_check_on,  # (checked inside the approval's own lock)
             )
         except RecapError as err:
             if err.problems is not None:
@@ -1316,6 +1423,54 @@ def create_app(
         except RecapError as err:
             status, detail = delete_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    backup_refusals = {
+        "not_found": (404, "not_found"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/backup", status_code=202)
+    async def me_campaign_backup(ref: str, signed: Signed) -> dict[str, str]:
+        """Ask for a complete copy of the campaign (#2554): the owner in any server, a game master
+        in a server on the session's list. DMbot builds it from its database (so a server it
+        cannot reach works). Poll `.../backup/{id}`; the copy is kept 15 minutes at most."""
+        session, _token = signed
+        try:
+            return {"id": await campaign_backup.request(db, session, ref)}
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}")
+    async def me_campaign_backup_status(ref: str, backup_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own copy stands, in the shared progress shape (stage, startedAt,
+        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size` and `expiresAt`."""
+        session, _token = signed
+        try:
+            return await campaign_backup.status(db, session, ref, backup_id)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}/file")
+    async def me_campaign_backup_file(ref: str, backup_id: str, signed: Signed) -> Response:
+        """The copy, once; it is removed as it is sent. It holds the DM's secrets: a download for
+        the person, with `Cache-Control: no-store`."""
+        session, _token = signed
+        try:
+            raw, name = await campaign_backup.fetch(db, session, ref, backup_id)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        return Response(
+            raw,
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe}"',
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.post("/me/campaigns/{ref}/settings", status_code=202)
     async def me_campaign_setting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
@@ -1830,12 +1985,19 @@ def create_app(
         )
 
     @app.post("/me/recaps/{ref}/{action}")
-    async def me_recap_decide(ref: str, action: str, signed: Signed) -> dict[str, Any]:
+    async def me_recap_decide(ref: str, action: str, signed: Signed) -> Any:
         """Post to the table (the bot sends it), Try again, or Don't post."""
         session, _token = signed
         try:
-            return await decide(db, session, ref, action)
+            return await decide(
+                db, session, ref, action,
+                plot_gate=settings.plot_check_on, outside_engine=settings.outside_engine,
+            )  # fmt: skip
         except RecapError as err:
+            if err.problems is not None:  # posting an unapproved draft checks its cues first
+                return JSONResponse(
+                    {"error": "cue_problems", "cue_problems": err.problems}, status_code=422
+                )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

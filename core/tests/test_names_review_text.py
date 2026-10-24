@@ -61,11 +61,12 @@ class ReviewTextTest(unittest.TestCase):
                 ("🔗 Another known name…", 0),
                 ("🚫 Not a name", 1),
                 ("⏳ Later", 1),
+                ("✏️ Change the words", 1),
             ],
         )
         view.match = None
         view._buttons()
-        self.assertEqual([b.row for b in view.children], [0, 0, 1, 1])
+        self.assertEqual([b.row for b in view.children], [0, 0, 1, 1, 1])
 
     def test_names_are_shown_as_written(self) -> None:
         text = ui.suggestion_text(suggested("*Star*"), 1, match=Match("b" * 32, "*Sun*"))

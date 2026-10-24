@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import psycopg
@@ -243,7 +244,11 @@ class Names(Base):
 
     async def test_a_saved_spelling_reaches_the_narrators_dictionary(self) -> None:
         await set_said_as(self.web, self.session, self.cref, self.main, "Kah-zeth")
-        bot = SimpleNamespace(lookup=LookupCache(self.memory))
+        bot = SimpleNamespace(
+            lookup=LookupCache(self.memory),
+            _recanted=AsyncMock(return_value=()),
+            _relation_ties=AsyncMock(return_value=()),
+        )
         got = await DMBot.recap_audio_inputs(bot, THURSDAY.id, self.one.id, SimpleNamespace())  # type: ignore[arg-type]
         assert got is not None
         rules = nm.rules(got.names)
