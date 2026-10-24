@@ -170,7 +170,7 @@ describe("beside Approve, for an edited draft", () => {
   it("says why everything is made again", async () => {
     live.on = true;
     render(<Recaps api={withAudio(editedDraft, { how: "all", why: "paragraphs", changed: 3, total: 3 })} path={path} />);
-    expect(await screen.findByText(w.all.paragraphs)).toBeTruthy();
+    expect(await screen.findByText(w.all.paragraphs as string)).toBeTruthy();
   });
 
   it("says nothing while it is off", async () => {
