@@ -540,7 +540,7 @@ class RecapStore:
 
     async def audio_again(self, guild_id: int, campaign_id: str, session_at: int) -> str:
         """Make the audio again from the Discord button (#2621), under the website door's rules
-        (`dmbot_recap_audio_again`): an approved text that makes audio, whose audio is ready or
+        (the website's own door): an approved text that makes audio, whose audio is ready or
         failed, once every 10 minutes. 'queued', 'too_soon' or 'not_allowed'. The plan and the
         allowance are checked by the audio step before any paid call."""
         now = int(self._now())
