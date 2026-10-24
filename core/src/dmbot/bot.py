@@ -12647,22 +12647,27 @@ class DMBot(commands.AutoShardedBot):
         store, memory = self.backstory_links, self.memory
         if store is None or memory is None:
             return
+        found = None
         for guild in list(self.guilds):
             campaign = await self.campaigns.get(guild.id, campaign_id)
-            if campaign is None:
-                continue
-            with log_context(guild_id=guild.id, campaign_id=campaign_id):
-                if not await store.count(guild.id, campaign_id):
-                    return  # (most campaigns have none waiting: the common case costs one count)
-                onto = await memory.ontology(guild.id, campaign_id)
-                symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
-                counts = await store.take_ready_notices(guild.id, campaign_id, symmetric=symmetric)
-                text = links_ready.notice(counts)
-                if text and campaign.dm_screen_channel_id:
-                    await self.post(
-                        campaign.dm_screen_channel_id, text, links_ready.view(campaign_id)
-                    )
+            if campaign is not None:
+                found = (guild.id, campaign)
+                break
+        if found is None:
             return
+        guild_id, campaign = found
+        with log_context(guild_id=guild_id, campaign_id=campaign_id):
+            # (nothing is marked told while there is nowhere to say it)
+            if not campaign.dm_screen_channel_id or not await store.count(guild_id, campaign_id):
+                return  # most campaigns have none waiting: the common case costs one count
+            onto = await memory.ontology(guild_id, campaign_id)
+            symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
+            taken = await store.take_ready_notices(guild_id, campaign_id, symmetric=symmetric)
+            text = links_ready.notice(taken.counts)
+            if text and not await self.post(
+                campaign.dm_screen_channel_id, text, links_ready.view(campaign_id)
+            ):
+                await store.untell(guild_id, campaign_id, taken.ids)  # said next time instead
 
     async def _rebuild_npcs(self) -> None:
         """At bot start: every campaign's NPC list is brought up to date once, in order, a few

@@ -19,7 +19,8 @@ import discord
 _ID = r"(?P<campaign>[0-9a-f]{32})"
 LABEL = "Check the connections"
 EMOJI = "📜"
-MAX_PARTS = 5  # uploads named in one notice; the rest are counted together
+MAX_PARTS = 2  # uploads named in one notice; the rest are counted together
+NAME_SHOWN = 30  # an upload's name is cut to this many characters
 
 
 def _plain(text: str) -> str:
@@ -28,28 +29,31 @@ def _plain(text: str) -> str:
     return discord.utils.escape_markdown(discord.utils.escape_mentions(one_line), as_needed=False)
 
 
+def _short(text: str) -> str:
+    plain = re.sub(r"<[^>]*>", "", _plain(text))  # (no channel, emoji or link markup)
+    return plain if len(plain) <= NAME_SHOWN else plain[: NAME_SHOWN - 1].rstrip() + "…"
+
+
 def notice(counts: Mapping[str, int]) -> str:
-    """The line for the DM screen: one clause for each upload, most connections first."""
-    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    named = [(label, n) for label, n in ordered if label and n > 0]
-    old = sum(n for label, n in counts.items() if not label)  # queued before uploads had names
-    parts = [
-        f"{n} connection{'' if n == 1 else 's'} from {_plain(label)}"
-        for label, n in named[:MAX_PARTS]
-    ]
-    rest = sum(n for _, n in named[MAX_PARTS:]) + old
-    if rest:
-        parts.append(f"{rest} more connection{'' if rest == 1 else 's'}")
-    total = sum(counts.values())
-    if not parts:
+    """The text for the DM screen: the total first, then which uploads (at most two, each cut
+    short) and what the button does."""
+    total = sum(n for n in counts.values() if n > 0)
+    if not total:
         return ""
-    return f"📜 {_join(parts)} {'is' if total == 1 else 'are'} ready to check."
-
-
-def _join(parts: list[str]) -> str:
-    if len(parts) <= 1:
-        return "".join(parts)
-    return ", ".join(parts[:-1]) + " and " + parts[-1]
+    noun = "connection" if total == 1 else "connections"
+    verb = "is" if total == 1 else "are"
+    named = sorted(((k, n) for k, n in counts.items() if k and n > 0), key=lambda i: (-i[1], i[0]))
+    if len(named) == 1 and named[0][1] == total:
+        head = f"📜 {_short(named[0][0])}: {total} {noun} {verb} ready to check."
+    else:
+        shown = [f"{n} from {_short(k)}" for k, n in named[:MAX_PARTS]]
+        rest = total - sum(n for _, n in named[:MAX_PARTS])
+        if rest and shown:
+            shown.append(f"{rest} more")
+        head = f"📜 {total} {noun} {verb} ready to check" + (
+            f" ({', '.join(shown)})." if shown else "."
+        )
+    return head + "\nPress the button to keep or skip each one. Nothing goes to players."
 
 
 class ReadyButton(

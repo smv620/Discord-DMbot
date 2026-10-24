@@ -39,6 +39,15 @@ class NewLink:
 
 
 @dataclass(frozen=True, slots=True)
+class Taken:
+    """What `take_ready_notices` marked told: a count for each upload, and the rows' ids (to
+    un-mark them if the notice could not be posted)."""
+
+    counts: dict[str, int]
+    ids: list[str]
+
+
+@dataclass(frozen=True, slots=True)
 class Waiting:
     subject_id: str
     predicate: str
@@ -201,11 +210,12 @@ class BackstoryLinks:
         it is next read."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT l.predicate, l.upload, (s.status = 'confirmed' AND o.status = 'confirmed')"
-                " AS ready, count(*) AS n FROM backstory_links l"
-                " JOIN memory_entities s ON s.guild_id = l.guild_id AND s.campaign_id ="
+                "SELECT l.predicate, l.upload,"
+                " COALESCE(s.status = 'confirmed' AND o.status = 'confirmed', false) AS ready,"
+                " count(*) AS n FROM backstory_links l"
+                " LEFT JOIN memory_entities s ON s.guild_id = l.guild_id AND s.campaign_id ="
                 " l.campaign_id AND s.id = l.subject_id"
-                " JOIN memory_entities o ON o.guild_id = l.guild_id AND o.campaign_id ="
+                " LEFT JOIN memory_entities o ON o.guild_id = l.guild_id AND o.campaign_id ="
                 " l.campaign_id AND o.id = l.object_id"
                 " WHERE l.guild_id = %s AND l.campaign_id = %s"
                 " GROUP BY l.predicate, l.upload, ready ORDER BY l.upload, l.predicate, ready",
@@ -218,25 +228,38 @@ class BackstoryLinks:
 
     async def take_ready_notices(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
-    ) -> dict[str, int]:
+    ) -> Taken:
         """The connections that became ready since the DM screen last said so (#2650), as a count
         for each upload ("" for an old one), marked told as they are taken: said once, even if two
         rounds overlap. Counts only: the DM screen never shows the connections themselves."""
         waiting = await self.waiting(guild_id, campaign_id, symmetric=symmetric)
         fresh = [w for w in waiting if w.ready and not w.told and w.id]
         if not fresh:
-            return {}
+            return Taken({}, [])
         counts: dict[str, int] = {}
+        ids: list[str] = []
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "UPDATE backstory_links SET told = true WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = ANY(%s) AND NOT told RETURNING upload",
+                " AND id = ANY(%s) AND NOT told RETURNING id, upload",
                 (guild_id, campaign_id, [w.id for w in fresh]),
             )
             for row in await cur.fetchall():
+                ids.append(str(row["id"]))
                 counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
-        return counts
+        return Taken(counts, ids)
+
+    async def untell(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
+        """Say again later: the notice for these could not be posted."""
+        if not ids:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE backstory_links SET told = false WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = ANY(%s)",
+                (guild_id, campaign_id, list(ids)),
+            )
 
     async def remove(self, guild_id: int, campaign_id: str, link: Waiting) -> None:
         async with self._db.guild(guild_id) as conn:

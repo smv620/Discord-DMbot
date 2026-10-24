@@ -364,9 +364,9 @@ class WhenKept(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        self.assertEqual(self.button(view, "✅ Keep all 2 from this backstory").disabled, False)
+        self.assertEqual(self.button(view, "✅ Keep all 2").disabled, False)
         press = self.it()
-        await self.button(view, "✅ Keep all 2 from this backstory").callback(press)
+        await self.button(view, "✅ Keep all 2").callback(press)
         kept = await self.relations()
         self.assertEqual(len(kept), 2)
         self.assertTrue(all(r.status == CONFIRMED and r.source == "dm" for r in kept))
@@ -408,7 +408,7 @@ class WhenKept(NamesTest):
         await self.confirm_all()
         _, view = await self.offer()
         stranger = self.it(999)
-        await self.button(view, "✅ Keep all 2 from this backstory").callback(stranger)
+        await self.button(view, "✅ Keep all 2").callback(stranger)
         self.assertEqual(await self.relations(), [])
         self.assertEqual(len(await self.waiting()), 2)
 
@@ -441,11 +441,15 @@ class WhenKept(NamesTest):
     async def test_ready_connections_are_said_once(self) -> None:
         await self.read()
         first = await self.store.take_ready_notices(GUILD, self.campaign.id)
-        self.assertEqual(first, {})  # the names are not answered yet
+        self.assertEqual(first.counts, {})  # the names are not answered yet
         await self.confirm_all()
         said = await self.store.take_ready_notices(GUILD, self.campaign.id)
-        self.assertEqual(sum(said.values()), 2)
-        self.assertEqual(await self.store.take_ready_notices(GUILD, self.campaign.id), {})
+        self.assertEqual(sum(said.counts.values()), 2)
+        again = await self.store.take_ready_notices(GUILD, self.campaign.id)
+        self.assertEqual(again.counts, {})
+        await self.store.untell(GUILD, self.campaign.id, said.ids)  # a failed post: said again
+        back = await self.store.take_ready_notices(GUILD, self.campaign.id)
+        self.assertEqual(sum(back.counts.values()), 2)
 
     async def test_the_bot_posts_the_notice_once_with_the_button(self) -> None:
         await self.read()
@@ -463,7 +467,7 @@ class WhenKept(NamesTest):
         self.bot.post.assert_awaited_once()
         channel, text, view = self.bot.post.await_args.args
         self.assertEqual(channel, 555)
-        self.assertIn("2 connections from your background", text)
+        self.assertIn("2 connections are ready to check", text)
         self.assertEqual(view.children[0].item.label, links_ready.LABEL)
 
     async def test_nothing_waiting_posts_nothing(self) -> None:
@@ -499,7 +503,7 @@ class WhenKept(NamesTest):
         )
         _, view = await self.offer()
         mine = next(b for b in view.children if b.label.startswith("✅ Keep all"))
-        self.assertEqual(mine.label, "✅ Keep all 2 from this backstory")
+        self.assertEqual(mine.label, "✅ Keep all 2")
         await mine.callback(self.it())
         left = await self.waiting()
         self.assertEqual([w.upload for w in left], ["Other file, 2 Jan"])  # never kept unseen
@@ -514,3 +518,42 @@ class WhenKept(NamesTest):
         after = await self.store.counts(GUILD, self.campaign.id)
         self.assertTrue(all(ready for _, _, ready, _ in after))
         self.assertEqual(len(await self.waiting()), 2)  # nothing was cleaned or moved
+
+    async def test_a_post_that_fails_is_said_next_time_and_no_channel_marks_nothing(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=GUILD)])
+        with patch.object(DMBot, "guilds", guilds), patch("dmbot.bot.LINKS_READY_SETTLE_S", 0):
+            self.bot.campaigns.get = AsyncMock(return_value=self.campaign)  # type: ignore[method-assign]
+            await self.bot._links_ready_look(self.campaign.id)  # no DM screen: nothing is told
+            self.assertTrue(all(not w.told for w in await self.waiting()))
+            campaign = dataclasses.replace(self.campaign, dm_screen_channel_id=555)
+            self.bot.campaigns.get = AsyncMock(return_value=campaign)  # type: ignore[method-assign]
+            self.bot.post = AsyncMock(return_value=False)  # type: ignore[method-assign]
+            await self.bot._links_ready_look(self.campaign.id)
+            self.assertTrue(all(not w.told for w in await self.waiting()))  # (said next time)
+            self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+            await self.bot._links_ready_look(self.campaign.id)
+        self.bot.post.assert_awaited_once()
+        self.assertTrue(all(w.told for w in await self.waiting()))
+
+    async def test_keep_all_never_mixes_an_old_connection_with_a_labelled_one(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.store._clock = lambda: time.time() - 100  # older than the reading: shown first
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [NewLink(ids["Mirelle"], "ally_of", ids["Brannoch Vale"], "an old one")],
+        )
+        _, view = await self.offer()
+        self.assertEqual(view.all_button.disabled, True)  # one old card: nothing else is its kind
+        await view.all_button.callback(self.it())  # (even if pressed: only its own kind is kept)
+        self.assertEqual([r.predicate for r in await self.relations()], ["ally_of"])
+        self.assertEqual(len(await self.waiting()), 2)  # both labelled ones are still waiting
+
+    async def test_a_comma_epithet_still_needs_one_name(self) -> None:
+        r = reader()
+        self.assertEqual(r.match("Brannoc, the Pale").name, "Brannoc")
+        self.assertEqual(r.match("Mara, the Pale").ambiguous, ("Mara Ashgrove", "Mara Vell"))

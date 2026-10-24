@@ -644,7 +644,8 @@ def upload_label(label: str, now: float) -> str:
     """The upload as the DM will see it on a card and in the DM-screen notice: its name and the
     day, "Tavin's backstory, 24 Oct" (#2650). Cut to what the queue keeps."""
     day = time.gmtime(now)
-    return logic.shorten(f"{label}, {day.tm_mday} {time.strftime('%b', day)}", UPLOAD_MAX)
+    when = f", {day.tm_mday} {time.strftime('%b', day)}"
+    return logic.shorten(label, UPLOAD_MAX - len(when)) + when  # (the date is never cut off)
 
 
 async def queue_links(
@@ -834,26 +835,16 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         return [w for w in waiting if w.ready]
 
-    def _this_upload(self, ready: list[Waiting]) -> list[Waiting]:
-        """What Keep all keeps (#2650): the ready connections from the same upload as the card on
-        screen, so a second backstory is never kept unseen. One queued before uploads had names
-        has no upload, and Keep all then means every ready one, as before."""
-        if not ready or not ready[0].upload:
-            return list(ready)
-        return [w for w in ready if w.upload == ready[0].upload]
+    @staticmethod
+    def _this_upload(ready: list[Waiting]) -> list[Waiting]:
+        """What Keep all keeps (#2650): the ready connections from the same upload as the first
+        card, an old one (queued before uploads had names, upload "") counting as an upload of
+        its own, so a labelled backstory is never kept unseen and neither is an old one."""
+        return [w for w in ready if w.upload == ready[0].upload] if ready else []
 
     def _set(self, ready: list[Waiting]) -> None:
         mine = self._this_upload(ready)
-        several = len(mine) < len(ready) or bool(ready and ready[0].upload)
-        self.all_button.label = (
-            (
-                f"✅ Keep all {len(mine)} from this backstory"
-                if several
-                else f"✅ Keep all {len(mine)} ready"
-            )
-            if len(mine) > 1
-            else "✅ Keep all"
-        )
+        self.all_button.label = f"✅ Keep all {len(mine)}" if len(mine) > 1 else "✅ Keep all"
         self.all_button.disabled = len(mine) < 2
         self.shown = list(ready)
         self.left = len(ready)
@@ -885,7 +876,16 @@ class ConnectionOffer(_Menu):
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n{note}"
+            + self._scope(c)
         )
+
+    def _scope(self, c: Waiting) -> str:
+        """Which connections ✅ Keep all keeps, when the card is from a named upload (#2650)."""
+        mine = [w for w in self.shown if w.upload == c.upload] if c.upload else []
+        if len(mine) < 2:
+            return ""
+        keeps = f"{len(mine)} from {_md(c.upload)}"
+        return f"\n✅ Keep all keeps the {keeps}, and none from other uploads."
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
@@ -995,8 +995,9 @@ class ConnectionOffer(_Menu):
             seen = {(w.subject_id, w.predicate, w.object_id) for w in self.shown}
             # only what this message has listed: one that turned ready meanwhile is still unseen
             todo = [w for w in ready if (w.subject_id, w.predicate, w.object_id) in seen]
-            if self.current is not None and self.current.upload:  # (from this backstory only)
-                todo = [w for w in todo if w.upload == self.current.upload]
+            if self.current is None:
+                return
+            todo = [w for w in todo if w.upload == self.current.upload]  # (this backstory only)
             self.all_done = await keep.keep_all(memory, store, campaign.guild_id, campaign.id, todo)
             changed(interaction, campaign)
             self.kept += len(self.all_done.kept)
