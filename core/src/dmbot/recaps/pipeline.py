@@ -1039,7 +1039,7 @@ class RecapWorker:
         length: rd.Length,
     ) -> Job | None:
         """The prose stage's try failed. After a draft that passed but graded weak, a revision
-        that fails its checks (cut off, declined, unreadable, too short) leaves that draft
+        that fails its checks (cut off, declined, unreadable, empty) leaves that draft
         standing, checked again against the names as they are now (the DM may have made one
         secret since); otherwise the usual retry, and the last try's failure fails the job. A
         service error or running out of credit during the revision still fails the job."""
@@ -1251,7 +1251,7 @@ class RecapWorker:
         length: rd.Length,
     ) -> rd.Prose | None:
         """The draft without the sentences still flagged, done in code. None when what is left
-        no longer meets the checks : then there is no recap."""
+        no longer meets the checks: then there is no recap."""
         cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
         if self._on_note is not None and facts.unsupported:
             self._on_note(

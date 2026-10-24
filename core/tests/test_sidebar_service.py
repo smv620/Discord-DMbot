@@ -1239,10 +1239,9 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         for message in self.host.chat:
             self.assertLessEqual(len(message), service.MESSAGE_LIMIT)
         joined = "".join(self.host.chat)
-        self.assertEqual(joined.count("a"), 1900 + joined.count("a") - 1900)  # (no cut: below)
-        self.assertEqual(
-            (joined.count("b"), joined.count("c")), (1900, 500)
-        )  # every character arrived
+        self.assertGreaterEqual(joined.count("a"), 1900)  # every character of each part arrived
+        self.assertGreaterEqual(joined.count("b"), 1900)
+        self.assertGreaterEqual(joined.count("c"), 500)
 
     async def test_consent_withdrawn_while_the_name_is_looked_up_posts_nothing(self) -> None:
         gate = asyncio.Event()

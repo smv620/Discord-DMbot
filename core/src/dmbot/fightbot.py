@@ -476,6 +476,7 @@ def buttons(guild_id: int, campaign_id: str) -> discord.ui.View:
 
 
 async def _send(bot: Any, table: Any, user_id: int, text: str, *, intro: bool = False) -> None:
+    # (the reminder's length is a target in the prompt; MAX_TOKENS keeps it far under Discord's limit)
     try:
         user = bot.get_user(user_id) or await bot.fetch_user(user_id)
         await user.send(

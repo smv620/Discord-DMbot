@@ -378,11 +378,11 @@ class TheProse(unittest.TestCase):
                 (beats, sections, paragraphs),
                 hours,
             )
-            self.assertEqual(length.summary_max, length.room * 8)
             self.assertGreater(length.room, length.target)  # the room is a ceiling above the target
             self.assertGreater(length.max_tokens, length.room)
-        # the editor's cap: the longest room, and space for the fixed opening and closing lines
-        self.assertEqual(rd.SUMMARY_MAX, rd.length_for(8).summary_max + 400)
+        # the database's cap on the whole text; the story's share leaves the fixed lines their room
+        self.assertEqual(rd.SUMMARY_MAX, 6000)
+        self.assertEqual(rd.STORY_MAX, 6000 - 400)
 
     def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
         def lines(*times_ms: int, words: int = 3) -> list[Said]:
@@ -726,6 +726,28 @@ class TheSchemas(unittest.TestCase):
             self.assertNotIn("HOUSEKEEPING:", text)
 
 
+class TheHardLimits(unittest.TestCase):
+    def test_a_draft_over_the_databases_limit_is_shortened_in_code_not_refused(self) -> None:
+        para = "《Calm》 " + "Mira walked on. " * 40
+        long = "\n\n".join([para] * 20)  # about 12,000 characters, twenty sections
+        fixed = rd.fix_prose(rd.Prose(long, ("m",) * 20), 99)
+        self.assertLessEqual(len(fixed.summary), rd.STORY_MAX)
+        self.assertGreater(len(fixed.summary), rd.STORY_MAX - 1000)  # whole paragraphs kept
+        self.assertEqual(
+            len(fixed.music), len(rd.CUE.findall(fixed.summary))
+        )  # music still matches
+        one = rd.fit_summary("《Calm》 " + "word " * 3000)
+        self.assertLessEqual(len(one), rd.STORY_MAX)
+        self.assertEqual(rd.fit_summary("short"), "short")
+
+    def test_at_word_end_edges(self) -> None:
+        self.assertEqual(at_word_end("one two", 7), "one two")  # exact fit
+        self.assertEqual(at_word_end("one two", 5), "one")  # cut inside a word: back to the last
+        self.assertEqual(at_word_end("one  two", 4), "one")  # whitespace at the limit
+        self.assertEqual(at_word_end("abcdefghij", 4), "abcd")  # one long word: cut where it is
+        self.assertEqual(at_word_end("anything", 0), "")
+
+
 class TheTitleAndHousekeeping(unittest.TestCase):
     def finish(self, raw: str, **kw: Any) -> tuple[Any, list[str]]:
         parsed = rd.parse_finish(raw)
@@ -771,7 +793,7 @@ class TheTitleAndHousekeeping(unittest.TestCase):
         self.assertEqual(problems, [])
         assert got is not None
         self.assertEqual(len(got.housekeeping), 20)  # twelve is the instruction, not a check
-        lots = fx.finish_answer("The Silver Lock", *[(1, f"Mira note {n}.") for n in range(40)])
+        lots = fx.finish_answer("The Silver Lock", *[(1, f"Mira note {n}.") for n in range(25)])
         got, _ = self.finish(lots)
         assert got is not None
         self.assertEqual(len(got.housekeeping), rd.HOUSEKEEPING_HARD)

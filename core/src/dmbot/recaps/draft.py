@@ -50,22 +50,21 @@ from dmbot.recaps.text import (
 BASE_WORDS = 75  # the recap's length: this many words, and 75 more for each hour played (#2368)
 WORDS_PER_HOUR = 75
 WORDS_CEILING = 450  # a 5-hour session or longer
-ROOM_TIMES = 2.5  # the output room is sized for a draft this many times the target (never a check)
+ROOM_TIMES = 2.5  # the output room is sized for a draft this many times the target (a ceiling)
 SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
-CHARS_PER_WORD = 8  # characters for each word the output room allows
-# The longest at all: the output room's words at 8 characters a word, so the web editor never
-# refuses a draft DMbot wrote.
-SUMMARY_MAX = (
-    round(WORDS_CEILING * ROOM_TIMES) * CHARS_PER_WORD + FIXED_LINES_ROOM
-)  # the longest at all (web editor), with room for the fixed opening and closing lines (#2253)
+# The recap text the database holds (`recap_jobs.summary`, backups) and the web editor takes: the
+# story, the fixed opening and closing lines and their gap. A draft longer than the story's share is
+# shortened in code (`fit_summary`), never sent back (#2597).
+SUMMARY_MAX = 6000
+STORY_MAX = SUMMARY_MAX - FIXED_LINES_ROOM
 # Counts the writer is told (HOUSEKEEPING_SYSTEM, the music line) and never refused for: what comes
 # back is used (owner, 2026-10-24, #2597). The HARD ones are a storage or service limit, kept by
 # shortening at a word end in code and never by asking again.
 HOUSEKEEPING_BULLETS = 12
 BULLET_MAX = 140
 TITLE_WORDS = 8
-HOUSEKEEPING_HARD = 30  # bullets kept
+HOUSEKEEPING_HARD = 20  # bullets kept: the most a backup of the recap will load
 BULLET_HARD = 400  # characters of one bullet
 TITLE_HARD = 120  # characters of the title
 MUSIC_MAX = 240  # characters of one music cue: the music service's prompt size
@@ -243,7 +242,6 @@ class Length:
     hours: float
     target: int  # words, to the nearest 10: told to the writer, never checked
     room: int  # words the output room is sized for, a ceiling and not a limit
-    summary_max: int  # characters the room allows
     beats: int  # most beats the writer is shown
     sections: int  # most 《…》 sections
     paragraphs: int
@@ -264,7 +262,6 @@ def length_for(hours: float) -> Length:
         hours=hours,
         target=target,
         room=room,
-        summary_max=room * CHARS_PER_WORD,
         beats=min(10, max(3, round(3 * hours))),
         sections=min(SECTIONS_MAX, max(1, target // 70)),
         paragraphs=max(2, round(target / 100)),
@@ -654,13 +651,26 @@ def pick_beats(
     return [b for b in beats if b.number in keep]
 
 
+def fit_summary(summary: str, limit: int = STORY_MAX) -> str:
+    """The summary inside the database's limit (#2597): over it, whole paragraphs are dropped from
+    the end (a section's mood cue goes with its paragraph, and `fix_prose` then trims the music to
+    match); one paragraph still over is shortened at a word end. A draft that fits is returned
+    as it is."""
+    if len(summary) <= limit:
+        return summary
+    paragraphs = re.split(r"(\n\s*\n)", summary)  # paragraphs and the gaps between them
+    while len(paragraphs) > 1 and len("".join(paragraphs)) > limit:
+        del paragraphs[-2:]
+    return at_word_end("".join(paragraphs).rstrip(), limit)
+
+
 def fix_prose(prose: Prose, sections_max: int = SECTIONS_MAX) -> Prose:
     """What is only mechanical about the answer's form, put right in code and not by a retry
     (#2013). Too many `《…》` sections: the extra cues are taken out and their words stay in the
     section before. Too many music prompts: the first ones are kept. Too few: the last prompt is
     used again for the sections left (a music prompt only describes a sound, so this invents no
     story). A summary with no cue, or no music prompt at all, is left for the checks."""
-    summary = prose.summary
+    summary = fit_summary(prose.summary)
     cues = list(CUE.finditer(summary))
     if len(cues) > sections_max:
         for match in reversed(cues[sections_max:]):

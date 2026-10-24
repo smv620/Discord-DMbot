@@ -697,7 +697,7 @@ class Sidebar:
         if fields.in_game and not source and not says_no_info(text):
             # A rule with no entry or house rule behind it is never "confident" (CLAUDE.md,
             # citations): it says plainly it is not from DMbot's rules. It sits with the
-            # source suffix, outside the length limit.
+            # source suffix, after the answer's own words.
             text, confidence = f"{text} {NOT_IN_RULES}", None
         if not says_no_info(text):
             source = legacy_citation(source, ctx) or source
