@@ -49,6 +49,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "What is waiting for you, on the Story graph",
+    text: "Under the count line, Waiting for you lists what DMbot needs your answer on, and says how many. Facts heard at the table: Yes, that's true, True, but keep it secret, or Not right. Connections found in a backstory are grouped by the upload they came from. Keep or Skip each one, or Keep all for an upload, which keeps the ready ones shown, up to 50 at a time. A connection with a new name in it waits until you answer that name in Check new names. Which Mara? questions have a button for each match and Neither. DMbot never decides these, and nothing goes into your story until you answer. Players never see this list.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Every name on the Story graph",
     text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },
