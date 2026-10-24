@@ -27,6 +27,7 @@ import json
 import uuid
 import zlib
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -56,6 +57,14 @@ _SESSION_KEYS = ("session", "lines", "suggestions", "respells", "import")
 def _without(alias: str, drop: Sequence[str]) -> str:
     minus = "".join(f" - '{c}'" for c in drop)
     return f"to_jsonb({alias}){minus}"  # (aliases and columns here are constants, not input)
+
+
+@dataclass(slots=True)
+class LeftOut:
+    """What a restore did not bring back because the person had erased it (#2605): lines of
+    people who used "Delete my transcripts" after the copy was made. A count only."""
+
+    lines: int = 0
 
 
 class TranscriptParts:
@@ -134,6 +143,8 @@ class TranscriptParts:
             or part < 1
         ):
             raise CampaignError(DAMAGED)
+        if "guild" in data and (type(data["guild"]) is not int or data["guild"] < 1):
+            raise CampaignError(DAMAGED)
         sessions = data.get("sessions")
         if not isinstance(sessions, list) or len(sessions) > SESSIONS_MAX:
             raise CampaignError(DAMAGED)
@@ -170,12 +181,27 @@ class TranscriptParts:
             (guild_id, campaign_id),
         )
 
-    async def load(self, conn: Conn, guild_id: int, campaign_id: str, part: dict[str, Any]) -> None:
+    async def load(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        part: dict[str, Any],
+        left_out: LeftOut | None = None,
+    ) -> None:
         """Write one checked part. Every key must be a column of its table (else the file is
         damaged); a column the file does not have takes its default, so a copy made by an older
-        DMbot restores into a newer table."""
+        DMbot restores into a newer table.
+
+        A person who erased their transcripts (in the server the copy came from, or in this one)
+        after a session began gets none of that session's lines back: their lines, the sidebar
+        lines that carry their id, their suggested fixes and the respellings of those lines
+        (#2605). The count goes to `left_out`."""
         allowed = await _columns(conn)
+        erased = await self._erased(conn, guild_id, part)
         for s in part["sessions"]:
+            if erased:
+                s = _without_erased(s, erased, left_out)
             sid = uuid.uuid4().hex
             await self._insert(
                 conn, "transcript_sessions", allowed, [s["session"]],
@@ -209,6 +235,32 @@ class TranscriptParts:
                 )  # fmt: skip
 
     @staticmethod
+    async def _erased(conn: Conn, guild_id: int, part: dict[str, Any]) -> dict[int, int]:
+        """user -> when they last erased their transcripts, for the speakers in this part, in this
+        server and in the one the copy came from (a door answers for one server at a time)."""
+        speakers = sorted(
+            {
+                int(r["user_id"])
+                for s in part["sessions"]
+                for name in ("lines", "suggestions")
+                for r in s[name]
+                if type(r.get("user_id")) is int
+            }
+        )
+        if not speakers:
+            return {}
+        source = part.get("guild")
+        servers = {guild_id, source} if type(source) is int else {guild_id}
+        out: dict[int, int] = {}
+        for server in sorted(servers):
+            cur = await conn.execute(
+                "SELECT user_id, erased_at FROM dmbot_erased_speakers(%s, %s)", (server, speakers)
+            )
+            for r in await cur.fetchall():
+                out[int(r["user_id"])] = max(out.get(int(r["user_id"]), 0), int(r["erased_at"]))
+        return out
+
+    @staticmethod
     async def _insert(
         conn: Conn,
         table: str,
@@ -239,6 +291,41 @@ class TranscriptParts:
         if returning is None:
             return []
         return [int(r[returning]) for r in await cur.fetchall()]
+
+
+def _without_erased(
+    s: dict[str, Any], erased: dict[int, int], left_out: LeftOut | None
+) -> dict[str, Any]:
+    """One session of a part with the erased people's rows taken out (#2605): only people who
+    erased after the session began lose it (a session after they came back stays whole)."""
+    began = s["session"].get("started_at")
+    gone = {u for u, at in erased.items() if type(began) is int and began <= at}
+    if not gone:
+        return s
+    keep = [i for i, r in enumerate(s["lines"]) if r.get("user_id") not in gone]
+    if len(keep) == len(s["lines"]) and not any(r.get("user_id") in gone for r in s["suggestions"]):
+        return s
+    place = {old: new for new, old in enumerate(keep)}
+    lines = [s["lines"][i] for i in keep]
+    if left_out is not None:
+        left_out.lines += len(s["lines"]) - len(lines)
+    heard = [r for r in lines if r.get("sidebar") is None]
+    session = dict(s["session"])
+    if "line_count" in session:
+        session["line_count"] = len(heard)
+    if "speakers" in session:
+        session["speakers"] = sorted({r["user_id"] for r in heard if "user_id" in r})
+    if isinstance(session.get("speaker_names"), dict):
+        session["speaker_names"] = {
+            k: v for k, v in session["speaker_names"].items() if k not in {str(u) for u in gone}
+        }
+    return {
+        **s,
+        "session": session,
+        "lines": lines,
+        "suggestions": [r for r in s["suggestions"] if r.get("user_id") not in gone],
+        "respells": [{**r, "line": place[r["line"]]} for r in s["respells"] if r["line"] in place],
+    }
 
 
 _SCOPE_TYPES = {"id": "text", "guild_id": "bigint", "campaign_id": "text", "session_id": "text"}
@@ -279,10 +366,13 @@ _ALWAYS_MADE_HERE = frozenset({"id", "guild_id", "campaign_id", "session_id", "l
 # ---- the files ---------------------------------------------------------------------------
 
 
-def encode_part(backup_id: str, number: int, sessions: Sequence[str]) -> bytes:
+def encode_part(
+    backup_id: str, number: int, sessions: Sequence[str], guild_id: int | None = None
+) -> bytes:
     """One part as a gzip file: `sessions` are the JSON texts `TranscriptParts.sessions` made."""
     head = json.dumps(
         {"format": PART_FORMAT, "version": PART_VERSION, "backup": backup_id, "part": number}
+        | ({} if guild_id is None else {"guild": guild_id})  # (where the copy came from, #2605)
     )
     out = io.BytesIO()
     with gzip.GzipFile(fileobj=out, mode="wb", compresslevel=6, mtime=0) as packed:

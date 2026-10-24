@@ -65,6 +65,7 @@ from dmbot.campaigns.parts import (
 from dmbot.campaigns.parts import (
     PART_TEXT_BYTES,
     SESSION_TOO_BIG,
+    LeftOut,
     TranscriptParts,
     decode_part,
     encode_part,
@@ -1426,14 +1427,18 @@ class CampaignStore:
                         raise BackupTooBig(SESSION_TOO_BIG)
                     if pending and size + len(text) > PART_TEXT_BYTES:
                         files.append(
-                            await asyncio.to_thread(encode_part, backup_id, len(files) + 1, pending)
+                            await asyncio.to_thread(
+                                encode_part, backup_id, len(files) + 1, pending, guild_id
+                            )
                         )
                         pending, size = [], 0
                     pending.append(text)
                     size += len(text)
                 if pending:
                     files.append(
-                        await asyncio.to_thread(encode_part, backup_id, len(files) + 1, pending)
+                        await asyncio.to_thread(
+                            encode_part, backup_id, len(files) + 1, pending, guild_id
+                        )
                     )
         main: dict[str, Any] = {
             "format": EXPORT_FORMAT,
@@ -1492,9 +1497,12 @@ class CampaignStore:
         *,
         replace_campaign_id: str | None = None,
         parts: Sequence[bytes] = (),
+        left_out: LeftOut | None = None,
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
 
+        `left_out` counts the lines not brought back because their speaker erased them after the
+        copy was made (#2605).
         `parts`: the `transcripts` files that came with the main file (#2552). None: the campaign
         is restored without them, as a copy made before they existed is. All of them or none: a
         file that is missing, repeated or from another copy is refused. Each is unpacked and
@@ -1658,7 +1666,7 @@ class CampaignStore:
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
                     try:
-                        await TranscriptParts().load(conn, guild_id, campaign_id, part)
+                        await TranscriptParts().load(conn, guild_id, campaign_id, part, left_out)
                     except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
