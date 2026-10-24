@@ -63,7 +63,7 @@ class CampaignTables(DatabaseTest):
     async def test_a_table_with_no_campaign_id_of_its_own_is_found_by_its_foreign_key(self) -> None:
         tables = await self.campaign_tables()
         self.assertIn("transcript_lines", tables)
-        self.assertIn("transcript_lines", OWED_TO_BACKUP)
+        self.assertIn("transcript_lines", backed_up())  # carried by the transcripts files
 
     async def test_the_lists_name_real_tables_and_do_not_overlap(self) -> None:
         real = await self.campaign_tables()

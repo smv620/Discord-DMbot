@@ -180,7 +180,7 @@ describe("the words match the numbers", () => {
     );
     expect(answer("Do unused hours carry over?")).toMatch(/^No\. Your hours are for the month\./);
     expect(answer("What's different between the plans?")).toMatch(
-      /^Only the hours and how many campaigns you can run\. The free Try It has no backups or downloads; everything else is the same on every plan/,
+      /^Every plan has the same DMbot\. Plans differ only in hours and campaigns \(the free Try It has no backups or downloads\)/,
     );
     expect(answer("Can I change my plan?")).toMatch(/any time/);
     const failed = answer("What if a payment doesn't go through?");

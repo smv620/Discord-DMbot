@@ -64,8 +64,21 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
+
+# No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
+# take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
+STALL_AFTER_S = 240.0
+
+
+def message_is_gone(exc: BaseException) -> bool:
+    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
+    return isinstance(exc, discord.NotFound) or (
+        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
+    )
+
 
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
@@ -282,6 +295,7 @@ class BackgroundOffer(_Menu):
         )
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        clicked = time.monotonic()  # the elapsed time the DM sees starts here
         await interaction.response.defer()  # the checks below are database reads (#88, #351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
@@ -314,6 +328,10 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, "This server has used today's document reads. Try again "
                         "tomorrow.")  # fmt: skip
             return
+        reading_text = (
+            f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
+            "background."
+        )
         self.stop()
         _ai_busy.add(guild)
         for old in [k for k in _ai_reads if k[1] != day]:
@@ -321,8 +339,7 @@ class BackgroundOffer(_Menu):
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a "
-                "long background.",
+                content=reading_text,
                 view=None,
                 allowed_mentions=NO_PINGS,
             )
@@ -346,15 +363,38 @@ class BackgroundOffer(_Menu):
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            read = await lore_read.read_lore(
-                read_ai,
-                ai,
-                self.upload.text,
-                own,
-                AI_AT_ONCE,
-                skip_name=lambda name: name_key(name) in known,
-                skip_pair=await connected_pairs(memory, campaign),
-            )
+            skip_pair = await connected_pairs(memory, campaign)
+
+            async def show(text: str) -> None:
+                await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
+
+            # The same message is kept current (#2559): the step, part n of m, then how long.
+            async with WaitingMessage(
+                show,
+                reading_text,
+                stall_after_s=STALL_AFTER_S,
+                stops_at_s=lore_read.LORE_TIME_LIMIT_S,
+                gone=message_is_gone,
+                started=clicked,
+            ) as waiting:
+
+                def on_step(stage: str, done: int, total: int) -> None:
+                    if stage == "reading":
+                        again = f", try {done}" if done > 1 else ""
+                        waiting.step(f"Step 1 of 2: reading it through{again}", keeps=False)
+                    else:
+                        waiting.step("Step 2 of 2: picking out names and links", done, total)
+
+                read = await lore_read.read_lore(
+                    read_ai,
+                    ai,
+                    self.upload.text,
+                    own,
+                    AI_AT_ONCE,
+                    skip_name=lambda name: name_key(name) in known,
+                    skip_pair=skip_pair,
+                    progress=on_step,
+                )
             found = bg.merge(
                 [read.names],
                 known,
@@ -364,16 +404,35 @@ class BackgroundOffer(_Menu):
                 memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
             )
             queued = await queue_links(
-                bot, memory, campaign, found, [read.links], set(own), truth=truth
+                bot,
+                memory,
+                campaign,
+                found,
+                [read.links],
+                set(own),
+                truth=truth,
+                dropped=read.stats.dropped,
             )
             cut = read.cut
             log.info(
-                "Background read: %d names and %d connections suggested%s",
+                "Background read: %d names and %d connections suggested%s; %d connection lines "
+                "found, dropped for: %s",
                 sum(map(len, stored.values())),
                 queued,
                 ", an answer cut off" if cut else "",
+                read.stats.links_listed,
+                ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
             )
-            await summary(interaction, campaign, self.upload.label, stored, queued, cut=cut)
+            await summary(
+                interaction,
+                campaign,
+                self.upload.label,
+                stored,
+                queued,
+                cut=cut,
+                # (lines for connections that were already there are not "found" again)
+                links_found=read.stats.links_listed - read.stats.dropped["already_connected"],
+            )
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -456,6 +515,19 @@ def _waiting_note(queued: int) -> str:
     return CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
 
 
+def _found_note(found: int, kept: int) -> str:
+    """How many connection lines DMbot saw in the text against how many it kept (#2563), so a
+    shorter list is never a silent one. A connection is kept only when both names were found and
+    the line is really in your text; DMbot never guesses one."""
+    if found <= kept:
+        return ""
+    return (
+        f"\n🔎 DMbot saw {found} connection{'' if found == 1 else 's'} in your text and kept "
+        f"{kept}. It keeps one only when both names were found and the words are really in your "
+        "text, so a few may be missing. You can add any you know from a name's card."
+    )
+
+
 async def summary(
     interaction: discord.Interaction,
     campaign: Campaign,
@@ -464,6 +536,7 @@ async def summary(
     queued: int = 0,
     *,
     cut: bool = False,
+    links_found: int = 0,
 ) -> None:
     total = sum(map(len, stored.values()))
     if not total:
@@ -473,6 +546,7 @@ async def summary(
                 CUT_NOTHING.format(label=_md(label))
                 if cut
                 else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
+                + _found_note(links_found, queued)
             ),
             allowed_mentions=NO_PINGS,
         )
@@ -494,6 +568,7 @@ async def summary(
                 if queued
                 else ""
             )
+            + _found_note(links_found, queued)
             + (CUT_NOTE if cut else "")
         ),
         view=view,
@@ -524,6 +599,7 @@ async def queue_links(
     own: set[str],
     *,
     truth: bool = False,
+    dropped: bg.Dropped | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -554,7 +630,9 @@ async def queue_links(
             return True  # an end that is no entry of the campaign (a name that was refused)
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
-    kept = bg.keep_connections(answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known)
+    kept = bg.keep_connections(
+        answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped
+    )
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret, c.words, truth)
         for c in kept

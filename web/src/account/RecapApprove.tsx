@@ -208,7 +208,9 @@ export default function RecapApprove({
   const making = audioChosen && recap.audio?.state === "queued";
   // The recap is approved and waits. After audio is made the DM first decides between posting it
   // and keeping it; once kept, or approved without audio, the recap is "approved, not posted".
-  const deciding = audioChosen && audioMade && !kept;
+  // "Your audio is ready. Listen to it below" is said only where the player is: the audio panel
+  // (Recaps.tsx) shows while RECAP_AUDIO_LIVE is on, so this does too (#2617).
+  const deciding = RECAP_AUDIO_LIVE && audioChosen && audioMade && !kept;
   const settled = approval.approved && !deciding && !making;
 
   return (

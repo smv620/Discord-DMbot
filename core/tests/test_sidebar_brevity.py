@@ -37,11 +37,11 @@ class HandCounted(unittest.TestCase):
     def test_no_before_a_number_is_an_abbreviation(self) -> None:
         self.assertEqual(len(brevity.sentences("See No. 5 for it. Done.")), 2)
 
-    def test_three_sentences_starting_with_no_are_too_many(self) -> None:
+    def test_three_sentences_starting_with_no_are_not_refused(self) -> None:
         problems = brevity.violations(
             "can it", "No. It needs sight. It also needs range.", full_text=False
         )
-        self.assertIn("use at most 2 sentences", problems)
+        self.assertEqual(problems, [])  # length is an instruction, never a check (#2597)
 
 
 class PaddingKeepsMeaning(unittest.TestCase):
@@ -127,15 +127,10 @@ class Padding(unittest.TestCase):
 
 
 class Limits(unittest.TestCase):
-    def test_three_sentences_is_too_many(self) -> None:
-        problems = brevity.violations("how much", "One. Two. Three.", full_text=False)
-        self.assertIn("use at most 2 sentences", problems)
-
-    def test_over_200_characters_is_too_long(self) -> None:
-        problems = brevity.violations(
-            "how much", "A" * 150 + ". " + "B" * 80 + ".", full_text=False
-        )
-        self.assertIn("use at most 200 characters", problems)
+    def test_no_answer_is_sent_back_for_its_length(self) -> None:
+        self.assertEqual(brevity.violations("how much", "One. Two. Three.", full_text=False), [])
+        long = "A" * 150 + ". " + "B" * 80 + ". " + "C" * 3000 + "."
+        self.assertEqual(brevity.violations("how much", long, full_text=False), [])
 
     def test_a_yes_no_question_needs_yes_or_no_first(self) -> None:
         problems = brevity.violations("does it work", "It works fine.", full_text=False)
@@ -150,7 +145,7 @@ class Limits(unittest.TestCase):
     def test_shorten_keeps_the_first_sentences_that_fit(self) -> None:
         text = "Yes. " + "A" * 150 + ". Third sentence here."
         cut = brevity.shorten(text)
-        self.assertTrue(brevity.within_limit(cut))
+        self.assertLessEqual(len(cut), brevity.MAX_CHARS)
         self.assertTrue(cut.startswith("Yes."))
 
     def test_shorten_trims_one_huge_sentence_at_a_word(self) -> None:
@@ -161,7 +156,9 @@ class Limits(unittest.TestCase):
 
     def test_shorten_never_sends_a_paragraph(self) -> None:
         for text in ("x. " * 40, "y" * 5000, "Hello there. " * 30):
-            self.assertTrue(brevity.within_limit(brevity.shorten(text)), text[:20])
+            cut = brevity.shorten(text)  # (for text made in code, never an AI answer)
+            self.assertLessEqual(len(cut), brevity.MAX_CHARS, text[:20])
+            self.assertLessEqual(len(brevity.sentences(cut)), brevity.MAX_SENTENCES, text[:20])
 
 
 class Source(unittest.TestCase):

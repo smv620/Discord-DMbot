@@ -413,42 +413,25 @@ class Working(WorkerHarness):
         self.assertIn("(check: ", job.last_error)
         self.assertEqual(job.summary, "")  # a failed draft is never kept
 
-    async def test_a_recap_a_little_long_is_accepted_only_on_the_third_try_and_says_so(
-        self,
-    ) -> None:
-        # A 1-hour session: about 150 words, 75 to 180, up to 202 on the last try.
-        def long(words: int) -> str:
-            return fx.prose_answer(
-                "《Tense》 " + " ".join(["calm"] * (words - 1)) + " Oskar", "1. Low strings."
-            )
-
-        # Each try moves toward the range (the owner's rule, #2383): 199, 192, then 190, which the
-        # last try accepts.
+    async def test_a_recap_much_longer_than_the_target_is_used_whole_at_once(self) -> None:
+        # Length is a target in the instructions, never a check (#2597): a 1-hour session aims at
+        # about 150 words, and a 209-word answer is used as it came, with no retry and no note.
+        long = fx.prose_answer(
+            "《Tense》 " + " ".join(["calm"] * 208) + " Oskar", "1. Low strings."
+        )
         await self.setUpWorker(
-            fx.Canned(fx.BEATS_ANSWER, long(199), fx.GRADE_ANSWER, fx.FINISH_ANSWER),
-            fx.Canned(long(192), long(190)),
+            fx.Canned(fx.BEATS_ANSWER, long, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(),
             hours=1.0,
         )
         notes: list[str] = []
         self.worker._on_note = notes.append
         job = await self.go()
         self.assertEqual(job.state, "ready")
-        self.assertEqual(
-            len(self.careful.sent), 2
-        )  # refused on the first two, accepted on the third
-        self.assertEqual(len(notes), 1)
-        self.assertIn("190 words", notes[0])
-        self.assertIn("about 1 hours", self.fast.sent[1] + self.fast.systems[1])
-
-    async def test_a_recap_too_long_even_for_the_last_try_fails_the_job(self) -> None:
-        long = fx.prose_answer(
-            "《Tense》 " + " ".join(["calm"] * 209) + " Oskar", "1. Low strings."
-        )
-        await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, long), fx.Canned(long, long), hours=1.0)
-        job = await self.go()
-        self.assertEqual(job.state, "failed")
-        self.assertTrue(job.last_error.startswith(pl.FAILED_CHECKS), job.last_error)
-        self.assertIn("(check: ", job.last_error)
+        self.assertIn(" ".join(["calm"] * 20), job.summary)
+        self.assertGreater(len(job.summary.split()), 200)
+        self.assertEqual(self.careful.sent, [])  # no retry for its length
+        self.assertEqual(notes, [])
 
     async def test_a_third_prose_try_happens_only_after_two_failures(self) -> None:
         invented = fx.PROSE_ANSWER.replace("Nothing answered.", "Lord Varkus laughed.")
@@ -463,7 +446,7 @@ class Working(WorkerHarness):
         # the retry carries the rejected draft and the target, to revise (#2026)
         self.assertIn("<previous_draft>", self.careful.sent[1])
         self.assertIn("Lord Varkus laughed.", self.careful.sent[1])
-        self.assertIn("between", self.careful.sent[1])
+        self.assertIn("about", self.careful.sent[1])
         self.assertNotIn("<previous_draft>", self.fast.sent[1])  # the first try has none
 
     async def test_the_prose_and_title_calls_ask_for_json_and_the_others_do_not(self) -> None:
@@ -583,7 +566,9 @@ class Working(WorkerHarness):
     async def test_a_revision_that_fails_the_checks_leaves_the_first_draft_standing(self) -> None:
         # test 7, run7-off: the first draft passed but graded weak; its revision came back far too
         # short and the next try was cut off, and the whole recap failed (#2008)
-        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        short = fx.prose_answer(
+            "《Tense》 Lord Varkus waited.", "1. Low strings."
+        )  # an invented name
         cut = Reply("{", cut=True)
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE),
@@ -632,7 +617,7 @@ class Working(WorkerHarness):
                     test.secret = ["Silver Lock"]  # the DM keeps it secret
                 return await super().complete(*args, **kwargs)
 
-        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        short = fx.prose_answer("《Tense》 Lord Varkus waited.", "1. Low strings.")
         await self.setUpWorker(
             SecretAppears(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.WEAK_GRADE), fx.Canned(short)
         )
@@ -642,7 +627,7 @@ class Working(WorkerHarness):
         self.assertNotIn("silver lock", job.summary)
 
     async def test_without_a_passing_first_draft_the_failing_tries_still_fail_the_job(self) -> None:
-        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        short = fx.prose_answer("《Tense》 Lord Varkus waited.", "1. Low strings.")
         await self.setUpWorker(fx.Canned(fx.BEATS_ANSWER, short), fx.Canned(short, short))
         job = await self.go()
         self.assertEqual(job.state, "failed")
@@ -949,7 +934,7 @@ class Working(WorkerHarness):
 
     async def test_a_revision_that_fails_its_checks_leaves_the_first_draft_with_cuts(self) -> None:
         n = self.sentence("The torch burned")
-        short = fx.prose_answer("《Tense》 Mira waited.", "1. Low strings.")
+        short = fx.prose_answer("《Tense》 Lord Varkus waited.", "1. Low strings.")
         await self.setUpWorker(
             fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
             fx.Canned(short, facts=[fx.facts_answer([(n, "place")])]),
@@ -960,16 +945,6 @@ class Working(WorkerHarness):
         self.assertIn("Mira lifted her blade", job.summary)
         self.assertEqual(self.worker._fallback, {})
         self.assertEqual(self.worker._flags, {})
-
-    async def test_a_recap_cut_below_the_minimum_fails_plainly(self) -> None:
-        count = len(rd.sentences_of(fx.SUMMARY))
-        all_but_one = fx.facts_answer([(n, "invented") for n in range(2, count + 1)])
-        await self.setUpWorker(
-            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER),
-            fx.Canned(fx.PROSE_ANSWER, facts=[all_but_one, all_but_one]),
-        )
-        job = await self.go()
-        self.assertEqual((job.state, job.last_error), ("failed", pl.UNMATCHED))
 
     async def test_beats_the_recap_leaves_out_are_named_by_number_in_the_revision(self) -> None:
         await self.setUpWorker(
