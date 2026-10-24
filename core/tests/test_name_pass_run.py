@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.campaigns.store import CampaignStore
@@ -431,7 +431,7 @@ class ThePass(NamesTest):
         view = name_pass_undo.undo_view_import(self.campaign.id, [first.fixed, second.fixed])
         assert view is not None
         self.assertEqual(
-            [b.item.label for b in view.children],
+            [cast(Any, b).item.label for b in view.children],
             ["Undo Kethrandil #1", "Undo Kethrandil #2", "Undo Mirelle"],
         )
 
