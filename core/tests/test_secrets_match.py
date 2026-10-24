@@ -195,7 +195,6 @@ class Speed(unittest.TestCase):
     """The callers run it on the event loop: a long draft with many names must stay quick."""
 
     def test_three_thousand_words_with_many_names_is_fast(self) -> None:
-        import time
 
         words = [f"word{n}" for n in range(3000)]
         words[1500:1503] = ["quiet", "plain", "sentence"]
@@ -209,9 +208,10 @@ class Speed(unittest.TestCase):
         self.assertFalse(sm.names_a_secret(text, secrets, allowed))
         # And with a secret in it, the allowed names are looked at and the answer is still quick.
         said = text + " Secret Name3 Holder spoke"
-        started = time.perf_counter()
         self.assertTrue(sm.names_a_secret(said, secrets, allowed))
-        self.assertLess(time.perf_counter() - started, speed.allowed(0.2))
+        self.assertLess(
+            speed.fastest(lambda: sm.names_a_secret(said, secrets, allowed)), speed.allowed(0.2)
+        )
 
     def test_every_match_inside_an_allowed_name_looks_each_name_up_once(self) -> None:
         """The contrived text of #2100: the secret stands only inside the allowed name, thousands

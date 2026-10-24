@@ -202,11 +202,13 @@ class Speed(unittest.TestCase):
         line = (
             "so then the goblin is grappled and I cast Fireball at the dragon while it flies away"
         )
-        started = time.perf_counter()
-        for _ in range(200):
-            sp.find(line)
+
+        def two_hundred() -> None:
+            for _ in range(200):
+                sp.find(line)
+
         self.assertLess(
-            (time.perf_counter() - started) / 200, speed.allowed(0.05)
+            speed.fastest(two_hundred) / 200, speed.allowed(0.05)
         )  # far above ~0.3 ms: CI can be slow
         self.assertLess(len(sp.by_first), 5000)
 
