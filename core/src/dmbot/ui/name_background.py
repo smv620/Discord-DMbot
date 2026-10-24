@@ -24,7 +24,7 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
-from dmbot.memory import lore_read
+from dmbot.memory import lore_context, lore_read
 from dmbot.memory.backstory_links import NewLink, Waiting
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
@@ -64,8 +64,21 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
+
+# No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
+# take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
+STALL_AFTER_S = 240.0
+
+
+def message_is_gone(exc: BaseException) -> bool:
+    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
+    return isinstance(exc, discord.NotFound) or (
+        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
+    )
+
 
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
@@ -282,6 +295,7 @@ class BackgroundOffer(_Menu):
         )
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        clicked = time.monotonic()  # the elapsed time the DM sees starts here
         await interaction.response.defer()  # the checks below are database reads (#88, #351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
@@ -314,6 +328,10 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, "This server has used today's document reads. Try again "
                         "tomorrow.")  # fmt: skip
             return
+        reading_text = (
+            f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
+            "background."
+        )
         self.stop()
         _ai_busy.add(guild)
         for old in [k for k in _ai_reads if k[1] != day]:
@@ -321,8 +339,7 @@ class BackgroundOffer(_Menu):
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a "
-                "long background.",
+                content=reading_text,
                 view=None,
                 allowed_mentions=NO_PINGS,
             )
@@ -346,21 +363,46 @@ class BackgroundOffer(_Menu):
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            read = await lore_read.read_lore(
-                read_ai,
-                ai,
-                self.upload.text,
-                own,
-                AI_AT_ONCE,
-                skip_name=lambda name: name_key(name) in known,
-                skip_pair=await connected_pairs(memory, campaign),
-            )
+            skip_pair = await connected_pairs(memory, campaign)
+
+            async def show(text: str) -> None:
+                await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
+
+            # The same message is kept current (#2559): the step, part n of m, then how long.
+            async with WaitingMessage(
+                show,
+                reading_text,
+                stall_after_s=STALL_AFTER_S,
+                stops_at_s=lore_read.LORE_TIME_LIMIT_S,
+                gone=message_is_gone,
+                started=clicked,
+            ) as waiting:
+
+                def on_step(stage: str, done: int, total: int) -> None:
+                    if stage == "reading":
+                        again = f", try {done}" if done > 1 else ""
+                        waiting.step(f"Step 1 of 2: reading it through{again}", keeps=False)
+                    else:
+                        waiting.step("Step 2 of 2: picking out names and links", done, total)
+
+                read = await lore_read.read_lore(
+                    read_ai,
+                    ai,
+                    self.upload.text,
+                    own,
+                    AI_AT_ONCE,
+                    skip_name=lambda name: name_key(name) in known,
+                    skip_pair=skip_pair,
+                    progress=on_step,
+                )
             found = bg.merge(
                 [read.names],
                 known,
                 rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
-            stored = await store(memory, campaign, found)
+            stored = await store(
+                memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
+            )
             queued = await queue_links(
                 bot, memory, campaign, found, [read.links], set(own), truth=truth
             )
@@ -393,12 +435,19 @@ class BackgroundOffer(_Menu):
 
 
 async def store(
-    memory: MemoryStore, campaign: Campaign, found: list[bg.Found]
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: list[bg.Found],
+    held: lore_context.Held | None = None,
+    text: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
-    one Undo. Returns the new suggestions' IDs for each kind."""
+    one Undo. Returns the new suggestions' IDs for each kind. What is stored stays the short quote
+    (the text is never kept, #2167); `held` gets the sentence around each name, cut from `text`
+    while it is still in memory, for the review card to show (#2561): memory only, never stored."""
     names: list[NewName] = []
+    items: list[bg.Found] = []
     for item in found:
         try:
             check_named(item.kind, item.name)  # one refused name must not stop the others
@@ -413,6 +462,7 @@ async def store(
                 item.name, item.kind, PROPOSED, others=item.also, secrets=item.secret, note=note
             )
         )
+        items.append(item)
     stored: dict[str, list[str]] = {}
     if not names:
         return stored
@@ -423,9 +473,15 @@ async def store(
     except MemoryRuleError as exc:
         log.info("Skipped the names from a background: %s", exc)
         return stored
-    for name, entity_id in zip(names, written.value, strict=False):
+    for name, item, entity_id in zip(names, items, written.value, strict=False):
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
+            if held is not None and text:
+                held.put(
+                    campaign.guild_id,
+                    entity_id,
+                    lore_context.around(text, item.quote, item.name),
+                )
     return stored
 
 

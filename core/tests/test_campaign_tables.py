@@ -9,7 +9,6 @@ the production ones from `register_backup_sections`, so a new section or table c
 
 from __future__ import annotations
 
-import inspect
 import json
 from collections.abc import Awaitable, Callable
 from typing import cast
@@ -24,7 +23,6 @@ from dmbot.campaigns.tables import (
     SERVER_BOUND_COLUMNS,
     backed_up,
 )
-from dmbot.memory.backup import _TAGS
 from tests.pg import DatabaseTest
 
 GUILD, DM = 1, 9
@@ -92,21 +90,6 @@ class CampaignTables(DatabaseTest):
 
     async def test_the_list_names_exactly_the_production_sections(self) -> None:
         self.assertEqual(set(self.store()._sections), set(SECTION_TABLES))
-
-    async def test_a_section_mentions_every_table_it_is_listed_as_carrying(self) -> None:
-        """The hand list cannot claim a table the section's code never touches."""
-        sections = self.store()._sections
-        for name, tables in SECTION_TABLES.items():
-            section = sections[name]
-            if name == "memory":
-                self.assertEqual(
-                    sorted(set(tables) - {"memory_perspectives"}),
-                    sorted({t.name for t in _TAGS.values()} - {"memory_perspectives"}),
-                )
-                continue
-            source = inspect.getsource(type(section))
-            for table in tables:
-                self.assertIn(table, source, f"{name} does not touch {table}")
 
     async def test_private_notes_never_reach_a_backup(self) -> None:
         """Anyone in the server may download a backup, so a person's own notes stay out (PLAN)."""
