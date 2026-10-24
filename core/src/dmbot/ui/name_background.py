@@ -64,8 +64,21 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
+
+# No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
+# take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
+STALL_AFTER_S = 240.0
+
+
+def message_is_gone(exc: BaseException) -> bool:
+    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
+    return isinstance(exc, discord.NotFound) or (
+        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
+    )
+
 
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
@@ -282,6 +295,7 @@ class BackgroundOffer(_Menu):
         )
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        clicked = time.monotonic()  # the elapsed time the DM sees starts here
         await interaction.response.defer()  # the checks below are database reads (#88, #351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
@@ -314,6 +328,10 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, "This server has used today's document reads. Try again "
                         "tomorrow.")  # fmt: skip
             return
+        reading_text = (
+            f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
+            "background."
+        )
         self.stop()
         _ai_busy.add(guild)
         for old in [k for k in _ai_reads if k[1] != day]:
@@ -321,8 +339,7 @@ class BackgroundOffer(_Menu):
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a "
-                "long background.",
+                content=reading_text,
                 view=None,
                 allowed_mentions=NO_PINGS,
             )
@@ -346,15 +363,38 @@ class BackgroundOffer(_Menu):
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            read = await lore_read.read_lore(
-                read_ai,
-                ai,
-                self.upload.text,
-                own,
-                AI_AT_ONCE,
-                skip_name=lambda name: name_key(name) in known,
-                skip_pair=await connected_pairs(memory, campaign),
-            )
+            skip_pair = await connected_pairs(memory, campaign)
+
+            async def show(text: str) -> None:
+                await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
+
+            # The same message is kept current (#2559): the step, part n of m, then how long.
+            async with WaitingMessage(
+                show,
+                reading_text,
+                stall_after_s=STALL_AFTER_S,
+                stops_at_s=lore_read.LORE_TIME_LIMIT_S,
+                gone=message_is_gone,
+                started=clicked,
+            ) as waiting:
+
+                def on_step(stage: str, done: int, total: int) -> None:
+                    if stage == "reading":
+                        again = f", try {done}" if done > 1 else ""
+                        waiting.step(f"Step 1 of 2: reading it through{again}", keeps=False)
+                    else:
+                        waiting.step("Step 2 of 2: picking out names and links", done, total)
+
+                read = await lore_read.read_lore(
+                    read_ai,
+                    ai,
+                    self.upload.text,
+                    own,
+                    AI_AT_ONCE,
+                    skip_name=lambda name: name_key(name) in known,
+                    skip_pair=skip_pair,
+                    progress=on_step,
+                )
             found = bg.merge(
                 [read.names],
                 known,
