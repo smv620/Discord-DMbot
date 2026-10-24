@@ -46,7 +46,6 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "import_speakers": ("import_speakers",),
     "rule_set_follows": ("rule_set_follows",),
     "rule_sets": ("rule_sets", "rule_set_versions", "rule_set_editors"),
-    "recap_dictionaries": ("recap_dictionaries",),
     "game_clock": ("game_clocks", "game_clock_groups"),
     "game_effects": ("game_effects",),
     # (only ready jobs are carried today, which is part of what #2552 lists)
@@ -63,7 +62,13 @@ _PLAN_READ = "made again by reading the adventure again (PLAN:170-172, #1714)"
 _PLAN_LIKE = "like the plan: it points into what is read again (its schema comment)"
 _QUEUE = "a request still waiting for an answer: a restored campaign starts with none"
 _KEY = "a key to a publisher's set, which must not travel in a file anyone in the server may get"
+_VOICE_CO = (
+    "an object on the voice company's one shared account, not in our data: a file could point a "
+    "campaign at another's, two campaigns could share it, and a name change deletes it "
+    "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
+)
 NOT_IN_BACKUP: dict[str, str] = {
+    "recap_dictionaries": _VOICE_CO,
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
     "image_day_use": _RUNTIME,
