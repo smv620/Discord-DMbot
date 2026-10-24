@@ -12884,7 +12884,10 @@ IMPORT_STEPS = """
 # (tests/test_campaign_move_cascade.py checks it still holds). Dropping a key takes an exclusive
 # lock on its table, and the migration is one transaction, so those locks last until it ends: deploy
 # it with the bot stopped (docs/testing-status.log). Each key is added NOT VALID and then validated.
-CAMPAIGN_MOVE_CASCADE = """
+# Every foreign key that carries `guild_id` becomes ON UPDATE CASCADE (found from the catalog, so
+# no table is forgotten). Run by 0215 and again by 0234: a table made between them (0225's
+# `recap_upload_rights`) was missed the first time. Already-cascading keys are left alone.
+_CASCADE_ALL_KEYS = """
     DO $$
     DECLARE r record;
     BEGIN
@@ -12907,6 +12910,15 @@ CAMPAIGN_MOVE_CASCADE = """
             EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', r.tbl, r.conname);
         END LOOP;
     END $$;
+"""
+
+# The same catalog loop again, for the tables made after 0215 (0225's `recap_upload_rights`); a
+# table made later than this declares ON UPDATE CASCADE itself (CLAUDE.md, #2550).
+MOVE_CASCADE_LATE = _CASCADE_ALL_KEYS
+
+CAMPAIGN_MOVE_CASCADE = (
+    _CASCADE_ALL_KEYS
+    + """
 
     -- The bot's lease on a move that is under way, and the door that asks for a move, made again
     -- (0214 is the same as it was when it first shipped): it now also checks that the caller is
@@ -13060,6 +13072,7 @@ CAMPAIGN_MOVE_CASCADE = """
         AFTER UPDATE OF guild_id ON campaigns
         FOR EACH ROW EXECUTE FUNCTION dmbot_note_campaign_guild();
 """
+)
 
 WEB_BACKUPS = (
     """
@@ -14284,6 +14297,10 @@ MIGRATIONS: tuple[Migration, ...] = (
         GRAPH_OVERVIEW,
     ),  # every name on the Story graph, not only the centre's web (#2632)
     ("0230_audio_remake", RECAP_AUDIO_REMAKE),  # what the audio did and how far (#2630)
+    (
+        "0234_move_cascade_late",
+        MOVE_CASCADE_LATE,
+    ),  # keys of tables made after 0215 cascade too (#2550)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
