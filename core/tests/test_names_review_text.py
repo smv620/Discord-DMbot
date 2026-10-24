@@ -57,5 +57,17 @@ class ReviewTextTest(unittest.TestCase):
         self.assertTrue(long.startswith("✅ It's Lord"))
 
 
+class FoundNoteTest(unittest.TestCase):
+    def test_a_shorter_list_is_never_a_silent_one(self) -> None:
+        from dmbot.ui.name_background import _found_note
+
+        self.assertEqual(_found_note(3, 3), "")
+        self.assertEqual(_found_note(0, 0), "")
+        note = _found_note(21, 3)
+        self.assertIn("saw 21 connections in your text and kept 3", note)
+        self.assertIn("one only when both names were found", note)
+        self.assertIn("saw 1 connection in", _found_note(1, 0))
+
+
 if __name__ == "__main__":
     unittest.main()
