@@ -4,6 +4,7 @@ cleaned transcript with PlotBot's guide. Made-up lines; a fake AI, nothing is pa
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import patch
 
@@ -76,6 +77,20 @@ class TheMessage(unittest.TestCase):
         self.assertIn("Mira; Oskar", guide)  # most connected first
         self.assertNotIn("Secret One", guide)  # never a name the writer may not use
 
+    def test_the_guide_never_fails_open(self) -> None:
+        importance = {"Mira": 5.0, "Zarathul": 9.0, "Oskar": 2.0}
+        threads = ["Find the lost crown", "What Zarathul wants", "zarathul's plan"]
+        # no allowed names at all lists no ranked name (an empty list is not "allow all")
+        bare = rd.guide_text([self.BEAT], importance, [], allowed_names=[])
+        self.assertNotIn("Names that matter", bare)
+        guide = rd.guide_text(
+            [self.BEAT], importance, threads,
+            allowed_names=["Mira", "Oskar"], secret_names=["Zarathul"],
+        )  # fmt: skip
+        self.assertNotIn("arathul", guide)  # neither a ranked name nor a thread that holds it
+        self.assertIn("- Find the lost crown", guide)
+        self.assertIn("Mira; Oskar", guide)
+
     def test_the_default_message_is_unchanged(self) -> None:
         message = rd.prose_message([self.BEAT], "", ["Mira"], None)
         self.assertIn("<beats>", message)
@@ -130,6 +145,14 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out.job.state, "ready")
         self.assertTrue(all("<guide>" not in m for m in fast.sent))
         self.assertTrue(all("<transcript>" not in m for m in careful.fact_sent))
+
+    async def test_the_limit_is_the_smaller_of_the_writers_and_the_checkers_model(self) -> None:
+        sizes = {"m-writer": 1_000_000, "m-careful": 10_000}
+        with patch.object(pl, "max_input", lambda model: sizes[model]):
+            worker = pl.RecapWorker.__new__(pl.RecapWorker)
+            worker._creative = SimpleNamespace(model="m-writer")  # type: ignore[attr-defined]
+            worker._careful = SimpleNamespace(model="m-careful")  # type: ignore[attr-defined]
+            self.assertEqual(worker._transcript_limit(), int(10_000 * pl.TRANSCRIPT_SHARE))
 
     async def test_a_name_outside_the_names_list_is_still_refused(self) -> None:
         # The writer may not use a secret name even when the transcript holds it: the draft check

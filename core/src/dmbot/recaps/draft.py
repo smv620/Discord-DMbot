@@ -621,19 +621,27 @@ def guide_text(
     importance: Mapping[str, float],
     threads: Sequence[str],
     allowed_names: Collection[str] = (),
+    secret_names: Collection[str] = (),
 ) -> str:
     """PlotBot's guide to what matters (#2590): the beat sheet as the checklist (its "Matters:"
     notes are PlotBot's), the story threads still open, and the names that matter most to the
-    story, by how connected they are in The truth (#2411). A name outside `allowed_names` is left
-    out, so a secret one is never listed, and no connection is spelled out."""
+    story, by how connected they are in The truth (#2411). It never fails open: a ranked name must
+    be one of `allowed_names` (an empty list allows none), and neither a name nor a thread that
+    mentions a secret name is listed, so a secret one is never shown and no connection is spelled
+    out."""
     ok = {n.casefold() for n in allowed_names}
+
+    def secret(text: str) -> bool:  # (a thread is a phrase: a secret name inside it counts)
+        return names_a_secret(text, secret_names, allowed_names)
+
     parts = ["Checklist (tell these):\n" + sheet(beats, notes=True)]
-    open_threads = [t for t in threads if not ok or t.casefold() in ok]
+    open_threads = [t for t in threads if not secret(t)]
     if open_threads:
         listed = "\n".join(f"- {quoted(t)}" for t in open_threads)
         parts.append("Story threads still open:\n" + listed)
     ranked = sorted(
-        (n for n in importance if not ok or n.casefold() in ok), key=lambda n: -importance[n]
+        (n for n in importance if n.casefold() in ok and not secret(n)),
+        key=lambda n: -importance[n],
     )[:GUIDE_NAMES]
     if ranked:
         parts.append("Names that matter most to the story, first first: " + "; ".join(ranked))

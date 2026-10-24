@@ -132,7 +132,7 @@ class Inputs:
 # A rough size of a token in characters, to decide whether a transcript fits (#2590). Low on
 # purpose: names and rare words take more tokens than plain English, so it errs towards "too long".
 CHARS_PER_TOKEN = 3
-TRANSCRIPT_SHARE = 0.6  # of the writer's input room for the transcript and the guide
+TRANSCRIPT_SHARE = 0.5  # of the smaller input room, for the transcript and the guide
 
 UNMATCHED = "Couldn't write a recap that matched the session."
 # Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
@@ -835,9 +835,14 @@ class RecapWorker:
         words, the DM sidebar or a table question."""
         if self._reads != rd.TRANSCRIPT or key in self._beats_instead:
             return "", ""
-        rows = [(self._who(inputs, s.user_id), s.text) for s in play]
+        first = [
+            u for u in dict.fromkeys(x.user_id for x in inputs.lines) if u not in inputs.dm_ids
+        ]
+        rows = [(self._who(inputs, s.user_id, first), s.text) for s in play]
         block = rd.transcript_block(rows)
-        guide = rd.guide_text(shown, inputs.importance, inputs.threads, inputs.allowed_names)
+        guide = rd.guide_text(
+            shown, inputs.importance, inputs.threads, inputs.allowed_names, inputs.secret_names
+        )
         if (len(block) + len(guide)) / CHARS_PER_TOKEN > self._transcript_limit():
             self._beats_instead.add(key)
             log.info(
@@ -854,20 +859,24 @@ class RecapWorker:
     def _transcript_limit(self) -> int:
         """The most tokens of transcript and guide the writer's model takes, leaving room for the
         instructions, the names and the answer."""
-        model = str(getattr(self._creative or self._careful, "model", ""))
-        return int(max_input(model) * TRANSCRIPT_SHARE)
+        # The fact check reads the same lines on the careful model, so the smaller of the two rules.
+        writer = str(getattr(self._creative or self._careful, "model", ""))
+        checker = str(getattr(self._careful, "model", ""))
+        return int(min(max_input(writer), max_input(checker)) * TRANSCRIPT_SHARE)
 
     @staticmethod
-    def _who(inputs: Inputs, user_id: int) -> str:
+    def _who(inputs: Inputs, user_id: int, order: Sequence[int] | None = None) -> str:
         """How a speaker is shown to the writer: "DM", the character the player plays (one, or
-        several joined), else "Player N" by who spoke first. Never a player's name."""
+        several joined), else "Player N" by who spoke first. Never a player's name. `order`: the
+        players in the order they first spoke, worked out once for a whole transcript."""
         if user_id in inputs.dm_ids:
             return "DM"
         for player, characters in inputs.party.items():
             if player == user_id and characters:
                 return "/".join(characters)
-        order = [u for u in dict.fromkeys(line.user_id for line in inputs.lines)]
-        order = [u for u in order if u not in inputs.dm_ids]
+        if order is None:
+            order = [u for u in dict.fromkeys(x.user_id for x in inputs.lines)]
+            order = [u for u in order if u not in inputs.dm_ids]
         return f"Player {order.index(user_id) + 1}" if user_id in order else "Player"
 
     async def _prose(
@@ -1059,7 +1068,7 @@ class RecapWorker:
                 gid, cid, job,
                 rd.pick_beats(sheet, length.beats, importance=inputs.importance), prose,
                 {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                inputs.corrections,
+                inputs.corrections, False, consenting,
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
@@ -1302,6 +1311,7 @@ class RecapWorker:
         names: Collection[str] = (),
         corrections: Sequence[str] = (),
         free: bool = False,
+        consenting: Consenting | None = None,
     ) -> tuple[rd.Facts | None, bool]:
         """The fact check's flags with the compass directions found in code added (#2067): the
         rule is checked in code, not only asked of the AI, so it holds when the AI's check fails.
@@ -1309,7 +1319,7 @@ class RecapWorker:
         shipped unchecked, whatever the code found)."""
         key = (gid, cid, job.session_at, "facts")
         before = self._last.get(key)
-        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections, free)
+        asked = await self._ask_facts(gid, cid, job, shown, prose, corrections, free, consenting)
         facts = rd.with_directions(asked, prose.summary, names)
         if facts is not asked and facts is not None and self._last.get(key) is not before:
             self._annotate(gid, cid, job, "facts", facts=facts.counts())  # (this try's own event)
@@ -1324,6 +1334,7 @@ class RecapWorker:
         prose: rd.Prose,
         corrections: Sequence[str] = (),
         free: bool = False,
+        consenting: Consenting | None = None,
     ) -> rd.Facts | None:
         """The fact check (#2064): the careful tier reads the numbered sentences against the
         beats the writer was shown and answers with numbers and fixed kinds, never text. None when
@@ -1353,6 +1364,16 @@ class RecapWorker:
                 )
             try:
                 heard = self._heard.get((gid, cid, job.session_at), "")
+                # The transcript goes to the AI again here, so consent is read right before it (a
+                # player may have stopped since the writer saw it): nothing is sent, and the
+                # caller's own check then starts the recap over.
+                if (
+                    heard
+                    and consenting is not None
+                    and not set(job.speakers) <= set(await consenting())
+                ):
+                    self._heard.pop((gid, cid, job.session_at), None)
+                    return None
                 reply = await self._careful.complete(
                     rd.FACTS_SYSTEM_TRANSCRIPT if heard else rd.FACTS_SYSTEM,
                     rd.facts_message(shown, prose.summary, corrections, heard),
@@ -1716,7 +1737,7 @@ class RecapWorker:
                     gid, cid, job,
                     rd.pick_beats(sheet, length.beats, importance=inputs.importance), revised,
                     {*inputs.allowed_names, *(w for b in sheet for w in b.who)},
-                    inputs.corrections, loop.waits > 0,
+                    inputs.corrections, loop.waits > 0, consenting,
                 )  # fmt: skip
             except AIOutOfFunds:
                 return await self._fail(gid, cid, job, FUNDS)
