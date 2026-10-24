@@ -23,7 +23,7 @@ def client(
     body: Any = BODY, model: str = "claude-sonnet-5-5"
 ) -> tuple[AnthropicClient, FakeSession]:
     session = FakeSession(FakeResponse(200, body))
-    return AnthropicClient("sk-secret", AIModels.same(model), session=session), session  # type: ignore[arg-type]
+    return AnthropicClient("sk-secret", AIModels.same(model), session=session), session
 
 
 class TheRoom(unittest.IsolatedAsyncioTestCase):
@@ -87,9 +87,11 @@ class TheHold(unittest.TestCase):
     def test_a_check_that_failed_on_our_side_waits_minutes_not_hours(self) -> None:
         from dmbot.recaps import critics as cr
 
-        for waits in range(8):
-            self.assertLessEqual(cr.wait_for(waits, soon=True), 900)
-        self.assertEqual(cr.wait_for(0, soon=True), 120)
+        self.assertEqual([cr.wait_for(n, soon=True) for n in range(3)], [120, 300, 900])
+        # then the usual back-off, so a long outage does not burn the day's calls
+        self.assertEqual(
+            [cr.wait_for(n, soon=True) for n in range(3, 8)], [900, 3600, 14400, 43200, 43200]
+        )
         # the day's tally, a rolling day, still uses the long schedule
         self.assertEqual(cr.wait_for(2), 14400)
 
@@ -112,7 +114,7 @@ class TheListRead(unittest.IsolatedAsyncioTestCase):
                 asked.append(max_tokens)
                 return Reply('NAMES\n- A | person | quote: "a"\n', len(asked) < 2)
 
-        await lr.read_list(Ai(), "a short text", {}, nullcontext(), lr.Stats())  # type: ignore[arg-type]
+        await lr.read_list(Ai(), "a short text", {}, nullcontext(), lr.Stats())
         self.assertGreaterEqual(asked[0], ai.OUTPUT_FLOOR)
         self.assertGreater(asked[1], asked[0])
 
