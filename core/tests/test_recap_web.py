@@ -521,6 +521,35 @@ class TheDmsPage(Base):
         self.assertEqual(job.summary, "《Calm》 Edited by the DM.")
         self.assertEqual(job.original, fx.SUMMARY)  # the diff against the draft stays possible
 
+    async def test_the_opening_and_closing_lines_cannot_be_edited(self) -> None:
+        """#2630: the DM edits the story between DMbot's two fixed lines."""
+        opening = "Previously, on The Ember Road…"
+        closing = "And so we continue, the epic adventure of The Ember Road."
+        story = "《Calm》 Mira rested."
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, summary=f"{opening}\n\n{story}\n\n{closing}"
+        )
+        edited = f"{opening}\n\n《Calm》 Mira rested by the fire.\n\n{closing}"
+        shown = await edit_recap(self.web, self.session, self.ref, summary=edited, housekeeping=[])
+        self.assertIn("by the fire", shown["summary"])  # the story between them is the DM's
+        for bad in (
+            edited.replace(opening, "Long ago…"),
+            edited.replace(closing, "The end."),
+            edited.replace(closing, "").strip(),
+            edited.replace(opening + "\n\n", ""),
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await edit_recap(self.web, self.session, self.ref, summary=bad, housekeeping=[])
+            self.assertEqual(caught.exception.code, "fixed_lines", bad)
+        job = await self.state(self.one.id)
+        self.assertEqual(job.summary, edited)  # nothing was saved by the refusals
+
+    async def test_a_recap_that_never_had_the_lines_may_stay_without_them(self) -> None:
+        shown = await edit_recap(
+            self.web, self.session, self.ref, summary="《Calm》 Plain.", housekeeping=[]
+        )
+        self.assertEqual(shown["summary"], "《Calm》 Plain.")
+
     async def test_edits_that_are_empty_or_too_big_are_refused(self) -> None:
         for summary, bullets in (
             ("  ", []),
@@ -785,7 +814,7 @@ class TheAudio(Base):
         self.assertEqual(
             off,
             {"state": "off", "error": "", "current": False, "canAskAgain": False,
-             "postedNote": False},
+             "postedNote": False, "how": "", "why": "", "progress": None},
         )  # fmt: skip
         await self.make(self.one.id)
         ready = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
@@ -798,6 +827,92 @@ class TheAudio(Base):
         )
         stale = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
         self.assertEqual((stale["state"], stale["current"]), ("ready", False))
+
+    async def keep_manifest(self, campaign: str) -> None:
+        """What the bot keeps beside the audio of the recap's text as it is now (#2630)."""
+        from dmbot.recaps.audio import parts
+        from dmbot.recaps.audio import script as audio_script
+
+        job = await self.state(campaign)
+        script = audio_script.build(job.title, job.game_day, job.summary)
+        n = len(script.paragraphs)
+        folder = self.files.recap_dir(THURSDAY.id, campaign, 100)
+        parts.save_manifest(
+            folder,
+            parts.manifest_of(
+                script, mode="both", seed=100, seconds=[2.0] * n, cue_at=[[] for _ in range(n)]
+            ),
+        )
+
+    async def remake(self) -> dict[str, Any]:
+        got = await self.client.get(f"/me/recaps/{self.ref}/audio/remake")
+        self.assertEqual(got.status_code, 200, got.text)
+        return cast(dict[str, Any], got.json())
+
+    async def test_the_page_is_told_whether_a_change_remakes_only_the_voice(self) -> None:
+        await self.make(self.one.id)
+        await self.keep_manifest(self.one.id)
+        same = await self.remake()  # the text the audio was made from: a new take of all of it
+        self.assertEqual((same["how"], same["why"]), ("all", ""))
+        job = await self.state(self.one.id)
+        first = job.summary.split("\n\n")[0]
+        word = next(w for w in first.split() if w.isalpha() and len(w) > 3)
+        small = job.summary.replace(first, first.replace(word, word + "x", 1), 1)
+        await self.client.put(f"/me/recaps/{self.ref}", json={"summary": small, "housekeeping": []})
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"], got["changed"]), ("voice", "", 1))
+        self.assertGreaterEqual(got["total"], 2)
+        # a paragraph added: everything again, and the page is told why
+        more = small + "\n\nAnd then the door closed behind them."
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary=more)
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"]), ("all", "paragraphs"))
+
+    async def test_nothing_kept_or_nothing_made_before_is_said_so(self) -> None:
+        await self.make(self.one.id, current=False)  # made before, and nothing kept beside it
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"]), ("all", "no_parts"))
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="off")
+        self.assertEqual((await self.remake())["how"], "new")
+
+    async def test_only_the_campaigns_dm_is_told(self) -> None:
+        await self.make(self.two.id)  # Bob's campaign
+        got = await self.client.get(f"/me/recaps/{self.other}/audio/remake")
+        self.assertEqual(got.status_code, 404)
+        anonymous = httpx.AsyncClient(
+            transport=self.client._transport, base_url=API, headers=HEADERS
+        )
+        self.assertEqual(
+            (await anonymous.get(f"/me/recaps/{self.ref}/audio/remake")).status_code, 401
+        )
+        await anonymous.aclose()
+
+    async def test_the_audio_under_way_carries_its_progress_in_the_shared_shape(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="queued")
+        await self.store.set_audio_progress(
+            THURSDAY.id, self.one.id, 100, stage="voice", done=2, total=3
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        progress = audio["progress"]
+        self.assertEqual(
+            (progress["stage"], progress["done"], progress["total"], progress["unit"]),
+            ("audio_voice", 2, 3, "parts"),
+        )
+        self.assertEqual((progress["state"], progress["reason"]), ("running", None))
+        self.assertGreater(progress["updatedAt"], 0)
+        self.assertNotIn("text", json.dumps(progress))  # counts and codes only
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")  # it ends
+        done = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertIsNone(done["progress"])
+
+    async def test_the_last_making_says_what_it_did(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(
+            THURSDAY.id, self.one.id, 100, audio="ready", how="all", why="moods"
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual((audio["how"], audio["why"]), ("all", "moods"))
 
     async def test_a_failed_audio_carries_its_sentence_and_may_be_asked_for_again(self) -> None:
         await self.approved_with_audio()

@@ -20,9 +20,10 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
-from dmbot.recaps import critics, cues
+from dmbot.recaps import critics, cues, fixed_lines
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
@@ -44,6 +45,8 @@ _COLUMNS = (
     # The posting clock's columns (#2435): the page's `postingSince`, `postingStep` and `postedUrl`
     # are made from them in `_view` (WebDev's #2436 owns those keys).
     " r.posting_since, r.posting_step, r.posted_url,"
+    # What the last making of the audio did and how far the one under way has got (#2630).
+    " r.audio_how, r.audio_why, r.audio_stage, r.audio_done, r.audio_total, r.audio_moved_at,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
@@ -99,7 +102,33 @@ def _audio_view(row: dict[str, Any], *, ready: bool, approved: bool = False) -> 
         and (row["status"] != "posted" or not current),
         # The page says what the new narration is for: the Discord message keeps the old one.
         "postedNote": row["status"] == "posted",
+        # What the last making did (#2630): `new`, `voice` (only the changed paragraphs were spoken
+        # again, the music kept), `all` (everything again, `why` says why: paragraphs, moods, size
+        # or no_parts) or `same` (the words the voice reads had not changed); fixed words only.
+        "how": row.get("audio_how") or "",
+        "why": row.get("audio_why") or "",
+        # While it is made: the shared progress shape (stage audio_voice / audio_music / audio_mix,
+        # the paragraphs spoken `done` of `total`, when it last moved). Counts and codes only.
+        "progress": _audio_progress(row),
     }
+
+
+def _audio_progress(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    stage = row.get("audio_stage") or ""
+    if row["audio"] != "queued" or not stage:
+        return None
+    moved = int(row.get("audio_moved_at") or 0)
+    began = int(row.get("posting_since") or 0) or moved
+    voice = stage == "voice"
+    return progress.shape(
+        f"audio_{stage}",
+        started_at=began,
+        updated_at=moved,
+        now=int(time.time()),
+        done=int(row["audio_done"]) if voice else None,
+        total=int(row["audio_total"]) if voice else None,
+        unit=progress.UNITS.get(f"audio_{stage}"),
+    )
 
 
 def _approved(row: dict[str, Any]) -> bool:
@@ -504,6 +533,8 @@ async def edit_recap(
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        if fixed_lines.changes_fixed_lines(_row["summary"], text):
+            raise RecapError("fixed_lines")  # the opening and closing lines are DMbot's (#2630)
         cur = await conn.execute(
             "UPDATE recap_jobs SET summary = %s, housekeeping = %s WHERE guild_id = %s"
             " AND campaign_id = %s AND session_at = %s AND state = 'ready' AND status = 'draft'",

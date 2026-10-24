@@ -31,6 +31,11 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
     "recap_not_written": None,  # the recap was held, declined or removed: a resting end
+    # The audio being made on the recap page (#2630): a part of the voice, the music call (up to
+    # 7 minutes), the mix.
+    "audio_voice": 10 * 60,
+    "audio_music": 15 * 60,
+    "audio_mix": 10 * 60,
     "recap_ready": None,
     "recap_failed": None,
     "done": None,
@@ -48,7 +53,7 @@ ENDS: Final[Mapping[str, str]] = {
 STALLED_REASON: Final = "stalled"
 RECAP_FAILED_REASON: Final = "recap_failed"
 # What each count measures, for the stages that have one.
-UNITS: Final[Mapping[str, str]] = {"cleaning": "lines"}
+UNITS: Final[Mapping[str, str]] = {"cleaning": "lines", "audio_voice": "parts"}
 
 
 def shape(

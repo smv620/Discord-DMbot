@@ -104,3 +104,20 @@ def without(summary: str) -> str:
     what the next recap is given as "last time" (so the writer is not shown lines to copy)."""
     body = _OPENS.sub("", summary.strip(), count=1).strip()
     return _CLOSES.sub("", body).strip()
+
+
+def _ends(summary: str) -> tuple[str, str]:
+    body = summary.strip()
+    opening, closing = _OPENS.match(body), _CLOSES.search(body)
+    return (
+        " ".join(opening.group().split()) if opening else "",
+        " ".join(closing.group().split()) if closing else "",
+    )
+
+
+def changes_fixed_lines(old: str, new: str) -> bool:
+    """Whether an edit changes, removes or adds the opening or closing line (#2630): the DM edits
+    the story between them; the two lines are DMbot's. A text that had no fixed line (an older
+    recap) may stay without one."""
+    was, now = _ends(old), _ends(new)
+    return (was[0] != now[0] and bool(was[0])) or (was[1] != now[1] and bool(was[1]))
