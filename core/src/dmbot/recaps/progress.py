@@ -30,6 +30,8 @@ FAILED = "recap_failed"
 
 # What a failed recap says, as codes the page puts into words (the stored sentences are the
 # pipeline's own words for the DM; a code is all this shape carries).
+CHECK_LATE_S = 30 * 60  # past its time to be tried again by this long, a check wait is stalled
+
 REASONS: Final[Mapping[str, str]] = {
     pl.NOTHING: "nothing_said",
     pl.TOO_LITTLE: "too_little",
@@ -56,13 +58,9 @@ def stage_of(row: Mapping[str, Any], *, now: int) -> str:
     if state == "queued":
         if int(row["window_count"]) > 0:
             return READING  # between two parts of a long session
-        # Nothing asked yet and put off without an error: it is the wait for the name pass
-        if (
-            int(row["calls"]) == 0
-            and int(row["errors"]) == 0
-            and not row["last_error"]
-            and int(row["next_at"] or 0) > now
-        ):
+        # The wait for the name pass (#2628) says so in the job itself, and the note goes when the
+        # wait is over, so this is the pipeline's own marker and not a guess from other columns.
+        if row["last_error"] == pl.CHECKING_NAMES:
             return NAMES
         return READING
     if state == "beats":
@@ -90,7 +88,7 @@ def of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:
         return None
     stage = stage_of(row, now=now)
     reading = stage == READING and int(row["window_count"]) > 0
-    return progress.shape(
+    shaped = progress.shape(
         stage,
         started_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]) or int(row["created_at"]),
@@ -102,3 +100,11 @@ def of(row: Mapping[str, Any], *, now: int) -> dict[str, Any] | None:
         unit="parts" if reading else None,
         reason=reason_of(row),
     )
+    # A written recap waits hours for its check by design, so it is never stalled by the usual
+    # clock; it is stalled only when the time it was to be tried again has long passed (the worker
+    # is not running it) (#2639 review).
+    due = int(row["next_at"] or 0)
+    if stage == CHECK_WAITING and due and now > due + CHECK_LATE_S:
+        shaped["state"] = progress.STALLED
+        shaped["reason"] = progress.STALLED_REASON
+    return shaped

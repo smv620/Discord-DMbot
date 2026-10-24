@@ -55,15 +55,27 @@ class Stages(unittest.TestCase):
             "done", of(state="beats", window_count=4, window_done=4)
         )  # a part count is for reading
 
-    def test_the_wait_for_the_name_pass_is_its_own_stage(self) -> None:
-        self.assertEqual(of(next_at=NOW_S + 20)["stage"], rp.NAMES)
-        # put off after an error, or after a call was made, is not that wait
+    def test_the_wait_for_the_name_pass_is_its_own_stage_by_the_pipelines_marker(self) -> None:
+        self.assertEqual(of(next_at=NOW_S + 20, last_error=pl.CHECKING_NAMES)["stage"], rp.NAMES)
+        # put off for another reason, or with no marker, is not that wait
+        self.assertEqual(of(next_at=NOW_S + 20)["stage"], rp.READING)
         self.assertEqual(of(next_at=NOW_S + 20, errors=1, last_error="x")["stage"], rp.READING)
-        self.assertEqual(of(next_at=NOW_S + 20, calls=1)["stage"], rp.READING)
 
-    def test_a_written_recap_waiting_to_be_checked_is_never_called_stalled(self) -> None:
-        got = of(state="prose", last_error=critics.CHECK_WAIT, updated_at=NOW_S - 10 * 3600)
+    def test_a_written_recap_waiting_to_be_checked_is_not_stalled_while_it_is_not_due(self) -> None:
+        got = of(
+            state="prose", last_error=critics.CHECK_WAIT, updated_at=NOW_S - 10 * 3600,
+            next_at=NOW_S + 3600,
+        )  # fmt: skip
         self.assertEqual((got["stage"], got["state"]), (rp.CHECK_WAITING, "running"))
+
+    def test_a_check_wait_long_past_its_time_is_stalled(self) -> None:
+        """#2639 review: tried again later is by design, but not when nobody tries it."""
+        late = of(state="prose", last_error=critics.CHECK_WAIT, next_at=NOW_S - rp.CHECK_LATE_S - 1)
+        self.assertEqual(
+            (late["stage"], late["state"], late["reason"]), (rp.CHECK_WAITING, "stalled", "stalled")
+        )
+        near = of(state="prose", last_error=critics.CHECK_WAIT, next_at=NOW_S - 60)
+        self.assertEqual(near["state"], "running")  # a little late is a busy worker
 
     def test_the_times_never_go_backwards_and_the_server_clock_comes_with_them(self) -> None:
         got = of(created_at=NOW_S - 100, updated_at=0)  # (a row never updated: it began now)
@@ -146,6 +158,23 @@ class AsThePipelineWorks(WorkerHarness):
         self.assertEqual(len(set(moved)), len(moved))
         self.assertEqual((seen[-1]["state"], seen[-1]["reason"]), ("done", None))
         self.assertTrue(all(p["startedAt"] == seen[0]["startedAt"] for p in seen))
+
+    async def test_the_name_wait_shows_as_its_own_stage_and_ends_with_it(self) -> None:
+        """#2639 review: the stage comes from the pipeline's own marker, in a real worker run."""
+        happy = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        await self.setUpWorker(happy)
+        waiting = [True]
+
+        async def names_ready(_gid: int, _cid: str, _job: Job) -> bool:
+            return not waiting[0]
+
+        self.worker._names_ready = names_ready
+        job = await self.go()
+        self.assertEqual(self.progress_of(job, int(self.clock.now))["stage"], rp.NAMES)
+        waiting[0] = False
+        self.clock.now += pl.NAMES_RETRY_S + 1
+        job = await self.go()
+        self.assertEqual(self.progress_of(job, int(self.clock.now))["stage"], rp.READY)
 
     async def test_a_long_session_shows_part_x_of_y_as_each_part_is_read(self) -> None:
         from dmbot.ai import Reply  # noqa: F401  (documented: the canned answers are Replies)
