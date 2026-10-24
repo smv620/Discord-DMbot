@@ -12650,14 +12650,19 @@ class DMBot(commands.AutoShardedBot):
             return
         found = None
         known = self._links_guilds.get(campaign_id)
-        for guild in list(self.guilds):
-            if known is not None and guild.id != known:
-                continue  # (the server it was last found in, so most looks are one lookup)
-            campaign = await self.campaigns.get(guild.id, campaign_id)
+        if known is not None:  # the server it was last found in: most looks are one lookup
+            campaign = await self.campaigns.get(known, campaign_id)
             if campaign is not None:
-                self._links_guilds[campaign_id] = guild.id
-                found = (guild.id, campaign)
-                break
+                found = (known, campaign)
+            else:  # moved to another server (or gone): forget it and look everywhere
+                self._links_guilds.pop(campaign_id, None)
+        if found is None:
+            for guild in list(self.guilds):
+                campaign = await self.campaigns.get(guild.id, campaign_id)
+                if campaign is not None:
+                    self._links_guilds[campaign_id] = guild.id
+                    found = (guild.id, campaign)
+                    break
         if found is None:
             return
         guild_id, campaign = found

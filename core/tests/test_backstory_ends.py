@@ -32,7 +32,7 @@ from dmbot.ui import name_background as ui_bg
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests import lore_fake
 from tests.test_background_connections import link, name, reply, shown
-from tests.test_memory_names import DM, GUILD, NamesTest
+from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
 
 TEXT2 = (
     "Mirelle the Pale serves the Order of the Grey Hand. Brannoch Vale was born in the hills; "
@@ -579,6 +579,26 @@ class WhenKept(NamesTest):
         self.assertTrue(waiting and all(w.ready and w.told for w in waiting))
         self.assertEqual((await self.store.take_ready_notices(GUILD, self.campaign.id)).counts, {})
 
+    async def test_a_campaign_that_moved_server_is_found_again_and_the_cache_follows(self) -> None:
+        """#2651 review: the remembered server is dropped on a miss, then every server is tried."""
+        other = SimpleNamespace(id=GUILD + 1)
+        here = SimpleNamespace(id=GUILD)
+        looked: list[int] = []
+
+        async def get(guild_id: int, campaign_id: str) -> Any:
+            looked.append(guild_id)
+            return self.campaign if guild_id == GUILD else None
+
+        self.bot.campaigns.get = get  # type: ignore[method-assign]
+        self.bot._links_guilds[self.campaign.id] = GUILD + 1  # remembered in the old server
+        with (
+            patch.object(DMBot, "guilds", PropertyMock(return_value=[other, here])),
+            patch("dmbot.bot.LINKS_READY_SETTLE_S", 0),
+        ):
+            await self.bot._links_ready_look(self.campaign.id)
+        self.assertEqual(looked, [GUILD + 1, GUILD + 1, GUILD])  # the miss, then the rescan
+        self.assertEqual(self.bot._links_guilds[self.campaign.id], GUILD)
+
 
 class Pronouns(unittest.TestCase):
     """#2650 item 1: "I", "my" and "me" are the character the DM chose; never a guess."""
@@ -883,6 +903,17 @@ class WhichMara(NamesTest):
             )
         self.assertEqual(result, "full")
         self.assertEqual(len(await self.store.which_waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_a_server_manager_who_is_not_a_dm_gets_only_dms_from_the_ready_button(
+        self,
+    ) -> None:
+        """#2651 review: `_campaign_for` lets a server manager through; the button's own check
+        must still refuse them, with the DM-only line, and show nothing from the queue."""
+        button = links_ready.ReadyButton(self.campaign.id)
+        manager = self.it(MANAGER)
+        await button.callback(manager)
+        self.assertIn(ui_bg.ONLY_DMS, str(manager.response.sent))
+        manager.followup.send.assert_not_awaited()
 
     async def test_the_ready_button_is_for_the_dm_only(self) -> None:
         button = links_ready.ReadyButton(self.campaign.id)
