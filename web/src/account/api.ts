@@ -575,6 +575,25 @@ export interface RecapAudioState {
   /** The recap is already posted: a new narration is for this page, and the Discord message keeps
    * its old audio (#2183). Missing from an older API. */
   postedNote?: boolean;
+  /** What the last making did (#2630): `new`, `voice` (only the changed paragraphs were spoken again,
+   * the music kept), `all` (everything again; `why` says why) or `same`. Missing from an older API. */
+  how?: RemakeHow | "";
+  why?: RemakeWhy;
+  /** While the audio is made: the shared progress shape (stage audio_voice / audio_music / audio_mix,
+   * paragraphs spoken `done` of `total`). Missing from an older API, or when nothing is under way. */
+  progress?: JobProgress | null;
+}
+
+/** What "Make the audio again" would do for this recap now (#2630; CloudDev's
+ * `GET /me/recaps/{ref}/audio/remake`): only the voice, everything, nothing, or a first making. `why`
+ * is a fixed code and says why everything is made again; `changed` of `total` paragraphs differ. */
+export type RemakeHow = "voice" | "all" | "same" | "new";
+export type RemakeWhy = "" | "paragraphs" | "moods" | "size" | "no_parts";
+export interface RecapRemake {
+  how: RemakeHow;
+  why: RemakeWhy;
+  changed: number;
+  total: number;
 }
 
 /** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
@@ -999,12 +1018,15 @@ export interface WebBelief {
 }
 
 /** One connection between two names, for the edge panel. `direction` says who does it to whom, from
- * the edge's `a` and `b`: "ab" (a does it to b), "ba", or "both". */
+ * the edge's `a` and `b`: "a-b" (a does it to b), "b-a", or "both". */
 export interface WebLink {
   id: string;
   words: string;
   secret: boolean;
-  direction: "ab" | "ba" | "both";
+  direction: "a-b" | "b-a" | "both";
+  /** How it reads from the second name when that differs ("has as a member"); null or missing
+   * when it reads the same either way or has no fixed reading back (#2666). */
+  back?: string | null;
   /** False: not revealed to the players yet (#2405). */
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
@@ -1275,6 +1297,7 @@ export type ApiErrorKind =
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
+  | "fixed-lines" // the opening or closing line of a recap was edited; they are DMbot's (#2630)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
@@ -1521,6 +1544,9 @@ export interface AccountApi {
   respellFromVoice?(campaignRef: string, nameId: string, clip: Blob): Promise<string>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
+  /** What that would do (#2630): only the voice or the whole audio, and why. Missing from an API older
+   * than #2630; the page then offers "Make the audio again" as before. */
+  recapAudioRemake?(ref: string): Promise<RecapRemake>;
   /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
    * the DM kept. Missing from an API older than #2113. */
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -1662,6 +1688,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
+  fixed_lines: "fixed-lines",
   no_tries: "no-tries",
   sort_failed: "sort-failed",
   bad_type: "bad-type",
@@ -2126,6 +2153,11 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    recapAudioRemake: async (ref) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/audio/remake`,
+      )) as RecapRemake,
     sendFix: async (ref, text) =>
       (await call(
         "POST",

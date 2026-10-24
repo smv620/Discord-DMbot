@@ -62,10 +62,10 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
             {
                 "id": row["id"],
                 "words": link_words(str(row["predicate"]), str(row["detail"] or ""), directional),
-                # how it reads from the second name when that differs ("has a niece"), else None
-                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional)
-                if str(row["predicate"]) == "kin_of"
-                else None,
+                # how it reads from the second name when that differs ("has a niece", "has as a
+                # member"), else None; every connection that has a reading back sends it (#2666),
+                # so the page can write each line from the name in the middle
+                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
