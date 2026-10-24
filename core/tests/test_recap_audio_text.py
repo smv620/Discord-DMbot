@@ -436,7 +436,7 @@ class Mixing(unittest.TestCase):
             samples = [
                 int.from_bytes(raw[i : i + 2], "little", signed=True) for i in range(0, len(raw), 2)
             ]
-            return (sum(x * x for x in samples) / max(1, len(samples))) ** 0.5
+            return float((sum(x * x for x in samples) / max(1, len(samples))) ** 0.5)
 
         with tempfile.TemporaryDirectory() as tmp:
             p = mix.plan(6, with_ambience=False)
