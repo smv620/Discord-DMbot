@@ -44,6 +44,15 @@ class EveryClaimedTableComesBack(DatabaseTest):
 
     async def count(self, guild: int, campaign_id: str, table: str) -> int:
         async with self.db.guild(guild) as conn:
+            if table == "transcript_lines":  # (no campaign_id of its own: it hangs off its session)
+                cur = await conn.execute(
+                    "SELECT count(*) AS n FROM transcript_lines l JOIN transcript_sessions s"
+                    " ON s.id = l.session_id AND s.guild_id = l.guild_id WHERE s.campaign_id = %s",
+                    (campaign_id,),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                return int(row["n"])
             cur = await conn.execute(
                 f"SELECT count(*) AS n FROM {table} WHERE campaign_id = %s",
                 (campaign_id,),
@@ -208,6 +217,32 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " '{\"rules\": []}'::jsonb, true, %s, 1)",
                 (g, c, "a" * 32, DM),
             ),
+            "transcript_sessions": (
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, line_count)"
+                " VALUES (%s, %s, %s, 100, 1)",
+                ("d" * 32, g, c),
+            ),
+            "transcript_lines": (
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard)"
+                " VALUES (%s, %s, 0, %s, 'hello')",
+                (g, "d" * 32, SPEAKER),
+            ),
+            "transcript_suggestions": (
+                "INSERT INTO transcript_suggestions (guild_id, campaign_id, session_id, started_ms,"
+                " user_id, suggested, base_text, created_at) VALUES (%s, %s, %s, 0, %s, 'hi', 'x', 1)",
+                (g, c, "d" * 32, SPEAKER),
+            ),
+            "transcript_respells": (
+                "INSERT INTO transcript_respells (guild_id, campaign_id, batch, session_id, line_id,"
+                " user_id, old_text, new_text, offsets, was, made_at) SELECT %s, %s, 1, %s, id, %s,"
+                " 'a', 'b', ARRAY[0], ARRAY['a'], 1 FROM transcript_lines WHERE session_id = %s",
+                (g, c, "d" * 32, SPEAKER, "d" * 32),
+            ),
+            "session_imports": (
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id, file_name,"
+                " imported_by, imported_at) VALUES (%s, %s, %s, %s, 'n.txt', %s, 1)",
+                (g, c, "d" * 32, "f" * 32, DM),
+            ),
             "rule_sets": (
                 "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
                 " created_at) VALUES (%s, %s, %s, 'house_rules', 'Mine', 'shared', %s, 1)",
@@ -275,9 +310,9 @@ class EveryClaimedTableComesBack(DatabaseTest):
         before = {t: await self.count(GUILD, self.campaign.id, t) for t in claimed}
         empty = sorted(t for t, n in before.items() if n == 0)
         self.assertEqual(empty, [], "a claimed table with no row proves nothing")
-        data = await self.store.export(GUILD, self.campaign.id)
+        data, parts = await self.store.export_set(GUILD, self.campaign.id)
         json.dumps(data)  # (what a download is made of)
-        restored = await self.store.import_backup(OTHER, data, DM)
+        restored = await self.store.import_backup(OTHER, data, DM, parts=parts)
         after = {t: await self.count(OTHER, restored.id, t) for t in claimed}
         self.assertEqual(after, before)
 

@@ -54,6 +54,18 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "memory_heard": ("memory_heard",),
 }
 
+# The extra files of a backup (#2552): the tables each one carries. Not registered sections: they
+# are written and read by `campaigns/parts.py` beside the main file, whole sessions at a time.
+PART_TABLES: dict[str, tuple[str, ...]] = {
+    "transcripts": (
+        "transcript_sessions",
+        "transcript_lines",
+        "transcript_suggestions",
+        "transcript_respells",
+        "session_imports",
+    ),
+}
+
 # Table -> why a backup does not carry it, and the decision that says so. A backup is downloadable
 # by anyone in the server, hence the private ones; the rest are runtime state, logs, waits and
 # pointers, or are made again by reading.
@@ -109,18 +121,15 @@ NOT_IN_BACKUP: dict[str, str] = {
     "rule_set_suggestions_sent": _KEY,
 }
 
-# Tables a backup should carry and does not yet. This is #2552's remaining work: each one moves to
-# a section and the list ends empty. `transcript_lines` has no `campaign_id`; it hangs off
-# `transcript_sessions` (the test follows foreign keys to find such tables).
-OWED_TO_BACKUP: tuple[str, ...] = (
-    "transcript_sessions",
-    "transcript_lines",
-    "transcript_respells",
-    "transcript_suggestions",
-    "session_imports",  # with the transcripts it belongs to
-)
+# Tables a backup should carry and does not yet: empty since #2552 (the test keeps the list so a
+# table can be parked here again while its section is built). `transcript_lines` has no
+# `campaign_id`; it hangs off `transcript_sessions` (the test follows foreign keys to find such
+# tables).
+OWED_TO_BACKUP: tuple[str, ...] = ()
 
 
 def backed_up() -> frozenset[str]:
     """The tables some registered backup section carries."""
-    return frozenset(t for tables in SECTION_TABLES.values() for t in tables)
+    return frozenset(
+        t for tables in (*SECTION_TABLES.values(), *PART_TABLES.values()) for t in tables
+    )

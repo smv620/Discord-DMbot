@@ -22,7 +22,7 @@ import re
 import time
 import uuid
 import zlib
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Sequence
 from typing import Any, Literal, LiteralString, Protocol, cast
 
 from psycopg import errors as pg_errors
@@ -59,6 +59,16 @@ from dmbot.campaigns.models import (
     fingerprint,
     name_key,
 )
+from dmbot.campaigns.parts import (
+    DAMAGED as TRANSCRIPTS_DAMAGED,
+)
+from dmbot.campaigns.parts import (
+    PART_TEXT_BYTES,
+    SESSION_TOO_BIG,
+    TranscriptParts,
+    decode_part,
+    encode_part,
+)
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
 
@@ -89,6 +99,9 @@ NOT_A_BACKUP = (
     "That file isn't a DMbot campaign backup. Pick the file you got from `/dmbot backup`."
 )
 CAMPAIGN_TOO_BIG = "This campaign is too big for DMbot to copy yet. Nothing was lost."
+PARTS_NOT_THIS_COPY = (
+    "Those transcripts files don't belong to this copy. Use the ones DMbot gave with it."
+)
 
 
 class BackupTooBig(CampaignError):
@@ -1386,14 +1399,43 @@ class CampaignStore:
     # ---- backups -------------------------------------------------------------
 
     async def export(self, guild_id: int, campaign_id: str) -> dict[str, Any]:
-        """A JSON-friendly backup of one campaign, read from one consistent moment."""
+        """A JSON-friendly backup of one campaign, read from one consistent moment. The main file
+        only: its transcripts are the extra files of `export_set`."""
+        return (await self.export_set(guild_id, campaign_id, with_parts=False))[0]
+
+    async def export_set(
+        self, guild_id: int, campaign_id: str, *, with_parts: bool = True
+    ) -> tuple[dict[str, Any], list[bytes]]:
+        """The whole backup: the main file and the `transcripts` files (#2552), all read from one
+        consistent moment. The main file names the set (`parts`: its id and how many files) so a
+        restore can tell a missing file from a campaign that has none. A session too big for one
+        file raises BackupTooBig; no copy is made that cannot come back."""
+        files: list[bytes] = []
+        backup_id = uuid.uuid4().hex
         async with self._db.guild(guild_id, snapshot=True) as conn:
             campaign = await self._require(conn, guild_id, campaign_id)
             sections = {
                 name: await section.dump(conn, guild_id, campaign_id)
                 for name, section in self._sections.items()
             }
-        return {
+            if with_parts:
+                pending: list[str] = []
+                size = 0
+                async for text in TranscriptParts().sessions(conn, guild_id, campaign_id):
+                    if len(text) > PART_TEXT_BYTES:
+                        raise BackupTooBig(SESSION_TOO_BIG)
+                    if pending and size + len(text) > PART_TEXT_BYTES:
+                        files.append(
+                            await asyncio.to_thread(encode_part, backup_id, len(files) + 1, pending)
+                        )
+                        pending, size = [], 0
+                    pending.append(text)
+                    size += len(text)
+                if pending:
+                    files.append(
+                        await asyncio.to_thread(encode_part, backup_id, len(files) + 1, pending)
+                    )
+        main: dict[str, Any] = {
             "format": EXPORT_FORMAT,
             "version": EXPORT_VERSION,
             "exported_at": int(self._clock()),
@@ -1421,6 +1463,9 @@ class CampaignStore:
             },
             "sections": sections,
         }
+        if files:
+            main["parts"] = {"id": backup_id, "count": len(files)}
+        return main, files
 
     def _checked(self, data: object) -> tuple[dict[str, Any], dict[str, Any]]:
         """The backup's campaign settings and each section's rows, checked. Pure."""
@@ -1446,8 +1491,14 @@ class CampaignStore:
         importer_id: int,
         *,
         replace_campaign_id: str | None = None,
+        parts: Sequence[bytes] = (),
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
+
+        `parts`: the `transcripts` files that came with the main file (#2552). None: the campaign
+        is restored without them, as a copy made before they existed is. All of them or none: a
+        file that is missing, repeated or from another copy is refused. Each is unpacked and
+        checked on its own, so memory stays bounded however many sessions there are.
 
         The importer always becomes a DM of the restored campaign, and its owner (#437)
         when it's a new campaign: the owner isn't in a backup, as it is a person's plan.
@@ -1461,6 +1512,7 @@ class CampaignStore:
         # other servers) carries on, and before the transaction, so no locks are held
         # meanwhile (#164).
         info, sections = await asyncio.to_thread(self._checked, data)
+        order = await self._part_order(data, parts)
         # The Shared story switch comes back on only for the person who confirmed the right to
         # use the material (the file's confirmation is theirs); anyone else restoring the file
         # starts with it off and confirms for themselves (#1692, CLAUDE.md IP rule).
@@ -1599,6 +1651,17 @@ class CampaignStore:
                     raise
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
+            if order:
+                if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
+                    await TranscriptParts().clear(conn, guild_id, campaign_id)
+                for index in order:
+                    # (unpacked again here, one at a time: nothing but the part in hand is held)
+                    part = await asyncio.to_thread(decode_part, parts[index])
+                    try:
+                        await TranscriptParts().load(conn, guild_id, campaign_id, part)
+                    except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
+                        # (the tables' own types and CHECKs refused a value in the file)
+                        raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(
@@ -1609,6 +1672,36 @@ class CampaignStore:
                 (campaign_id, guild_id, importer_id, guild_id, campaign_id),
             )
             return await self._require(conn, guild_id, campaign_id)
+
+    @staticmethod
+    async def _part_order(data: object, parts: Sequence[bytes]) -> list[int]:
+        """Which of `parts` to load, in the copy's own order, after checking that they are exactly
+        the set the main file names (#2552). Empty when none were given. Each file is unpacked and
+        checked here, one at a time, and let go."""
+        if not parts:
+            return []
+        manifest = data.get("parts") if isinstance(data, dict) else None
+        if (
+            not isinstance(manifest, dict)
+            or not isinstance(manifest.get("id"), str)
+            or type(manifest.get("count")) is not int
+        ):
+            raise CampaignError(PARTS_NOT_THIS_COPY)
+        numbered: dict[int, int] = {}
+        for index, raw in enumerate(parts):
+            part = await asyncio.to_thread(decode_part, raw)
+            if part["backup"] != manifest["id"]:
+                raise CampaignError(PARTS_NOT_THIS_COPY)
+            if part["part"] in numbered or not 1 <= part["part"] <= manifest["count"]:
+                raise CampaignError(PARTS_NOT_THIS_COPY)
+            numbered[part["part"]] = index
+        if len(numbered) != manifest["count"]:
+            raise CampaignError(
+                f"This copy has {manifest['count']} transcripts file"
+                f"{'' if manifest['count'] == 1 else 's'}, and you gave {len(numbered)}. "
+                "Give all of them, or none to restore without the transcripts."
+            )
+        return [numbered[n] for n in sorted(numbered)]
 
     # ---- helpers (run inside a guild transaction) ----------------------------
 
