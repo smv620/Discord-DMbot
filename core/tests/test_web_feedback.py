@@ -70,7 +70,7 @@ class FeedbackRoute(DatabaseTest):
         }
         options.update(changes)
         app = create_app(
-            settings(client_ip_header="CF-Connecting-IP"),
+            settings(client_ip_header="X-Test-Client-IP"),
             self.db,
             FakeDiscord(),
             clock=lambda: NOW,
@@ -85,7 +85,7 @@ class FeedbackRoute(DatabaseTest):
     async def send(self, ip: str = "203.0.113.5", **fields: Any) -> httpx.Response:
         body = {"kind": "feedback", "message": "Loved it!", "turnstile": "person", **fields}
         return await self.client.post(
-            "/feedback", json=body, headers={**HEADERS, "CF-Connecting-IP": ip}
+            "/feedback", json=body, headers={**HEADERS, "X-Test-Client-IP": ip}
         )
 
     async def stored(self) -> list[dict[str, Any]]:

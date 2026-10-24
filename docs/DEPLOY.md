@@ -318,6 +318,28 @@ Discord sign-in isn't set, because the API won't start without it):**
    An older email's reply address (on the main domain) still reads, if it ever arrives: the
    token proves the ticket, not the domain.
 
+   **One route for the whole API (#2625; Supervisor's decision, 2026-10-24).** The routes above
+   (`^/admin…`, the Stripe, sign-in, `/me`, billing and support route, and `^/mail/inbound$`)
+   were the list of paths the outside world may reach, kept in the Cloudflare dashboard. That
+   list now lives in the code (`core/src/dmbot/web/public_paths.py`): a request that comes through
+   the tunnel to any other path gets the same empty 404 from the app itself, and a test fails
+   when a route has not been sorted. So the tunnel needs only **one** route. **Do this only after
+   dev1 has deployed this change and says so** (until then the old routes stay exactly as they
+   are, or the closed paths open up):
+   1. dev1 deploys, then runs `scripts/check-public-paths` from a computer outside the server.
+      Every line must say `ok`.
+   2. The owner adds one route as above (Subdomain `api`, Domain `getdmbot.com`, Service type
+      HTTP, URL `web-api:8080`) with the Path `^/` (copied exactly).
+   3. dev1 runs `scripts/check-public-paths` again. Every line must still say `ok`, and the three
+      "stays closed" lines (`/health`, `/personal`, a path that doesn't exist) must still be the
+      empty 404. If one of them isn't, the owner deletes the new route at once and tells dev1.
+   4. The owner removes the old routes one by one. Nothing changes: the app now keeps what they
+      kept.
+   **Interim, until then:** the owner can add one route, Path `^/recap-audio/`, to `web-api:8080`
+   so recap audio plays on the website. It is safe: each audio link is signed and expires.
+   A new public route is added in `public_paths.py` (with its reason) in the same change that
+   adds the route: no dashboard step.
+
 **You (the owner), on the server, once dev1 says the update is in:**
 
 4. Copy the token again from the tunnel's page in Cloudflare (open

@@ -109,7 +109,7 @@ class Routes(DatabaseTest):
         }
         route_limits.update(limits)
         app = create_app(
-            settings(client_ip_header="CF-Connecting-IP"),
+            settings(client_ip_header="X-Test-Client-IP"),
             self.db,
             FakeDiscord(),
             route_limits=route_limits,
@@ -124,7 +124,7 @@ class Routes(DatabaseTest):
         self, method: str, path: str, ip: str = "203.0.113.5", **extra: Any
     ) -> httpx.Response:
         return await self.client.request(
-            method, path, headers={**HEADERS, "CF-Connecting-IP": ip}, **extra
+            method, path, headers={**HEADERS, "X-Test-Client-IP": ip}, **extra
         )
 
     async def test_sign_in_and_install_share_twenty_per_ten_minutes_each_group(self) -> None:
@@ -174,7 +174,7 @@ class Routes(DatabaseTest):
         self.assertEqual(other.status_code, 401)
 
     async def test_a_missing_or_garbage_proxy_header_is_still_limited(self) -> None:
-        for header in ({}, {"CF-Connecting-IP": "not-an-address"}):
+        for header in ({}, {"X-Test-Client-IP": "not-an-address"}):
             self.make_client()
             statuses = [
                 (
@@ -187,7 +187,7 @@ class Routes(DatabaseTest):
     async def test_the_payment_webhook_is_never_limited(self) -> None:
         for _ in range(60):
             response = await self.client.post(
-                "/webhooks/nobody", content=b"{}", headers={"CF-Connecting-IP": "203.0.113.5"}
+                "/webhooks/nobody", content=b"{}", headers={"X-Test-Client-IP": "203.0.113.5"}
             )
             self.assertEqual(response.status_code, 404)  # no provider: not 429
 
@@ -209,7 +209,7 @@ class Routes(DatabaseTest):
     async def test_a_cross_site_post_is_refused_before_it_is_counted(self) -> None:
         for _ in range(10):
             forged = await self.client.post(
-                "/account/delete/request", headers={"CF-Connecting-IP": "203.0.113.5"}
+                "/account/delete/request", headers={"X-Test-Client-IP": "203.0.113.5"}
             )
             self.assertEqual(forged.status_code, 403)
         self.assertEqual((await self.hit("POST", "/account/delete/request")).status_code, 401)
@@ -242,14 +242,14 @@ class Routes(DatabaseTest):
         self.assertNotIn("slow", (await self.hit("GET", "/install")).headers["location"])
 
     async def test_the_real_limits_are_wired_by_default(self) -> None:
-        app = create_app(settings(client_ip_header="CF-Connecting-IP"), self.db, FakeDiscord())
+        app = create_app(settings(client_ip_header="X-Test-Client-IP"), self.db, FakeDiscord())
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=API)
         self.addAsyncCleanup(client.aclose)
         codes = [
             (
                 await client.post(
                     "/account/delete/request",
-                    headers={**HEADERS, "CF-Connecting-IP": "203.0.113.5"},
+                    headers={**HEADERS, "X-Test-Client-IP": "203.0.113.5"},
                 )
             ).status_code
             for _ in range(6)

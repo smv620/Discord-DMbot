@@ -90,6 +90,7 @@ from dmbot.web.payments import (
     ResumeRefused,
     paid_plan_ids,
 )
+from dmbot.web.public_paths import TUNNEL_HEADER, is_public
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recap_requests import (
     STATUS,
@@ -249,6 +250,10 @@ def create_app(
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        # Through the tunnel (it always sets this header), only the public paths exist (#2625); the
+        # same empty 404 the tunnel gave before the list moved into code. From inside, never.
+        if TUNNEL_HEADER in request.headers and not is_public(request.url.path):
+            return Response(status_code=404)
         # The payment company's webhook and the mail service's inbound one are checked by their
         # signatures instead (they can't send our header or come from the website).
         webhook = request.url.path.startswith("/webhooks/") or request.url.path == "/mail/inbound"
