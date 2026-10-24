@@ -288,7 +288,10 @@ from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
     DM,
     FIX,
+    GOING,
+    HINTED,
     KEEP,
+    OPEN,
     PROPOSED,
     Heard,
     MemoryRuleError,
@@ -1430,6 +1433,7 @@ class DMBot(commands.AutoShardedBot):
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
                 critics=True,  # the critics read each draft until they agree (#2255)
+                reads=settings.recap_writer_reads,
             )
         # The recap's narration and music (#1383): a second job after the text is ready. Built
         # only with the switch on and a key and voice set; with none, recaps go out text-only.
@@ -9446,7 +9450,30 @@ class DMBot(commands.AutoShardedBot):
             with_earlier=job.split is None and job.window_done == 0,
         )
         # What the DM corrected in this one recap, for this try only (#2076).
-        return None if found is None else dataclasses.replace(found, corrections=job.corrections)
+        if found is None:
+            return None
+        threads = (
+            await self._open_threads(gid, cid)
+            if self.settings.recap_writer_reads == "transcript"
+            else ()
+        )
+        return dataclasses.replace(found, corrections=job.corrections, threads=threads)
+
+    async def _open_threads(self, gid: int, cid: str) -> tuple[str, ...]:
+        """The names of the story threads still open (not resolved or abandoned), for PlotBot's
+        guide to a writer that reads the transcript (#2590). Names only; none if they can't be
+        read (the guide is then shorter, nothing else changes)."""
+        if self.memory is None:
+            return ()
+        try:
+            found = await self.memory.threads(gid, cid)
+        except Exception:
+            log.exception("Recap: couldn't read the open story threads")
+            return ()
+        live = (OPEN, GOING, HINTED)
+        return tuple(
+            t.thread.name for t in found if t.state is not None and t.state.condition in live
+        )
 
     async def recap_story(self, gid: int, cid: str, job: Job, seeds: Sequence[str]) -> list[Memory]:
         """The confirmed story memory around the beats' names for PlotBot's notes (#2254). Two
