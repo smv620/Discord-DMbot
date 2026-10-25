@@ -1124,14 +1124,9 @@ async def _forget_memory_traces(
     """The story-memory rows that exist only because of this person's lines (see
     `delete_person`), in the caller's transaction. Memory relations may still list a deleted
     mention's id; recall skips ids it can't find."""
-    await _forget_mentions(conn, guild_id, refs)
-    # whatever else names them (a reference to a line that was not in the list): by speaker
-    await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
-    await conn.execute(
-        "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
-    )
     # A claim that cites this person goes even if it cites others too: it is only a waiting
-    # proposal, and keeping it would keep their words in its details.
+    # proposal, and keeping it would keep their words in its details. First of all: the clean-ups
+    # below take the person's id out of the claims that stay, and this finds them by it.
     cur = await conn.execute(
         "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
         " AND status <> 'confirmed' RETURNING campaign_id, id",
@@ -1142,6 +1137,13 @@ async def _forget_memory_traces(
         claims.setdefault(str(claim["campaign_id"]), []).append(str(claim["id"]))
     await _drop_log_rows(conn, guild_id, "memory_claims", claims)
     await evidence.placeholder_claims(conn, guild_id, [i for ids in claims.values() for i in ids])
+    await _forget_mentions(conn, guild_id, refs)
+    # whatever else names them (a reference to a line that was not in the list): by speaker; the
+    # claims the DM confirmed stay, without their line references and their id (#2676, #2679)
+    await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
+    await conn.execute(
+        "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
+    )
 
 
 async def _drop_log_rows(
