@@ -24,10 +24,10 @@ describe("Names fixed this session", () => {
   it("lists each name with how often it was fixed and the spellings it replaced", async () => {
     await open();
     await heading();
-    expect(row("Kethrandil").textContent).toContain("corrected 8 times");
-    expect(row("Kethrandil").textContent).toContain("Keirandal (5)");
-    expect(row("Kethrandil").textContent).toContain("Kethrandel (3)");
-    expect(row("Brindlemoor").textContent).toContain("corrected once");
+    expect(row("Kethrandil").textContent).toContain("fixed 8 times");
+    expect(row("Kethrandil").textContent).toContain("Keirandal, 5 times");
+    expect(row("Kethrandil").textContent).toContain("Kethrandel, 3 times");
+    expect(row("Brindlemoor").textContent).toContain("fixed once");
     expect(screen.getByText(/2 words it wasn't sure of and 1 new name/)).toBeTruthy();
   });
 
@@ -40,8 +40,10 @@ describe("Names fixed this session", () => {
   it("puts a name back through the bot and says how many lines came back", async () => {
     const api = await open();
     await heading();
-    fireEvent.click(screen.getByRole("button", { description: /Kethrandil/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Kethrandil" }));
     await waitFor(() => expect(screen.getByText(w.putBack(8))).toBeTruthy());
+    // The keyboard stays on that name's line.
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-row")).toBe("nf-kethrandil"));
     expect(api.calls).toContain(`undoNameFix:${REF}:nf-kethrandil`);
     expect(row("Kethrandil").textContent).toContain(w.undone);
     expect(row("Kethrandil").querySelector("button")).toBeNull();
@@ -50,22 +52,25 @@ describe("Names fixed this session", () => {
   it("says what happened when the lines were changed since", async () => {
     await open();
     await heading();
-    fireEvent.click(screen.getByRole("button", { description: /Oskar Vane/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Oskar Vane" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["gone"]));
+    // The re-read that follows must not wipe the message.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByRole("alert").textContent).toBe(w.errors["gone"]);
   });
 
   it("leaves it on the list when DMbot can't write now", async () => {
     await open();
     await heading();
-    fireEvent.click(screen.getByRole("button", { description: /Brindlemoor/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Brindlemoor" }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["cannot-write"]));
-    expect(screen.getByRole("button", { description: /Brindlemoor/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Undo Brindlemoor" })).toBeTruthy();
   });
 
   it("does one Undo at a time, even for two presses at once", async () => {
     const api = await open();
     await heading();
-    const button = screen.getByRole("button", { description: /Kethrandil/ });
+    const button = screen.getByRole("button", { name: "Undo Kethrandil" });
     fireEvent.click(button);
     fireEvent.click(button);
     await waitFor(() => expect(screen.getByText(w.putBack(8))).toBeTruthy());

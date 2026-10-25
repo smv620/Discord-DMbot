@@ -514,7 +514,6 @@ export interface NamesFixed {
   unsure: number;
   /** New names it offered to the DM: a count only. */
   new: number;
-  guarded?: number;
 }
 /** Adding a recap someone wrote (`POST /me/campaigns/{ref}/recaps/upload`, #2609): `text` or `link`. */
 export interface AddRecapInput {

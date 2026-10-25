@@ -70,7 +70,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Names fixed this session, with Undo",
-    text: "Under a session's recap, Names fixed this session lists the names DMbot corrected in the cleaned transcript: each name, how many times it was fixed, and the spellings it replaced. Press Undo to put a name back as it was heard; DMbot then won't fix that spelling the same way again. If the lines were changed since, it says there was nothing to put back. Only the DM sees this list, never a player.",
+    text: "Below a session's recap text, Names fixed this session shows the names DMbot fixed in the cleaned transcript. Each name says how many times it was fixed and how it was written before. Press Undo to put a name back as it was heard. DMbot then leaves that spelling alone. Only you, the DM, see this list.",
   },
   {
     audience: "gameMaster",

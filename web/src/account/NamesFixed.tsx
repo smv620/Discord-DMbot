@@ -18,9 +18,11 @@ const say = (error: unknown): string => {
 export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const [got, setGot] = useState<Fixed | null>(null);
   const [hidden, setHidden] = useState(false);
-  const [problem, setProblem] = useState("");
+  const [problem, setProblem] = useState(""); // the list could not be read
+  const [undoProblem, setUndoProblem] = useState(""); // an Undo was refused: kept apart so the re-read can't wipe it
   const [busy, setBusy] = useState<string | null>(null);
   const [said, setSaid] = useState(""); // one polite place for results
+  const [waited, setWaited] = useState(0); // seconds the Undo in progress has waited
   const latest = useRef(0); // the newest look's number: an older, slower answer is ignored
   const inFlight = useRef(false); // Undo goes one at a time, even two clicks in one tick
   const box = useRef<HTMLElement>(null);
@@ -50,6 +52,7 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
     setGot(null);
     setHidden(false);
     setProblem("");
+    setUndoProblem("");
     setSaid("");
     void load();
     return () => {
@@ -57,6 +60,14 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, recapRef]);
+
+  // While an Undo waits, count the seconds so the DM can see it is still working (owner rule 2026-10-23).
+  useEffect(() => {
+    if (!busy) return;
+    setWaited(0);
+    const timer = setInterval(() => setWaited((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
 
   // Nothing at all until the API has said this is a DM's list: no heading, no lead, for anyone else.
   if (hidden || !api.namesFixed || (!got && !problem)) return null;
@@ -72,22 +83,26 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
     if (!api.undoNameFix || busy || inFlight.current) return;
     inFlight.current = true;
     setBusy(id);
-    setProblem("");
+    setUndoProblem("");
     setSaid("");
     let message = "";
     try {
       const done = await api.undoNameFix(recapRef, id);
       message = done.putBack > 0 ? w.putBack(done.putBack) : w.nothingBack;
     } catch (error) {
-      setProblem(say(error));
+      setUndoProblem(say(error));
     } finally {
       // Read again either way, so the list matches the truth (it may have changed since the page read it).
       await load();
       inFlight.current = false;
       setBusy(null);
       if (message) setSaid(message);
-      // The pressed button turns into "Put back": keep the keyboard on the list.
-      setTimeout(() => box.current?.querySelector<HTMLElement>(`[data-fix="${id}"]`)?.focus(), 0);
+      // The pressed button is gone once it worked (and was disabled while it waited): keep the keyboard on
+      // that name's line, or on its button when the Undo was refused.
+      setTimeout(() => {
+        const at = box.current;
+        (at?.querySelector<HTMLElement>(`[data-fix="${id}"]`) ?? at?.querySelector<HTMLElement>(`[data-row="${id}"]`))?.focus();
+      }, 0);
     }
   };
 
@@ -99,9 +114,9 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
       <p class="small" role="status" aria-live="polite">
         {said}
       </p>
-      {problem && (
+      {(undoProblem || problem) && (
         <p class="error" role="alert">
-          {problem}
+          {undoProblem || problem}
         </p>
       )}
       {got.fixed.length === 0 ? (
@@ -110,7 +125,7 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
         <ul class="stack">
           {got.fixed.map((f) => (
             <li key={f.id} class={f.undone ? "stack muted" : "stack"}>
-              <p id={`fixed-${f.id}`}>
+              <p id={`fixed-${f.id}`} data-row={f.id} tabIndex={-1}>
                 <strong>{f.name}</strong>: {w.times(f.times)}
               </p>
               <p class="small muted">
@@ -125,13 +140,17 @@ export default function NamesFixed({ api, recapRef }: { api: AccountApi; recapRe
                     class="button secondary"
                     disabled={!!busy}
                     data-fix={f.id}
-                    aria-describedby={`fixed-${f.id}`}
+                    aria-label={w.undoName(f.name)}
                     onClick={() => void undo(f.id)}
                   >
                     {w.undo}
                   </button>
                 )}
-                {busy === f.id && <span class="small muted">{w.working}</span>}
+                {busy === f.id && (
+                  <span class="small muted">
+                    {w.working(f.name, waited)} {waited >= 20 ? w.slow : ""}
+                  </span>
+                )}
               </div>
             </li>
           ))}
