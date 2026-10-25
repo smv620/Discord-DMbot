@@ -11,6 +11,8 @@ from tests.test_memory_store import MemoryTest
 EVERY_ACTION = (
     "spell", "kind", "add-other", "remove-other", "secret", "hide", "merge", "merge-many",
     "remove", "link-add", "link-words", "link-secret", "link-remove", "link-pin",
+    "claim-confirm", "claim-reject", "backstory-keep", "backstory-skip", "backstory-keep-all",
+    "backstory-which-pick", "backstory-which-neither",
 )  # fmt: skip
 
 

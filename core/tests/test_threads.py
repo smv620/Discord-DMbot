@@ -27,6 +27,7 @@ from dmbot.memory.models import (
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.search import find
 from dmbot.ui import threads as ui
+from tests import speed
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
 
 # Session starts are real times like the clock's, later than anything the test writes by hand.
@@ -435,14 +436,13 @@ class ThreadList(ConfirmedMemoryTest):
         self.assertIn("DM", it.sent[-1])  # refused, no list
 
     async def test_fifty_threads_read_fast(self) -> None:
-        import time
-
         for n in range(50):
             await self.memory.new_thread(GUILD_A, self.c, f"Thread {n}", "quest", OPEN, source="dm")
-        began = time.perf_counter()
         found = await self.memory.threads(GUILD_A, self.c, stalled_after=3)
-        took = time.perf_counter() - began
         self.assertEqual(len(found), 50)
+        took = await speed.fastest_async(
+            lambda: self.memory.threads(GUILD_A, self.c, stalled_after=3)
+        )  # (the best of several: a read does not change anything, #2671)
         self.assertLess(took, 1.0)  # a session start has 3 seconds; this is one read
 
 

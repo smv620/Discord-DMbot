@@ -10,7 +10,9 @@ runaway still fails: that cap is the backstop, ten times what a quiet machine al
 from __future__ import annotations
 
 import hashlib
+import math
 import time
+from collections.abc import Awaitable, Callable
 
 # The fixed work takes about this long on a quiet machine (measured when this was written).
 QUIET_S = 0.012
@@ -35,3 +37,26 @@ def allowed(limit: float, *scales: float) -> float:
     """`limit`, stretched by the worst slowdown seen: the ones measured before the test (`scales`)
     and the one measured now, after it."""
     return limit * max(1.0, *scales, slowdown())
+
+
+def fastest(work: Callable[[], object], runs: int = 5) -> float:
+    """The shortest time of `runs` timed runs of `work`, the way `timeit` reports it (#2671). One
+    run on a shared runner can be stretched by a pause that no measure taken before or after
+    sees, so a single timing fails at random; the best of several is what the code can do when
+    nothing interrupts it, and code that is really slow is slow in every run."""
+    best = math.inf
+    for _ in range(runs):
+        began = time.perf_counter()
+        work()
+        best = min(best, time.perf_counter() - began)
+    return best
+
+
+async def fastest_async(work: Callable[[], Awaitable[object]], runs: int = 5) -> float:
+    """`fastest` for work that is awaited."""
+    best = math.inf
+    for _ in range(runs):
+        began = time.perf_counter()
+        await work()
+        best = min(best, time.perf_counter() - began)
+    return best
