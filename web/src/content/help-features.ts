@@ -64,6 +64,16 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "After the session: things to check",
+    text: "Under a session's recap, After the session: things to check lists what DMbot noticed. First, things it holds that may not fit together, with both sides and where each came from; if the words behind a line are gone, it says a line from that session is no longer available. Then what the party has wrong, in three groups: disguised on purpose, misunderstood, and simply false. Each one has four answers: That's intended (kept, and not raised again), Fix the DM's view (opens the Story graph), Not a problem, and Remind me next session. Undo takes an answer back. Only the DM sees this list, never a player. DMbot only lists; you decide.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Names fixed this session, with Undo",
+    text: "Below a session's recap text, Names fixed this session shows the names DMbot fixed in the cleaned transcript. Each name says how many times it was fixed and how it was written before. Press Undo to put a name back as it was heard. DMbot then leaves that spelling alone. Only you, the DM, see this list.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Every name on the Story graph",
     text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },

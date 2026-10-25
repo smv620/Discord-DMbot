@@ -441,6 +441,80 @@ export interface PastSession {
 export interface PastSessions {
   sessions: PastSession[];
 }
+/** The after-session report (#2661; STORY_MEMORY 9a; shapes agreed on the issue). DM only: a player is
+ * refused and nothing here is ever in the players' view. Only DMbot's own words and placeholders, never
+ * a person's words or who said them. */
+export interface ReportEvidence {
+  kind: "claim" | "line" | "clue" | "event";
+  session: number;
+  /** False: the words are gone; the page says "a line from session N, no longer available". */
+  available: boolean;
+  quote?: string;
+}
+export interface ReportStatement {
+  text: string;
+  /** Whose view it is: "The DM's view", "The party", or a character's name. */
+  view: string;
+  session?: number | null;
+  evidence: ReportEvidence[];
+}
+export type ReportAction = "intended" | "fix" | "not_a_problem" | "remind";
+export interface ReportAnswer {
+  action: ReportAction | "fixed";
+  at: number;
+}
+export interface ReportContradiction {
+  id: string;
+  reason: string;
+  gameTimeKnown: boolean;
+  first: ReportStatement;
+  second: ReportStatement;
+  answer: ReportAnswer | null;
+  remindedFrom?: number | null;
+}
+export interface ReportDifference {
+  id: string;
+  reason: string;
+  view: string;
+  believes: string;
+  truth: string;
+  evidence: ReportEvidence[];
+  answer: ReportAnswer | null;
+  /** The connection "Fix the DM's view" opens in the Story graph; null when there is none. */
+  open: { a: string; b: string } | null;
+  remindedFrom?: number | null;
+}
+export interface SessionReport {
+  session: { at: number; number?: number | null };
+  state: "none" | "making" | "ready" | "failed";
+  /** While `making` or `failed`: the shared wait shape (counts and codes only). */
+  progress?: JobProgress | null;
+  counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };
+  contradictions: ReportContradiction[];
+  differences: { disguised: ReportDifference[]; misunderstood: ReportDifference[]; false: ReportDifference[] };
+}
+/** "Names fixed this session" (#2645; shapes agreed on the issue): what the name pass wrote into a session's
+ * cleaned text, for the campaign's DM only. `forms[].heard` are transcript words: shown to that DM, never
+ * logged, never on a public link or in a players' view. */
+export interface NameFixForm {
+  heard: string;
+  times: number;
+}
+export interface NameFix {
+  /** Its Undo's id (the pass's batch). */
+  id: string;
+  name: string;
+  times: number;
+  forms: NameFixForm[];
+  undone: boolean;
+}
+export interface NamesFixed {
+  fixed: NameFix[];
+  /** Words the pass left as heard and asked the DM about: a count only. */
+  unsure: number;
+  /** New names it offered to the DM: a count only. */
+  new: number;
+}
 /** Adding a recap someone wrote (`POST /me/campaigns/{ref}/recaps/upload`, #2609): `text` or `link`. */
 export interface AddRecapInput {
   /** When the session began (Unix seconds). */
@@ -1208,6 +1282,8 @@ interface WebAnswer {
   error?: string | null;
   edge?: WebEdge | null;
   removed?: boolean;
+  /** An Undo of a name fix: how many lines were put back (#2645). */
+  putBack?: number | null;
 }
 
 /** The changed row, or `{ removed: true }` after a removal. */
@@ -1472,6 +1548,19 @@ export interface AccountApi {
   recapList?(): Promise<{ recaps: Recap[]; thisMonth: RecapMonth[] }>;
   /** A campaign's past sessions with what each one's recap is (DMs only; #2608). */
   pastSessions?(campaignRef: string): Promise<PastSessions>;
+  /** The after-session report for one session (DMs only; #2661), `at` in Unix seconds. Missing from an
+   * API older than the report. */
+  sessionReport?(campaignRef: string, at: number): Promise<SessionReport>;
+  /** Start making the report (`state` was `none` or `failed`); the report comes back as it stands. */
+  makeSessionReport?(campaignRef: string, at: number): Promise<SessionReport>;
+  /** One answer to one item, queued for the bot like #2638's; resolves once it is saved. `undo` puts the
+   * item back to open. A refusal is an `ApiError` (`gone`, `cannot-write`, `queue-full`). */
+  answerReport?(campaignRef: string, at: number, id: string, action: ReportAction | "undo"): Promise<void>;
+  /** What the name pass fixed in this recap's session (DMs only; #2645). Missing from an older API. */
+  namesFixed?(recapRef: string): Promise<NamesFixed>;
+  /** Undo one fix, queued for the bot like the DM screen's Undo; resolves with how many lines were put back.
+   * A refusal is an `ApiError` (`gone`, `not-allowed`, `cannot-write`, `queue-full`). */
+  undoNameFix?(recapRef: string, id: string): Promise<{ putBack: number }>;
   /** Make a recap for a session, or make it again (`POST /me/recaps/{ref}/again`, #2608); `replace` after
    * the DM said yes to "This session already has a recap". The recap comes back, queued. */
   makeRecap?(recapRef: string, replace: boolean): Promise<Recap>;
@@ -1691,6 +1780,9 @@ export interface AccountApi {
 }
 
 const errorKinds: Record<string, ApiErrorKind> = {
+  gone: "gone",
+  cannot_write: "cannot-write",
+  queue_full: "queue-full",
   no_lines: "no-lines",
   needs_rights: "needs-rights",
   not_a_google_doc: "not-a-google-doc",
@@ -1709,11 +1801,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   confirm_again: "confirm-again",
   no_paid_plan: "no-paid-plan",
   offer_gone: "offer-gone",
-  gone: "gone",
   name_first: "name-first",
   stopped_recording: "stopped-recording",
-  cannot_write: "cannot-write",
-  queue_full: "queue-full",
   has_free_access: "free-access",
   slow_down: "slow-down",
   busy: "slow-down",
@@ -2033,6 +2122,28 @@ export function httpApi(
       ((await call("GET", "/me/recaps")) as { recaps: Recap[] }).recaps,
     pastSessions: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/past-sessions`)) as PastSessions,
+    sessionReport: async (campaignRef, at) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`)) as SessionReport,
+    makeSessionReport: async (campaignRef, at) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report/make`, {})) as SessionReport,
+    answerReport: async (campaignRef, at, id, action) => {
+      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}`;
+      const queued = (await call("POST", `${base}/sessions/${at}/report`, { id, action })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    namesFixed: async (recapRef) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
+    undoNameFix: async (recapRef, id) => {
+      const queued = (await call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed/${encodeURIComponent(id)}/undo`, {})) as {
+        answer: string;
+      };
+      if (!queued?.answer) throw new ApiError("server");
+      // The bot's answer is polled under the campaign, as the report's are (the campaign is the recap's first two parts).
+      const campaign = recapRef.split(".").slice(0, 2).join(".");
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaign)}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { putBack: got.putBack ?? 0 };
+    },
     makeRecap: async (recapRef, replace) =>
       recapFrom(await busyAsBusy(() => call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/again`, { replace }))),
     addRecap: async (campaignRef, input) =>
