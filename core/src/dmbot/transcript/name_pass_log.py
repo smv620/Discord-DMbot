@@ -6,12 +6,16 @@ only, and they go with the lines they came from)."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory.store import MemoryStore
 from dmbot.transcript.name_pass import Report
 from dmbot.transcript.store import TranscriptStore
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,16 @@ class NamePassLog:
             )
             return int(cur.rowcount)
 
+    async def is_undone(self, guild_id: int, campaign_id: str, batch: int) -> bool:
+        """Has this fix been put back already (its record says so)?"""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_pass_fixes WHERE guild_id = %s AND campaign_id = %s"
+                " AND batch = %s AND undone_at IS NOT NULL",
+                (guild_id, campaign_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def report(self, guild_id: int, campaign_id: str, session_id: str) -> StoredReport | None:
         """The session's run, or None when the pass never ran there (or kept nothing)."""
         async with self._db.guild(guild_id) as conn:
@@ -104,3 +118,60 @@ class NamePassLog:
 def counts(fixes: Sequence[StoredFix]) -> tuple[int, int]:
     """(fixed names, still standing) for a log line."""
     return len(fixes), sum(1 for f in fixes if f.undone_at is None)
+
+
+async def undo_fix(
+    transcripts: TranscriptStore,
+    memory: MemoryStore | None,
+    guild_id: int,
+    campaign_id: str,
+    batch: int,
+    *,
+    now: int,
+) -> int:
+    """Put one name-pass fix back (the DM screen's Undo and the website's, one way): the old
+    spellings return where the fix wrote the new one, the spellings are kept as heard so the pass
+    does not fix them again, and the fix is marked undone for the recap page. How many lines were
+    put back (0: changed since, or undone already: nothing was changed). A keep-as-heard rule the
+    rules refuse is logged and skipped; a failure to note the Undo for the page is logged and does
+    not undo the Undo."""
+    from dmbot.memory.models import DM, KEEP, MemoryRuleError
+
+    olds = await transcripts.respelled_olds(guild_id, campaign_id, batch)
+    lines, _sessions = await transcripts.undo_respell(guild_id, campaign_id, batch)
+    # (when every line has changed since, nothing was put back, so no "keep as heard" rule is
+    # saved; but the fix's rows are spent either way, so the page must not show it as standing)
+    if memory is not None and lines:
+        for heard in olds:
+            try:
+                await memory.add_correction(guild_id, campaign_id, heard, action=KEEP, source=DM)
+            except MemoryRuleError:
+                log.info("Name pass undo: a keep-as-heard rule was refused")
+            except Exception:
+                log.exception("Name pass undo: couldn't save the keep-as-heard rule")
+    if olds:
+        try:
+            await NamePassLog.of(transcripts).mark_undone(guild_id, campaign_id, batch, now=now)
+        except Exception:
+            log.exception("Name pass undo: couldn't note it for the website")
+    return lines
+
+
+async def undo_for_web(
+    transcripts: TranscriptStore,
+    memory: MemoryStore | None,
+    guild_id: int,
+    campaign_id: str,
+    batch: int,
+    *,
+    now: int,
+) -> int | None:
+    """The website's Undo: `undo_fix`, but told apart from "nothing to undo". How many lines went
+    back; 0 when the fix's record already says it was undone (a retry after a crash, or the DM
+    screen's button got there first: the wish is met); None when nothing could be put back and
+    the fix is not recorded as undone (lines changed since, or no fix of this campaign)."""
+    lines = await undo_fix(transcripts, memory, guild_id, campaign_id, batch, now=now)
+    if lines:
+        return lines
+    done = await NamePassLog.of(transcripts).is_undone(guild_id, campaign_id, batch)
+    return 0 if done else None

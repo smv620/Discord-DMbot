@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.web import recaps
+from dmbot.web import recaps, relationships
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
@@ -40,3 +40,30 @@ async def read_names_fixed(db: Database, session: Session, ref: str) -> dict[str
         "new": int(got["new"]),
         "guarded": int(got["guarded"]),
     }
+
+
+async def queue_undo_polled(
+    db: Database, session: Session, ref: str, fix_id: object
+) -> tuple[str, str]:
+    """Queue the Undo of one fix for the bot and return the answer's id (the page polls the usual
+    answers door). DM only: anyone else gets "not found" before anything is queued. The id is the
+    fix's Undo number; one that is not a fix of this campaign is "not found" too. The bot puts
+    the lines back through the very calls the DM screen's Undo makes, so an Undo already made, or
+    lines changed since, end as `gone` and nothing is changed. (An Undo number is campaign-wide,
+    like the DM screen's button: any recap page of this campaign can undo it.)"""
+    if (
+        not isinstance(fix_id, str)
+        or not (fix_id.isascii() and fix_id.isdecimal())
+        or len(fix_id) > 12
+    ):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, _at, _row = await recaps._one(conn, ref, session, marks=False)
+        answer = await relationships.queue_in(conn, gid, cid, "names-fixed-undo", fix_id)
+    # (the answers door the page polls: the same one the other recap-page edits use)
+    return answer, f"/me/campaigns/{gid}.{cid}/web/answers/{answer}"
+
+
+async def queue_undo(db: Database, session: Session, ref: str, fix_id: object) -> str:
+    """`queue_undo_polled`, the answer's id alone."""
+    return (await queue_undo_polled(db, session, ref, fix_id))[0]

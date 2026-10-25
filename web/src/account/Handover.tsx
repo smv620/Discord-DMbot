@@ -12,6 +12,8 @@ import { HANDOVER_LIVE, handoverWords as words } from "../content/handover-words
 import { campaignHref } from "./campaignLinks";
 import { ApiError, type AccountApi, type HandoverLook, type HandoverServer } from "./api";
 import { keepFocus } from "./focus";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 
 const KEY = "dmbot:handover";
 
@@ -115,6 +117,8 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
 
   // While the bot moves the campaign, look every 3 seconds (up to 3 minutes) for it among the person's own.
   const moving = view.kind === "moving" && !view.slow;
+  // The move gives no stage and nothing the page can see changes, so only the time it has run is shown (no "last change", no stall until the page gives up).
+  const movingSeen = useObservedWait(view.kind === "moving", view.kind);
   const [tickMove, setTickMove] = useState(0);
   const misses = useRef(0); // looks in a row that failed: each waits twice as long (3 s, 6, 12, up to 30)
   useEffect(() => {
@@ -279,7 +283,21 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
           <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
             {words.heading}
           </h2>
-          <p role="status">{view.slow ? words.movingSlow : words.moving}</p>
+          {movingSeen.startedAt !== null ? (
+            <WorkProgress
+              stage={words.moving}
+              startedAt={movingSeen.startedAt}
+              progressUnknown
+              frozen={view.slow}
+              state={view.slow ? "stalled" : "running"}
+              {...(view.slow ? { whatToDo: words.movingSlow } : {})}
+            />
+          ) : (
+            <p>{words.moving}</p>
+          )}
+          <p class="sr-only" role="status">
+            {view.slow ? "" : words.moving}
+          </p>
           {view.slow && (
             <p>
               <a class="button" href="/account">
