@@ -460,7 +460,8 @@ function recapFacts(ref: string): { recapsPossible: boolean; recapsWhy?: "off" |
  * `.names-manager` is a server manager who isn't a DM of it (no secret names, nothing to change), and
  * `.names-none` is someone who may not see the list (not found). Any other address is a DM. */
 const NAME_KINDS: { key: string; label: string }[] = [
-  { key: "npc", label: "People" },
+  { key: "npc", label: "NPCs" },
+  { key: "player_character", label: "PCs" },
   { key: "place", label: "Places" },
   { key: "group", label: "Groups" },
   { key: "item", label: "Items" },
