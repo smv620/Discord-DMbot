@@ -75,6 +75,8 @@ CLAIM_REFUSALS = {
     # A claim that reads like an instruction is dropped for good as it is looked at, so the answer
     # is final: the question is gone, not "try again" (Supervisor, #2638).
     claims_mod.ODD_NOW: GONE,
+    # (the page does not list a reading, so this is a stale press: the question is not there)
+    claims_mod.A_READING: GONE,
 }
 ALIAS_KIND = "nickname"  # what the name card calls an other name the DM adds
 

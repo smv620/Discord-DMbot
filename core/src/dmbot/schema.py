@@ -14492,6 +14492,7 @@ MEMORY_EVIDENCE = (
 """
 )
 
+_WAITING_DOOR = WEB_WAITING[WEB_WAITING.index("CREATE OR REPLACE FUNCTION dmbot_web_waiting(") :]
 CLAIM_READINGS = """
     -- A claim can be a reading (#2412, docs/STORY_MEMORY.md 9 and 9a): not a fact someone said
     -- but a belief for the DM to place, such as a theory, a reveal, a frame-up or what a spell
@@ -14505,7 +14506,14 @@ CLAIM_READINGS = """
     ALTER TABLE memory_claims ADD COLUMN reading JSONB
         CHECK (reading IS NULL OR (jsonb_typeof(reading) = 'object'
                                    AND pg_column_size(reading) <= 2000));
-"""
+    -- A reading is a belief to place, not a fact to say yes to: the website's list of what waits
+    -- for the DM leaves it out (its claims and its count), as the Discord list does. Cut from
+    -- the door as 0233 made it, with that one condition added.
+""" + _WAITING_DOOR.replace(
+    "AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0",
+    "AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0 AND k.reading IS NULL",
+)
+assert _WAITING_DOOR.count("AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0") == 2
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),

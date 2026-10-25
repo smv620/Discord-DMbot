@@ -42,7 +42,7 @@ class Stored(ConfirmedMemoryTest):
         got = await self.propose(
             readings.as_claim(THEORY, "player_said"), said("Bram", "knows", "Heartseeker")
         )
-        self.assertEqual(got.waiting + got.dropped, 2)
+        self.assertEqual((got.waiting, got.dropped), (2, 0))
         by_rel = {r["relationship"]: r for r in await self.stored()}
         reading = by_rel["carries"]["reading"]
         self.assertEqual(
@@ -114,3 +114,43 @@ class Stored(ConfirmedMemoryTest):
                 tampered = [{**r, "reading": reading} if r["table"] == "claim" else r for r in rows]
                 with self.assertRaises(CampaignError):
                     section.check(tampered)
+
+
+class EveryPathLeavesItAlone(Stored):
+    async def reading_row(self) -> dict[str, Any]:
+        await self.propose(readings.as_claim(THEORY, "player_said"))
+        (row,) = await self.stored()
+        return row
+
+    async def test_the_pre_session_count_and_the_health_count_leave_readings_out(self) -> None:
+        await self.reading_row()
+        self.assertEqual(await self.claims.waiting_for_check(GUILD_A, self.c, opted_in={DM}), 0)
+        from dmbot.memory import health
+
+        got = await health.read(self.memory, GUILD_A, self.c, since=0)
+        self.assertEqual(got.asked_dm, 0)
+
+    async def test_when_a_speaker_stops_the_reading_is_wiped_with_the_words(self) -> None:
+        row = await self.reading_row()
+        await self.claims.purge_stopped(GUILD_A, self.c, opted_in=set())  # nobody is recorded
+        (after,) = await self.stored()
+        self.assertEqual(after["id"], row["id"])
+        self.assertEqual((after["status"], after["subject"], after["lines"]), ("dropped", "", []))
+        self.assertIsNone(after["reading"])  # not the clue, nor the character it named
+
+    async def test_stop_recording_me_deletes_a_waiting_reading(self) -> None:
+        await self.reading_row()
+        self.assertEqual(await self.claims.forget_speaker(GUILD_A, DM), 1)
+        self.assertEqual(await self.stored(), [])
+
+    async def test_a_file_cannot_bring_a_reading_back_as_a_kept_fact(self) -> None:
+        await self.reading_row()
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        tampered = [
+            {**r, "status": "confirmed", "fact_id": "f" * 32} if r["table"] == "claim" else r
+            for r in rows
+        ]
+        with self.assertRaises(CampaignError):
+            section.check(tampered)

@@ -352,6 +352,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         elif table is EVIDENCE:
             _check_evidence(raw)
         elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
+            # (a claim's reading has its own check, `_check_claim`)
             raise CampaignError(DAMAGED)
         if table is CLAIMS:
             _check_claim(raw)
@@ -647,6 +648,8 @@ def _check_claim(row: Mapping[str, Any]) -> None:
         raise CampaignError(DAMAGED)
     if not _reading_ok(row["reading"]):
         raise CampaignError(DAMAGED)
+    if row["reading"] is not None and row["status"] == "confirmed":
+        raise CampaignError(DAMAGED)  # a reading is placed as a belief, never kept as a fact
     if row["fact_id"] is not None and row["status"] != "confirmed":
         raise CampaignError(DAMAGED)
     if row["status"] == "proposed" and row["how"] == "plan":

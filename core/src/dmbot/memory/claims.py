@@ -490,6 +490,8 @@ def _repeat_key(
     question (it is never asked, so it must not hide the fact it resembles). A reading is its own
     question too: the same words as a theory, a reveal and a plain claim are three things to place
     (point of view and status tell them apart)."""
+    # (Only the point of view and the status: two readings of the same words that differ only in
+    # the clue they name are one question. Slice 2b may need the clue here.)
     held = None if reading is None else (reading.get("view"), reading.get("status"))
     return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN, held
 
@@ -863,6 +865,7 @@ class ClaimStore:
                         "details": "",
                         "lines": [],
                         "speaker_ids": [],
+                        "reading": None,  # the clue, the act and the character it named go too
                     },
                 )
             return len(stale)
@@ -984,7 +987,7 @@ class ClaimStore:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'proposed' AND reason <> %s AND cardinality(speaker_ids) > 0"
-                " AND speaker_ids <@ %s::bigint[]",
+                " AND speaker_ids <@ %s::bigint[] AND reading IS NULL",
                 (*scope.ids, WAITING_NAME_REASON, list(opted_in)),
             )
             row = await cur.fetchone()

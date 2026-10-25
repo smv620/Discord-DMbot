@@ -84,7 +84,7 @@ SELECT
   (SELECT count(*) FROM memory_flags WHERE guild_id = %(g)s AND campaign_id = %(c)s
      AND created_at >= %(since)s) AS flags,
   (SELECT count(*) FROM memory_claims WHERE guild_id = %(g)s AND campaign_id = %(c)s
-     AND status = 'proposed' AND session_started_at >= %(since)s) AS claims
+     AND status = 'proposed' AND reading IS NULL AND session_started_at >= %(since)s) AS claims
 """
 
 
