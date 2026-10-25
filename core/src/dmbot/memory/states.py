@@ -93,7 +93,8 @@ async def place_nesting(w: Scope, onto: Ontology) -> Nesting:
         " JOIN memory_entities o ON (o.guild_id, o.campaign_id, o.id)"
         "    = (r.guild_id, r.campaign_id, r.object_id)"
         " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.predicate = %s"
-        " AND r.status <> 'rejected' AND NOT (r.status = 'proposed' AND r.secret)"
+        " AND r.status <> 'rejected'"
+        " AND NOT (r.status = 'proposed' AND r.secret AND r.source = 'extractor')"
         " AND r.to_session_at IS NULL"
         " AND s.type = ANY(%s) AND o.type = ANY(%s)",
         (*w.ids, NESTS, places, places),

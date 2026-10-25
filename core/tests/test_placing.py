@@ -343,16 +343,142 @@ class ReadersAndWriters(Placing):
                     await self.place(claim_id)
         self.assertEqual(await self.connections(), [])
 
-    async def test_another_proposed_secret_connection_is_not_made_public_by_a_restatement(
+    async def test_the_guess_connection_is_the_extractors_and_a_kept_one_is_the_dms(self) -> None:
+        theory = await self.place(await self.waiting_reading(belief("pc:Mira", "theory", 0.5)))
+        reveal_words = readings.BeliefProposal(
+            "party", "Bram", "owns", "Heartseeker", 1.0, "revealed_fact", ("1",)
+        )
+        revealed = await self.place(await self.waiting_reading(reveal_words))
+        by_id = {r["id"]: r for r in await self.connections()}
+        self.assertEqual(by_id[theory.relation_id]["source"], "extractor")
+        self.assertEqual(by_id[revealed.relation_id]["source"], "dm")
+
+    async def test_a_restatement_makes_a_guess_connection_public_but_not_another_proposal(
+        self,
+    ) -> None:
+        placed = await self.place(await self.waiting_reading(belief("pc:Mira", "theory", 0.5)))
+        await self.relate(self.bram, "carries", self.sword, status="confirmed")
+        (host,) = await self.connections()
+        self.assertEqual((host["id"], host["secret"]), (placed.relation_id, False))
+        other = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "owns", self.sword,
+            source="scan", status="proposed", secret=True, confidence=0.5,
+        )  # fmt: skip
+        await self.relate(self.bram, "owns", self.sword, status="confirmed")
+        row = next(r for r in await self.connections() if r["id"] == other.value[0].id)
+        self.assertEqual(row["secret"], True)  # another proposal's secret is not the guess's
+
+    async def test_a_theory_on_someone_elses_proposal_adds_a_belief_and_leaves_it_alone(
         self,
     ) -> None:
         theirs = await self.memory.add_relation(
             GUILD_A, self.c, self.bram, "carries", self.sword,
-            source="extractor", status="proposed", secret=True, confidence=0.5,
+            source="scan", status="proposed", confidence=0.5,
         )  # fmt: skip
+        before = (await self.connections())[0]
+        claim_id = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        placed = await self.place(claim_id)
+        self.assertEqual(placed.relation_id, theirs.value[0].id)
+        self.assertEqual((await self.connections())[0], before)
+        await self.claims.forget_speaker(GUILD_A, DM)
+        (survivor,) = await self.connections()  # the proposal was not the placement's to delete
+        self.assertEqual(survivor["id"], theirs.value[0].id)
+        self.assertEqual(await self.beliefs_of(survivor["id"]), [])  # only the guess went
+
+    async def test_a_reveal_or_plot_will_not_take_over_someone_elses_question(self) -> None:
+        await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "carries", self.sword,
+            source="scan", status="proposed", confidence=0.5,
+        )  # fmt: skip
+        for status, confidence in (("revealed_fact", 1.0), ("magically_verified", 1.0)):
+            with self.subTest(status):
+                claim_id = await self.waiting_reading(belief("party", status, confidence))
+                with self.assertRaises(MemoryRuleError):
+                    await self.place(claim_id)
+        (row,) = await self.connections()
+        self.assertEqual((row["status"], row["secret"]), ("proposed", False))
+
+    async def test_a_secret_plot_over_a_connection_the_players_know_is_refused(self) -> None:
         await self.relate(self.bram, "carries", self.sword, status="confirmed")
-        (relation,) = await self.connections()
-        self.assertEqual((relation["id"], relation["secret"]), (theirs.value[0].id, True))
+        plot = readings.BeliefProposal(
+            "truth", "Bram", "carries", "Heartseeker", 1.0, "secret_plot", ("1",),
+            new_assertion=True, dm_confirms=True,
+        )  # fmt: skip
+        with self.assertRaises(MemoryRuleError):
+            await self.place(await self.waiting_reading(plot))
+
+    async def test_forgetting_also_clears_the_undo_log(self) -> None:
+        claim_id = await self.waiting_reading(belief("pc:Mira", "accusation", 0.75), "player_said")
+        placed = await self.place(claim_id)
+        await self.claims.forget_speaker(GUILD_A, DM)
+        gone = {claim_id, placed.relation_id}
+        gone |= {b["id"] for b in await self.beliefs_of(placed.relation_id)}
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT row_id FROM memory_changes")
+            log = [dict(r) for r in await cur.fetchall()]
+        self.assertEqual([r for r in log if r["row_id"] in gone], [])
+
+    async def test_the_other_forget_path_follows_the_same_ruling(self) -> None:
+        from dmbot.transcript import store as transcript_store
+
+        unkept = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        shown = readings.BeliefProposal(
+            "party", "Bram", "owns", "Heartseeker", 1.0, "revealed_fact", ("1",)
+        )
+        kept = await self.waiting_reading(shown, "dm_said")
+        a, b = await self.place(unkept), await self.place(kept)
+        async with self.db.guild(GUILD_A) as conn:
+            await transcript_store._forget_memory_traces(conn, GUILD_A, DM, [])
+        self.assertEqual(await self.beliefs_of(a.relation_id), [])
+        self.assertEqual([r["id"] for r in await self.connections()], [b.relation_id])
+        self.assertEqual([c["id"] for c in await self.rows("memory_claims")], [kept])
+
+    async def test_a_guess_that_also_stands_on_a_dm_line_stays(self) -> None:
+        mine = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        placed = await self.place(mine)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_beliefs SET evidence_ids = ARRAY[%s, %s] WHERE relation_id = %s"
+                " AND confidence = 0.5",
+                (mine, "s1:123:456", placed.relation_id),
+            )
+        await self.claims.forget_speaker(GUILD_A, DM)
+        (kept,) = [b for b in await self.beliefs_of(placed.relation_id) if b["kind"] == "pc"]
+        self.assertEqual(kept["evidence_ids"], ["s1:123:456"])
+
+    async def test_a_no_on_the_guess_connection_leaves_the_belief_standing(self) -> None:
+        placed = await self.place(await self.waiting_reading(belief("pc:Mira", "theory", 0.5)))
+        await self.memory.update_relation(
+            GUILD_A, self.c, placed.relation_id, source="dm", status="rejected"
+        )
+        (mine,) = [b for b in await self.beliefs_of(placed.relation_id) if b["kind"] == "pc"]
+        self.assertEqual((mine["status"], mine["confidence"]), ("theory", 0.5))
+
+    async def test_keeping_an_ordinary_proposal_adds_no_second_flag(self) -> None:
+        keep, inn, hall = [await self.add(n, type="place") for n in ("Keep", "Inn", "Hall")]
+        await self.relate(inn, "located_in", keep, status="confirmed")
+        waiting = await self.relate(inn, "located_in", hall, status="proposed")
+        before = len(await self.memory.flags(GUILD_A, self.c))
+        self.assertGreater(before, 0)  # judged once, when it was proposed
+        await self.memory.update_relation(
+            GUILD_A, self.c, waiting.value[0].id, source="dm", status="confirmed"
+        )
+        self.assertEqual(len(await self.memory.flags(GUILD_A, self.c)), before)
+
+    async def test_lists_that_count_connections_do_not_count_a_guess_connection(self) -> None:
+        await self.place(await self.waiting_reading(belief("pc:Mira", "theory", 0.5)))
+        known = {(r.subject_id, r.object_id) for r in await self.memory.relations(
+            GUILD_A, self.c, include_secret=True
+        )}  # fmt: skip
+        self.assertNotIn((self.bram, self.sword), known)
+
+    async def test_what_quotes_a_fact_source_skips_readings(self) -> None:
+        import inspect
+
+        from dmbot.memory import continuity, recall
+
+        self.assertIn("reading IS NULL", inspect.getsource(recall.RecallService._sources))
+        self.assertIn("reading IS NULL", inspect.getsource(continuity))
 
     async def test_keeping_a_waiting_theory_judges_it_as_a_fact_then(self) -> None:
         keep, inn, hall = [await self.add(n, type="place") for n in ("Keep", "Inn", "Hall")]

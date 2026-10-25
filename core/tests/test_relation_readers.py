@@ -6,9 +6,11 @@ way `test_campaign_move_cascade` makes a new table choose."""
 
 from __future__ import annotations
 
+import ast
 import re
-import unittest
 from pathlib import Path
+
+from tests.pg import DatabaseTest
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 
@@ -22,7 +24,7 @@ READERS = {
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
     "memory/states.py": "live located_in facts, without secret proposals that only hold guesses",
-    "memory/claims.py": "Stop recording me removes a connection made only to hold a guess",
+    "memory/forget_readings.py": "Stop recording me removes a connection made only to hold a guess",
     "memory/beliefs.py": "beliefs hang on any connection; every players' reader filters on the "
     "party's belief at 1.0, which a guess never is",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
@@ -31,21 +33,69 @@ READERS = {
     "memory/set_definitions.py": "is a relationship word in use: any status, on purpose",
     "memory/backup.py": "a backup is complete: DM secrets and proposals travel as they are",
     "memory/_changes.py": "the change log and the row writers",
-    "memory/store.py": "the store: players' readers filter confirmed (and the party's belief); "
-    "the checks and merge are DM-side and judge facts against facts since #2412",
     "campaigns/tables.py": "the list of tables a campaign owns",
-    "schema.py": "the doors: the website's connection readers filter confirmed and not secret "
-    "for anyone but the DM",
 }
 
 
-class WhoReadsConnections(unittest.TestCase):
+# memory/store.py, by function: it holds most of the readers, so one entry for the file would let a
+# new query in it pass unseen. Every function that names the table is here with how it treats a
+# guess connection (proposed, secret, the extractor's).
+STORE = {
+    "_close_stale_flags": DM_ONLY + ": flags",
+    "_sync_plays": "plays links only (scan proposals, never secret guesses)",
+    "_threads": CONFIRMED_ONLY,
+    "_standing_index": CONFIRMED_ONLY,
+    "_deed_rows": CONFIRMED_ONLY,
+    "_audience": CONFIRMED_ONLY + ": who may be told",
+    "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",
+    "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
+    "_delete_relation": DM_ONLY + ": removal with its flags",
+    "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
+    "relations": "all live ones, without guess connections (they are not connections yet)",
+    "lookup_data": CONFIRMED_ONLY + " (a proposed one only while not secret)",
+    "set_condition_in": DM_ONLY + ": what an entry's condition touches",
+    "set_unique": DM_ONLY + ": one-of-a-kind items",
+    "chain": CONFIRMED_ONLY,
+    "waiting_connections": CONFIRMED_ONLY + ": and hidden ones, for the DM",
+    "add_knower_in": CONFIRMED_ONLY,
+    "remove_knower": DM_ONLY,
+    "analyze": DM_ONLY + ": counts for the DM",
+    "reveal_exposed": CONFIRMED_ONLY,
+    "check_people": "plays links only",
+    "learn_people": "plays links only",
+    "people_suggestions": "plays links only",
+    "table_people": "plays links only",
+    "decide_plays": "plays links only",
+    "forget_learned": "plays links only",
+    "recheck_definitions": CONFIRMED_ONLY,
+    "add_relation_in": "writes: `placing` makes a guess connection here (fresh, leave, made_by)",
+    "update_relation": "writes: the DM's Keep or No",
+    "pinned_connections": CONFIRMED_ONLY,
+    "_view": CONFIRMED_ONLY + ": the party's and the DM's views",
+    "relation": DM_ONLY + ": one connection by id",
+    "change_relation_words": "requires a confirmed connection",
+    "undo_connection": DM_ONLY + ": an Undo",
+}
+
+
+def _store_functions() -> set[str]:
+    source = (SRC / "memory" / "store.py").read_text()
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            text = ast.get_source_segment(source, node) or ""
+            if re.search(r"memory_relations|\bRELATIONS\b", text):
+                found.add(node.name)
+    return found
+
+
+class WhoReadsConnections(DatabaseTest):
     def test_every_file_that_touches_the_table_is_on_the_reviewed_list(self) -> None:
         found = {
             str(path.relative_to(SRC))
             for path in SRC.rglob("*.py")
             if re.search(r"memory_relations|\bRELATIONS\b", path.read_text())
-        }
+        } - {"memory/store.py", "schema.py"}  # (store.py by function below; schema.py by door)
         self.assertEqual(
             sorted(found),
             sorted(READERS),
@@ -54,13 +104,22 @@ class WhoReadsConnections(unittest.TestCase):
             "connection is secret and unproved); otherwise add it here with the reason.",
         )
 
-    def test_the_players_views_count_only_what_the_party_holds(self) -> None:
-        schema = (SRC / "schema.py").read_text()
-        # the website's connection door: players see confirmed, not secret ones
-        door = schema[schema.index("CREATE OR REPLACE FUNCTION dmbot_web_relationships(") :]
-        door = door[: door.index("$$ LANGUAGE")] if "$$ LANGUAGE" in door else door
-        self.assertIn("status = 'confirmed'", door)
+    def test_every_function_in_the_store_that_touches_the_table_is_reviewed(self) -> None:
+        self.assertEqual(sorted(_store_functions()), sorted(STORE))
 
-
-if __name__ == "__main__":
-    unittest.main()
+    async def test_every_door_that_reads_connections_filters_confirmed(self) -> None:
+        """The doors as the database has them (the last definition of each, not a string in the
+        Python that builds it): each must filter on `status = 'confirmed'`."""
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute(
+                "SELECT proname, prosrc FROM pg_proc p"
+                " JOIN pg_namespace n ON n.oid = p.pronamespace"
+                " WHERE n.nspname = current_schema() AND prosrc ILIKE '%memory_relations%'"
+                " ORDER BY proname"
+            )
+            doors = {r["proname"]: r["prosrc"] for r in await cur.fetchall()}
+        self.assertTrue(doors)  # the pin is looking at something
+        loose = sorted(
+            name for name, src in doors.items() if not re.search(r"status\s*=\s*'confirmed'", src)
+        )
+        self.assertEqual(loose, [], "a door reads connections without the confirmed filter")

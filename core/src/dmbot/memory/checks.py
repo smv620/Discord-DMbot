@@ -124,8 +124,9 @@ def _same_order(old: Relation, new: Relation) -> bool:
 
 
 def waiting_guess(r: Relation) -> bool:
-    """A connection made only to hold what someone believes (`placing.py`): proposed and secret."""
-    return r.status == PROPOSED and r.secret
+    """A connection made only to hold what someone believes (`placing.py`): proposed, secret and
+    the extractor's. No other proposal is one (the speaker scan's are not secret)."""
+    return r.status == PROPOSED and r.secret and r.source == "extractor"
 
 
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:

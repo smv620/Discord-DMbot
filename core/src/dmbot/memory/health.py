@@ -32,7 +32,11 @@ from dmbot.memory.store import MemoryStore
 
 RECENT_SESSIONS = 3  # "heard lately" for an orphan
 
-_LIVE = "r.status <> 'rejected' AND r.to_session_at IS NULL"
+# (not the secret proposals that only hold what someone believes, #2412: they are not connections)
+_LIVE = (
+    "r.status <> 'rejected' AND r.to_session_at IS NULL"
+    " AND NOT (r.status = 'proposed' AND r.secret AND r.source = 'extractor')"
+)
 
 COUNTS = f"""
 SELECT

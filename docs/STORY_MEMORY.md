@@ -637,6 +637,11 @@ twin. **Stop recording me and readings** (Supervisor, 2026-10-25): the same line
 into a placeholder. What only that person's words produced goes: a guess, an accusation or a dodge the DM
 placed, its claim, the belief it created (a belief that also stands on other evidence stays and loses only the
 link) and the waiting connection made just to hold it, if nothing else is believed of it.
+A guess's holding connection is recorded as the extractor's, whoever pressed the button, and stands on the
+claim it was made for (an evidence link), so Stop recording me removes only the connections a placement made.
+Both ways of forgetting a person (`forget_speaker` and Delete my transcripts) run the same code under each
+campaign's lock and take the deleted rows out of the undo log (`memory/forget_readings.py`). A reading's claim
+is never quoted as the source of a fact (recall and continuity skip claims that carry one).
 Not yet: the deception event (`manipulated_by`), the running pass and the review lists (slice 3).
 
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the

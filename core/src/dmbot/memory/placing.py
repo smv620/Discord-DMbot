@@ -30,7 +30,9 @@ from typing import Any
 
 from dmbot.memory import beliefs, evidence
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, PERSPECTIVES, RELATIONS, Changes
+from dmbot.memory.checks import waiting_guess
 from dmbot.memory.claims import (
+    EXTRACTOR,
     GONE,
     INJECTION_REASON,
     NAME_FIRST,
@@ -72,6 +74,8 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.store import _load_ontology, flag_kept
 
+WAITING_ALREADY = "That is already waiting for your answer. Answer it there first."
+PLOT_IS_KNOWN = "The players already know that, so it cannot also be a secret plot."
 NOT_A_READING = "That is a fact to keep, not a belief to place."
 A_STATE = "That is how something is, not a connection, so there is nothing to place."
 UNKNOWN_CHARACTER = "DMbot doesn't know which character believes that."
@@ -238,15 +242,36 @@ async def _place_in(
     keeps = status in (REVEALED_FACT, MAGICALLY_VERIFIED, SECRET_PLOT)
     secret = status != REVEALED_FACT and status != MAGICALLY_VERIFIED
     wanted = CONFIRMED if keeps else PROPOSED
+    ends = [subject_id, object_id]
+    before = {
+        r["id"]
+        for r in await w.select(
+            RELATIONS, " AND (subject_id = ANY(%s) OR object_id = ANY(%s))", [ends, ends]
+        )
+    }
     relation, flags = await store.add_relation_in(
         w, subject_id, predicate, object_id,
         confidence=1.0 if keeps else HOST_CONFIDENCE, status=wanted, detail=detail,
         from_session_at=claim.session_started_at, secret=secret, fresh=True, leave=True,
+        # a guess a player voiced is the extractor's connection, whoever pressed the button; what
+        # the DM keeps (a reveal, a plot) is theirs
+        made_by=None if keeps else EXTRACTOR,
     )  # fmt: skip
     host = relation.id
+    if host not in before:
+        if not keeps:  # this placement made it to hold a guess: it stands on this claim
+            await evidence.add_in(
+                w, kind=evidence.CLAIM, target_id=claim.id, relation_id=host,
+                session_started_at=claim.session_started_at, trusted=True,
+            )  # fmt: skip
+    else:
+        if keeps and relation.status == PROPOSED and not waiting_guess(relation):
+            raise MemoryRuleError(WAITING_ALREADY)  # someone else's question: not changed here
+        if status == SECRET_PLOT and relation.status == CONFIRMED and not relation.secret:
+            raise MemoryRuleError(PLOT_IS_KNOWN)  # the players know it: it cannot be a plot too
     if keeps and relation.status == PROPOSED:
-        # Waiting as a theory until now; the DM placing the reading keeps it. This is the DM's
-        # Keep on the connection (it can only be a proposal that was made for beliefs).
+        # Waiting as a guess until now; the DM placing the reading keeps it. This is the DM's
+        # Keep on the connection.
         await w.update(RELATIONS, host, {"status": CONFIRMED, "secret": secret})
         flags = [*flags, *await flag_kept(w, host)]  # judged now, as a fact
     if status == SECRET_PLOT:  # the DM's view already holds it, as a plot, from the connection

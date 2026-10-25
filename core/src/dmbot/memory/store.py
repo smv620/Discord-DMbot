@@ -58,7 +58,14 @@ from dmbot.memory._changes import (
     Scope,
     undo_batch,
 )
-from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of, ordered
+from dmbot.memory.checks import (
+    HELD_TWICE,
+    Ended,
+    check_relation,
+    duplicate_of,
+    ordered,
+    waiting_guess,
+)
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
 from dmbot.memory.lookalikes import Name as LookAlikeName
 from dmbot.memory.lookalikes import find as find_look_alikes
@@ -560,7 +567,9 @@ class MemoryStore:
             rows = await scope.select(
                 RELATIONS,
                 " AND status = ANY(%s) AND (%s::text IS NULL OR %s IN (subject_id, object_id))"
-                " AND (%s OR (NOT secret AND NOT unrevealed)) ORDER BY created_at, id",
+                " AND (%s OR (NOT secret AND NOT unrevealed))"
+                " AND NOT (status = 'proposed' AND secret AND source = 'extractor')"  # (#2412)
+                " ORDER BY created_at, id",
                 [statuses, entity_id, entity_id, include_secret],
             )
             ends = {r[end] for r in rows for end in ("subject_id", "object_id")}
@@ -3366,13 +3375,16 @@ class MemoryStore:
         directional: bool = False,
         fresh: bool = False,
         leave: bool = False,
+        made_by: str | None = None,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
         campaign. `fresh`: a twin the DM rejected is not brought back by this (#2412: a theory
         about a rejected fact is a new proposal, not a revival). `leave`: a twin that is there
-        is returned as it is, never upgraded (a belief is hung on it, the fact is not restated)."""
-        source = w.source
+        is returned as it is, never upgraded (a belief is hung on it, the fact is not restated).
+        `made_by`: the source to record when it is not the write's own (a guess a player voiced is
+        the extractor's, whoever pressed the button)."""
+        source = made_by or w.source
         if unrevealed and source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         _check_choice(status, LIVE, "relation status")
@@ -3499,8 +3511,8 @@ class MemoryStore:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
             row = await w.update(RELATIONS, relation_id, changes)
-            if current["status"] == PROPOSED and row["status"] == CONFIRMED:
-                await flag_kept(w, relation_id)
+            if waiting_guess(_relation(current)) and row["status"] == CONFIRMED:
+                await flag_kept(w, relation_id)  # (only a guess host was never judged as a fact)
             return Written(_relation(row), w.batch)
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
@@ -4484,7 +4496,8 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
         changes["status"] = status
         if (
             source == DM
-            and old["source"] == DM
+            and old.get("source") == "extractor"
+            and "predicate" in old
             and old["status"] == PROPOSED
             and old["secret"]
             and not secret
