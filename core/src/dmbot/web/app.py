@@ -1543,6 +1543,34 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/readings")
+    async def me_campaign_web_readings(ref: str, signed: Signed) -> dict[str, Any]:
+        """What people believe, waiting for the DM (#2412): theories, reveals, frame-ups and what
+        a spell showed, kept as beliefs and never as facts. DM only."""
+        session, _token = signed
+        try:
+            return await relationships.read_readings(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/web/readings", status_code=202)
+    async def me_campaign_web_readings_answer(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Keep a reading as a belief, say no to it, or undo a keep: `{action: "place" | "no" |
+        "undo", id}`. Queued for the bot; the answer is polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await relationships.queue_reading(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web/answers/{answer}")
     async def me_campaign_web_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
         """Where one of the signed-in DM's own connection edits stands, with the edge as it now

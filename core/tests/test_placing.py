@@ -4,6 +4,7 @@ there, one Undo. Needs the test database; invented names throughout."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from dmbot.memory import readings
@@ -124,6 +125,251 @@ class Placing(ConfirmedMemoryTest):
         self.assertEqual(latest["evidence_ids"], [claim_id])
         held = {b.relation_id for b in await self.memory.party_view(GUILD_A, self.c)}
         self.assertIn(placed.relation_id, held)
+
+    async def links_of(self, belief_id: str) -> list[tuple[str, str | None]]:
+        rows = await self.rows("memory_evidence")
+        return sorted((e["kind"], e["target_id"]) for e in rows if e["belief_id"] == belief_id)
+
+    async def test_the_clue_a_reveal_names_becomes_a_link_on_its_belief(self) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("party", "revealed_fact", 1.0, because="the ledger"), "dm_said"
+        )
+        placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(
+            await self.links_of(latest["id"]), sorted([("claim", claim_id), ("clue", ledger)])
+        )
+
+    async def test_a_frame_up_links_the_event_that_faked_it(self) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        planted = await self.add("The Planted Ledger", type="event")
+        await self.relate(self.bram, "carries", self.sword, status="confirmed")
+        proposal = belief(
+            "truth",
+            "false_evidence",
+            0.0,
+            because="the ledger",
+            manipulated_by="the planted ledger",
+        )
+        placed = await self.place(await self.waiting_reading(proposal, "dm_said"))
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        links = await self.links_of(latest["id"])
+        self.assertIn(("event", planted), links)
+        self.assertIn(("clue", ledger), links)  # both of its reasons
+
+    async def test_a_name_that_finds_nothing_or_is_not_a_clue_or_event_adds_no_link(self) -> None:
+        await self.add("Heartseeker II", type="item")
+        await self.add("Old Tom", type="clue", status="proposed")  # still waiting for the DM
+        for n, reason in enumerate(("the missing ledger", "Mira", "Old Tom", "Heartseeker II")):
+            with self.subTest(reason):
+                await self.add(f"Trinket {n}", type="item")  # (a fresh guess each time)
+                proposal = readings.BeliefProposal(
+                    "pc:Mira", "Bram", "carries", f"Trinket {n}", 0.5, "theory", ("1",),
+                    because=reason,
+                )  # fmt: skip
+                claim_id = await self.waiting_reading(proposal, "player_said")
+                placed = await self.place(claim_id)
+                latest = (await self.beliefs_of(placed.relation_id))[-1]
+                self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_a_name_that_fits_two_entries_adds_no_link(self) -> None:
+        letter = await self.add("Letter", type="clue")
+        await self.memory.add_alias(
+            GUILD_A, self.c, letter, "the note", kind="nickname", source="dm", status="confirmed"
+        )
+        await self.add("The Note", type="event")
+        claim_id = await self.waiting_reading(belief("pc:Mira", "theory", 0.5, because="the note"))
+        placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_a_secret_plot_links_its_reason_on_the_connection(self) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("truth", "secret_plot", 1.0, because="the ledger"), "dm_said"
+        )
+        placed = await self.place(claim_id)
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertIn(("clue", ledger), [(e["kind"], e["target_id"]) for e in links])
+
+    async def test_a_placed_reading_whose_clue_found_no_entry_is_counted_on_the_health_line(
+        self,
+    ) -> None:
+        from dmbot.memory import health
+
+        async def unlinked() -> int:
+            return (await health.read(self.memory, GUILD_A, self.c, since=0)).readings_unlinked
+
+        await self.add("The Ledger", type="clue")
+        self.assertEqual(await unlinked(), 0)
+        await self.place(
+            await self.waiting_reading(belief("pc:Mira", "theory", 0.4, because="the ledger"))
+        )
+        await self.place(  # (named, but nothing by that name: placed, not linked, counted)
+            await self.waiting_reading(
+                readings.BeliefProposal(
+                    "pc:Mira", "Mira", "carries", "Heartseeker", 0.6, "theory", ("1",),
+                    because="the lost map",
+                )
+            )
+        )  # fmt: skip
+        self.assertEqual(await unlinked(), 1)
+        line = (await health.read(self.memory, GUILD_A, self.c, since=0)).line()
+        self.assertIn("readings_unlinked=1", line)
+        self.assertNotIn("map", line)  # a count: never a name
+
+    async def test_a_plot_on_a_connection_that_was_there_takes_no_links_so_undo_leaves_none(
+        self,
+    ) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=True)
+        claim_id = await self.waiting_reading(
+            belief("truth", "secret_plot", 1.0, because="the ledger"), "dm_said"
+        )
+        placed = await self.place(claim_id)
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertNotIn(("clue", ledger), [(e["kind"], e["target_id"]) for e in links])
+
+    async def test_a_reason_that_is_not_text_is_ignored(self) -> None:
+        await self.add("The Ledger", type="clue")
+        for n, bad in enumerate((5, ["the ledger"], "", None, {"a": 1})):
+            with self.subTest(bad):
+                await self.add(f"Gem {n}", type="item")
+                proposal = readings.BeliefProposal(
+                    "pc:Mira", "Bram", "carries", f"Gem {n}", 0.5, "theory", ("1",)
+                )  # fmt: skip
+                claim_id = await self.waiting_reading(proposal, "player_said")
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(
+                        "UPDATE memory_claims SET reading = reading || jsonb_build_object("
+                        "'because', %s::jsonb) WHERE id = %s",
+                        (json.dumps(bad), claim_id),
+                    )
+                placed = await self.place(claim_id)
+                latest = (await self.beliefs_of(placed.relation_id))[-1]
+                self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_an_entry_that_goes_away_before_the_write_does_not_stop_the_placing(
+        self,
+    ) -> None:
+        from unittest import mock
+
+        from dmbot.memory import evidence
+
+        await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("pc:Mira", "theory", 0.5, because="the ledger"), "player_said"
+        )
+        real = evidence.add_in
+
+        async def gone(w: Any, **kw: Any) -> Any:
+            if kw["kind"] == evidence.CLUE:
+                raise MemoryRuleError(evidence.NOT_THIS_CAMPAIGN)
+            return await real(w, **kw)
+
+        with mock.patch.object(evidence, "add_in", gone):
+            placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+        self.assertEqual((await self.rows("memory_claims"))[0]["status"], "confirmed")
+
+    async def test_the_cap_on_links_refuses_a_reason_without_stopping_the_placing(self) -> None:
+        from unittest import mock
+
+        from dmbot.memory import evidence
+
+        await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("pc:Mira", "theory", 0.5, because="the ledger"), "player_said"
+        )
+        with mock.patch.object(evidence, "PER_OWNER_MAX", 1):  # the claim's own link fills it
+            placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_a_link_to_an_entry_turned_down_since_the_names_were_read_is_refused(
+        self,
+    ) -> None:
+        from unittest import mock
+
+        from dmbot.memory import placing
+
+        ledger = await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("pc:Mira", "theory", 0.5, because="the ledger"), "player_said"
+        )
+        # the names were read while it stood; then the DM turned it down before the write
+        await self.memory.set_entity_status(GUILD_A, self.c, ledger, "rejected", source="dm")
+        with mock.patch.object(placing, "_reasons", return_value=[("clue", ledger)]):
+            placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_a_merge_carries_the_links_to_the_kept_name_and_undo_gives_them_back(
+        self,
+    ) -> None:
+        keep = await self.add("The Ledger", type="clue")
+        gone = await self.add("The Old Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("pc:Mira", "theory", 0.5, because="the old ledger"), "player_said"
+        )
+        placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertIn(("clue", gone), await self.links_of(latest["id"]))
+        merged = await self.memory.merge(
+            GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True
+        )
+        links = await self.links_of(latest["id"])
+        self.assertIn(("clue", keep), links)
+        self.assertNotIn(("clue", gone), links)  # nothing points at the name that went
+        await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")  # type: ignore[arg-type]
+        links = await self.links_of(latest["id"])
+        self.assertIn(("clue", gone), links)
+        self.assertNotIn(("clue", keep), links)
+
+    async def test_a_merge_drops_a_twin_link_and_one_the_kept_kind_cannot_hold(self) -> None:
+        keep = await self.add("The Ledger", type="clue")
+        gone = await self.add("The Old Ledger", type="clue")
+        thing = await self.add("The Ledger Fire", type="event")
+        claim_id = await self.waiting_reading(
+            belief("pc:Mira", "theory", 0.5, because="the old ledger", manipulated_by="the ledger"),
+            "player_said",
+        )
+        placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        clues = [x for x in await self.links_of(latest["id"]) if x[0] == "clue"]
+        self.assertEqual(clues, [("clue", keep)])  # the twin is one link, not two
+        await self.memory.merge(GUILD_A, self.c, thing, keep, source="dm", dm_said_same=True)
+        self.assertEqual([x for x in await self.links_of(latest["id"]) if x[0] == "clue"], [])
+
+    async def test_undoing_one_of_two_guesses_on_a_shared_connection_keeps_the_other_link(
+        self,
+    ) -> None:
+        await self.add("Rook", type="character", role="player_character", played_by=5)
+        first = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        second = await self.waiting_reading(belief("pc:Rook", "theory", 0.5), "player_said")
+        await self.place(first)
+        placed = await self.place(second)
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertEqual(sorted(e["target_id"] for e in links), sorted([first, second]))
+        await self.memory.undo(
+            GUILD_A, self.c, placed.batch, source="dm",
+            after=lambda c: ClaimStore.reopen_in(c, second),
+        )  # fmt: skip
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertEqual([e["target_id"] for e in links], [first])  # the first guess still stands
+        (claim,) = [r for r in await self.rows("memory_claims") if r["id"] == second]
+        self.assertEqual((claim["status"], claim["fact_id"]), ("proposed", None))
 
     async def test_a_reveal_of_a_secret_connection_is_refused_and_writes_nothing(self) -> None:
         await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=True)

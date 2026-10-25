@@ -521,6 +521,19 @@ class TranscriptStore:
             )
             return [_session(r) for r in await cur.fetchall()]
 
+    async def line_count_at(self, guild_id: int, campaign_id: str, started_at: int) -> int | None:
+        """How many lines the campaign's session that began at `started_at` has, or None when it
+        has no such session. A session with no lines (or whose transcript was deleted) is not in
+        `sessions`; this says that is why (#2680)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT max(line_count) AS n FROM transcript_sessions"
+                " WHERE campaign_id = %s AND started_at = %s",
+                (campaign_id, started_at),
+            )
+            row = await cur.fetchone()
+        return None if row is None or row["n"] is None else int(row["n"])
+
     async def latest_before(
         self, guild_id: int, campaign_id: str, before: int
     ) -> tuple[int, bool] | None:
