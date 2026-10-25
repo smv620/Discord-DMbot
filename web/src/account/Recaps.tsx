@@ -47,6 +47,8 @@ import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
+import RecapReport from "./RecapReport";
+import { AFTER_SESSION_REPORT_LIVE } from "../content/report-words";
 import RecapPlayer from "./RecapPlayer";
 import CampaignNav from "./CampaignNav";
 
@@ -919,6 +921,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
+      {AFTER_SESSION_REPORT_LIVE && !editing && recap.campaign && recap.canEdit && (
+        <RecapReport key={`${recap.campaign}.${recap.sessionAt}`} api={api} campaignRef={recap.campaign} sessionAt={recap.sessionAt} />
+      )}
       {!editing &&
         !recap.working &&
         (recap.canEdit || recap.canTryAgain || !decided) && (
