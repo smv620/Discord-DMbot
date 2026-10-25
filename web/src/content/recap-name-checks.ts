@@ -31,12 +31,12 @@ export const nameCheckWords = {
   left: (n: number): string => `${n} letters left`,
   // Change the words (#2593): "Harrow" is often "Harrow's Keep".
   changeLabel: "What is the whole name?",
-  changeHint: "Add the words around it, or fix the spelling.",
+  changeHint: "Add the words around it. For example, Harrow becomes Harrow's Keep.",
+  useName: (name: string): string => `Use this name: ${name}`,
   changeUse: "Change the words",
   changeFor: (name: string): string => `Change the words: ${name}`,
-  longerLabel: "Or pick a longer name",
-  changed: "Changed. Now say what it is.",
-  changeFailedHint: "The words didn't change. Press the button again.",
+  longerLabel: "Maybe:",
+  changed: (name: string): string => `Now called ${name}. Pick what it is.`,
   noteFrom: "From the recap:",
   waiting: "DMbot is saving your answer…",
   slow: "Still saving. Your answer is kept, and the name will leave this list when it is done.",
@@ -51,14 +51,14 @@ export const nameCheckWords = {
     "bad-action": "That didn't work. Try again.",
     "too-soon": "Try again in a minute.",
     "not-allowed": "Only this campaign's DM can answer these names.",
-    // What the bot writes when it could not apply an answer (core/.../recaps/name_answers.py), by its code
-    // with the underscore as a hyphen. A test reads the codes from core so a new one needs words here.
     // Change the words refusals (core #2570), by code with the underscore as a hyphen. Which other name
     // clashes is never said, because it may be a secret one.
     empty: "Type the name first.",
-    "too-long": "That name is too long. Use fewer words.",
-    "already-known": "You already have a name like that. Use \"It's the same as…\" instead.",
-    "secret-clash": "That name can't be used. Try other words.",
+    "too-long": `That name is too long. Keep it to ${NAME_MAX_LETTERS} letters or fewer.`,
+    "already-known": "A name like that is already on your list. Pick it under \"It's the same as…\" instead.",
+    "secret-clash": "That name can't be used here. Try different words, or leave it as it is.",
+    // What the bot writes when it could not apply an answer (core/.../recaps/name_answers.py), by its code
+    // with the underscore as a hyphen. A test reads the codes from core so a new one needs words here.
     gone: "That name was already answered, here or in Discord. The list is up to date now.",
     "bad-kind": "That kind can't be used for a name. Pick another kind.",
     "not-joined": "Those two names can't be joined here. Choose another name, or open the Names page.",

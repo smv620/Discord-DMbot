@@ -61,25 +61,48 @@ describe("change the words", () => {
     expect(button.disabled).toBe(false);
   });
 
-  it("sends the new words, keeps the card with its new name, and says what to do next", async () => {
+  it("sends the new words, keeps the card with its new name, and says what to do next", { timeout: 20_000 }, async () => {
     const api = await open();
     fireEvent.input(box("Brannoch"), { target: { value: "  Brannoch's Forge " } });
     fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.changeFor("Brannoch") }));
     await waitFor(() => expect(calls(api, "answerNameCheck")).toEqual([`answerNameCheck:${draft.ref}:a:${JSON.stringify({ action: "change_words", words: "Brannoch's Forge" })}`]));
     expect((await screen.findAllByText(w.waiting, undefined, slow)).length).toBeGreaterThan(0);
     expect(await screen.findByRole("group", { name: "Brannoch's Forge" }, slow)).toBeTruthy();
-    expect(screen.getAllByText(w.changed).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(w.changed("Brannoch's Forge")).length).toBeGreaterThan(0);
+    await waitFor(() => expect(document.activeElement?.id).toBe(`name-check-${"a".repeat(32)}-kind`)); // the next answer is the kind
     expect(screen.queryByRole("group", { name: "Brannoch" })).toBeNull();
   });
 
   it("offers up to three longer names, and picking one sends it as the heard form too", async () => {
     const api = await open();
-    const pick = within(row("Brannoch")).getByRole("button", { name: "Brannoch's Forge" });
+    const pick = within(row("Brannoch")).getByRole("button", { name: w.useName("Brannoch's Forge") });
     fireEvent.click(pick);
     expect(box("Brannoch").value).toBe("Brannoch's Forge");
     fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.changeFor("Brannoch") }));
     await waitFor(() => expect(calls(api, "answerNameCheck")[0]).toContain(JSON.stringify({ action: "change_words", words: "Brannoch's Forge", heard: "Brannoch's Forge" })));
     expect(within(row("Veshla")).queryByRole("group", { name: w.longerLabel })).toBeNull(); // none for this card
+  });
+
+  it("keeps the picked suggestion as the heard form even when the DM then fixes its spelling", async () => {
+    const api = await open();
+    fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.useName("Brannoch's Forge") }));
+    fireEvent.input(box("Brannoch"), { target: { value: "Brannoch's Forge Hall" } });
+    fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.changeFor("Brannoch") }));
+    await waitFor(() => expect(calls(api, "answerNameCheck")[0]).toContain(JSON.stringify({ action: "change_words", words: "Brannoch's Forge Hall", heard: "Brannoch's Forge" })));
+  });
+
+  it("shows the stored words after a change, and gives the buttons back after a refusal", { timeout: 20_000 }, async () => {
+    await open();
+    fireEvent.input(box("Brannoch"), { target: { value: "Zeta" } });
+    fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.changeFor("Brannoch") }));
+    await screen.findByRole("alert", undefined, slow);
+    await waitFor(() => expect((within(row("Brannoch")).getByRole("button", { name: w.notANameFor("Brannoch") }) as HTMLButtonElement).disabled).toBe(false));
+    expect(box("Brannoch").value).toBe("Zeta"); // the DM's words stay to be edited
+    fireEvent.input(box("Brannoch"), { target: { value: "Brannoch's Forge" } });
+    fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.changeFor("Brannoch") }));
+    await screen.findByRole("group", { name: "Brannoch's Forge" }, slow);
+    expect(box("Brannoch's Forge").value).toBe("Brannoch's Forge"); // follows the stored name, not what was typed before
+    expect((within(row("Brannoch's Forge")).getByRole("button", { name: w.changeFor("Brannoch's Forge") }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("says each refusal in plain words and never names the entry a secret name clashes with", async () => {

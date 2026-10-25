@@ -59,26 +59,28 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     const timer = setTimeout(async () => {
       looks.current += 1;
       const before = new Map((list?.names ?? []).map((n) => [n.id, n.name]));
+      const busyNow = new Set(busy);
       const got = await read();
       if (got) {
         const now = new Set(got.names.map((n) => n.id));
         // Change the words keeps the card and gives it new words (#2593), which also ends its wait.
-        const renamed = got.names.some((n) => before.has(n.id) && before.get(n.id) !== n.name);
+        const renamedCard = got.names.find((n) => busyNow.has(n.id) && before.has(n.id) && before.get(n.id) !== n.name);
         // A name that left the list is answered; one that is still there with a word in `error` failed.
         setBusy((was) => {
           const next = new Set(was);
           for (const id of was) {
             const card = got.names.find((n) => n.id === id);
-            if (!card || card.error !== "" || (before.has(id) && before.get(id) !== card.name)) next.delete(id);
+            if (!card || (card.error ?? "") !== "" || (before.has(id) && before.get(id) !== card.name)) next.delete(id);
           }
           return next;
         });
         if ([...before.keys()].some((id) => !now.has(id))) {
           setSaid(words.done);
           keepFocus(() => heading.current);
-        } else if (renamed) {
-          setSaid(words.changed);
-          keepFocus(() => heading.current);
+        } else if (renamedCard) {
+          // The card goes on under its new words: say so, and put the focus where the next answer is made.
+          setSaid(words.changed(renamedCard.name));
+          keepFocus(() => document.getElementById(`name-check-${renamedCard.id}-kind`));
         }
       }
       if (looks.current >= POLL_LIMIT) setSlow(true);
@@ -185,9 +187,18 @@ function NameRow({
   const [note, setNote] = useState("");
   const room = NOTE_MAX_LETTERS - note.length;
   // Change the words (#2593): starts as the name itself; a longer name picked from the card fills the box.
-  const [words2, setWords2] = useState(name.name);
-  const [heard, setHeard] = useState("");
+  const [wholeName, setWholeName] = useState(name.name);
+  const [heard, setHeard] = useState(""); // how it was written, when the DM picked a longer name (kept if they then fix it)
+  const [changing, setChanging] = useState(false);
   const longer = (name.longerNames ?? []).slice(0, 3);
+  // The card keeps its id when its words change (here or in Discord), so the box follows the stored name.
+  const shownName = useRef(name.name);
+  useEffect(() => {
+    if (shownName.current === name.name) return; // (not on the first draw: that would undo a word typed at once)
+    shownName.current = name.name;
+    setWholeName(name.name);
+    setHeard("");
+  }, [name.name]);
   return (
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`}>
@@ -214,38 +225,44 @@ function NameRow({
             {words.notAName}
           </button>
         </div>
+        {NAME_CHANGE_WORDS_LIVE && (
+          <>
+            {longer.length > 0 && (
+              <div class="row" role="group" aria-label={words.longerLabel}>
+                <span class="small muted">{words.longerLabel}</span>
+                {longer.map((option) => (
+                  <button key={option} type="button" class="button secondary" disabled={busy} aria-label={words.useName(option)} onClick={() => { setWholeName(option); setHeard(option); setChanging(true); }}>
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+            <details open={changing} onToggle={(e) => setChanging((e.target as HTMLDetailsElement).open)}>
+              <summary>{words.changeUse}</summary>
+              <fieldset class="stack" disabled={busy}>
+                <legend>{words.changeLabel}</legend>
+                <p class="small muted">{words.changeHint}</p>
+                <div class="row">
+                  <label for={`${id}-words`} class="visually-hidden">
+                    {words.changeLabel}
+                  </label>
+                  <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
+                  <button
+                    type="button"
+                    class="button secondary"
+                    disabled={wholeName.trim() === "" || wholeName.trim() === name.name}
+                    aria-label={words.changeFor(name.name)}
+                    onClick={() => onSend({ action: "change_words", words: wholeName.trim(), ...(heard !== "" ? { heard } : {}) })}
+                  >
+                    {words.changeUse}
+                  </button>
+                </div>
+              </fieldset>
+            </details>
+          </>
+        )}
         <details>
           <summary>{words.more}</summary>
-          {NAME_CHANGE_WORDS_LIVE && (
-            <fieldset class="stack" disabled={busy}>
-              <legend>{words.changeLabel}</legend>
-              <p class="small muted">{words.changeHint}</p>
-              <div class="row">
-                <label for={`${id}-words`} class="visually-hidden">
-                  {words.changeLabel}
-                </label>
-                <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={words2} onInput={(e) => { setWords2((e.target as HTMLInputElement).value); setHeard(""); }} />
-                <button
-                  type="button"
-                  class="button secondary"
-                  disabled={words2.trim() === "" || words2.trim() === name.name}
-                  aria-label={words.changeFor(name.name)}
-                  onClick={() => onSend({ action: "change_words", words: words2.trim(), ...(heard !== "" ? { heard } : {}) })}
-                >
-                  {words.changeUse}
-                </button>
-              </div>
-              {longer.length > 0 && (
-                <div class="row" role="group" aria-label={words.longerLabel}>
-                  {longer.map((l) => (
-                    <button key={l} type="button" class="button secondary" onClick={() => { setWords2(l); setHeard(l); }}>
-                      {l}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </fieldset>
-          )}
           <fieldset class="stack" disabled={busy}>
             <legend>{words.actually}</legend>
             <div class="row">
