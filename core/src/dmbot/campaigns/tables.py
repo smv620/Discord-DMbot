@@ -128,10 +128,10 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
-    "name_pass_reports": "a log of one name-pass run (counts only): a restore starts with none "
-    "(#2684)",
-    "name_pass_fixes": "a log of what one name-pass run fixed and its Undo number, which points at "
-    "respell records a restore does not carry (#2684)",
+    "name_pass_reports": "the name pass's report and Undo record: a run's history, the fixes "
+    "themselves are in the transcript (#2684)",
+    "name_pass_fixes": "the name pass's report and Undo record: a run's history, the fixes "
+    "themselves are in the transcript (#2684)",
     # Decided on #2552 (Supervisor, 2026-10-23):
     "session_usage": "the hours meter: a restore must not reset or double it",
     "waiting_name_questions": _QUEUE,
