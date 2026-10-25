@@ -12,7 +12,7 @@ from typing import Any
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
-from dmbot.memory import extractor
+from dmbot.memory import extractor, readings
 from dmbot.memory.claims import ClaimStore, Extracted, Proposed
 from dmbot.sidebar import answer as sidebar
 from dmbot.transcript.models import (
@@ -180,13 +180,13 @@ class ReadingPass(unittest.IsolatedAsyncioTestCase):
         ai, store = Believing(), Kept()
         report = await go(ai, store, session(10))
         self.assertEqual((report.calls, report.readings), (1, 0))
-        self.assertNotIn(extractor.READING_SYSTEM, ai.systems)
+        self.assertNotIn(readings.READING_SYSTEM, ai.systems)
 
     async def test_on_each_batch_is_asked_again_and_the_belief_waits_as_a_claim(self) -> None:
         ai, store = Believing(), Kept()
         report = await go(ai, store, session(10), readings=True)
         self.assertEqual((report.calls, report.readings, report.readings_refused), (2, 1, 0))
-        self.assertEqual(ai.systems, [extractor.SYSTEM, extractor.READING_SYSTEM])
+        self.assertEqual(ai.systems, [extractor.SYSTEM, readings.READING_SYSTEM])
         self.assertEqual(store.versions, [extractor.READING_PROMPT_VERSION])
         ((claims, speakers, _),) = store.calls
         self.assertEqual(claims[0].reading["view"], "pc:Mira")  # type: ignore[index]
