@@ -234,6 +234,13 @@ class Switched(OfferBase):
         taken = await self.alice.delete(f"/me/campaigns/{self.ref}/handover")
         self.assertEqual(taken.status_code, 404)
 
+    async def test_the_link_routes_answer_404_too(self) -> None:
+        for tail in ("look", "accept", "decline"):
+            got = await self.alice.post(
+                f"/me/handover/{tail}", json={"token": "1-2-" + "a" * 43, "serverId": "1"}
+            )
+            self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"), tail)
+
 
 class Showing(OfferBase):
     async def handover_of(self, client: httpx.AsyncClient) -> Any:

@@ -539,6 +539,23 @@ class Decisions(Harness):
         )
         self.assertEqual(guild.buyer.sent, [])
 
+    async def test_an_email_offer_tells_the_owner_and_sends_the_person_nothing(self) -> None:
+        # #2532: the person answered on the website, not through a Discord message.
+        self.decided("accepted", message_id=None)
+        self.store.offers[(GUILD, 1)] = replace(
+            self.store.offers[(GUILD, 1)], via_email=True, to_name=""
+        )
+        await self.decide_quietly(GUILD, 1)
+        guild = self.guilds[GUILD]
+        self.assertEqual(
+            guild.owner.sent,
+            [
+                handover.TOLD_ACCEPTED.format(
+                    name="The person you emailed", campaign="Frost\\*maiden"
+                )
+            ],
+        )
+
     async def test_an_expired_email_offer_tells_the_owner_in_plans_words(self) -> None:
         # #2532: no name to show, and the campaign never moved.
         guild = self.guilds[GUILD]
