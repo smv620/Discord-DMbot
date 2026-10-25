@@ -21,6 +21,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
+from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -513,8 +514,12 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
-    if got is None or not str(got["action"]).startswith(("link-", "claim-", "backstory-")):
+    if got is None or not str(got["action"]).startswith(
+        ("link-", "claim-", "backstory-", "reading-")
+    ):
         raise RecapError("not_found")
+    if str(got["action"]).startswith("reading-"):
+        return _reading_answer(got)
     edge = None
     if str(got["action"]).startswith(("claim-", "backstory-")):
         # a waiting connection answered: how it ended, and for Keep all how many were kept
@@ -540,6 +545,122 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
 
 
 WAITING_COUNT_KEYS = ("claims", "backstory", "which")
+
+# What people believe (#2412 slice 3b). A reading's rule, in the words the page shows, from the
+# status code sets (never the model) and the view that holds it.
+READING_RULES = {
+    "theory": "theory",
+    "accusation": "accusation",
+    "revealed_fact": "reveal",
+    "magically_verified": "confession",
+    "evasion_under_magic": "evasion",
+    "false_evidence": "false_clue",
+    "secret_plot": "plot",
+}
+READING_QUEUE = {"place": "reading-place", "no": "reading-no", "undo": "reading-undo"}
+READINGS_SHOWN = 100
+
+
+def _who_believes(view: str) -> str:
+    if view == "party":
+        return "the party"
+    if view == "truth":
+        return "the DM's view"
+    return view.removeprefix("pc:")
+
+
+def _sureness(status: str, confidence: object) -> str:
+    """How sure the belief is, in words (the numbers are set by code from the rule)."""
+    if status in ("theory", "accusation"):
+        value = confidence if isinstance(confidence, (int, float)) else 0.5
+        return "fairly sure" if value > 0.5 else "doubtful" if value < 0.5 else "a guess"
+    return {
+        "revealed_fact": "seen",
+        "magically_verified": "seen",
+        "evasion_under_magic": "dodged",
+        "false_evidence": "false",
+        "secret_plot": "secret plot",
+    }.get(status, "a guess")
+
+
+async def read_readings(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """What people believe, waiting for the signed-in DM (#2412): claims that carry a reading, not
+    yet kept as a belief or turned down. DM only (the door answers anyone else with nothing, here
+    `not_found`). The words are the claim's own (names and a relationship), never a transcript
+    line or a quote. Read-only."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute("SELECT dmbot_web_readings(%s, %s) AS r", (guild_id, campaign_id))
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("status") != "ok":
+        raise RecapError("not_found")
+    readings = [
+        {
+            "id": r["id"],
+            "rule": READING_RULES.get(str(r["status"]), "theory"),
+            "who": _who_believes(str(r["view"] or "")),
+            "statement": _claim_statement(r),
+            "sureness": _sureness(str(r["status"]), r["confidence"]),
+            "sessionAt": r["at"],
+            # a new name in it has to be answered first (in Check new names)
+            "canPlace": not r["waitingOn"],
+            "why": "name_first" if r["waitingOn"] else None,
+            "waitingOn": r["waitingOn"],
+        }
+        for r in got["readings"]
+    ]
+    total = max(int(got.get("total", 0)), len(readings))
+    return {"readings": readings, "counts": {"readings": total}, "capped": total > len(readings)}
+
+
+async def queue_reading(db: Database, session: Session, ref: str, body: object) -> str:
+    """Queue the DM's answer to a reading: `{action: "place" | "no" | "undo", id}`; `id` is the
+    reading's claim, or for `undo` the answer of the keep it undoes. The bot makes the calls the
+    DM screen would (`ClaimStore.place`, `reject`, the store's Undo), so consent and every rule
+    are checked there again. Returns the answer's id. The answer ends with an `error` word the
+    page can word: `gone` (not waiting any more, or nothing left to undo), `name_first`,
+    `stopped_recording`, `cannot_write`, `bad_reading`, `unknown_character`, `waiting_already`,
+    `plot_is_known` or `already_known`."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    action = READING_QUEUE.get(str(body.get("action")))
+    target = str(body.get("id") or "")
+    if action is None:
+        raise RecapError("bad_action")
+    if not ID_PATTERN.match(target):
+        raise RecapError("not_found")
+    return await _queue(
+        db, session, ref, entity="", action=action, target=target, text="", flag=False
+    )
+
+
+def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
+    """Where one answer about a reading stands, with the wait shown (CLAUDE.md: every wait says
+    what stage it is at, how long it has run and when it last moved): counts and stages only."""
+    state = str(got["state"])
+    created = int(got.get("createdAt") or 0)
+    claimed = int(got.get("claimedAt") or 0) // 1000  # (the queue marks pickups in milliseconds)
+    now = int(got.get("now") or created)
+    stage = {"waiting": "queued", "working": "working"}.get(state, state)
+    return {
+        "state": state,
+        "error": got["error"],
+        "undoable": got["action"] == "reading-place"
+        and state == "done"
+        and str(got.get("resultOther") or "").isdigit(),
+        "waits": {
+            "stage": stage,
+            "waitedSeconds": max(0, now - created) if created else 0,
+            "lastMovedAt": claimed or created,
+            "now": now,  # the server's clock, so the page need not guess it (seconds)
+            # nothing has moved for longer than a stalled worker is given before it is retaken
+            "stalled": state in ("waiting", "working")
+            and now - (claimed or created) > RETAKE_AFTER_S,
+        },
+    }
 
 
 def _can_be_secret(row: dict[str, Any]) -> bool:

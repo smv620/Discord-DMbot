@@ -24,7 +24,7 @@ one write with one Undo, and the claim keeps which connection it became (`fact_i
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -114,6 +114,10 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
     return {"view": view, "status": status, "confidence": c}
 
 
+# Who is recorded now: a snapshot, or a function (plain or awaited) that asks again.
+Recorded = Collection[int] | Callable[[], Collection[int] | Awaitable[Collection[int]]]
+
+
 @dataclass(frozen=True, slots=True)
 class Placed:
     claim: Claim
@@ -129,7 +133,7 @@ async def place(
     campaign_id: str,
     claim_id: str,
     *,
-    opted_in: Collection[int] | Callable[[], Collection[int]],
+    opted_in: Recorded,
 ) -> Placed:
     """The DM places a reading (see the module's note). The same early exits as `confirm` (the
     question is gone, a plan, an instruction, someone stopped being recorded), the names asked
@@ -151,7 +155,7 @@ async def place(
         async with store._write(guild_id, campaign_id, "extractor") as w:
             await w.update(CLAIMS, claim_id, {"status": CLAIM_DROPPED, "reason": INJECTION_REASON})
         raise MemoryRuleError(ODD_NOW)
-    if not _recorded(claim, opted_in):
+    if not await _recorded(claim, opted_in):
         await _stopped(store, guild_id, campaign_id, claim_id)
     reading = _checked(claim.reading)
     async with store._read(guild_id, campaign_id) as scope:
@@ -180,6 +184,7 @@ async def place(
         if isinstance(found, str) or found[0] in waiting or found[0] not in names.roles:
             raise MemoryRuleError(UNKNOWN_CHARACTER)
         holder = found[0]
+    reasons = _reasons(claim.reading or {}, names, waiting)
     stopped = False
     async with store._write(guild_id, campaign_id, DM) as w:
         current = await w.get(CLAIMS, claim_id)
@@ -187,10 +192,10 @@ async def place(
             raise MemoryRuleError(GONE)
         # Asked again under the lock, after every await above: a caller that can say who is
         # recorded *now* passes a function (a snapshot taken earlier is all a collection is).
-        if _recorded(claim, opted_in):
+        if await _recorded(claim, opted_in):
             relation_id, belief, flags = await _place_in(
                 store, w, claim, reading, subject_id, term.key, object_id,
-                label, holder, names.roles,
+                label, holder, names.roles, reasons,
             )  # fmt: skip
             row = await w.update(
                 CLAIMS,
@@ -205,9 +210,13 @@ async def place(
     return Placed(claim_of(row), relation_id, belief, tuple(flags), batch)
 
 
-def _recorded(claim: Claim, opted_in: Collection[int] | Callable[[], Collection[int]]) -> bool:
+async def _recorded(claim: Claim, opted_in: Recorded) -> bool:
     """Is everyone whose words the claim holds recorded now?"""
-    now = opted_in() if callable(opted_in) else opted_in
+    if callable(opted_in):
+        found = opted_in()
+        now = await found if isinstance(found, Awaitable) else found
+    else:
+        now = opted_in
     return bool(claim.speaker_ids) and all(s in now for s in claim.speaker_ids)
 
 
@@ -253,6 +262,7 @@ async def _place_in(
     detail: str,
     holder: str | None,
     roles: Mapping[str, tuple[str | None, int | None]],
+    reasons: Sequence[tuple[str, str]] = (),
 ) -> tuple[str, Belief | None, list[Flag]]:
     """The write: find or make the connection, then the belief, in the one open write."""
     status, confidence, view = str(reading["status"]), float(reading["confidence"]), reading["view"]
@@ -295,10 +305,65 @@ async def _place_in(
         await w.update(RELATIONS, host, {"status": CONFIRMED, "secret": secret})
         flags = [*flags, *await flag_kept(w, host)]  # judged now, as a fact
     if status == SECRET_PLOT:  # the DM's view already holds it, as a plot, from the connection
+        # Only a connection this very write made takes the links: the store's Undo does not reverse
+        # a link (they are not logged), so on a connection that was there before they would stay
+        # after the Undo, resting a plot that is gone on a clue.
+        if host not in before:
+            await _link_reasons(w, reasons, relation_id=host, session_at=claim.session_started_at)
         return host, None, list(flags)
     perspective = await _view_id(w, view, holder, roles)
     belief = await beliefs.place_belief(
         w, perspective, host, confidence, status,
         evidence=[claim.id], session_at=claim.session_started_at,
     )  # fmt: skip
+    await _link_reasons(w, reasons, belief_id=belief.id, session_at=claim.session_started_at)
     return host, belief, list(flags)
+
+
+def _reasons(
+    reading: Mapping[str, Any], names: Any, waiting: Collection[str]
+) -> list[tuple[str, str]]:
+    """The clue or event a reading names as its reason (`because`) or as the act or ward that
+    faked or blocked it (`manipulated_by`), as (link kind, entry) pairs. Only an entry that already
+    exists and is kept (never one waiting for the DM's yes, never a person, place or item) and
+    that the name fits exactly once: a reading never makes a name or an event, and a name that
+    finds nothing adds no link (its words still show on the review card)."""
+    found: list[tuple[str, str]] = []
+    for key in ("because", "manipulated_by"):
+        name = reading.get(key)
+        if not isinstance(name, str) or not name.strip():  # (a stored reading is untrusted)
+            continue
+        one = names.one(name.strip())
+        if isinstance(one, str) or one[0] in waiting:
+            continue
+        kind = {"clue": evidence.CLUE, "event": evidence.EVENT}.get(one[1])
+        if kind is not None and (kind, one[0]) not in found:
+            found.append((kind, one[0]))
+    return found
+
+
+async def _link_reasons(
+    w: Changes,
+    reasons: Sequence[tuple[str, str]],
+    *,
+    session_at: int | None,
+    relation_id: str | None = None,
+    belief_id: str | None = None,
+) -> None:
+    """Link what the reading rests on to the belief it made (or, for a plot that makes none, the
+    connection). An entry that went away since the names were read adds no link; it does not stop
+    the placing."""
+    for kind, target in reasons:
+        # Asked again under the lock: the names were read before the write, and an entry may have
+        # been turned down, merged away or changed kind since. Only a kept entry of the right kind
+        # takes a link.
+        row = await w.get(ENTITIES, target)
+        if row is None or row["status"] != CONFIRMED or row["type"] != kind:
+            continue
+        try:
+            await evidence.add_in(
+                w, kind=kind, target_id=target, relation_id=relation_id, belief_id=belief_id,
+                session_started_at=session_at,
+            )  # fmt: skip
+        except MemoryRuleError:
+            continue
