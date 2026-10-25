@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Iterator, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from dmbot.memory.extractor import readable
 from dmbot.memory.models import name_key, spelling_key
@@ -212,7 +212,10 @@ class NotLoaded(Exception):
     sessions with lines began, as numbers, so a wrong time is easy to see)."""
 
     def __init__(
-        self, why: str, started: Sequence[int] = (), lines_in_it: int | None = None
+        self,
+        why: Literal["campaign", "names", "session"],
+        started: Sequence[int] = (),
+        lines_in_it: int | None = None,
     ) -> None:
         super().__init__(why)
         self.why = why

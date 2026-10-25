@@ -488,3 +488,31 @@ class TheToolsLookup(DatabaseTest):
             await inputs_for(self.db, 1, cid, 1_700_000_000)
         self.assertEqual((empty.exception.why, empty.exception.lines_in_it), ("session", 0))
         self.assertIn("0 stored lines", not_loaded_line(empty.exception, 1, cid, 1_700_000_000))
+
+    async def test_the_line_count_is_one_servers_own(self) -> None:
+        from dmbot.transcript.store import TranscriptStore
+
+        cid, _ = await self.setUp_one()
+        transcripts = TranscriptStore(self.db)
+        self.assertEqual(await transcripts.line_count_at(1, cid, 1_700_000_000), len(fx.lines()))
+        self.assertIsNone(await transcripts.line_count_at(1, cid, 5))  # no such session
+        self.assertIsNone(await transcripts.line_count_at(2, cid, 1_700_000_000))  # another server
+
+    async def test_the_lines_name_what_to_look_at(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.devtools.recap_run.__main__ import inputs_for, not_loaded_line
+        from dmbot.memory.lookup import LookupCache
+        from dmbot.recaps.inputs import NotLoaded
+
+        cid, _ = await self.setUp_one()
+        self.assertEqual(
+            not_loaded_line(NotLoaded("campaign"), 1, cid, 9), f"no campaign {cid} in server 1"
+        )
+        self.assertIn("names can't be read", not_loaded_line(NotLoaded("names"), 1, cid, 9))
+        with (
+            patch.object(LookupCache, "get", side_effect=RuntimeError("boom")),
+            self.assertRaises(NotLoaded) as names,
+        ):
+            await inputs_for(self.db, 1, cid, 1_700_000_000)
+        self.assertIsInstance(names.exception.__cause__, RuntimeError)

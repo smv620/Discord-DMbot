@@ -70,6 +70,7 @@ from dmbot.recaps import pipeline as pl
 from dmbot.recaps import split as sp
 from dmbot.recaps.audio.eleven import ProviderError, check_line
 from dmbot.recaps.audio.names import SpokenName
+from dmbot.recaps.inputs import NotLoaded
 from dmbot.recaps.pipeline import Client
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.recaps.style import StyleStore
@@ -879,7 +880,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
     )
 
 
-def not_loaded_line(why: Any, gid: int, cid: str, at: int) -> str:
+def not_loaded_line(why: NotLoaded, gid: int, cid: str, at: int) -> str:
     """Which of the three it was, in words that say what to look at. Numbers only: no name or
     word of a transcript."""
     if why.why == "campaign":
@@ -887,10 +888,11 @@ def not_loaded_line(why: Any, gid: int, cid: str, at: int) -> str:
     if why.why == "names":
         return f"the campaign {cid}'s names can't be read (see the log above for why)"
     near = ", ".join(str(t) for t in why.started) or "none"
+    # (when several sessions share a start time, the count is the largest; harmless)
     if why.lines_in_it is not None:  # the session is there, but there is nothing to read in it
         return (
             f"campaign {cid} has a session that began at {at}, but with {why.lines_in_it} stored "
-            f"lines (a session with none is not listed; was its transcript copied?)"
+            f"lines (a session with none is not listed; was its transcript copied, or deleted?)"
         )
     return (
         f"campaign {cid} has no stored session that began at {at}; its newest sessions with "
