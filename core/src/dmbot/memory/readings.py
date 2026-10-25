@@ -32,7 +32,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory.claims import FIELD_MAX, LINES_MAX, reads_like_instruction
+from dmbot.memory.claims import FIELD_MAX, LINES_MAX, Extracted, reads_like_instruction
 from dmbot.memory.models import (
     ACCUSATION,
     EVASION_UNDER_MAGIC,
@@ -284,6 +284,31 @@ def _theory(r: Reading) -> BeliefProposal:
     return BeliefProposal(
         view, r.subject, r.relationship, r.object, confidence,
         ACCUSATION if r.accusation else THEORY, r.lines,
+    )  # fmt: skip
+
+
+def reading_of(belief: BeliefProposal) -> dict[str, Any]:
+    """What a belief proposal adds to a stored claim (`memory_claims.reading`): plain words and
+    numbers, never a line number, a speaker or a Discord id (a claim keeps those itself, and they
+    go with a person's words)."""
+    return {
+        "view": belief.view,
+        "confidence": belief.confidence,
+        "status": belief.status,
+        "because": belief.because,
+        "manipulated_by": belief.manipulated_by,
+        "new_assertion": belief.new_assertion,
+        "dm_confirms": belief.dm_confirms,
+    }
+
+
+def as_claim(belief: BeliefProposal, how: str) -> Extracted:
+    """The belief as a claim for `ClaimStore.propose`: the same checks (consent, names, the
+    relationship's kinds, the instruction check) and the same storing, with the reading beside
+    its words. `how` is how it was said ("dm_said" or "player_said"), from the lines it cites."""
+    return Extracted(
+        belief.subject, belief.relationship, belief.object, "", belief.lines, how,
+        reading_of(belief),
     )  # fmt: skip
 
 

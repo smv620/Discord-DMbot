@@ -73,6 +73,7 @@ PAGE = 5
 
 NOT_THE_DM = "Only the DM can answer that."
 GONE = "DMbot doesn't have that question any more."
+A_READING = "That is a belief to place, not a fact to keep."
 
 # Why a claim was dropped, in words the numbers (and a curious DM) can read.
 PLAN_REASON = "a plan, not something that happened"
@@ -119,6 +120,9 @@ class Extracted:
     details: str
     lines: tuple[str, ...]
     how: str
+    # A belief for the DM to place (#2412, `memory.readings`), as plain words and numbers, or None
+    # for a claim that is just something said.
+    reading: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +146,7 @@ class Claim:
     created_at: int
     decided_at: int | None
     fact_id: str | None
+    reading: Mapping[str, Any] | None = None
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
@@ -150,7 +155,7 @@ def claim_of(r: Mapping[str, Any]) -> Claim:
         r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"],
+        r["fact_id"], r.get("reading"),
     )  # fmt: skip
 
 
@@ -478,10 +483,15 @@ def effect_note(
     )
 
 
-def _repeat_key(subject: str, relationship: str, obj: str, how: str) -> tuple[Any, ...]:
+def _repeat_key(
+    subject: str, relationship: str, obj: str, how: str, reading: Mapping[str, Any] | None = None
+) -> tuple[Any, ...]:
     """What makes two questions the same: the words, not who said them. A plan is its own
-    question (it is never asked, so it must not hide the fact it resembles)."""
-    return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN
+    question (it is never asked, so it must not hide the fact it resembles). A reading is its own
+    question too: the same words as a theory, a reveal and a plain claim are three things to place
+    (point of view and status tell them apart)."""
+    held = None if reading is None else (reading.get("view"), reading.get("status"))
+    return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN, held
 
 
 async def _turned_down(scope: Any) -> set[str]:
@@ -578,7 +588,9 @@ class ClaimStore:
             asked: set[tuple[Any, ...]] = set()  # what the DM has seen or is waiting on
             refused: set[tuple[Any, ...]] = set()  # what was dropped before, and why
             for r in await w.select(CLAIMS, ""):
-                key = _repeat_key(r["subject"], r["relationship"], r["object"], r["how"])
+                key = _repeat_key(
+                    r["subject"], r["relationship"], r["object"], r["how"], r.get("reading")
+                )
                 if r["status"] == CLAIM_DROPPED:
                     refused.add((*key, r["reason"]))
                 else:
@@ -617,7 +629,7 @@ class ClaimStore:
             for r in leftovers:
                 kept = Extracted(
                     r["subject"], r["relationship"], r["object"], r["details"],
-                    tuple(r["lines"]), r["how"],
+                    tuple(r["lines"]), r["how"], r.get("reading"),
                 )  # fmt: skip
                 if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
                     continue  # its speaker stopped: `purge_stopped` wipes it when it is read
@@ -664,7 +676,11 @@ class ClaimStore:
                         # Past the limit: kept waiting for its name, which is proposed in a later
                         # session (most-said first, before that session's own).
                         key = _repeat_key(
-                            claim.subject, claim.relationship, claim.object, claim.how
+                            claim.subject,
+                            claim.relationship,
+                            claim.object,
+                            claim.how,
+                            claim.reading,
                         )
                         if key in asked:
                             repeated += 1
@@ -682,7 +698,9 @@ class ClaimStore:
                             ))  # fmt: skip
                         continue
                     reason = judged(claim)
-                key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
+                key = _repeat_key(
+                    claim.subject, claim.relationship, claim.object, claim.how, claim.reading
+                )
                 cited = [speakers.get(ref) for ref in claim.lines]
                 if reason in (STOPPED_REASON, NO_SPEAKER_REASON):
                     dropped += 1  # counted, never kept
@@ -735,6 +753,7 @@ class ClaimStore:
             "created_at": now,
             "decided_at": None,
             "fact_id": None,
+            "reading": dict(claim.reading) if claim.reading is not None else None,
         }
 
     async def _link(
@@ -870,7 +889,9 @@ class ClaimStore:
         has not said yet what it is waits. One whose name is no longer anyone's (the DM said it
         isn't a name, or it was taken away) is dropped here for good, so it is never asked."""
         async with self._store._read(guild_id, campaign_id) as scope:
-            sql = " AND status = 'proposed' ORDER BY created_at, id"
+            # (A reading is a belief to place, not a fact to say yes to: it is not asked here until
+            # the DM can place it, #2412.)
+            sql = " AND status = 'proposed' AND reading IS NULL ORDER BY created_at, id"
             rows = await scope.select(CLAIMS, sql)
             if not rows:
                 return [], []
@@ -892,6 +913,7 @@ class ClaimStore:
                 claim.details,
                 claim.lines,
                 claim.how,
+                claim.reading,
             )
             said = (
                 [claim.subject]
@@ -1027,6 +1049,10 @@ class ClaimStore:
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
+        if claim.reading is not None:
+            # A theory said "yes" to as a fact would be a lie in the DM's own voice: a reading is
+            # placed as a belief, which is its own step (#2412).
+            raise MemoryRuleError(A_READING)
         wording = Extracted(
             claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
         )

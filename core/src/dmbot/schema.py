@@ -14492,6 +14492,21 @@ MEMORY_EVIDENCE = (
 """
 )
 
+CLAIM_READINGS = """
+    -- A claim can be a reading (#2412, docs/STORY_MEMORY.md 9 and 9a): not a fact someone said
+    -- but a belief for the DM to place, such as a theory, a reveal, a frame-up or what a spell
+    -- showed. `reading` holds what the reading adds to the claim's words: the point of view
+    -- that holds it, its confidence and status (set by code, never by the model), the clue,
+    -- event or spell that justifies it, the act that faked it and whether the DM alone may
+    -- write it. Names, numbers and words of the game only, never a Discord id or a quote; a
+    -- claim's lines and speakers are the claim's own and go with a person's words as before.
+    -- NULL for every claim made before. A new column on a table the website cannot read, so no
+    -- row is touched and no policy opened.
+    ALTER TABLE memory_claims ADD COLUMN reading JSONB
+        CHECK (reading IS NULL OR (jsonb_typeof(reading) = 'object'
+                                   AND pg_column_size(reading) <= 2000));
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -14761,6 +14776,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         MOVE_CASCADE_LATE,
     ),  # keys of tables made after 0215 cascade too (#2550)
     ("0235_memory_evidence", MEMORY_EVIDENCE),  # typed evidence links with placeholders (#2662)
+    ("0236_claim_readings", CLAIM_READINGS),  # a claim can be a reading, a belief to place (#2412)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

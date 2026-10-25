@@ -351,7 +351,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
             _check_evidence(raw)
-        elif not all(_valid(c, raw[c]) for c in table.columns):
+        elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
             raise CampaignError(DAMAGED)
         if table is CLAIMS:
             _check_claim(raw)
@@ -434,6 +434,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
             raw = {"pinned": False, **raw}  # from before the pin (#2447)
+        elif isinstance(raw, dict) and raw.get("table") == "claim":
+            raw = {"reading": None, **raw}  # from before readings (#2412)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
@@ -555,7 +557,7 @@ def _other_version(snapshot: Any) -> bool:
 
 
 def _db_value(column: str, value: Any) -> Any:
-    return Jsonb(value) if column == "sheet" and value is not None else value
+    return Jsonb(value) if column in ("sheet", "reading") and value is not None else value
 
 
 def _type_term(r: dict[str, Any]) -> TypeTerm:
@@ -642,6 +644,8 @@ def _check_claim(row: Mapping[str, Any]) -> None:
     """A claim in a file: a status a claim can have, a fact only when it was confirmed, and
     never a plan that someone says is waiting for the DM (a plan is never asked)."""
     if row["status"] not in CLAIM_STATUSES:
+        raise CampaignError(DAMAGED)
+    if not _reading_ok(row["reading"]):
         raise CampaignError(DAMAGED)
     if row["fact_id"] is not None and row["status"] != "confirmed":
         raise CampaignError(DAMAGED)
@@ -741,3 +745,31 @@ def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
             or (kind in (evidence.CLUE, evidence.EVENT) and entity_kind.get(target) != kind)
         ):
             row["target_id"] = None
+
+
+_READING_KEYS: dict[str, type | tuple[type, ...]] = {
+    "view": str, "confidence": (int, float), "status": str, "because": str, "manipulated_by": str,
+    "new_assertion": bool, "dm_confirms": bool,
+}  # fmt: skip
+
+
+def _reading_ok(reading: object) -> bool:
+    """A claim's reading from a file: none, or exactly the keys a reading has, each the right kind
+    of value, a known status, a confidence from 0 to 1, a view that is the party, the truth or a
+    character's, and short words. Untrusted."""
+    if reading is None:
+        return True
+    if not isinstance(reading, dict) or set(reading) != set(_READING_KEYS):
+        return False
+    for key, kind in _READING_KEYS.items():
+        value = reading[key]
+        if not isinstance(value, kind) or (kind is not bool and isinstance(value, bool)):
+            return False
+        if isinstance(value, str) and len(value) > NAME_MAX + 3:
+            return False
+    view = reading["view"]
+    return (
+        reading["status"] in BELIEF_STATUSES
+        and 0 <= reading["confidence"] <= 1
+        and (view in ("party", "truth") or (view.startswith("pc:") and len(view) > 3))
+    )
