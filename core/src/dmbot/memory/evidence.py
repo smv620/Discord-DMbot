@@ -118,7 +118,7 @@ async def add_in(
     )
     row = await cur.fetchone()
     assert row is not None
-    if int(row["n"]) >= PER_OWNER_MAX:
+    if int(row["n"]) >= PER_OWNER_MAX and not trusted:  # (a copy of what was already there)
         raise MemoryRuleError(BAD_LINK)
     cur = await w.conn.execute(
         sql.SQL(
@@ -185,7 +185,8 @@ async def _placeholder(conn: Conn, guild_id: int, kind: str, targets: Collection
             (guild_id, kind, batch),
         )
         changed += cur.rowcount
-        await _scrub_old_lists(conn, guild_id, batch)
+    if ordered:  # (once for all of them: the lists and the log have no index on a reference)
+        await _scrub_old_lists(conn, guild_id, ordered)
     return changed
 
 

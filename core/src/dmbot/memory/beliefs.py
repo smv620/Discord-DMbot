@@ -104,15 +104,28 @@ async def _add(
     evidence: Sequence[str] = (),
     session_at: int | None = None,
     pinned: bool | None = None,
+    copy_from: str | None = None,
 ) -> dict[str, Any]:
     """The checked insert behind `believe_in` and `follow`. `pinned` (the DM's 📌, #2447): None
-    keeps what the pair's last belief said, so a new belief never silently unpins."""
+    keeps what the pair's last belief said, so a new belief never silently unpins.
+    `copy_from`: the id of an earlier belief of this campaign whose evidence links this one
+    carries on (a placeholder stays a placeholder); `evidence` is then that belief's old list.
+    Without it `evidence` is new and each item must be a claim or line of this campaign (#2662)."""
     if not 0.0 <= confidence <= 1.0:
         raise MemoryRuleError("A confidence runs from 0 to 1.")
     if status not in BELIEF_STATUSES:
         raise MemoryRuleError("That is not a kind of belief.")
     if len(evidence) > EVIDENCE_MAX or any(not e or len(e) > EVIDENCE_ID_MAX for e in evidence):
         raise MemoryRuleError("That evidence is not in the right shape.")
+    kinds: dict[str, str] = {}
+    if copy_from is None:  # new evidence: each item a claim or a line of THIS campaign, or refused
+        for item in dict.fromkeys(evidence):
+            for kind in (CLAIM, LINE):
+                if await evidence_links.resolves(w.conn, w.guild_id, w.campaign_id, kind, item):
+                    kinds[item] = kind
+                    break
+            else:
+                raise MemoryRuleError(evidence_links.NOT_THIS_CAMPAIGN)
     last = await w.select(
         BELIEFS,
         " AND perspective_id = %s AND relation_id = %s ORDER BY seq DESC LIMIT 1",
@@ -136,10 +149,18 @@ async def _add(
             "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
         },
     )
-    for item in dict.fromkeys(evidence):  # the same evidence as typed links (#2662)
-        is_claim = await evidence_links.resolves(w.conn, w.guild_id, w.campaign_id, CLAIM, item)
+    if copy_from is not None:
+        await w.conn.execute(
+            "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
+            " session_started_at, added_at)"
+            " SELECT guild_id, campaign_id, %s, kind, target_id, session_started_at, added_at"
+            " FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s AND belief_id = %s"
+            " ON CONFLICT DO NOTHING",
+            (row["id"], *w.ids, copy_from),
+        )
+    for item, kind in kinds.items():
         await evidence_links.add_in(
-            w, kind=CLAIM if is_claim else LINE, target_id=item, belief_id=row["id"],
+            w, kind=kind, target_id=item, belief_id=row["id"],
             session_started_at=session_at, trusted=True,
         )  # fmt: skip
     return row
@@ -168,14 +189,22 @@ async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:
         if status not in (SECRET_PLOT, REVEALED_FACT, MAGICALLY_VERIFIED):
             status = SECRET_PLOT if held else REVEALED_FACT  # a doubt or a lie is not 100% truth
         row = await _add(
-            w, ids[TRUTH], relation_id, KNOWN, status, evidence, session_at, pinned=True
+            w,
+            ids[TRUTH],
+            relation_id,
+            KNOWN,
+            status,
+            evidence,
+            session_at,
+            pinned=True,
+            copy_from=truth["id"] if truth is not None else None,
         )
     else:
         if truth is None or not bool(truth["pinned"]):
             raise MemoryRuleError("That connection isn't pinned.")
         row = await _add(
             w, ids[TRUTH], relation_id, float(truth["confidence"]), status, evidence,
-            session_at, pinned=False,
+            session_at, pinned=False, copy_from=truth["id"],
         )  # fmt: skip
     return belief_of(row)
 
@@ -308,6 +337,16 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
             changes[column] = old[column]
     if changes:
         new = await w.update(RELATIONS, new_id, changes)
+    await w.conn.execute(  # and what the old one stood on (#2662), unless the new one has its own
+        "INSERT INTO memory_evidence (guild_id, campaign_id, relation_id, kind, target_id,"
+        " session_started_at, added_at)"
+        " SELECT guild_id, campaign_id, %s, kind, target_id, session_started_at, added_at"
+        " FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s AND relation_id = %s"
+        " AND NOT EXISTS (SELECT 1 FROM memory_evidence n WHERE n.guild_id = %s"
+        "   AND n.campaign_id = %s AND n.relation_id = %s)"
+        " ON CONFLICT DO NOTHING",
+        (new_id, *w.ids, old["id"], *w.ids, new_id),
+    )
     ids = await perspective_ids(w)
     party = ids[PARTY]
     held = await _newest(w, [old["id"], new_id])
@@ -333,6 +372,7 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
             list(belief["evidence_ids"]), belief["session_at"], pinned=bool(belief["pinned"]),
+            copy_from=belief["id"],
         )  # fmt: skip
 
 

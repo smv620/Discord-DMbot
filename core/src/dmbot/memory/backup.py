@@ -316,6 +316,11 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
             row = row_of(raw, table)
             if table is RELATIONS:
                 row["mention_ids"] = []  # mentions aren't backed up
+            if table is BELIEFS:
+                # the old list can hold a line's reference, which names its speaker; the typed
+                # links (a line's as a placeholder) carry the evidence now, and a backup is read
+                # by the whole server
+                row["evidence_ids"] = []
             if table is EVIDENCE and row["kind"] == evidence.LINE:
                 # A line of this server's transcripts: its reference names the speaker, and a
                 # restored campaign has none of these lines, so the link goes as a placeholder
@@ -362,6 +367,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
+    _tidy_evidence(by_tag)
     _check_terms(by_tag)
     # A sheet belongs to the player playing the character, as everywhere else (#723).
     # One left from another player, or on an entry with no player (an undone merge), is
@@ -709,3 +715,22 @@ def _check_evidence(raw: dict[str, Any]) -> None:
     )
     if not (owner_ok and ids_ok and target_ok and ints_ok and raw["kind"] in evidence.KINDS):
         raise CampaignError(DAMAGED)
+
+
+def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """What a file's links may point at, whatever the file says (it is untrusted): a line is never
+    brought back (its reference names a speaker, and a restored campaign has none of those
+    lines), and a claim, clue or event must be a row of this same file, else the link is a
+    placeholder. A belief's old list is not read from a file for the same reason."""
+    for row in by_tag["belief"]:
+        row["evidence_ids"] = []
+    claims = {r["id"] for r in by_tag["claim"]}
+    entity_kind = {r["id"]: r["type"] for r in by_tag["entity"]}
+    for row in by_tag["evidence"]:
+        kind, target = row["kind"], row["target_id"]
+        if (
+            kind == evidence.LINE
+            or (kind == evidence.CLAIM and target not in claims)
+            or (kind in (evidence.CLUE, evidence.EVENT) and entity_kind.get(target) != kind)
+        ):
+            row["target_id"] = None

@@ -14042,12 +14042,17 @@ MEMORY_EVIDENCE = (
     -- placeholder when the mention is already gone, which is what it would have become).
     INSERT INTO memory_evidence
             (guild_id, campaign_id, relation_id, kind, target_id, session_started_at, added_at)
-        SELECT DISTINCT r.guild_id, r.campaign_id, r.id, 'line', m.line_ref,
-               m.session_started_at, r.created_at
+        SELECT DISTINCT ON (r.guild_id, r.campaign_id, r.id, t.line_ref)
+               r.guild_id, r.campaign_id, r.id, 'line', t.line_ref, t.session_started_at,
+               r.created_at
         FROM memory_relations r
         CROSS JOIN LATERAL unnest(r.mention_ids) AS ids(mention_id)
         LEFT JOIN memory_mentions m ON m.guild_id = r.guild_id AND m.campaign_id = r.campaign_id
-                                   AND m.id = ids.mention_id;
+                                   AND m.id = ids.mention_id
+        CROSS JOIN LATERAL (SELECT CASE WHEN char_length(m.line_ref) <= 100
+                                        THEN m.line_ref END AS line_ref,
+                                   m.session_started_at AS session_started_at) t
+        ORDER BY r.guild_id, r.campaign_id, r.id, t.line_ref, t.session_started_at;
     -- A belief's evidence ids were never typed: one that is a claim of the campaign is a claim,
     -- anything else is taken to be a line.
     INSERT INTO memory_evidence

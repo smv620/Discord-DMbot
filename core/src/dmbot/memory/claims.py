@@ -1039,6 +1039,7 @@ class ClaimStore:
         if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
             async with self._store._write(guild_id, campaign_id, DM) as w:
                 await w.delete(CLAIMS, claim_id)
+                await evidence.placeholder_claims(w.conn, guild_id, [claim_id])  # (#2662)
             raise MemoryRuleError(STOPPED_NOW)
         async with self._store._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)
