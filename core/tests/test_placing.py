@@ -4,6 +4,7 @@ there, one Undo. Needs the test database; invented names throughout."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from dmbot.memory import readings
@@ -141,6 +142,7 @@ class Placing(ConfirmedMemoryTest):
         )
 
     async def test_a_frame_up_links_the_event_that_faked_it(self) -> None:
+        ledger = await self.add("The Ledger", type="clue")
         planted = await self.add("The Planted Ledger", type="event")
         await self.relate(self.bram, "carries", self.sword, status="confirmed")
         proposal = belief(
@@ -152,7 +154,9 @@ class Placing(ConfirmedMemoryTest):
         )
         placed = await self.place(await self.waiting_reading(proposal, "dm_said"))
         latest = (await self.beliefs_of(placed.relation_id))[-1]
-        self.assertIn(("event", planted), await self.links_of(latest["id"]))
+        links = await self.links_of(latest["id"])
+        self.assertIn(("event", planted), links)
+        self.assertIn(("clue", ledger), links)  # both of its reasons
 
     async def test_a_name_that_finds_nothing_or_is_not_a_clue_or_event_adds_no_link(self) -> None:
         await self.add("Heartseeker II", type="item")
@@ -216,6 +220,63 @@ class Placing(ConfirmedMemoryTest):
         line = (await health.read(self.memory, GUILD_A, self.c, since=0)).line()
         self.assertIn("readings_unlinked=1", line)
         self.assertNotIn("map", line)  # a count: never a name
+
+    async def test_a_plot_on_a_connection_that_was_there_takes_no_links_so_undo_leaves_none(
+        self,
+    ) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=True)
+        claim_id = await self.waiting_reading(
+            belief("truth", "secret_plot", 1.0, because="the ledger"), "dm_said"
+        )
+        placed = await self.place(claim_id)
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertNotIn(("clue", ledger), [(e["kind"], e["target_id"]) for e in links])
+
+    async def test_a_reason_that_is_not_text_is_ignored(self) -> None:
+        await self.add("The Ledger", type="clue")
+        for n, bad in enumerate((5, ["the ledger"], "", None, {"a": 1})):
+            with self.subTest(bad):
+                await self.add(f"Gem {n}", type="item")
+                proposal = readings.BeliefProposal(
+                    "pc:Mira", "Bram", "carries", f"Gem {n}", 0.5, "theory", ("1",)
+                )  # fmt: skip
+                claim_id = await self.waiting_reading(proposal, "player_said")
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(
+                        "UPDATE memory_claims SET reading = reading || jsonb_build_object("
+                        "'because', %s::jsonb) WHERE id = %s",
+                        (json.dumps(bad), claim_id),
+                    )
+                placed = await self.place(claim_id)
+                latest = (await self.beliefs_of(placed.relation_id))[-1]
+                self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_an_entry_that_goes_away_before_the_write_does_not_stop_the_placing(
+        self,
+    ) -> None:
+        from unittest import mock
+
+        from dmbot.memory import evidence
+
+        await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("pc:Mira", "theory", 0.5, because="the ledger"), "player_said"
+        )
+        real = evidence.add_in
+
+        async def gone(w: Any, **kw: Any) -> Any:
+            if kw["kind"] == evidence.CLUE:
+                raise MemoryRuleError(evidence.NOT_THIS_CAMPAIGN)
+            return await real(w, **kw)
+
+        with mock.patch.object(evidence, "add_in", gone):
+            placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+        self.assertEqual((await self.rows("memory_claims"))[0]["status"], "confirmed")
 
     async def test_a_reveal_of_a_secret_connection_is_refused_and_writes_nothing(self) -> None:
         await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=True)

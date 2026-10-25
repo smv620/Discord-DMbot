@@ -305,7 +305,11 @@ async def _place_in(
         await w.update(RELATIONS, host, {"status": CONFIRMED, "secret": secret})
         flags = [*flags, *await flag_kept(w, host)]  # judged now, as a fact
     if status == SECRET_PLOT:  # the DM's view already holds it, as a plot, from the connection
-        await _link_reasons(w, reasons, relation_id=host, session_at=claim.session_started_at)
+        # Only a connection this very write made takes the links: the store's Undo does not reverse
+        # a link (they are not logged), so on a connection that was there before they would stay
+        # after the Undo, resting a plot that is gone on a clue.
+        if host not in before:
+            await _link_reasons(w, reasons, relation_id=host, session_at=claim.session_started_at)
         return host, None, list(flags)
     perspective = await _view_id(w, view, holder, roles)
     belief = await beliefs.place_belief(
