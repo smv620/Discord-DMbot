@@ -1,10 +1,10 @@
 """What the party has wrong (#2661; docs/STORY_MEMORY.md 9a, "The after-session report"): where the
-party's or a character's belief differs from The truth, as candidates for PlotBot to sort into
-disguised, misunderstood and simply false. Finding is code; the sort is the AI's, and neither
+party's or a player's character's belief differs from The truth, as candidates for PlotBot to
+sort into disguised, misunderstood and simply false. Finding is code; the sort is the AI's, and neither
 changes a belief (the DM decides).
 
-A belief counts as a difference when a point of view that is not The truth holds it NOW (the
-newest belief, at 0.5 or more and not a denial) and The truth either
+A belief counts as a difference when the party or a player's character (never an NPC) holds it
+NOW (the newest belief, at 0.5 or more and not a denial) and The truth either
 - **denies** that very connection (its belief there is 0.0, False Evidence): the party believes
   what the DM's view says is not so; or
 - holds a connection **between the same two names that clashes with it** under the ontology and
@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from dmbot.memory.store import MemoryStore
 
 TRUTH = "truth"
+# Only the party and the players' characters are the table's to be corrected; what an NPC believes
+# (or lies about) is the DM's own story, and is never offered as "what the party has wrong".
+SORTED_VIEWS = ("party", "pc")
 DENIED, CLASHES = "denied", "clashes"
 
 
@@ -40,7 +43,7 @@ class Difference:
     """One belief that differs from The truth. Ids only."""
 
     perspective_id: str
-    view_kind: str  # party, pc or npc
+    view_kind: str  # party or pc
     relation_id: str  # the connection the point of view believes
     truth_relation_id: str | None  # the connection The truth holds instead (None when it denies)
     kind: str  # DENIED or CLASHES
@@ -64,7 +67,7 @@ def differences(onto: Ontology, held: Sequence[Held]) -> list[Difference]:
     out: list[Difference] = []
     seen: set[tuple[str, str]] = set()
     for mine in now:
-        if mine.kind == TRUTH or not asserts(mine.belief):
+        if mine.kind not in SORTED_VIEWS or not asserts(mine.belief):
             continue
         key = (mine.belief.perspective_id, mine.relation.id)
         if key in seen:

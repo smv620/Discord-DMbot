@@ -3,6 +3,8 @@ candidates for PlotBot's sort. Invented names."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from dmbot.memory import differences as df
 from dmbot.memory.models import new_id
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
@@ -41,7 +43,7 @@ class Finding(ConfirmedMemoryTest):
                  GUILD_A, self.c),
             )  # fmt: skip
 
-    async def link(self, predicate: str, **kw: object) -> str:
+    async def link(self, predicate: str, **kw: Any) -> str:
         made = await self.relate(self.bram, predicate, self.mira, status="confirmed", **kw)
         return made.value[0].id
 
@@ -57,14 +59,14 @@ class Finding(ConfirmedMemoryTest):
         await self.believe(view, relation, 0.75, "accusation")
         return relation
 
-    async def character(self, name: str) -> str:
+    async def character(self, name: str, kind: str = "pc") -> str:
         entity = await self.add(name, type="character", role="player_character", played_by=9)
         made = new_id()
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
-                " created_at) VALUES (%s, %s, %s, 'pc', %s, 1)",
-                (GUILD_A, self.c, made, entity),
+                " created_at) VALUES (%s, %s, %s, %s, %s, 1)",
+                (GUILD_A, self.c, made, kind, entity),
             )
         return made
 
@@ -144,3 +146,26 @@ class Finding(ConfirmedMemoryTest):
         elsewhere = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id
         self.assertEqual(await self.finder.find(GUILD_A, elsewhere), [])
         self.assertEqual(len(await self.finder.find(GUILD_A, self.c)), 1)
+
+    async def test_a_non_player_characters_belief_is_not_the_partys_to_correct(self) -> None:
+        # only the party and the players' characters are what the DM sorts: an NPC being wrong
+        # (or lying) is the DM's own story
+        enemy = await self.link("enemy_of")
+        npc = await self.character("Thessaly", kind="npc")
+        await self.guess(npc, "ally_of")
+        await self.believe(npc, enemy, 0.0, "false_evidence")
+        self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
+
+    async def test_a_frame_up_the_truth_denies_is_a_denied_difference_marked_as_a_guess(
+        self,
+    ) -> None:
+        # a player's character accuses Bram and Mira of an alliance the DM's view says is not so
+        rook = await self.character("Rook")
+        accused = await self.guess(rook, "ally_of")
+        await self.believe(await self.view("truth"), accused, 0.0, "false_evidence")
+        (found,) = await self.finder.find(GUILD_A, self.c)
+        self.assertEqual(
+            (found.view_kind, found.relation_id, found.truth_relation_id, found.kind),
+            ("pc", accused, None, df.DENIED),
+        )
+        self.assertTrue(found.involves_guess)
