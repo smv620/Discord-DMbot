@@ -146,6 +146,14 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_READINGS": "1"}).story_readings_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_READINGS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_READINGS": "maybe"})
+
+    def test_grading_contradictions_is_off_unless_asked(self) -> None:
+        self.assertFalse(load_settings(BASE).story_contradictions_on)
+        self.assertTrue(
+            load_settings({**BASE, "DMBOT_STORY_CONTRADICTIONS": "1"}).story_contradictions_on
+        )
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_CONTRADICTIONS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_CONTRADICTIONS": "maybe"})
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_EXTRACTOR must be 1"):
             load_settings({**BASE, "DMBOT_STORY_EXTRACTOR": "maybe"})
 

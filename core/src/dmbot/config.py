@@ -90,6 +90,10 @@ class Settings:
     # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
     # extractor does, inside the same call limits.
     story_readings_on: bool = False
+    # After a session, PlotBot grades the contradictions one point of view holds (#2660), major or
+    # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
+    # extractor's plan check and call limits (at most a few calls a session).
+    story_contradictions_on: bool = False
     # Images posted in the table chat are described once by the AI (#2450). Off until dev1 has run
     # a live check; with it off no image is fetched or sent anywhere. `table_images_per_day` is the
     # most images one campaign has described in a day (each counts toward its AI use); past it an
@@ -295,6 +299,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_READINGS must be 1 (on) or 0 (off), got "' + readings_raw + '".'
         )
+    contradictions_raw = (get("DMBOT_STORY_CONTRADICTIONS") or "0").lower()
+    if contradictions_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_CONTRADICTIONS must be 1 (on) or 0 (off), got "'
+            + contradictions_raw
+            + '".'
+        )
     extractor_tier = (get("DMBOT_STORY_EXTRACTOR_TIER") or "fast").lower()
     if extractor_tier not in ("fast", "careful", "deep"):
         raise ConfigError(
@@ -432,6 +443,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
+        story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
