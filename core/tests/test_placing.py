@@ -191,6 +191,32 @@ class Placing(ConfirmedMemoryTest):
         ]
         self.assertIn(("clue", ledger), [(e["kind"], e["target_id"]) for e in links])
 
+    async def test_a_placed_reading_whose_clue_found_no_entry_is_counted_on_the_health_line(
+        self,
+    ) -> None:
+        from dmbot.memory import health
+
+        async def unlinked() -> int:
+            return (await health.read(self.memory, GUILD_A, self.c, since=0)).readings_unlinked
+
+        await self.add("The Ledger", type="clue")
+        self.assertEqual(await unlinked(), 0)
+        await self.place(
+            await self.waiting_reading(belief("pc:Mira", "theory", 0.4, because="the ledger"))
+        )
+        await self.place(  # (named, but nothing by that name: placed, not linked, counted)
+            await self.waiting_reading(
+                readings.BeliefProposal(
+                    "pc:Mira", "Mira", "carries", "Heartseeker", 0.6, "theory", ("1",),
+                    because="the lost map",
+                )
+            )
+        )  # fmt: skip
+        self.assertEqual(await unlinked(), 1)
+        line = (await health.read(self.memory, GUILD_A, self.c, since=0)).line()
+        self.assertIn("readings_unlinked=1", line)
+        self.assertNotIn("map", line)  # a count: never a name
+
     async def test_a_reveal_of_a_secret_connection_is_refused_and_writes_nothing(self) -> None:
         await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=True)
         before = await self.snapshot()
