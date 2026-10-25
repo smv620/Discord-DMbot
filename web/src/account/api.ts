@@ -170,6 +170,9 @@ export interface HandoverServer {
   current: boolean;
   /** False: DMbot has to be added to it first. */
   botIn: boolean;
+  /** Why the campaign can't move to this server: a code (today `shares_rules`), never set on the server
+   * it runs on now. Missing from an API older than #2550. */
+  why?: string | null;
 }
 
 /** What opening a hand-over link shows (#2534). `ended` covers expired, taken back, used and unknown
@@ -182,8 +185,13 @@ export type HandoverLook =
       from: { name: string };
       server: { id: string; name: string };
       canAccept: boolean;
-      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
+      /** `shares_rules`: the campaign can only be handed over on the server it runs on now, and the person is
+       * not in that server (#2550); `canAccept` is false. */
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner" | "shares_rules";
       servers: HandoverServer[];
+      /** A plain sentence, safe to show, on why the move this person asked for last time did not happen; the
+       * offer is open again. Only the person who accepted ever gets one. Missing from an API older than #2550. */
+      moveFailed?: string | null;
     };
 
 /** One Discord account on a DMbot account (#2534). `key` is an opaque handle for removing it, never the
@@ -1234,6 +1242,57 @@ export interface MyNpcNote {
   listed: boolean;
 }
 
+/** What waits for the DM (#2635, #2652; core `GET /me/campaigns/{ref}/web/waiting`, DMs only). */
+export interface WaitingClaim {
+  id: string;
+  /** The claim as one plain line, "Mira Voss knows Far Hall". */
+  statement: string;
+  /** "True, but keep it secret" is not offered for a condition ("Roan is dead"). */
+  canSecret: boolean;
+  /** When the session it was said in began (Unix seconds). */
+  at?: number | null;
+}
+export interface WaitingBackstory {
+  id: string;
+  subject: string;
+  object: string;
+  /** The connection in words, "knows" or "grew up in". */
+  how: string;
+  quote?: string;
+  secret: boolean;
+  /** The label of the upload it came from; empty for one queued before labels. */
+  upload: string;
+  /** False while a name in it is not confirmed yet; `waitingOn` says which. */
+  ready: boolean;
+  waitingOn: string[];
+}
+export interface WaitingWhich {
+  id: string;
+  /** The written name, "Mara". */
+  word: string;
+  other: string;
+  otherIsSubject: boolean;
+  how: string;
+  quote?: string;
+  secret: boolean;
+  upload: string;
+  candidates: { id: string; name: string; limited: boolean }[];
+}
+export interface Waiting {
+  claims: WaitingClaim[];
+  backstory: WaitingBackstory[];
+  which: WaitingWhich[];
+  /** The true sizes (the lists are cut at their caps). */
+  counts: { claims: number; backstory: number; ready: number; which: number; all: number };
+}
+/** One answer to a waiting item; the API queues it for the bot and the page waits for it. */
+export type WaitingAnswer =
+  | { kind: "claim"; action: "confirm" | "reject"; id: string; secret?: boolean }
+  | { kind: "backstory"; action: "keep" | "skip"; id: string; secret?: boolean }
+  | { kind: "backstory"; action: "keep_all"; ids: string[] }
+  | { kind: "which"; action: "pick"; id: string; entity: string }
+  | { kind: "which"; action: "neither"; id: string };
+
 /** Sent on `window` whenever the real API answers "not signed in" (#2301). */
 export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
@@ -1250,6 +1309,11 @@ export type ApiErrorKind =
   | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
+  | "gone" // a waiting connection that is not waiting any more (#2635)
+  | "name-first" // a new name in it has to be answered first, in Check new names (#2635)
+  | "stopped-recording" // someone it cites is no longer recorded, so the fact was thrown away (#2635)
+  | "cannot-write" // the rules refuse to write that fact now; it stays waiting (#2635)
+  | "queue-full" // too many connections wait already: answer some first (#2652)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
@@ -1320,6 +1384,7 @@ export type ApiErrorKind =
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
+  | "shares-rules" // the campaign shares a rule set, so it can't move to another server yet (#2550)
   | "session-running" // a session is running, so the campaign can't be deleted (#2555)
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
@@ -1378,7 +1443,9 @@ export interface AccountApi {
   campaignBackup?(ref: string): Promise<Blob>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
-  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string }>;
+  /** `{moving: true}` (HTTP 202) when the campaign has to move to another server first: the bot does it within
+   * about a minute (#2550). */
+  handoverAccept?(token: string, serverId: string): Promise<{ campaignRef: string } | { moving: true }>;
   handoverDecline?(token: string): Promise<void>;
   /** Where "Add a Discord account" goes: Discord's own sign-in, then back to My Account with a result (#2534). */
   addDiscordUrl?(): string;
@@ -1458,6 +1525,10 @@ export interface AccountApi {
   /** The Story graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
    * older than that: then the page is the graph alone. */
   webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
+  /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
+   * connections a Keep all kept, when the API says. Missing from an API older than that. */
+  webWaiting?(ref: string): Promise<Waiting>;
+  answerWaiting?(ref: string, answer: WaitingAnswer): Promise<{ kept?: number }>;
     /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
   webPeek?(ref: string): Promise<void>;
   /** A DM shows a name or a connection to the players (#2405). */
@@ -1638,6 +1709,11 @@ const errorKinds: Record<string, ApiErrorKind> = {
   confirm_again: "confirm-again",
   no_paid_plan: "no-paid-plan",
   offer_gone: "offer-gone",
+  gone: "gone",
+  name_first: "name-first",
+  stopped_recording: "stopped-recording",
+  cannot_write: "cannot-write",
+  queue_full: "queue-full",
   has_free_access: "free-access",
   slow_down: "slow-down",
   busy: "slow-down",
@@ -1650,6 +1726,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   owner: "owner-offer",
   bad_server: "bad-server",
   last_account: "last-account",
+  shares_rules: "shares-rules",
   not_the_owner: "not-allowed",
   session_running: "session-running",
   name_mismatch: "name-mismatch",
@@ -1870,8 +1947,10 @@ export function httpApi(
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
     },
     handoverLook: async (token) => (await call("POST", "/me/handover/look", { token })) as HandoverLook,
-    handoverAccept: async (token, serverId) =>
-      (await call("POST", "/me/handover/accept", { token, serverId })) as { campaignRef: string },
+    handoverAccept: async (token, serverId) => {
+      const got = (await call("POST", "/me/handover/accept", { token, serverId })) as { status?: string; campaignRef?: string };
+      return got.status === "moving" ? { moving: true as const } : { campaignRef: got.campaignRef ?? "" };
+    },
     handoverDecline: async (token) => {
       await call("POST", "/me/handover/decline", { token });
     },
@@ -2303,6 +2382,21 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
       )) as WebOverview;
+    },
+    webWaiting: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
+    // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.
+    answerWaiting: async (ref, answer) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
+      const body =
+        answer.action === "keep_all"
+          ? { kind: answer.kind, action: answer.action, ids: answer.ids }
+          : answer;
+      const queued = (await call("POST", `${base}/waiting`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
+      const kept = (got as { kept?: unknown }).kept;
+      return typeof kept === "number" ? { kept } : {};
     },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
