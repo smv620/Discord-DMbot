@@ -575,8 +575,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )  # fmt: skip
     parser.add_argument(
         "--out", metavar="DIR",
-        help="with --transcript: keep recap.txt, report.txt and review.html here, and with "
-        "--audio the mp3s",
+        help="with --session or --transcript: keep recap.txt, report.txt and review.html here, "
+        "and with --audio the mp3s",
     )  # fmt: skip
     parser.add_argument(
         "--no-critics", action="store_true",
@@ -585,7 +585,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--compare", action="store_true",
         help="with --session or --transcript: the same beats written by Claude and by Gemini, "
-        "saved blind as A.txt and B.txt in --out with the key apart (needs --gemini-model)",
+        "saved blind as A.txt and B.txt in --out with the key apart (a Gemini writer needs "
+        "--gemini-model and --paid-gemini-key; claude,claude needs neither)",
     )  # fmt: skip
     parser.add_argument("--gemini-model", metavar="NAME", help="with --compare: the Gemini model")
     parser.add_argument(
@@ -631,11 +632,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             parser.error(
                 "--compare goes with --session or --transcript, and takes no --audio or --keep"
             )
-        if not args.out or not args.gemini_model:
-            parser.error(
-                "--compare needs --out DIR (for the drafts and the key) and --gemini-model"
-            )
-        if not args.paid_gemini_key:
+        gemini_writes = "gemini" in [w.strip() for w in args.writers.split(",")]
+        if not args.out:
+            parser.error("--compare needs --out DIR (for the drafts and the key)")
+        if gemini_writes and not args.gemini_model:
+            parser.error("--compare with a Gemini writer needs --gemini-model")
+        if gemini_writes and not args.paid_gemini_key:
             parser.error(
                 "--compare sends the session to Google: add --paid-gemini-key to confirm the key "
                 "is on a billing-enabled account (the free tier lets Google use what is sent)"
@@ -645,8 +647,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     elif args.writers != "claude,gemini":
         parser.error("--writers goes with --compare")
     args.reads_each = parse_reads(args.reads, parser.error)
-    if args.out and not (args.transcript or args.compare):
-        parser.error("--out goes with --transcript or --compare")
+    if args.out and not (args.transcript or args.compare or args.session):
+        parser.error("--out goes with --session, --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
         parser.error("--hours is the session's length in hours, from 0.25 to 24")
     if args.hours is not None and args.golden:
@@ -927,6 +929,8 @@ async def _session(
         if not args.yes:
             print("Nothing was run. Add --yes to spend the money.")
             return 0
+        if args.out:
+            rv.clear_old(Path(args.out))  # nothing of an earlier run is left to be mixed in
         if args.compare:
             return await _compare(args, inputs, fast, careful, models, prices, agreed, at)
         out = await run_text(
@@ -938,11 +942,16 @@ async def _session(
             print(REFUSED)
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
+        folder = Path(args.out) if args.out else None
+        if folder is not None:  # the text is saved before the audio can fail
+            save_text(folder, out, lines, names_given=False)
         if args.audio and out.job.state == "ready":
             try:
-                print("\n".join(await _audio(out)))
+                print("\n".join(await _audio(out, keep_in=folder)))
             except Exception as exc:  # the provider, ffmpeg: say the kind, never the message
                 print("\n".join(audio_failure(exc)))
+        if folder is not None:
+            print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
         if args.keep and out.job.state == "ready":
             campaign = await campaigns.get(gid, cid)
             assert campaign is not None  # load_inputs found it
@@ -995,14 +1004,19 @@ async def _compare(
         lambda name: os.environ.get(name, ""),
         all_models,
         claude_model,
-        args.gemini_model,
+        args.gemini_model or "",
         register=_OPEN_CLIENTS.append,
         which=which,
         reads=args.reads_each,
     )
     if writers is None:
         return 2
-    shown = {**prices, **prices_of(args.price, [claude_model, args.gemini_model])}
+    shown = {
+        **prices,
+        **prices_of(
+            args.price, [claude_model, *([args.gemini_model] if args.gemini_model else [])]
+        ),
+    }
     return await cmp.run_compare(
         run_text,
         inputs,
