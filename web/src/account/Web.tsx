@@ -25,7 +25,9 @@ import {
 } from "./api";
 import WebMap from "./WebMap";
 import WebOverviewPanel from "./WebOverview";
+import WebReadings from "./WebReadings";
 import WebWaiting from "./WebWaiting";
+import { WEB_READINGS_LIVE } from "../content/web-readings";
 import { WEB_WAITING_LIVE } from "../content/web-waiting";
 import { clampHops } from "./webLayout";
 import { listLines, type WebLine } from "./webLines";
@@ -436,6 +438,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           onAlone={setAlone}
         />
       )}
+
+      {WEB_READINGS_LIVE && overview?.canEdit && asked !== "players" && <WebReadings key={`readings-${ref}`} api={api} campaignRef={ref} />}
 
       {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
         <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
