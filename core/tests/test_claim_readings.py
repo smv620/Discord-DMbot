@@ -140,6 +140,39 @@ class NoNewNames(Stored):
         ]
         self.assertEqual(waiting, [])
 
+    async def test_a_readings_only_pass_leaves_an_earlier_claim_waiting_for_its_name(self) -> None:
+        await self.claims.propose(
+            GUILD_A,
+            self.c,
+            [said("Quill", "knows", "Bram")],
+            {"1": DM},
+            opted_in={DM},
+            dms={DM},
+            prompt_version="c1",
+            model="m1",
+            session_started_at=500,
+            new_names=0,
+        )  # fmt: skip  (a name past the limit: the claim waits for it)
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        await self.claims.propose(
+            GUILD_A,
+            self.c,
+            [readings.as_claim(THEORY, "player_said")],
+            {"1": DM},
+            opted_in={DM},
+            dms={DM},
+            prompt_version="readings-1",
+            model="m1",
+            session_started_at=1_000,
+            make_names=False,
+        )  # fmt: skip  (the default room for new names is there; it must not be used)
+        self.assertEqual({e.name for e in await self.memory.entities(GUILD_A, self.c)}, before)
+        self.assertNotIn("Quill", before)
+        waiting = [
+            r for r in await self.stored() if r["reason"] == "waiting for its name to be proposed"
+        ]
+        self.assertEqual(len(waiting), 1)  # still waiting, for a claims pass to take up
+
     async def test_a_known_name_reading_is_stored_with_its_reading_and_makes_no_entity(
         self,
     ) -> None:

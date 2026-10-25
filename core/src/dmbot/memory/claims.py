@@ -602,9 +602,10 @@ class ClaimStore:
                     asked.add(key)
 
             leftovers = [
-                r for r in await w.select(CLAIMS, " AND status = 'proposed'")
-                if r["reason"] == WAITING_NAME_REASON
-            ]  # fmt: skip
+                r
+                for r in await w.select(CLAIMS, " AND status = 'proposed'")
+                if r["reason"] == WAITING_NAME_REASON and make_names
+            ]  # fmt: skip  (a pass that makes no names leaves earlier waiting claims alone)
 
             def judged(claim: Extracted) -> str:
                 cited = [speakers.get(ref) for ref in claim.lines]

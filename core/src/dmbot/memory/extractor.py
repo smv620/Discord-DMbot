@@ -446,6 +446,7 @@ async def run(
                 dms=dm_ids,
                 skip=skip,
                 make_names=False,  # a reading never makes a new name, now or a session later
+                new_names=0,
                 limit=SESSION_CLAIMS,
             )
         except Exception as exc:
