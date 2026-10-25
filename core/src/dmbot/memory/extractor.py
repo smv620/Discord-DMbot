@@ -204,6 +204,8 @@ class Report:
     readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
     readings_refused: int = 0  # answers or items the reading rules turned down
     readings_failed: int = 0  # reading calls that failed (the claims pass is not affected)
+    cut: int = 0  # claims answers that stopped at the length limit (the whole items were kept)
+    readings_cut: int = 0  # the same for the readings answers
     stopped: str = ""  # why it ended early, if it did
     through_ms: int = 0  # every line that began up to this was read and its claims stored
 
@@ -214,10 +216,14 @@ class Report:
             f"{self.proposed} proposed, dropped: {why}, {self.repeated} repeated, "
             f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
             f"{self.deferred} deferred, {self.unsent} line(s) not sent"
+            + (f", {self.cut} answer(s) cut short" if self.cut else "")
             + (
                 f", readings: {self.readings} found, {self.readings_refused} refused,"
-                f" {self.readings_failed} failed"
-                if self.readings or self.readings_refused or self.readings_failed
+                f" {self.readings_failed} failed, {self.readings_cut} cut short"
+                if self.readings
+                or self.readings_refused
+                or self.readings_failed
+                or self.readings_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -333,41 +339,56 @@ async def run(
         found, bad = parse_answer(reply.text, speakers.keys())
         collected.extend(found)
         answered_by = reply.model or answered_by
-        if readings and report.calls < max_calls:
-            dm_lines = {str(s.number) for s in batch if s.user_id in dm_ids}
-            report.calls += 1
-            if count_call is not None:
-                try:
-                    await count_call()
-                except Exception as exc:
-                    log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
-            try:
-                second = await asyncio.wait_for(
-                    client.complete(READING_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
-                    CALL_TIMEOUT_S,
-                )
-            except AIOutOfFunds:
-                report.failed += 1
-                report.stopped = "out of funds"
-                report.unsent += sum(len(b) for b in work[index + 1 :])
-                everyone.update(speakers)
-                heard.update((number, text) for number, _who, text in rows)
-                break
-            except Exception as exc:  # never fatal, and the claims above stand
-                log.warning("Story extractor: a reading call failed (%s)", type(exc).__name__)
-                report.readings_failed += 1
-            else:
-                kept, refused = parse_readings(second.text, speakers.keys(), dm_lines=dm_lines)
-                report.readings_refused += refused
-                report.readings += len(kept)
-                for belief in proposals(kept).beliefs:
-                    how = "dm_said" if any(n in dm_lines for n in belief.lines) else "player_said"
-                    believed.append(as_claim(belief, how))
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
         report.malformed += bad
+        if reply.cut:  # stopped at the length limit: the whole items before it are kept
+            report.cut += 1
         if not broken:
-            reached = end_ms
+            reached = end_ms  # (the claims of this batch are in hand: a restart need not redo it)
+        if not readings or report.calls >= max_calls:
+            continue
+        # The second question. Asked again who is recorded: the first call took seconds, and
+        # someone may have stopped since (CLAUDE.md: re-check after every async step).
+        agreed = await consenting()
+        batch = [s for s in batch if s.user_id in agreed]
+        if not batch:
+            continue
+        rows = [(str(s.number), "DM" if s.user_id in dm_ids else "Player", s.text) for s in batch]
+        speakers = {str(s.number): s.user_id for s in batch}
+        dm_lines = {str(s.number) for s in batch if s.user_id in dm_ids}
+        report.calls += 1
+        if count_call is not None:
+            try:
+                await count_call()
+            except Exception as exc:
+                log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
+        try:
+            second = await asyncio.wait_for(
+                client.complete(READING_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
+                CALL_TIMEOUT_S,
+            )
+        except AIOutOfFunds:
+            report.failed += 1
+            report.stopped = "out of funds"
+            report.unsent += sum(len(b) for b in work[index + 1 :])
+            break
+        except Exception as exc:  # never fatal, and the claims above stand
+            log.warning("Story extractor: a reading call failed (%s)", type(exc).__name__)
+            report.readings_failed += 1
+            continue
+        kept, refused = parse_readings(
+            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut
+        )
+        report.readings_refused += refused
+        report.readings += len(kept)
+        if second.cut:
+            report.readings_cut += 1
+        for belief in proposals(kept).beliefs:
+            how = "dm_said" if any(n in dm_lines for n in belief.lines) else "player_said"
+            believed.append(as_claim(belief, how))
+        everyone.update(speakers)
+        heard.update((number, text) for number, _who, text in rows)
     # One hand-over for the whole session: the linker picks the most-said new names across all of
     # it, and the campaign's memory is read once, not once a batch. Consent is asked again here,
     # after the last answer (CLAUDE.md: after every async step), and `propose` checks it per claim.
@@ -424,7 +445,7 @@ async def run(
                 tally=tally,
                 dms=dm_ids,
                 skip=skip,
-                new_names=0,  # a reading never makes a new name: the claims pass does that
+                make_names=False,  # a reading never makes a new name, now or a session later
                 limit=SESSION_CLAIMS,
             )
         except Exception as exc:

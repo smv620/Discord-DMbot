@@ -28,6 +28,7 @@ into belief proposals, with these rules:
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -178,8 +179,30 @@ def _flag(value: object) -> bool:
     return value is True
 
 
+_LIST_START = re.compile(r'\s*\{\s*"readings"\s*:\s*\[')
+
+
+def _whole_items(text: str) -> list[object]:
+    """The complete items at the start of an answer that was cut off in the middle of its list:
+    every item before the broken one is as good as in a whole answer. Only an answer whose first
+    `{` opens the readings list and whose list never closes is read this way."""
+    found = _LIST_START.match(text)
+    if found is None:
+        return []
+    decoder, at = json.JSONDecoder(), found.end()
+    items: list[object] = []
+    while True:
+        while at < len(text) and text[at] in " \t\r\n,":
+            at += 1
+        try:
+            item, at = decoder.raw_decode(text, at)
+        except ValueError:  # the cut item, or the end of the list
+            return [] if text[at:].lstrip().startswith("]") else items
+        items.append(item)
+
+
 def parse_readings(
-    text: str, refs: Collection[str], *, dm_lines: Collection[str]
+    text: str, refs: Collection[str], *, dm_lines: Collection[str], cut: bool = False
 ) -> tuple[list[Reading], int]:
     """The readings in a model's answer, and how many items were refused (not an object, not a
     rule we have, a missing part, a name that is a pronoun, a line not in this batch, or words
@@ -191,11 +214,16 @@ def parse_readings(
     showed), so each must cite at least one of them: a player's "he confessed!" or a guess must
     not pass for what the DM showed. A theory is a player's and is not held to it. Instruction-like
     words are caught by the claims check (`reads_like_instruction`), a pattern and not a
-    guarantee."""
+    guarantee. `cut`: the answer stopped at the length limit, so the items before the broken one
+    are kept and the broken one is not counted as refused (the caller reports the cut itself:
+    CLAUDE.md, an answer cut off is never "nothing found")."""
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
-        return [], 1
+        salvaged = _whole_items(text) if cut else []
+        if not salvaged:
+            return [], 0 if cut else 1
+        data = {"readings": salvaged}
     items = data.get("readings") if isinstance(data, dict) else None
     if not isinstance(items, list):
         return [], 1

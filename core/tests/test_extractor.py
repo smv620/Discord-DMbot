@@ -4,6 +4,7 @@ calls it. The database half proves a claim from someone who stopped recording is
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import unittest
 from collections.abc import Collection, Sequence
@@ -140,15 +141,23 @@ class Believing:
     """A fake AI that answers the claims question with nothing and the readings question with one
     theory (by a player), citing the first line, or whatever `answer` says."""
 
-    def __init__(self, answer: str | None = None, fail_readings: Exception | None = None) -> None:
+    def __init__(
+        self,
+        answer: str | None = None,
+        fail_readings: Exception | None = None,
+        cut: bool = False,
+    ) -> None:
         self.systems: list[str] = []
+        self.sent_readings: list[str] = []
         self.answer = answer
         self.fail_readings = fail_readings
+        self.cut = cut
 
     async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
         self.systems.append(system)
         if system is extractor.SYSTEM:
             return Reply(json.dumps({"claims": []}), False, 10, 5, "m-fast")
+        self.sent_readings.append(text)
         if self.fail_readings is not None:
             raise self.fail_readings
         first = text.split("\n")[1].split(" ")[0]
@@ -157,7 +166,7 @@ class Believing:
             "subject": "Bram", "relationship": "carries", "object": "Heartseeker",
             "lines": [int(first)],
         }  # fmt: skip
-        return Reply(self.answer or json.dumps({"readings": [theory]}), False, 10, 5, "m-fast")
+        return Reply(self.answer or json.dumps({"readings": [theory]}), self.cut, 10, 5, "m-fast")
 
 
 class Kept(Recorder):
@@ -225,9 +234,51 @@ class ReadingPass(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.stopped, "out of funds")
         self.assertEqual(report.calls, 2)
 
+    async def test_a_speaker_who_stops_between_the_two_calls_is_not_in_the_second(self) -> None:
+        calls = [0]
+
+        async def stops_after_the_first() -> Collection[int]:
+            calls[0] += 1
+            return {DM, ALICE, BOB} if calls[0] <= 1 else {DM, ALICE}
+
+        lines = [line(n, BOB if n % 2 else ALICE, f"said-by-{'bob' if n % 2 else 'alice'}")
+                 for n in range(1, 11)]  # fmt: skip
+        ai = Believing()
+        await go(ai, Kept(), lines, stops_after_the_first, readings=True)
+        self.assertTrue(ai.sent_readings)
+        self.assertNotIn("said-by-bob", "".join(ai.sent_readings))
+        self.assertIn("said-by-alice", "".join(ai.sent_readings))
+
+    async def test_a_cut_reading_answer_keeps_the_whole_items_and_is_reported_as_cut(self) -> None:
+        whole = {
+            "rule": "theory", "who": "Mira", "shared": False, "strength": "",
+            "subject": "Bram", "relationship": "carries", "object": "Heartseeker", "lines": [1],
+        }  # fmt: skip
+        text = '{"readings": [' + json.dumps(whole) + ', {"rule": "theory", "who": "Mi'
+        report = await go(Believing(text, cut=True), Kept(), session(10), readings=True)
+        self.assertEqual(
+            (report.readings, report.readings_refused, report.readings_cut), (1, 0, 1)
+        )  # one kept, none "refused", the cut said out loud
+        self.assertIn("1 cut short", report.line())
+
+    async def test_out_of_funds_on_the_reading_call_still_notes_the_batch_as_read(self) -> None:
+        ai = Believing(fail_readings=AIOutOfFunds("no money"))
+        report = await go(ai, Kept(), session(25), readings=True)
+        self.assertEqual((report.stopped, report.through_ms), ("out of funds", 10_000))
+
+    async def test_a_claims_answer_cut_off_is_counted(self) -> None:
+        class Cutting(Canned):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+                got = await super().complete(system, text, max_tokens=max_tokens)
+                return dataclasses.replace(got, cut=True)
+
+        report = await go(Cutting(), Recorder(), session(10))
+        self.assertEqual(report.cut, 1)
+        self.assertIn("1 answer(s) cut short", report.line())
+
     async def test_the_log_line_has_counts_only(self) -> None:
         report = await go(Believing(), Kept(), session(10), readings=True)
-        self.assertIn("readings: 1 found, 0 refused, 0 failed", report.line())
+        self.assertIn("readings: 1 found, 0 refused, 0 failed, 0 cut short", report.line())
         self.assertNotIn("Heartseeker", report.line())
 
 
