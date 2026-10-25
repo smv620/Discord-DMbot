@@ -40,6 +40,7 @@ import type {
   CampaignSettingName,
   Timeline,
   WebRevealTarget,
+  Waiting,
   MyNpcNote,
   NpcPage,
 } from "./api";
@@ -593,7 +594,34 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
+/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
+function pretendWaiting(): Waiting {
+  return {
+    claims: [
+      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
+      { id: "c2", statement: "Roan is dead", canSecret: false },
+    ],
+    backstory: [
+      { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
+      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [] },
+      { id: "b3", subject: "Rook", object: "Newcomer", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: false, waitingOn: ["Newcomer"] },
+      { id: "b4", subject: "Mira Voss", object: "Harrow's Keep", how: "grew up in", secret: false, upload: "", ready: true, waitingOn: [] },
+    ],
+    which: [
+      {
+        id: "w1", word: "Mara", other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct",
+        candidates: [
+          { id: "e1", name: "Mara Ashgrove", limited: false },
+          { id: "e2", name: "Mara Vell", limited: true },
+        ],
+        quote: "Rook knows Sister Mara",
+      },
+    ],
+    counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
+  };
+}
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
+  const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
@@ -1123,6 +1151,45 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return { names: webGraphOf(ref, query).nodes.length };
     },
     // A player who agreed to the warning peeks (#2405); the DM would be told once on the DM screen.
+    // What waits for the DM (#2635, #2652): a fact, a condition (no "keep it secret"), connections from two
+    // uploads (one waiting on a name) and a "Which Mara?" question. Answers remove what they answer.
+    async webWaiting(ref) {
+      calls.push(`webWaiting:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const waiting = (waitingState[ref] ??= pretendWaiting());
+      return structuredClone({
+        ...waiting,
+        counts: {
+          claims: waiting.claims.length,
+          backstory: waiting.backstory.length,
+          ready: waiting.backstory.filter((b) => b.ready).length,
+          which: waiting.which.length,
+          all: waiting.claims.length + waiting.backstory.length + waiting.which.length,
+        },
+      });
+    },
+    async answerWaiting(ref, answer) {
+      calls.push(
+        `answerWaiting:${ref}:${answer.kind}:${answer.action}:${"ids" in answer ? answer.ids.join(",") : answer.id}${"entity" in answer ? `:${answer.entity}` : ""}${"secret" in answer && answer.secret ? ":secret" : ""}`,
+      );
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const ids = "ids" in answer ? answer.ids : [answer.id];
+      if (answer.kind === "which" && answer.action === "pick") {
+        const q = waiting.which.find((x) => x.id === answer.id);
+        if (!q?.candidates.some((c) => c.id === answer.entity)) throw new ApiError("gone");
+      }
+      const before = waiting.claims.length + waiting.backstory.length + waiting.which.length;
+      waiting.claims = waiting.claims.filter((c) => !ids.includes(c.id));
+      waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
+      waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
+      if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
+      return answer.action === "keep_all" ? { kept: ids.length } : {};
+    },
     async webPeek(ref) {
       calls.push(`webPeek:${ref}`);
       await reachable();
