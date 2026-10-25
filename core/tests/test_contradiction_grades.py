@@ -131,3 +131,13 @@ class Storing(ConfirmedMemoryTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+    async def test_the_reason_limit_is_the_columns_check(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint"
+                " WHERE conrelid = 'memory_contradictions'::regclass AND contype = 'c'"
+                " AND pg_get_constraintdef(oid) LIKE '%%reason%%'"
+            )
+            (row,) = await cur.fetchall()
+        self.assertIn(f"<= {cg.REASON_MAX})", row["d"])
