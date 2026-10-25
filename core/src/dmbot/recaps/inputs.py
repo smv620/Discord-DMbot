@@ -205,6 +205,21 @@ def familiar_for(
     )
 
 
+class NotLoaded(Exception):
+    """The inputs of a recap could not be loaded, and which of the three it was (#2680): the
+    campaign is not there (`campaign`), its names could not be read (`names`), or the campaign has
+    no stored session that began at that time (`session`; `started` then holds when its newest
+    sessions with lines began, as numbers, so a wrong time is easy to see)."""
+
+    def __init__(
+        self, why: str, started: Sequence[int] = (), lines_in_it: int | None = None
+    ) -> None:
+        super().__init__(why)
+        self.why = why
+        self.started = tuple(started)
+        self.lines_in_it = lines_in_it  # a session that began then but has no lines: how many
+
+
 async def load_inputs(
     *,
     campaigns: Any,
@@ -222,18 +237,53 @@ async def load_inputs(
     recanted: Collection[str] = (),
     relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
 ) -> Inputs | None:
+    """The inputs of the recap of one session, or None when they cannot be loaded (the bot does not
+    care why; the one-off tool does: `load_inputs_or_why`)."""
+    try:
+        return await load_inputs_or_why(
+            campaigns=campaigns, lookup=lookup, transcripts=transcripts, recaps=recaps,
+            clocks=clocks, guild_id=guild_id, campaign_id=campaign_id, session_at=session_at,
+            styles=styles, notes=notes, with_earlier=with_earlier, importance=importance,
+            recanted=recanted, relation_ties=relation_ties,
+        )  # fmt: skip
+    except NotLoaded:
+        return None
+
+
+async def load_inputs_or_why(
+    *,
+    campaigns: Any,
+    lookup: Any,
+    transcripts: Any,
+    recaps: Any,
+    clocks: Any | None,
+    guild_id: int,
+    campaign_id: str,
+    session_at: int,
+    styles: StyleStore | None = None,
+    notes: NoteStore | None = None,
+    with_earlier: bool = True,
+    importance: Any | None = None,
+    recanted: Collection[str] = (),
+    relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+) -> Inputs:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
-        return None
+        raise NotLoaded("campaign")
     try:
         names = await lookup.get(guild_id, campaign_id)
-    except Exception:
+    except Exception as exc:
         log.exception("Recap: couldn't load the campaign's names")
-        return None
+        raise NotLoaded("names") from exc
     sessions = await transcripts.sessions(guild_id, campaign_id, limit=1000)
     found = [s for s in sessions if s.started_at == session_at]
     if not found:
-        return None
+        count = getattr(transcripts, "line_count_at", None)
+        raise NotLoaded(
+            "session",
+            [s.started_at for s in sessions[:5]],
+            await count(guild_id, campaign_id, session_at) if count is not None else None,
+        )
     lines = await transcripts.lines(guild_id, found[0].id)
     bridge = await recaps.bridge(guild_id, campaign_id, session_at)
     earlier = (

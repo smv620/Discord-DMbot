@@ -424,3 +424,67 @@ class TheSharedLoader(DatabaseTest):
         self.assertEqual(got.previous, "")
         self.assertIsNone(await load(1, 12345))  # no such session
         self.assertIsNone(await load(2, 1_700_000_000))  # another server sees nothing
+
+
+class TheToolsLookup(DatabaseTest):
+    """`recap_run --session` finds the session and the names the way the bot does, on tables with
+    forced row-level security, and says WHICH of the three things failed (#2680)."""
+
+    async def setUp_one(self, lines: bool = True) -> tuple[str, str]:
+        from dmbot.transcript.store import TranscriptStore
+
+        camp = await CampaignStore(self.db).create(1, "One", fx.DM)
+        transcripts = TranscriptStore(self.db)
+        sid = await transcripts.open_session(1, camp.id, 1_700_000_000)
+        if lines:
+            await transcripts.add_lines(1, sid, fx.lines())
+        return camp.id, sid
+
+    async def test_the_session_and_the_names_load(self) -> None:
+        from dmbot.devtools.recap_run.__main__ import inputs_for
+
+        cid, _ = await self.setUp_one()
+        got = await inputs_for(self.db, 1, cid, 1_700_000_000)
+        self.assertEqual(len(got.lines), len(fx.lines()))
+
+    async def test_each_failure_says_which_it_was(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.devtools.recap_run.__main__ import inputs_for, not_loaded_line
+        from dmbot.memory.lookup import LookupCache
+        from dmbot.recaps.inputs import NotLoaded
+
+        cid, _ = await self.setUp_one()
+        with self.assertRaises(NotLoaded) as no_campaign:
+            await inputs_for(self.db, 1, "0" * 32, 1_700_000_000)
+        self.assertEqual(no_campaign.exception.why, "campaign")
+        with self.assertRaises(NotLoaded) as elsewhere:
+            await inputs_for(self.db, 2, cid, 1_700_000_000)  # another server sees nothing
+        self.assertEqual(elsewhere.exception.why, "campaign")
+        with self.assertRaises(NotLoaded) as wrong_time:
+            await inputs_for(self.db, 1, cid, 12345)
+        self.assertEqual(wrong_time.exception.why, "session")
+        self.assertEqual(wrong_time.exception.started, (1_700_000_000,))
+        line = not_loaded_line(wrong_time.exception, 1, cid, 12345)
+        self.assertIn("12345", line)
+        self.assertIn("1700000000", line)  # the times that do exist, to see the mismatch
+        with (
+            patch.object(LookupCache, "get", side_effect=RuntimeError("boom")),
+            self.assertRaises(NotLoaded) as names,
+        ):
+            await inputs_for(self.db, 1, cid, 1_700_000_000)
+        self.assertEqual(names.exception.why, "names")
+        self.assertNotEqual(
+            not_loaded_line(names.exception, 1, cid, 1),
+            not_loaded_line(wrong_time.exception, 1, cid, 1),
+        )
+
+    async def test_a_session_with_no_stored_lines_says_so(self) -> None:
+        from dmbot.devtools.recap_run.__main__ import inputs_for, not_loaded_line
+        from dmbot.recaps.inputs import NotLoaded
+
+        cid, _ = await self.setUp_one(lines=False)
+        with self.assertRaises(NotLoaded) as empty:
+            await inputs_for(self.db, 1, cid, 1_700_000_000)
+        self.assertEqual((empty.exception.why, empty.exception.lines_in_it), ("session", 0))
+        self.assertIn("0 stored lines", not_loaded_line(empty.exception, 1, cid, 1_700_000_000))

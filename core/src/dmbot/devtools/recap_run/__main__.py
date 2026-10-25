@@ -854,6 +854,50 @@ def _golden_inputs(session: object) -> pl.Inputs:
     )  # fmt: skip
 
 
+async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
+    """The recap inputs of one stored session, read the way the bot reads them (every store on
+    this one database, each read scoped to the server by `Database.guild`). Raises `NotLoaded` with
+    the reason (#2680)."""
+    from dmbot.campaigns.store import CampaignStore
+    from dmbot.memory.lookup import LookupCache
+    from dmbot.memory.store import MemoryStore
+    from dmbot.recaps.inputs import load_inputs_or_why
+    from dmbot.recaps.store import RecapStore
+    from dmbot.timebot.store import ClockStore
+    from dmbot.transcript.store import TranscriptStore
+
+    return await load_inputs_or_why(
+        campaigns=CampaignStore(db),
+        lookup=LookupCache(MemoryStore(db)),
+        transcripts=TranscriptStore(db),
+        recaps=RecapStore(db),
+        clocks=ClockStore(db),
+        guild_id=gid,
+        campaign_id=cid,
+        session_at=at,
+        styles=StyleStore(db),
+    )
+
+
+def not_loaded_line(why: Any, gid: int, cid: str, at: int) -> str:
+    """Which of the three it was, in words that say what to look at. Numbers only: no name or
+    word of a transcript."""
+    if why.why == "campaign":
+        return f"no campaign {cid} in server {gid}"
+    if why.why == "names":
+        return f"the campaign {cid}'s names can't be read (see the log above for why)"
+    near = ", ".join(str(t) for t in why.started) or "none"
+    if why.lines_in_it is not None:  # the session is there, but there is nothing to read in it
+        return (
+            f"campaign {cid} has a session that began at {at}, but with {why.lines_in_it} stored "
+            f"lines (a session with none is not listed; was its transcript copied?)"
+        )
+    return (
+        f"campaign {cid} has no stored session that began at {at}; its newest sessions with "
+        f"lines began at: {near}"
+    )
+
+
 async def _session(
     args: argparse.Namespace,
     fast: Client,
@@ -864,12 +908,8 @@ async def _session(
     from dmbot.campaigns.store import CampaignStore
     from dmbot.consent import ConsentStore
     from dmbot.db import Database
-    from dmbot.memory.lookup import LookupCache
-    from dmbot.memory.store import MemoryStore
-    from dmbot.recaps.inputs import load_inputs
+    from dmbot.recaps.inputs import NotLoaded
     from dmbot.recaps.store import RecapStore
-    from dmbot.timebot.store import ClockStore
-    from dmbot.transcript.store import TranscriptStore
 
     try:
         gid, cid, at = int(args.session[0]), args.session[1], int(args.session[2])
@@ -884,21 +924,10 @@ async def _session(
     try:
         recaps = RecapStore(db)
         campaigns = CampaignStore(db)
-        inputs = await load_inputs(
-            campaigns=campaigns,
-            lookup=LookupCache(MemoryStore(db)),
-            transcripts=TranscriptStore(db),
-            recaps=recaps,
-            clocks=ClockStore(db),
-            guild_id=gid,
-            campaign_id=cid,
-            session_at=at,
-            styles=StyleStore(db),
-        )
-        if inputs is None:
-            print(
-                "recap_run: no such session, or the campaign's names can't be read", file=sys.stderr
-            )
+        try:
+            inputs = await inputs_for(db, gid, cid, at)
+        except NotLoaded as why:
+            print(f"recap_run: {not_loaded_line(why, gid, cid, at)}", file=sys.stderr)
             return 2
         # The improvement opt-out (#1609): this is a test run on real words, not a table, so
         # the lines of anyone who opted out are left out, read now.
