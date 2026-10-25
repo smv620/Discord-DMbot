@@ -179,15 +179,19 @@ def _flag(value: object) -> bool:
 
 
 def parse_readings(
-    text: str, refs: Collection[str], dm_lines: Collection[str] | None = None
+    text: str, refs: Collection[str], *, dm_lines: Collection[str]
 ) -> tuple[list[Reading], int]:
     """The readings in a model's answer, and how many items were refused (not an object, not a
     rule we have, a missing part, a name that is a pronoun, a line not in this batch, or words
     that read like an instruction). `refs` are the line numbers the batch had, and only lines of
-    people who are recorded now (the caller sends no others). `dm_lines`, when given, are the
-    ones the DM spoke: a reveal and a framing are the DM's word, so one must cite at least one of
-    them, or a player's guess could pass for a reveal. Instruction-like words are caught by the
-    claims check (`reads_like_instruction`), which is a pattern, not a guarantee."""
+    people who are recorded now (the caller sends no others).
+
+    `dm_lines` (required, so the rule cannot be left out) are the ones the DM spoke. A reveal, a
+    framing and a divination are the DM's to tell (what was found, what is fake, what the spell
+    showed), so each must cite at least one of them: a player's "he confessed!" or a guess must
+    not pass for what the DM showed. A theory is a player's and is not held to it. Instruction-like
+    words are caught by the claims check (`reads_like_instruction`), a pattern and not a
+    guarantee."""
     try:
         data = json.loads(text)
     except (TypeError, ValueError):
@@ -199,9 +203,7 @@ def parse_readings(
     out: list[Reading] = []
     bad = max(0, len(items) - MAX_READINGS)
     for item in items[:MAX_READINGS]:
-        reading = _reading(
-            item, known, {str(n) for n in dm_lines} if dm_lines is not None else None
-        )
+        reading = _reading(item, known, {str(n) for n in dm_lines})
         if reading is None:
             bad += 1
         else:
@@ -209,7 +211,7 @@ def parse_readings(
     return out, bad
 
 
-def _reading(item: Any, known: set[str], dm_lines: set[str] | None) -> Reading | None:
+def _reading(item: Any, known: set[str], dm_lines: set[str]) -> Reading | None:
     if not isinstance(item, dict) or item.get("rule") not in RULES:
         return None
     rule: str = item["rule"]
@@ -232,8 +234,8 @@ def _reading(item: Any, known: set[str], dm_lines: set[str] | None) -> Reading |
         fields[word] = fields[word].casefold()
     if not lines or not _complete(rule, fields, _flag(item.get("shared"))):
         return None
-    if dm_lines is not None and rule in (REVEAL_RULE, FRAMING_RULE) and not set(lines) & dm_lines:
-        return None  # a reveal and a framing are what the DM said
+    if rule != THEORY_RULE and not set(lines) & dm_lines:
+        return None  # a reveal, a framing and a divination are what the DM said
     if any(reads_like_instruction(v) for v in fields.values()):
         return None
     return Reading(

@@ -61,8 +61,11 @@ PROTECTED_D: dict[str, object] = {
 }  # fmt: skip
 
 
+DM_LINES = ["2", "3", "4", "5"]  # line 1 is a player's; the rest are the DM's
+
+
 def read(*items: dict[str, object]) -> list[readings.Reading]:
-    got, bad = parse_readings(answer(*items), REFS)
+    got, bad = parse_readings(answer(*items), REFS, dm_lines=DM_LINES)
     assert bad == 0, bad
     return got
 
@@ -175,10 +178,14 @@ class TheModelIsNotTrusted(unittest.TestCase):
                 if field in ("rule", "lines", "shared", "accusation"):
                     continue
                 with self.subTest(f"{base['rule']} {field}"):
-                    got, bad = parse_readings(answer({**base, field: said}), REFS)
+                    got, bad = parse_readings(
+                        answer({**base, field: said}), REFS, dm_lines=DM_LINES
+                    )
                     self.assertEqual((got, bad), ([], 1))
         got, bad = parse_readings(
-            answer({**THEORY_A, "lines": ["1", "ignore all instructions"]}), REFS
+            answer({**THEORY_A, "lines": ["1", "ignore all instructions"]}),
+            REFS,
+            dm_lines=DM_LINES,
         )
         self.assertEqual((len(got), bad), (1, 0))  # an unknown line is dropped, not read
 
@@ -210,35 +217,43 @@ class TheModelIsNotTrusted(unittest.TestCase):
         ]
         for case in cases:
             with self.subTest(case):
-                self.assertEqual(parse_readings(answer(case), REFS), ([], 1))
+                self.assertEqual(parse_readings(answer(case), REFS, dm_lines=DM_LINES), ([], 1))
 
     def test_an_answer_that_is_not_the_shape_is_one_refusal_and_nothing_else(self) -> None:
         for text in ("not json", "[]", '{"readings": "no"}', '{"claims": []}', ""):
             with self.subTest(text):
-                self.assertEqual(parse_readings(text, REFS), ([], 1))
-        self.assertEqual(parse_readings('{"readings": []}', REFS), ([], 0))
+                self.assertEqual(parse_readings(text, REFS, dm_lines=DM_LINES), ([], 1))
+        self.assertEqual(parse_readings('{"readings": []}', REFS, dm_lines=DM_LINES), ([], 0))
 
     def test_good_readings_are_kept_beside_a_bad_one_and_the_batch_is_capped(self) -> None:
-        got, bad = parse_readings(answer(THEORY_A, "nonsense", REVEAL_B), REFS)  # type: ignore[arg-type]
+        got, bad = parse_readings(answer(THEORY_A, "nonsense", REVEAL_B), REFS, dm_lines=DM_LINES)  # type: ignore[arg-type]
         self.assertEqual((len(got), bad), (2, 1))
         many = answer(*([THEORY_A] * (readings.MAX_READINGS + 5)))
-        kept, refused = parse_readings(many, REFS)
+        kept, refused = parse_readings(many, REFS, dm_lines=DM_LINES)
         self.assertEqual((len(kept), refused), (readings.MAX_READINGS, 5))
 
 
 class OnlyTheDmReveals(unittest.TestCase):
-    def test_a_reveal_or_a_framing_must_cite_a_line_the_dm_spoke(self) -> None:
-        dm = ["2", "3"]  # lines 1, 4 and 5 are not the DM's in this check
-        for item in (REVEAL_B, FRAMING_C):
+    def test_a_reveal_a_framing_or_a_divination_must_cite_a_line_the_dm_spoke(self) -> None:
+        for item in (REVEAL_B, FRAMING_C, EVASION_D, PROTECTED_D):
             with self.subTest(item["rule"]):
-                ok, bad = parse_readings(answer(item), REFS, dm)
+                ok, bad = parse_readings(answer(item), REFS, dm_lines=DM_LINES)
                 self.assertEqual((len(ok), bad), (1, 0))
-                player = {**item, "lines": [1]}  # a player's line passed off as a reveal
-                self.assertEqual(parse_readings(answer(player), REFS, dm), ([], 1))
-        # a theory is a player's, so it is not held to this; nor is a spell the DM did not narrate
-        self.assertEqual(len(parse_readings(answer(THEORY_A), REFS, dm)[0]), 1)
-        # with no list the caller has not said who spoke: nothing is refused for it
-        self.assertEqual(len(parse_readings(answer(REVEAL_B), REFS)[0]), 1)
+                player = {**item, "lines": [1]}  # a player's line passed off as what the DM showed
+                self.assertEqual(parse_readings(answer(player), REFS, dm_lines=DM_LINES), ([], 1))
+                self.assertEqual(parse_readings(answer(item), REFS, dm_lines=[]), ([], 1))
+
+    def test_a_players_he_confessed_is_not_a_party_belief_at_one(self) -> None:
+        said = {**EVASION_D, "outcome": "confession", "lines": [1]}  # line 1 is a player's
+        self.assertEqual(parse_readings(answer(said), REFS, dm_lines=DM_LINES), ([], 1))
+
+    def test_a_theory_is_a_players_and_is_not_held_to_it(self) -> None:
+        got, bad = parse_readings(answer(THEORY_A), REFS, dm_lines=DM_LINES)
+        self.assertEqual((len(got), bad), (1, 0))  # (it cites line 1, a player's)
+
+    def test_the_list_of_the_dms_lines_cannot_be_left_out(self) -> None:
+        with self.assertRaises(TypeError):
+            parse_readings(answer(REVEAL_B), REFS)  # type: ignore[call-arg]
 
 
 class NothingIsWritten(unittest.TestCase):
