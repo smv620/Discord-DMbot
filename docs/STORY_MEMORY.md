@@ -745,6 +745,12 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
 - **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
   sorted into disguised, misunderstood and simply false, so the DM can close plot holes before they
   grow.
+  **Built (#2661 slice 1): the differences finder.** `memory/differences.py` lists the beliefs a point of
+  view that is not The truth holds NOW (0.5 or more, not a denial) where The truth either denies that very
+  connection (0.0, False Evidence) or holds a clashing connection between the same two names that overlaps
+  it in story time. A guess The truth neither holds nor denies is not a difference, nor is the DM's own
+  doubt. Ids and numbers only (the sort into disguised, misunderstood and false is PlotBot's, a later
+  slice); each point of view and connection is reported once.
 
 Everything after a session is built on the **website first**. A Discord version is added only when
 the owner chooses it, one at a time.
@@ -1175,3 +1181,18 @@ cleaner use (`beliefs.party_knows()` in SQL), and the website's relationship web
 guesses arrive (#2412) The party's belief and the flag always agree, and tests hold the readers to it. A
 reworded connection (#2408) carries the old one's beliefs, evidence, mentions and session span. The flag
 and the API's `secret` field stay until every reader has moved and a later migration drops the flag.
+
+## The name pass's report, kept for the website (#2684)
+
+PlotBot's name pass (#2628) used to say what it did only in a Discord message, and an Undo deleted the
+lines that proved a fix was made. `name_pass_reports` (migration 0239) now keeps one row for each session
+(the counts: words left as heard, names offered as new, words left alone near a secret name, and whether
+PlotBot's answer was cut) and `name_pass_fixes` one row for each name fixed (its Undo number, the list
+name, how many times, and when it was undone). Counts and the campaign's own list names only; the
+spellings as heard stay in `transcript_respells`, read from there while a fix stands and never copied.
+Written by the pass; the Discord Undo marks a fix undone. A backup leaves both out (a log of a run).
+
+The recap page reads it through `GET /me/recaps/{ref}/names-fixed` (#2684, migration 0240, a DM-only door
+`dmbot_recap_names_fixed`): the counts, each fix with its Undo number, list name, times, whether it was
+undone, and the spellings as heard (only while the fix stands; transcript words, for the campaign's DM
+alone, never logged). A player, another DM or an unknown recap gets "not found".

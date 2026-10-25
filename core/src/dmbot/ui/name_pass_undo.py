@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Sequence
 from typing import Any
 
 import discord
 
-from dmbot.memory.models import DM, KEEP, MemoryRuleError
 from dmbot.mentions import NO_PINGS
 from dmbot.transcript.name_pass import Fixed
+from dmbot.transcript.name_pass_log import undo_fix
 from dmbot.ui.dmbot_commands import _bot, _tell
 
 log = logging.getLogger(__name__)
@@ -71,22 +72,13 @@ class UndoNamePassButton(
             await _tell(interaction, FAILED)
             return
         try:
-            olds = await store.respelled_olds(guild.id, campaign.id, self.batch)
-            lines, _sessions = await store.undo_respell(guild.id, campaign.id, self.batch)
+            lines = await undo_fix(
+                store, bot.memory, guild.id, campaign.id, self.batch, now=int(time.time())
+            )
         except Exception:
             log.exception("Undo of the name pass failed")
             await _tell(interaction, FAILED)
             return
-        if bot.memory is not None:
-            for heard in olds:
-                try:
-                    await bot.memory.add_correction(
-                        guild.id, campaign.id, heard, action=KEEP, source=DM
-                    )
-                except MemoryRuleError:
-                    log.info("Name pass undo: a keep-as-heard rule was refused")
-                except Exception:
-                    log.exception("Name pass undo: couldn't save the keep-as-heard rule")
         if not lines:
             await _tell(interaction, NOTHING)
             return
