@@ -9,6 +9,7 @@ from typing import Any
 from dmbot.ai import Reply
 from dmbot.memory import contradiction_run as run
 from dmbot.memory.contradiction_grades import GradeStore
+from dmbot.memory.contradictions import Contradictions
 from tests.test_contradiction_grader import Canned
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
@@ -81,3 +82,22 @@ class Passing(ConfirmedMemoryTest):
             self.memory, self.grades, client, GUILD_A, elsewhere, session_started_at=1, max_calls=3
         )
         self.assertEqual((report.found, report.calls, client.asked), (0, 0, []))
+
+    async def test_the_grade_of_a_clash_no_longer_found_is_deleted(self) -> None:
+        # (the pair made in setUp has no game times, so it always clashes; this one is dated)
+        gorrak, tamsin = await self.add("Gorrak"), await self.add("Tamsin")
+        alliance = await self.relate(
+            gorrak, "ally_of", tamsin, status="confirmed", from_session_at=100
+        )
+        await self.relate(gorrak, "enemy_of", tamsin, status="confirmed", from_session_at=200)
+        before = await Contradictions(self.memory).find(GUILD_A, self.c)
+        await self.go(Canned(answer(*[(n + 1, "minor", "Small.") for n in range(len(before))])))
+        self.assertEqual(len(await self.grades.rows(GUILD_A, self.c)), len(before))
+        await self.memory.update_relation(
+            GUILD_A, self.c, alliance.value[0].id, to_session_at=150, source="dm"
+        )  # ended before the other began: history, not a clash
+        after = await Contradictions(self.memory).find(GUILD_A, self.c)
+        report = await self.go(Canned(answer()))
+        self.assertEqual(report.dropped, len(before) - len(after))
+        self.assertGreater(report.dropped, 0)
+        self.assertEqual(len(await self.grades.rows(GUILD_A, self.c)), len(after))

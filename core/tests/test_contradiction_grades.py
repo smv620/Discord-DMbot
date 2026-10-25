@@ -22,7 +22,7 @@ class Storing(ConfirmedMemoryTest):
         self.assertTrue(found)
         self.candidate = found[0]
 
-    async def count(self, table: str = "memory_contradictions") -> int:
+    async def rows_in(self, table: str = "memory_contradictions") -> int:
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(f"SELECT count(*) AS n FROM {table}")
             row = await cur.fetchone()
@@ -63,7 +63,19 @@ class Storing(ConfirmedMemoryTest):
         (row,) = await self.store.rows(GUILD_A, self.c)
         self.assertEqual((row.grade, row.reason), ("minor", "second"))
         self.assertIsNotNone(row.said_at)  # told once, not again
-        self.assertEqual(await self.count(), 1)
+        self.assertEqual(await self.rows_in(), 1)
+
+    async def test_a_failed_grade_never_replaces_a_real_one(self) -> None:
+        await self.store.save(GUILD_A, self.c, [cg.Graded(self.candidate, cg.MAJOR, "real", 500)])
+        await self.store.save(
+            GUILD_A, self.c, [cg.Graded(self.candidate, cg.NOT_GRADED, "cut", 900)]
+        )
+        (row,) = await self.store.rows(GUILD_A, self.c)
+        self.assertEqual((row.grade, row.reason, row.session_started_at), ("major", "real", 500))
+        # a real grade after that does replace it
+        await self.store.save(GUILD_A, self.c, [cg.Graded(self.candidate, cg.MINOR, "newer", 900)])
+        (row,) = await self.store.rows(GUILD_A, self.c)
+        self.assertEqual((row.grade, row.reason), ("minor", "newer"))
 
     async def test_told_once(self) -> None:
         await self.store.save(GUILD_A, self.c, [cg.Graded(self.candidate, cg.MAJOR)])
@@ -93,7 +105,7 @@ class Storing(ConfirmedMemoryTest):
         saved = await self.store.save(
             GUILD_A, self.c, [cg.Graded(gone, cg.MAJOR), cg.Graded(self.candidate, cg.MINOR)]
         )
-        self.assertEqual((saved, await self.count()), (1, 1))
+        self.assertEqual((saved, await self.rows_in()), (1, 1))
 
     async def test_a_grade_goes_with_either_connection(self) -> None:
         await self.store.save(GUILD_A, self.c, [cg.Graded(self.candidate, cg.MAJOR)])
@@ -102,7 +114,7 @@ class Storing(ConfirmedMemoryTest):
                 "DELETE FROM memory_relations WHERE guild_id = %s AND campaign_id = %s AND id = %s",
                 (GUILD_A, self.c, self.candidate.first_relation_id),
             )
-        self.assertEqual(await self.count(), 0)
+        self.assertEqual(await self.rows_in(), 0)
 
     async def test_another_campaign_and_another_server_see_nothing(self) -> None:
         await self.store.save(GUILD_A, self.c, [cg.Graded(self.candidate, cg.MAJOR)])

@@ -4,9 +4,10 @@ plan, the feature switch, the call limits) and how many calls it may make; this 
 
 A candidate already graded `major` or `minor` is not asked about again (it would cost a call to say
 the same thing); one that is `not_graded` (a cut answer, a failure) is asked again. A candidate
-that no longer exists is not graded, and an old grade of one is left alone: the database removes it
-with the connection. Nothing here changes a belief, and nothing is told to the DM (that is the
-next step, which reads the stored grades)."""
+that no longer exists is not graded, and the grade of a clash that is no longer found (a
+connection ended or changed) is deleted in every pass, even one that asks nothing, so a stale one
+is never told. Nothing here changes a belief, and nothing is told to the DM (that is the next step,
+which reads the stored grades)."""
 
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ class Report:
     calls: int = 0
     failed: int = 0
     cut: int = 0
+    dropped: int = 0  # old grades of clashes no longer found, deleted
     stopped: str = ""
 
     def line(self) -> str:
@@ -36,7 +38,7 @@ class Report:
         return (
             f"Contradictions: found={self.found} asked={self.asked} major={self.major} "
             f"minor={self.minor} not_graded={self.not_graded} calls={self.calls} "
-            f"failed={self.failed} cut={self.cut}"
+            f"failed={self.failed} cut={self.cut} dropped={self.dropped}"
             + (f" stopped={self.stopped}" if self.stopped else "")
         )
 
@@ -59,6 +61,7 @@ async def run(
     report = Report()
     found = await Contradictions(memory).find(guild_id, campaign_id)
     report.found = len(found)
+    report.dropped = await grades.drop_except(guild_id, campaign_id, {key(c) for c in found})
     done = {
         (r.perspective_id, r.kind, r.first_relation_id, r.second_relation_id)
         for r in await grades.rows(guild_id, campaign_id)

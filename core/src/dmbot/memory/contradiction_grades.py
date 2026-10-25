@@ -16,7 +16,7 @@ every query names the campaign, and the table's row-level security and composite
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
@@ -90,10 +90,18 @@ class GradeStore:
                     " AND (SELECT count(*) FROM memory_relations WHERE guild_id = %s"
                     "  AND campaign_id = %s AND id IN (%s, %s)) = 2"
                     " ON CONFLICT (guild_id, campaign_id, perspective_id, kind, first_relation_id,"
-                    "  second_relation_id) DO UPDATE SET grade = EXCLUDED.grade,"
-                    "  reason = EXCLUDED.reason, times_unknown = EXCLUDED.times_unknown,"
-                    "  involves_guess = EXCLUDED.involves_guess,"
-                    "  session_started_at = EXCLUDED.session_started_at",
+                    "  second_relation_id) DO UPDATE SET"
+                    # a grade that could not be made (cut, unreadable, refused) never replaces
+                    # one that was: the old answer still stands until a real one arrives
+                    "  grade = CASE WHEN EXCLUDED.grade = 'not_graded' THEN"
+                    "   memory_contradictions.grade ELSE EXCLUDED.grade END,"
+                    "  reason = CASE WHEN EXCLUDED.grade = 'not_graded' THEN"
+                    "   memory_contradictions.reason ELSE EXCLUDED.reason END,"
+                    "  session_started_at = CASE WHEN EXCLUDED.grade = 'not_graded' THEN"
+                    "   memory_contradictions.session_started_at"
+                    "   ELSE EXCLUDED.session_started_at END,"
+                    "  times_unknown = EXCLUDED.times_unknown,"
+                    "  involves_guess = EXCLUDED.involves_guess",
                     (
                         guild_id, campaign_id, c.perspective_id, c.kind, c.first_relation_id,
                         c.second_relation_id, grade, one_line(g.reason), c.times_unknown,
@@ -136,3 +144,32 @@ class GradeStore:
                 )
                 told += cur.rowcount
         return told
+
+    async def drop_except(
+        self, guild_id: int, campaign_id: str, keep: Collection[tuple[str, str, str, str]]
+    ) -> int:
+        """Forget the grades of clashes that are no longer found (a connection ended, was changed
+        or lost its belief, so the two no longer meet): a stale grade must not be told to the DM
+        or counted. Everything else is left as it is."""
+        dropped = 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT perspective_id, kind, first_relation_id, second_relation_id"
+                " FROM memory_contradictions WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            for row in await cur.fetchall():
+                key = (
+                    row["perspective_id"], row["kind"],
+                    row["first_relation_id"], row["second_relation_id"],
+                )  # fmt: skip
+                if key in keep:
+                    continue
+                gone = await conn.execute(
+                    "DELETE FROM memory_contradictions WHERE guild_id = %s AND campaign_id = %s"
+                    " AND perspective_id = %s AND kind = %s AND first_relation_id = %s"
+                    " AND second_relation_id = %s",
+                    (guild_id, campaign_id, *key),
+                )
+                dropped += gone.rowcount
+        return dropped
