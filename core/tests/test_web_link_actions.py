@@ -691,6 +691,28 @@ class TheEdits(Editing):
     async def waiting_now(self, who: Any = None) -> dict[str, Any]:
         return await relationships.read_waiting(self.web, who or self.session, self.cref)
 
+    async def test_a_reading_is_not_listed_or_counted_as_a_claim_waiting_for_a_yes(self) -> None:
+        """#2412: a theory is a belief to place, not something said to keep; the page lists the
+        plain claim and not the reading, and the count agrees."""
+        from dmbot.memory import readings
+
+        plain = await self.claim()
+        theory = readings.BeliefProposal(
+            "pc:Rook", "Mira Voss", "carries", "Far Hall", 0.5, "theory", ("1",)
+        )
+        await self.claims.propose(
+            self.g, self.one.id, [readings.as_claim(theory, "player_said")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_claims WHERE reading IS NOT NULL"
+            )
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)  # (it is stored)
+        got = await self.waiting_now()
+        self.assertEqual([c["id"] for c in got["claims"]], [plain])
+        self.assertEqual(got["counts"]["claims"], 1)
+
     async def test_the_door_lists_what_waits_with_the_upload_and_the_counts(self) -> None:
         claim = await self.claim()
         link = await self.waiting_link(self.mira, self.hall)

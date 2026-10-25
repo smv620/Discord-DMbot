@@ -605,6 +605,14 @@ what players see.
   Magic). When the target resisted or was protected, The truth stays as it is, and the protection is linked
   to the event as `MANIPULATED_BY`.
 
+**Built so far (#2412, slice 1):** `memory/readings.py` holds the prompt for these four rules (its own
+text; the claims prompt and its measured version are untouched), reads the model's answer and turns
+each reading into belief proposals. The model says words only; code sets every number (a guess 0.5,
+"surely" 0.75, "unlikely" 0.25, a reveal 1.0, a dodge under a spell 0.7, a false public statement 0.0)
+and every status. A guess goes to one player character's point of view, and to the party's only when the
+table agreed out loud. Anything about The truth is a proposal that waits for the DM. Storing them, the
+players' points of view and the running pass come in the next slices.
+
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
 

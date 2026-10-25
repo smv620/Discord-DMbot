@@ -142,6 +142,16 @@ who it belongs to.
 8. Each beat has a place ("Where"). Never move an event to another place. Never add a direction, \
 a distance, a time or any detail the beats do not state ("they travelled north", "the gate \
 groaned"). Never say "all", "every" or "each" of the party unless a beat does.
+9. Write for a listener who missed the last session and hears this cold. Open the first sentence \
+with a name, never a pronoun. The first time you name a person, a place or a thing the previous \
+recap did not name, say in a few words what it is to the party, using only the <names> list, the \
+material you were given and the previous recap. For each scene say what changed and the mood of \
+it (tense, mysterious, dangerous, a turning point) only as the material shows. Give every \
+character who has a beat a decision or a moment. When a favour, a debt, a promise or a threat \
+comes up, say what came of it, or that it is still open. End on the cliffhanger and say why it \
+matters to the party, in the material's own terms. None of this lets you add anything: when the \
+material does not say what something is or why it matters, leave that detail out. This rule \
+never changes the length.
 
 The music prompt of a section: one short prompt (under 240 characters), describing only the \
 sound: instruments, tempo, \
