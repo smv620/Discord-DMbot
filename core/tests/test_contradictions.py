@@ -178,6 +178,56 @@ class Finding(ConfirmedMemoryTest):
         await self.relate(self.bram, "enemy_of", self.mira, status="proposed")
         self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
 
+    async def test_being_in_the_inn_and_the_town_it_is_in_is_one_place_not_two(self) -> None:
+        town = await self.add("Harrowmere", type="place")
+        inn = await self.add("The Gull", type="place")
+        await self.relate(inn, "located_in", town, status="confirmed")
+        await self.relate(self.bram, "located_in", inn, status="confirmed")
+        await self.relate(self.bram, "located_in", town, status="confirmed")
+        self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
+
+    async def test_too_many_is_found_for_a_point_of_view_that_believes_it_but_not_for_the_truth(
+        self,
+    ) -> None:
+        one = await self.add("Harrowmere", type="place")
+        two = await self.add("Stonebridge", type="place")
+        await self.relate(self.bram, "located_in", one, status="confirmed")
+        await self.relate(self.bram, "located_in", two, status="confirmed")
+        party = await self.view("party")
+        found = await self.finder.find(GUILD_A, self.c)
+        self.assertEqual([(c.perspective_id, c.kind) for c in found], [(party, "too_many")])
+
+    async def test_a_one_of_a_kind_item_in_two_hands_is_found_for_a_belief_not_for_the_truth(
+        self,
+    ) -> None:
+        sword = await self.add("Heartseeker", type="item")
+        await self.relate(self.bram, "carries", sword, status="confirmed")
+        await self.relate(self.mira, "carries", sword, status="confirmed")
+        party = await self.view("party")
+        found = await self.finder.find(GUILD_A, self.c)
+        self.assertEqual([(c.perspective_id, c.kind) for c in found], [(party, "held_twice")])
+
+    async def test_a_pair_is_reported_once_however_it_is_met(self) -> None:
+        sword = await self.add("Heartseeker", type="item")
+        await self.relate(self.bram, "carries", sword, status="confirmed")
+        await self.relate(self.mira, "carries", sword, status="confirmed")
+        found = await self.finder.find(GUILD_A, self.c)
+        self.assertEqual(
+            len(found), len({(c.first_relation_id, c.second_relation_id) for c in found})
+        )
+
+    async def test_a_middle_belief_of_less_than_even_odds_splits_the_history(self) -> None:
+        ally, enemy = await self.pair()
+        truth, party = await self.view("truth"), await self.view("party")
+        await self.anchor()
+        await self.believe(truth, enemy, 0.0, "false_evidence", session_at=0)
+        await self.believe(party, enemy, 0.0, "false_evidence", session_at=0)
+        await self.believe(party, enemy, 0.9, "revealed_fact", session_at=1)
+        await self.believe(party, enemy, 0.3, "theory", session_at=4)  # unsure again at 4
+        await self.believe(party, ally, 0.0, "false_evidence", session_at=0)  # not yet allies
+        await self.believe(party, ally, 1.0, "revealed_fact", session_at=6)  # after it let go
+        self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
+
     async def test_another_campaign_never_shows(self) -> None:
         await self.pair()
         elsewhere = (await self.campaigns.create(GUILD_A, "Elsewhere", DM)).id
@@ -207,6 +257,17 @@ class Pure(unittest.TestCase):
         got = cx.spans([belief(2, 5), belief(1, 1), belief(3, None)])
         # (the second was replaced by one with no session: its end cannot be placed)
         self.assertEqual([(b.seq, st, en) for b, st, en in got], [(1, 1, 5), (3, None, None)])
+
+    def test_a_belief_formed_and_changed_in_the_same_session_was_never_held(self) -> None:
+        from dmbot.memory.models import Belief
+
+        def belief(seq: int, at: int | None) -> Belief:
+            return Belief("i", "p", "r", 1.0, "theory", at, (), seq, 0)
+
+        got = cx.spans([belief(1, 3), belief(2, 3), belief(3, 6)])
+        self.assertEqual([(b.seq, st, en) for b, st, en in got], [(2, 3, 6), (3, 6, None)])
+        inverted = cx.spans([belief(1, 9), belief(2, 4)])  # recorded out of order
+        self.assertEqual([(b.seq, st, en) for b, st, en in inverted], [(2, 4, None)])
 
     def test_a_denial_and_a_long_shot_assert_nothing(self) -> None:
         from dmbot.memory.models import Belief
