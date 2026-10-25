@@ -493,6 +493,28 @@ export interface SessionReport {
   contradictions: ReportContradiction[];
   differences: { disguised: ReportDifference[]; misunderstood: ReportDifference[]; false: ReportDifference[] };
 }
+/** "Names fixed this session" (#2645; shapes agreed on the issue): what the name pass wrote into a session's
+ * cleaned text, for the campaign's DM only. `forms[].heard` are transcript words: shown to that DM, never
+ * logged, never on a public link or in a players' view. */
+export interface NameFixForm {
+  heard: string;
+  times: number;
+}
+export interface NameFix {
+  /** Its Undo's id (the pass's batch). */
+  id: string;
+  name: string;
+  times: number;
+  forms: NameFixForm[];
+  undone: boolean;
+}
+export interface NamesFixed {
+  fixed: NameFix[];
+  /** Words the pass left as heard and asked the DM about: a count only. */
+  unsure: number;
+  /** New names it offered to the DM: a count only. */
+  new: number;
+}
 /** Adding a recap someone wrote (`POST /me/campaigns/{ref}/recaps/upload`, #2609): `text` or `link`. */
 export interface AddRecapInput {
   /** When the session began (Unix seconds). */
@@ -1260,6 +1282,8 @@ interface WebAnswer {
   error?: string | null;
   edge?: WebEdge | null;
   removed?: boolean;
+  /** An Undo of a name fix: how many lines were put back (#2645). */
+  putBack?: number | null;
 }
 
 /** The changed row, or `{ removed: true }` after a removal. */
@@ -1532,6 +1556,11 @@ export interface AccountApi {
   /** One answer to one item, queued for the bot like #2638's; resolves once it is saved. `undo` puts the
    * item back to open. A refusal is an `ApiError` (`gone`, `cannot-write`, `queue-full`). */
   answerReport?(campaignRef: string, at: number, id: string, action: ReportAction | "undo"): Promise<void>;
+  /** What the name pass fixed in this recap's session (DMs only; #2645). Missing from an older API. */
+  namesFixed?(recapRef: string): Promise<NamesFixed>;
+  /** Undo one fix, queued for the bot like the DM screen's Undo; resolves with how many lines were put back.
+   * A refusal is an `ApiError` (`gone`, `not-allowed`, `cannot-write`, `queue-full`). */
+  undoNameFix?(recapRef: string, id: string): Promise<{ putBack: number }>;
   /** Make a recap for a session, or make it again (`POST /me/recaps/{ref}/again`, #2608); `replace` after
    * the DM said yes to "This session already has a recap". The recap comes back, queued. */
   makeRecap?(recapRef: string, replace: boolean): Promise<Recap>;
@@ -2102,6 +2131,18 @@ export function httpApi(
       const queued = (await call("POST", `${base}/sessions/${at}/report`, { id, action })) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    namesFixed: async (recapRef) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
+    undoNameFix: async (recapRef, id) => {
+      const queued = (await call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed/${encodeURIComponent(id)}/undo`, {})) as {
+        answer: string;
+      };
+      if (!queued?.answer) throw new ApiError("server");
+      // The bot's answer is polled under the campaign, as the report's are (the campaign is the recap's first two parts).
+      const campaign = recapRef.split(".").slice(0, 2).join(".");
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaign)}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { putBack: got.putBack ?? 0 };
     },
     makeRecap: async (recapRef, replace) =>
       recapFrom(await busyAsBusy(() => call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/again`, { replace }))),

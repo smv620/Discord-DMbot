@@ -69,6 +69,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "Names fixed this session, with Undo",
+    text: "Below a session's recap text, Names fixed this session shows the names DMbot fixed in the cleaned transcript. Each name says how many times it was fixed and how it was written before. Press Undo to put a name back as it was heard. DMbot then leaves that spelling alone. Only you, the DM, see this list.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Every name on the Story graph",
     text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },
