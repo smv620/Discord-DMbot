@@ -129,7 +129,9 @@ async def undo_fix(
 
     olds = await transcripts.respelled_olds(guild_id, campaign_id, batch)
     lines, _sessions = await transcripts.undo_respell(guild_id, campaign_id, batch)
-    if memory is not None:
+    # (when every line has changed since, nothing was put back, so no "keep as heard" rule is
+    # saved; but the fix's rows are spent either way, so the page must not show it as standing)
+    if memory is not None and lines:
         for heard in olds:
             try:
                 await memory.add_correction(guild_id, campaign_id, heard, action=KEEP, source=DM)
@@ -137,7 +139,7 @@ async def undo_fix(
                 log.info("Name pass undo: a keep-as-heard rule was refused")
             except Exception:
                 log.exception("Name pass undo: couldn't save the keep-as-heard rule")
-    if lines:
+    if olds:
         try:
             await NamePassLog.of(transcripts).mark_undone(guild_id, campaign_id, batch, now=now)
         except Exception:

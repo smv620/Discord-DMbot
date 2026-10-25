@@ -47,8 +47,13 @@ async def queue_undo(db: Database, session: Session, ref: str, fix_id: object) -
     answers door). DM only: anyone else gets "not found" before anything is queued. The id is the
     fix's Undo number; one that is not a fix of this campaign is "not found" too. The bot puts
     the lines back through the very calls the DM screen's Undo makes, so an Undo already made, or
-    lines changed since, end as `gone` and nothing is changed."""
-    if not isinstance(fix_id, str) or not fix_id.isdecimal() or len(fix_id) > 12:
+    lines changed since, end as `gone` and nothing is changed. (An Undo number is campaign-wide,
+    like the DM screen's button: any recap page of this campaign can undo it.)"""
+    if (
+        not isinstance(fix_id, str)
+        or not (fix_id.isascii() and fix_id.isdecimal())
+        or len(fix_id) > 12
+    ):
         raise RecapError("not_found")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, _at, _row = await recaps._one(conn, ref, session, marks=False)

@@ -498,7 +498,7 @@ async def _answer_waiting(
         # lines changed since, or it was undone already) and nothing was changed.
         if w.name_pass_undo is None:
             return _failed(FAILED)
-        if not a.target_id.isdigit() or len(a.target_id) > 12:
+        if not (a.target_id.isascii() and a.target_id.isdecimal()) or len(a.target_id) > 12:
             return _failed(NOT_FOUND)
         lines = await w.name_pass_undo(cid, int(a.target_id))
         return Outcome(result_other=str(lines)) if lines else _failed(GONE)

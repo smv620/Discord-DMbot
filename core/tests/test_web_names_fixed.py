@@ -179,6 +179,32 @@ class Undoing(Fixed):
         self.assertEqual(outcome.error, wa.GONE)
         self.assertEqual((await self.poll(again))["error"], wa.GONE)
 
+    async def test_a_fix_whose_lines_all_changed_is_still_marked_undone(self) -> None:
+        sid = await self.session_with_fixes()
+        batch = np.batch_of(sid, "e1")
+        async with self.db.guild(GUILD) as conn:  # every line was edited by hand since
+            await conn.execute(
+                "UPDATE transcript_lines SET text = 'Edited by hand.' WHERE session_id = %s", (sid,)
+            )
+        answer = await web.queue_undo(self.web, self.session, self.ref, str(batch))
+        await self.run_bot()
+        self.assertEqual((await self.poll(answer))["error"], wa.GONE)  # nothing put back
+        (shown,) = (await self.read())["fixed"]
+        self.assertTrue(shown["undone"])  # but its record is spent: not shown as standing
+        kept = {c.heard for c in await self.memory.corrections(GUILD, self.one.id)}  # type: ignore[attr-defined]
+        self.assertNotIn("Keirandal", kept)  # no keep-as-heard rule for lines never put back
+
+    async def test_a_number_that_is_not_plain_digits_is_not_found(self) -> None:
+        await self.session_with_fixes()
+        for odd in ("\u00b2", "\u0663", "1 ", "", "1" * 13, 5):
+            with self.assertRaises(RecapError, msg=repr(odd)):
+                await web.queue_undo(self.web, self.session, self.ref, odd)
+
+    def test_the_door_and_the_bot_name_the_same_actions(self) -> None:
+        from dmbot import schema
+
+        self.assertEqual(schema.NAMES_FIXED_ACTIONS, wa.NAMES_FIXED_ACTIONS)
+
     async def test_the_undo_keeps_the_old_spellings_as_heard(self) -> None:
         sid = await self.session_with_fixes()
         await web.queue_undo(self.web, self.session, self.ref, str(np.batch_of(sid, "e1")))
