@@ -10049,6 +10049,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             (lambda cid, answer: actions.spent(guild_id, cid, answer))
             if actions is not None
             else None,
+            (lambda cid, uid, claim: actions.batch_of(guild_id, cid, uid, claim))
+            if actions is not None
+            else None,
         )
 
     async def run_name_actions(self) -> None:

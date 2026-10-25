@@ -192,13 +192,32 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else (str(row["target_id"]), int(row["result_other"]))
 
+    async def batch_of(
+        self, guild_id: int, campaign_id: str, user_id: int, claim_id: str
+    ) -> int | None:
+        """The change batch of this DM's latest keep of this reading that is still undoable (not
+        undone, `spent` clears it), so a retried Place can hand its Undo the batch (#2412)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT result_other FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND target_id = %s AND action = 'reading-place'"
+                " AND state = 'done' AND result_other ~ '^[0-9]+$'"
+                " ORDER BY created_at DESC, id DESC LIMIT 1",
+                (guild_id, campaign_id, user_id, claim_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["result_other"])
+
     async def spent(self, guild_id: int, campaign_id: str, answer_id: str) -> None:
         """The keep was undone: the same answer is not offered an Undo again."""
         async with self._db.guild(guild_id) as conn:
+            # every answer that holds the same keep (a retried Place hands back the same batch)
             await conn.execute(
                 "UPDATE name_actions SET result_other = '' WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = %s",
-                (guild_id, campaign_id, answer_id),
+                " AND action = 'reading-place' AND result_other ~ '^[0-9]+$' AND result_other ="
+                " (SELECT result_other FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s)",
+                (guild_id, campaign_id, guild_id, campaign_id, answer_id),
             )
 
     async def sweep(self, guild_id: int) -> int:
@@ -238,6 +257,8 @@ class Waiting:
     # `spent` marks the Undo as used.
     kept_reading: Callable[[str, int, str], Awaitable[tuple[str, int] | None]] | None = None
     spent: Callable[[str, str], Awaitable[None]] | None = None
+    # The batch of an earlier undoable keep of a claim (campaign, DM, claim), for a retried Place.
+    batch_of: Callable[[str, int, str], Awaitable[int | None]] | None = None
 
 
 async def apply(
@@ -531,8 +552,8 @@ async def _answer_reading(
     `reading-place` keeps the reading as a belief (never a fact; `ClaimStore.place`, which asks who
     is recorded again inside its write), `reading-no` turns it down, `reading-undo` puts a keep
     back through the store's Undo (a retry finds it already undone, which is done too). A retried
-    `reading-place` finds the claim kept already and answers done, without the batch: its Undo is
-    then only on Discord."""
+    `reading-place` finds the claim kept already and answers done with the batch of the keep it
+    made (so the page still has its Undo); a keep made from Discord has none."""
     if a.action == "reading-undo":
         if w.kept_reading is None or w.spent is None:
             return _failed(FAILED)
@@ -540,14 +561,15 @@ async def _answer_reading(
         if kept is None:
             return _failed(GONE)
         claim_id, batch = kept
-        recorded = set(await w.opted_in())
 
         async def reopen(c: Changes) -> None:
             """The question comes back, unless someone whose words it holds has stopped being
-            recorded since: then it goes, as `place` would have deleted it."""
+            recorded since: then it goes, as `place` would have deleted it. Who is recorded is read
+            here, inside the undo, so a stop between the press and the write is seen."""
             row = await c.get(CLAIMS, claim_id)
             if row is None:
                 return
+            recorded = set(await w.opted_in())
             if not row["speaker_ids"] or not set(row["speaker_ids"]) <= recorded:
                 await c.delete(CLAIMS, claim_id)
                 await evidence.placeholder_claims(c.conn, guild_id, [claim_id])
@@ -567,7 +589,15 @@ async def _answer_reading(
         return _failed(NOT_FOUND)
     if claim.status != CLAIM_PROPOSED:
         done = CLAIM_CONFIRMED if a.action == "reading-place" else CLAIM_REJECTED
-        return Outcome(result_id=claim.fact_id or "") if claim.status == done else _failed(GONE)
+        if claim.status != done:
+            return _failed(GONE)
+        # A retried Place finds the keep made: it hands back that keep's batch so the page still
+        # has its Undo (none when it was undone or kept from Discord).
+        batch = await w.batch_of(cid, a.user_id, a.target_id) if w.batch_of else None
+        return Outcome(
+            result_id=claim.fact_id or "",
+            result_other=str(batch) if batch and a.action == "reading-place" else "",
+        )
     if a.action == "reading-no":
         await w.claims.reject(guild_id, cid, a.target_id)
         return Outcome()

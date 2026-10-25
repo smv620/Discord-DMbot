@@ -23,7 +23,7 @@ from dmbot.web.recaps import RecapError
 from tests.test_memory_claims import said
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
-from tests.test_web_relationships import Web
+from tests.test_web_relationships import BOB_USER, MEMBER, Web
 
 
 class TheSecretOffer(unittest.TestCase):
@@ -1204,8 +1204,11 @@ class WhatPeopleBelieve(Editing):
         async def spent(cid: str, answer: str) -> None:
             await self.actions.spent(self.g, cid, answer)
 
+        async def batch_of(cid: str, uid: int, claim: str) -> int | None:
+            return await self.actions.batch_of(self.g, cid, uid, claim)
+
         return await self.apply_all(
-            waiting=wa.Waiting(self.claims, self.backstory, now, kept, spent)
+            waiting=wa.Waiting(self.claims, self.backstory, now, kept, spent, batch_of)
         )
 
     async def connections(self) -> list[Any]:
@@ -1256,6 +1259,79 @@ class WhatPeopleBelieve(Editing):
         assert claim is not None
         self.assertEqual(claim.status, "confirmed")
         self.assertTrue(claim.fact_id)
+
+    async def test_a_retried_place_still_has_its_undo(self) -> None:
+        ident = await self.reading()
+        first = await self.answer("place", ident)
+        retry = await self.answer("place", ident)  # the page pressed it twice before the bot ran
+        outcomes = await self.run_bot()
+        self.assertEqual([o.error for o in outcomes], ["", ""])
+        self.assertTrue(all(o.result_other.isdigit() for o in outcomes))
+        self.assertTrue((await self.poll(retry))["undoable"])
+        # and the retry's Undo puts it back, once
+        await self.answer("undo", retry)
+        (undone,) = await self.run_bot()
+        self.assertEqual(undone.error, "")
+        self.assertEqual(len((await self.listed())["readings"]), 1)
+        # an Undo already used leaves a later retried Place with none
+        self.assertIsNone(await self.actions.batch_of(self.g, self.one.id, ALICE.id, ident))
+        self.assertFalse((await self.poll(first))["undoable"])
+
+    async def test_an_undo_reads_who_is_recorded_inside_the_undo(self) -> None:
+        ident = await self.reading()
+        kept = await self.answer("place", ident)
+        await self.run_bot()
+        reads: list[str] = []
+        real_undo = self.memory.undo
+
+        async def undo(*args: Any, **kw: Any) -> Any:
+            reads.append("undo")
+            return await real_undo(*args, **kw)
+
+        async def now() -> set[int]:
+            reads.append("recorded")
+            return self.recorded
+
+        async def kept_of(cid: str, uid: int, answer: str) -> tuple[str, int] | None:
+            return await self.actions.kept_reading(self.g, cid, uid, answer)
+
+        async def spent(cid: str, answer: str) -> None:
+            await self.actions.spent(self.g, cid, answer)
+
+        await self.answer("undo", kept)
+        with patch.object(self.memory, "undo", undo):
+            await self.apply_all(
+                waiting=wa.Waiting(self.claims, self.backstory, now, kept_of, spent)
+            )
+        self.assertEqual(reads[0], "undo")  # nothing about who is recorded was read before it
+        self.assertIn("recorded", reads)
+
+    async def test_a_player_who_may_peek_still_cannot_list_or_answer_readings(self) -> None:
+        ident = await self.reading()
+        before = len(await self.connections())
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, BOB_USER, [MEMBER], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+            base = f"/me/campaigns/{self.cref}/web"
+            peek = await client.get(base, params={"view": "full"})
+            self.assertEqual((peek.status_code, peek.json()["view"]), (200, "full"))  # peek is on
+            listed = await client.get(f"{base}/readings")
+            self.assertNotEqual(listed.status_code, 200)
+            self.assertNotIn("readings", listed.json())
+            posted = await client.post(f"{base}/readings", json={"action": "place", "id": ident})
+            self.assertNotEqual(posted.status_code, 202)
+        self.assertEqual(len(await self.connections()), before)  # nothing was written
+        claim = await self.claims.get(self.g, self.one.id, ident)
+        assert claim is not None
+        self.assertEqual(claim.status, "proposed")
 
     async def test_no_writes_nothing(self) -> None:
         ident = await self.reading()
