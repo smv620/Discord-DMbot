@@ -169,6 +169,9 @@ export const importPage = {
   failedReason: {
     names_failed: "The check for new names failed. Import this file again on its own, later.",
     partly_labelled: "Some lines couldn't be sorted, so they count as game talk.",
+    error: "Something went wrong with this one. Import this file again on its own.",
+    recap_failed: "The recap couldn't be written. You can try again from the recap list.",
+    stalled: "Nothing has moved for a while. Your files are safe and DMbot keeps trying.",
   } as Record<string, string>,
   // Where each session has got to (#2230). Simple words: what DMbot is doing, or what it needs.
   stage: {
@@ -183,6 +186,17 @@ export const importPage = {
     done: "Imported",
     failed: "Couldn't import this one",
   } as Record<string, string>,
+  // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
+  unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
+  // Said when the server calls the import stalled: it can still move, and the files are safe.
+  // A stall does not send anyone to import again (that could make doubles); only a failure does.
+  stalledDo: "Your files are safe. DMbot keeps trying, and you can leave and come back. If nothing moves in 10 more minutes, use the Help page to tell us.",
+  failedDo: "Import the files again, one at a time. Nothing already imported is lost.",
+  // How far a session's cleaning has got, by the API's counts (a unit of lines); only numbers, never a line of text.
+  lineCount: (done: number, total: number): string => `${done} of ${total} lines`,
+  sessionStalled: "Not moving for a while. DMbot keeps trying.",
+  stoppedWatching: "We stopped checking after a long time with nothing new. Your files are safe. Press Check again to look once more.",
+  gone: "This import is no longer listed. It may have finished. Check Transcripts to see what was imported.",
   waitingForNames: (n: number): string =>
     n > 0
       ? `Waiting for your answers about ${n} ${n === 1 ? "name" : "names"}`

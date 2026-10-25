@@ -408,10 +408,12 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     cur = await conn.execute(
         "SELECT count(*) AS n FROM information_schema.columns"
         " WHERE table_schema = current_schema() AND table_name = 'campaign_handover_offers'"
-        " AND column_name IN ('delivered_at', 'claimed_at', 'message_id', 'end_told_at')"
+        " AND column_name IN ('delivered_at', 'claimed_at', 'message_id', 'end_told_at',"
+        " 'via_email', 'token_hash')"
     )
     columns = await cur.fetchone()
-    if columns is not None and columns["n"] == 4:
+    offers_ready = columns is not None and columns["n"] == 6  # #2532 columns exist
+    if offers_ready:
         await conn.execute(WEB_ROLE_OFFER_POLICY)  # #728
     cur = await conn.execute(
         "SELECT count(*) AS n FROM information_schema.columns"
@@ -445,6 +447,8 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
         await conn.execute(WEB_ROLE_RECAP_POLICY)  # #1382
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
+        if privileges.startswith("INSERT (") and not offers_ready:
+            continue  # the offer INSERT names columns an older schema doesn't have yet
         if not sheets_held:
             # No sheet rights without the rule that holds them to the person's own rows.
             present = [t for t in present if t != "character_sheets"]
@@ -457,6 +461,13 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
                 role,
             )
         )
+        if privileges.startswith("INSERT (") and "campaign_handover_offers" in present:
+            # An insert takes its id from the table's sequence (#2532).
+            await conn.execute(
+                sql.SQL("GRANT USAGE ON SEQUENCE {} TO {}").format(
+                    sql.Identifier("campaign_handover_offers_id_seq"), role
+                )
+            )
 
 
 async def _take_migration_lock(conn: AsyncConnection[Any], schema: str) -> None:

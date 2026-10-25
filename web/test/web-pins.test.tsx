@@ -27,8 +27,8 @@ const graph = (over: Partial<WebGraph> = {}): WebGraph => ({
       label: "owes a debt to",
       more: 1,
       links: [
-        { id: "l1", words: "owes a debt to", secret: false, direction: "ab", pinned: true },
-        { id: "l2", words: "trusts", secret: false, direction: "ab" },
+        { id: "l1", words: "owes a debt to", secret: false, direction: "a-b", pinned: true },
+        { id: "l2", words: "trusts", secret: false, direction: "a-b" },
       ],
     },
   ],

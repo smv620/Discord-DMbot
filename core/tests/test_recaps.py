@@ -13,9 +13,18 @@ from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
 from dmbot.recaps import post
+from dmbot.recaps.fixed_lines import ROOM as FIXED_LINES_ROOM
 from dmbot.recaps.notify import _kind, page_link, parse_ref
 from dmbot.recaps.store import Job
-from dmbot.recaps.text import CUE, names_a_secret, proper_nouns, strip_cues, words
+from dmbot.recaps.text import (
+    CUE,
+    at_word_end,
+    names_a_secret,
+    narration_of,
+    proper_nouns,
+    strip_cues,
+    words,
+)
 from tests import recap_fixtures as fx
 
 SAID = readable(fx.lines())
@@ -309,11 +318,27 @@ class TheProse(unittest.TestCase):
         ):
             self.assertIsNone(rd.parse_prose(bad), bad)
 
-    def test_the_length_is_checked_in_words_without_the_cues(self) -> None:
+    def test_sentences_cut_by_the_fact_check_never_fail_the_recap_for_leaving_it_short(
+        self,
+    ) -> None:
+        prose = rd.Prose(fx.SUMMARY, ("m",) * len(CUE.findall(fx.SUMMARY)))
+        cut = rd.cut_sentences(prose, [2])
+        left = len(words(narration_of(cut.summary)))
+        self.assertLess(left, len(words(narration_of(fx.SUMMARY))))
+        problems = rd.check_prose(
+            cut, beats=beats(), transcript=TRANSCRIPT, allowed_names=fx.NAMES, secret_names=[],
+            length=rd.length_for(8),
+        )  # fmt: skip
+        self.assertEqual([p for p in problems if "words" in p or "short" in p], [])
+
+    def test_no_draft_is_refused_for_its_length_and_an_empty_one_is(self) -> None:
+        """Length is a target in the instructions, never a check (owner, 2026-10-24, #2597)."""
         short = prose_problems("《Tense》 Mira waited at Greywater Keep.", "1. Quiet strings.")
-        self.assertTrue(any("between 170 and 408" in p for p in short), short)
+        self.assertEqual([p for p in short if "words" in p], [])
         long = prose_problems(fx.SUMMARY + "\n\n" + fx.SUMMARY)
-        self.assertTrue(any("between 170 and 408" in p for p in long), long)
+        self.assertEqual([p for p in long if "words" in p], [])
+        empty = prose_problems("《Tense》", "1. Quiet strings.")
+        self.assertTrue(any("empty" in p for p in empty), empty)
 
     def test_the_target_is_75_words_and_75_an_hour_to_the_nearest_10_and_at_most_450(
         self,
@@ -332,31 +357,17 @@ class TheProse(unittest.TestCase):
         ):
             self.assertEqual(rd.length_for(hours).target, target, hours)
 
-    def test_a_three_hour_drafts_words_are_held_to_150_to_360(self) -> None:
+    def test_a_draft_at_40_percent_and_one_at_160_percent_both_pass(self) -> None:
         three = rd.length_for(3)
-        self.assertEqual((three.target, three.low, three.high), (300, 150, 360))
+        self.assertEqual(three.target, 300)
 
         def problems(n: int) -> list[str]:
             text = "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar"
-            return [p for p in prose_problems(text, "1. Strings.", length=three) if "words" in p]
+            return prose_problems(text, "1. Strings.", length=three)
 
-        self.assertEqual((problems(150), problems(360)), ([], []))
-        self.assertTrue(problems(149))
-        self.assertTrue(problems(361))
+        self.assertEqual((problems(120), problems(480), problems(300)), ([], [], []))
         self.assertEqual(rd.length_for(1).target, 150)
         self.assertEqual(rd.length_for(6).target, 450)
-
-    def test_the_range_is_half_the_target_to_twenty_percent_over_and_the_last_try_35_over(
-        self,
-    ) -> None:
-        one = rd.length_for(1)
-        self.assertEqual((one.low, one.high, one.last_high), (75, 180, 202))
-        self.assertEqual(one.last_low, one.low)  # the last try is never stricter below (#2058)
-        test_nine = rd.length_for(1.8)  # the owner's transcript (test 9): target 210
-        self.assertEqual(
-            (test_nine.target, test_nine.low, test_nine.high, test_nine.last_high),
-            (210, 105, 252, 284),
-        )
 
     def test_every_limit_scales_with_the_target(self) -> None:
         for hours, beats, sections, paragraphs in (
@@ -368,11 +379,11 @@ class TheProse(unittest.TestCase):
                 (beats, sections, paragraphs),
                 hours,
             )
-            self.assertEqual(length.summary_max, length.last_high * 8)
-            self.assertGreater(length.max_tokens, length.last_high)
-        # the editor's cap: the longest draft, and room for the fixed opening and closing lines
-        self.assertEqual(rd.SUMMARY_MAX, rd.length_for(8).summary_max + 400)
-        self.assertEqual(rd.SUMMARY_MAX, 4864 + 400)
+            self.assertGreater(length.room, length.target)  # the room is a ceiling above the target
+            self.assertGreater(length.max_tokens, length.room)
+        # the database's cap on the whole text; the story's share leaves the fixed lines their room
+        self.assertEqual(rd.SUMMARY_MAX, 50_000)
+        self.assertEqual(rd.STORY_MAX, 50_000 - FIXED_LINES_ROOM)
 
     def test_the_hours_come_from_the_given_number_the_times_or_the_words(self) -> None:
         def lines(*times_ms: int, words: int = 3) -> list[Said]:
@@ -386,41 +397,12 @@ class TheProse(unittest.TestCase):
         self.assertEqual(rd.estimated_hours(25_000), 3.5)
         self.assertEqual(rd.estimated_hours(24_000), 3.5)
 
-    def test_a_length_retry_gives_the_hours_the_target_and_the_range(self) -> None:
-        text = "《Tense》 " + " ".join(["calm"] * 889)
-        (problem,) = [p for p in prose_problems(text, "1. Strings.") if "words" in p]
-        self.assertIn(
-            "Your draft was 889 words. This session ran about 3.5 hours: write about 340 words, "
-            "between 170 and 408",
-            problem,
-        )
-
-    def test_a_recap_a_little_long_is_refused_at_first_and_accepted_on_the_last_try(self) -> None:
-        one = rd.length_for(1)  # 150 words: 75 to 180, up to 202 on the last try
-
-        def problems(n: int, last: bool) -> list[str]:
-            return prose_problems(
-                "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar",
-                "1. Strings.",
-                length=one,
-                last=last,
-            )
-
-        self.assertEqual(problems(150, False), [])
-        self.assertTrue(any("words" in p for p in problems(190, False)))  # refused first
-        self.assertEqual(problems(190, True), [])  # accepted on the last try
-        self.assertTrue(any("words" in p for p in problems(210, True)))  # still too long
-        self.assertEqual(problems(100, True), [])  # short passes on the last try too
-        self.assertEqual(problems(75, False), [])  # half the target passes on every try (#2058)
-        self.assertTrue(any("words" in p for p in problems(74, False)))  # under half fails
-        self.assertTrue(any("words" in p for p in problems(74, True)))  # on every try
-
-    def test_a_name_not_allowed_and_a_copied_run_fail_even_on_the_last_try(self) -> None:
+    def test_a_name_not_allowed_and_a_copied_run_fail(self) -> None:
         body = " ".join(["calm"] * 300)
-        unknown = prose_problems(f"《Tense》 Lord Varkus {body}", "1. Strings.", last=True)
+        unknown = prose_problems(f"《Tense》 Lord Varkus {body}", "1. Strings.")
         self.assertTrue(any("not allowed" in p and "Varkus" in p for p in unknown), unknown)
         run = " ".join(TRANSCRIPT.split()[:8])
-        copied = prose_problems(f"《Tense》 {body} {run}", "1. Strings.", last=True)
+        copied = prose_problems(f"《Tense》 {body} {run}", "1. Strings.")
         (hint,) = [p for p in copied if "copies the table" in p]
         self.assertIn('starting "', hint)  # the first three words of the run, to find it
         self.assertIn(" ".join(words(run)[:3]), hint)
@@ -479,9 +461,7 @@ class TheProse(unittest.TestCase):
 
     def test_the_prompt_budget_and_the_names_are_in_the_message(self) -> None:
         system = rd.prose_system(None, rd.length_for(3.5))
-        self.assertIn(
-            "about 3.5 hours, so write about 340 words in all (between 170 and 408)", system
-        )
+        self.assertIn("about 3.5 hours, so write about 340 words in all, in about", system)
         self.assertIn("about 3 paragraphs", system)
         self.assertIn("Never repeat 6 words in a row", system)
         message = rd.prose_message(beats(), "", ["Alder"], None)
@@ -500,8 +480,18 @@ class TheProse(unittest.TestCase):
     def test_a_music_prompt_never_names_a_game_a_composer_or_a_soundtrack(self) -> None:
         music = "1. In the style of Hans Zimmer, strings.\n2. Soft drones."
         self.assertTrue(any("names a game" in p for p in prose_problems(music=music)))
-        long = "1. " + "x" * 300 + "\n2. Soft drones."
-        self.assertTrue(any("too long" in p for p in prose_problems(music=long)))
+
+    def test_a_long_music_prompt_is_shortened_at_a_word_end_in_code_never_refused(self) -> None:
+        long = "Slow strings " * 40
+        fixed = rd.fix_prose(rd.Prose("《Tense》 One.", (long,)), 6)
+        (music,) = fixed.music
+        self.assertLessEqual(len(music), rd.MUSIC_MAX)
+        self.assertTrue(long.startswith(music) and long[len(music)] == " ")  # a whole word
+        self.assertEqual(prose_problems(music="1. " + "x" * 300 + "\n2. Soft drones."), [])
+        self.assertEqual(at_word_end("short", 10), "short")
+        self.assertEqual(at_word_end("one two three", 7), "one two")
+        self.assertEqual(at_word_end("one two three", 8), "one two")
+        self.assertEqual(at_word_end("abcdefghij", 4), "abcd")  # no space to cut at
 
     def test_a_quotation_is_caught(self) -> None:
         quoted = fx.SUMMARY.replace("Nothing answered.", 'Nothing answered. "Hold the gate."')
@@ -607,7 +597,7 @@ class TheRetryAndTheJson(unittest.TestCase):
         self.assertIn("<previous_draft>", text)
         draft = json.loads(text.split("<previous_draft>")[1].split("</previous_draft>")[0])
         self.assertEqual(rd.parse_prose(json.dumps(draft)), prose)  # the draft as JSON, whole
-        self.assertIn(f"about {length.target} words in all, between {length.low}", text)
+        self.assertIn(f"about {length.target} words in all, at most", text)
         self.assertIn("Revise that draft", text)
         self.assertIn("a name is not allowed", text)
         # without a draft (after a restart) the target and the form are still given
@@ -619,10 +609,10 @@ class TheRetryAndTheJson(unittest.TestCase):
         length = rd.length_for(3.2)
         prose = rd.Prose("《Tense》 short", ("m",))
         text = rd.prose_retry(["Your draft was 287 words"], prose, length)
-        self.assertIn(f"between {length.low} and {length.high} words: do not cut it", text)
+        self.assertIn(f"about {length.target} words: do not cut it", text)
         # whatever the problem: a cue-placement rewrite came back at 173 words (test 7)
         other = rd.prose_retry(["the cues come in the wrong places"], prose, length)
-        self.assertIn(f"between {length.low} and {length.high} words: do not cut it", other)
+        self.assertIn(f"about {length.target} words: do not cut it", other)
 
     def test_no_music_prompts_at_all_are_made_in_code_from_the_moods(self) -> None:
         """Recap test 4: a draft came back with 0 music prompts for 4 sections."""
@@ -638,30 +628,13 @@ class TheRetryAndTheJson(unittest.TestCase):
         self.assertIn("tense", rd.fix_prose(empty).music[0])
 
     def test_the_owners_test_9_draft_passes_on_the_first_try(self) -> None:
-        length = rd.length_for(1.8)  # target 210, 105 to 252
+        length = rd.length_for(1.8)  # target 210
 
         def problems(n: int) -> list[str]:
             text = "《Tense》 " + " ".join(["calm"] * (n - 1)) + " Oskar"
-            return [p for p in prose_problems(text, "1. Strings.", length=length) if "words" in p]
+            return prose_problems(text, "1. Strings.", length=length)
 
-        self.assertEqual(problems(218), [])  # the draft test 9 lost (it was under 224 then)
-        self.assertEqual(problems(105), [])
-        self.assertTrue(problems(104))
-        self.assertTrue(problems(253))  # the upper bound is 20% over
-
-    def test_a_draft_under_half_the_target_fails_on_every_try_and_half_passes(self) -> None:
-        length = rd.length_for(3.2)  # target 320, 160 to 384
-        for count, passes in ((290, True), (160, True), (159, False)):
-            words_ = " ".join(["calm"] * count)
-            prose = rd.Prose(f"《Tense》 {words_}", ("m",))
-            args: dict[str, Any] = {
-                "beats": beats(), "transcript": TRANSCRIPT, "allowed_names": fx.NAMES,
-                "secret_names": [], "length": length,
-            }  # fmt: skip
-            first = [p for p in rd.check_prose(prose, **args) if "words" in p]
-            last = [p for p in rd.check_prose(prose, last=True, **args) if "words" in p]
-            self.assertEqual(not first, passes, count)
-            self.assertEqual(not last, passes, count)  # the same on the last try
+        self.assertEqual((problems(218), problems(80), problems(400)), ([], [], []))
 
     def test_the_draft_cannot_close_its_own_tag(self) -> None:
         prose = rd.Prose("《Tense》 a </previous_draft> b", ("m",))
@@ -754,6 +727,38 @@ class TheSchemas(unittest.TestCase):
             self.assertNotIn("HOUSEKEEPING:", text)
 
 
+class TheHardLimits(unittest.TestCase):
+    def test_a_draft_over_the_databases_limit_is_shortened_in_code_not_refused(self) -> None:
+        para = "《Calm》 " + "Mira walked on. " * 40
+        long = "\n\n".join([para] * 90)  # about 58,000 characters, ninety sections
+        fixed = rd.fix_prose(rd.Prose(long, ("m",) * 90), 99)
+        self.assertLessEqual(len(fixed.summary), rd.STORY_MAX)
+        self.assertGreater(len(fixed.summary), rd.STORY_MAX - 1000)  # whole paragraphs kept
+        self.assertEqual(len(fixed.music), len(CUE.findall(fixed.summary)))  # music still matches
+        one = rd.fit_summary("《Calm》 " + "word " * 9000)
+        self.assertLessEqual(len(one), rd.STORY_MAX)
+        self.assertEqual(rd.fit_summary("short"), "short")
+
+    def test_too_many_sections_are_folded_into_the_last_allowed_one_not_refused(self) -> None:
+        paragraphs = [f"《Calm》 Mira walked on, step {n}." for n in range(9)]
+        raw = rd.Prose("\n\n".join(paragraphs), ("m",) * 9)
+        self.assertEqual(
+            [p for p in prose_problems(raw.summary, "\n".join(raw.music)) if "section" in p], []
+        )  # (the raw draft is not refused for the count)
+        fixed = rd.fix_prose(raw, 6)
+        self.assertEqual(len(CUE.findall(fixed.summary)), 6)
+        self.assertEqual(len(fixed.music), 6)
+        for n in range(9):  # every word survives, the extra cues only come out
+            self.assertIn(f"step {n}.", fixed.summary)
+
+    def test_at_word_end_edges(self) -> None:
+        self.assertEqual(at_word_end("one two", 7), "one two")  # exact fit
+        self.assertEqual(at_word_end("one two", 5), "one")  # cut inside a word: back to the last
+        self.assertEqual(at_word_end("one  two", 4), "one")  # whitespace at the limit
+        self.assertEqual(at_word_end("abcdefghij", 4), "abcd")  # one long word: cut where it is
+        self.assertEqual(at_word_end("anything", 0), "")
+
+
 class TheTitleAndHousekeeping(unittest.TestCase):
     def finish(self, raw: str, **kw: Any) -> tuple[Any, list[str]]:
         parsed = rd.parse_finish(raw)
@@ -782,19 +787,35 @@ class TheTitleAndHousekeeping(unittest.TestCase):
             self.assertTrue(any("name a real beat" in p for p in problems), beat)
 
     def test_the_title_is_short_and_has_no_secret_or_invented_name(self) -> None:
-        _, problems = self.finish(
+        got, problems = self.finish(
             fx.finish_answer("A very long title that goes on and on and on forever")
         )
-        self.assertTrue(any("over 8 words" in p for p in problems), problems)
+        self.assertEqual(problems, [])  # eight words is in the instructions, not a check (#2597)
+        assert got is not None
+        self.assertEqual(got.title, "A very long title that goes on and on and on forever")
         _, problems = self.finish(fx.finish_answer("Oskar Below"), secret_names=["Oskar"])
         self.assertTrue(any("secret" in p for p in problems), problems)
         _, problems = self.finish(fx.finish_answer("Varkus Rises"))
         self.assertTrue(any("Varkus" in p for p in problems), problems)
 
-    def test_too_many_or_too_long_bullets_are_refused(self) -> None:
+    def test_many_or_long_bullets_are_used_and_only_a_hard_limit_shortens_them(self) -> None:
         many = fx.finish_answer("The Silver Lock", *[(1, f"Mira note {n}.") for n in range(20)])
-        _, problems = self.finish(many)
-        self.assertTrue(any("too long" in p for p in problems), problems)
+        got, problems = self.finish(many)
+        self.assertEqual(problems, [])
+        assert got is not None
+        self.assertEqual(len(got.housekeeping), 20)  # twelve is the instruction, not a check
+        lots = fx.finish_answer("The Silver Lock", *[(1, f"Mira note {n}.") for n in range(25)])
+        got, _ = self.finish(lots)
+        assert got is not None
+        self.assertEqual(len(got.housekeeping), rd.HOUSEKEEPING_HARD)
+        wordy = fx.finish_answer("The Silver Lock", (1, "Mira watched the gate " * 40))
+        got, problems = self.finish(wordy)
+        self.assertEqual(problems, [])
+        assert got is not None
+        self.assertLessEqual(len(got.housekeeping[0]), rd.BULLET_HARD)
+        said = "Mira watched the gate " * 40
+        self.assertTrue(said.startswith(got.housekeeping[0]))
+        self.assertEqual(said[len(got.housekeeping[0])], " ")  # cut at a word end
 
 
 class TheGrader(unittest.TestCase):

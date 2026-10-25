@@ -25,7 +25,7 @@ from dmbot.db import Database
 from dmbot.recaps import notify
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.audio.files import KINDS, AudioFiles
-from dmbot.recaps.draft import SUMMARY_MAX
+from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
 from dmbot.transcript.models import Line
@@ -43,6 +43,8 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    redo_recap,
+    upload_recap,
 )
 from tests import recap_fixtures as fx
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
@@ -65,6 +67,16 @@ def callers(needle: str) -> set[str]:
 
 
 class Base(DatabaseTest):
+    async def speaker_agreed(self) -> None:
+        """The speaker whose lines the recap used has agreed to be recorded: posting an unapproved
+        draft approves it first (#2122), and approving checks that."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (THURSDAY.id, fx.ALICE, NOW, TERMS_VERSION),
+            )
+
     async def asyncSetUp(self) -> None:
         if not SUPERUSER_URL:
             if REQUIRE_DB:
@@ -281,6 +293,24 @@ class TheDmsPage(Base):
         self.assertEqual((again["uncheckedSince"], again["uncheckedSentences"]), (0, []))
         self.assertEqual(again["uncheckedDraft"], [])
 
+    async def test_the_marked_sentences_are_the_ones_that_state_a_purpose(self) -> None:
+        """#2308: the page marks the draft's sentences with a purpose in them, by number."""
+        from dmbot.recaps.critics import CHECK_WAIT, Loop
+        from dmbot.recaps.motives import states_purpose
+
+        quiet = "The party rode through the rain."
+        purposeful = "Mira rode on to avenge her brother."
+        self.assertFalse(states_purpose(quiet))
+        self.assertTrue(states_purpose(purposeful))
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, state="prose", last_error=CHECK_WAIT,
+            summary=f"{quiet} {purposeful} They reached the keep.",
+            critics=Loop(waits=3, since=1234).to_json(),
+        )  # fmt: skip
+        one = await read_recap(self.web, self.session, self.ref)
+        self.assertEqual(one["uncheckedDraft"][1], purposeful)
+        self.assertEqual(one["uncheckedSentences"], [2])
+
     async def test_the_draft_is_given_only_after_exactly_3_days(self) -> None:
         import time
 
@@ -474,6 +504,28 @@ class TheDmsPage(Base):
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
 
+    async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
+        self,
+    ) -> None:
+        """#2639 review: the contract WebDev's page reads, pinned against the real door: the
+        shared shape, counts and codes only, and nothing once the recap is posted."""
+        read = await read_recap(self.web, self.session, self.ref)
+        got = read["progress"]
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            sorted(got), ["reason", "serverNow", "stage", "startedAt", "state", "updatedAt"]
+        )
+        self.assertTrue(got["stage"].startswith("recap_"))
+        self.assertIn(got["state"], ("running", "stalled", "failed", "done"))
+        listed = await list_recaps(self.web, self.session)
+        self.assertTrue(all("progress" in r for r in listed))
+        async with self.db.guild(THURSDAY.id) as conn:  # (posted by the bot's own path elsewhere)
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'posted' WHERE guild_id = %s AND session_at = %s",
+                (THURSDAY.id, 100),
+            )
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["progress"])
+
     async def test_the_month_line_counts_only_the_dms_own_campaigns(self) -> None:
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")
         got = await month_usage(self.web, self.session, now=NOW, recaps_allowed=10, audio_allowed=8)
@@ -521,12 +573,41 @@ class TheDmsPage(Base):
         self.assertEqual(job.summary, "《Calm》 Edited by the DM.")
         self.assertEqual(job.original, fx.SUMMARY)  # the diff against the draft stays possible
 
+    async def test_the_opening_and_closing_lines_cannot_be_edited(self) -> None:
+        """#2630: the DM edits the story between DMbot's two fixed lines."""
+        opening = "Previously, on The Ember Road…"
+        closing = "And so we continue, the epic adventure of The Ember Road."
+        story = "《Calm》 Mira rested."
+        await self.store.update(
+            THURSDAY.id, self.one.id, 100, summary=f"{opening}\n\n{story}\n\n{closing}"
+        )
+        edited = f"{opening}\n\n《Calm》 Mira rested by the fire.\n\n{closing}"
+        shown = await edit_recap(self.web, self.session, self.ref, summary=edited, housekeeping=[])
+        self.assertIn("by the fire", shown["summary"])  # the story between them is the DM's
+        for bad in (
+            edited.replace(opening, "Long ago…"),
+            edited.replace(closing, "The end."),
+            edited.replace(closing, "").strip(),
+            edited.replace(opening + "\n\n", ""),
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await edit_recap(self.web, self.session, self.ref, summary=bad, housekeeping=[])
+            self.assertEqual(caught.exception.code, "fixed_lines", bad)
+        job = await self.state(self.one.id)
+        self.assertEqual(job.summary, edited)  # nothing was saved by the refusals
+
+    async def test_a_recap_that_never_had_the_lines_may_stay_without_them(self) -> None:
+        shown = await edit_recap(
+            self.web, self.session, self.ref, summary="《Calm》 Plain.", housekeeping=[]
+        )
+        self.assertEqual(shown["summary"], "《Calm》 Plain.")
+
     async def test_edits_that_are_empty_or_too_big_are_refused(self) -> None:
         for summary, bullets in (
             ("  ", []),
             ("x" * (SUMMARY_MAX + 1), []),
-            ("ok", ["b"] * 13),
-            ("ok", ["b" * 141]),
+            ("ok", ["b"] * (HOUSEKEEPING_HARD + 1)),
+            ("ok", ["b" * (BULLET_HARD + 1)]),
         ):
             with self.assertRaises(RecapError) as caught:
                 await edit_recap(
@@ -564,6 +645,7 @@ class TheDmsPage(Base):
         self.assertEqual(await list_recaps(self.web, session), [])
 
     async def test_post_marks_it_for_the_bot_and_only_once(self) -> None:
+        await self.speaker_agreed()
         shown = await decide(self.web, self.session, self.ref, "post")
         self.assertEqual(shown["status"], "posting")
         self.assertFalse(shown["canEdit"] or shown["canPost"])
@@ -575,6 +657,7 @@ class TheDmsPage(Base):
     async def test_the_stored_posting_clock_is_readable_by_the_web_role(self) -> None:
         """#2435: the website's role can read the three columns (#2436 puts them in the answer);
         another DM's campaign is not readable at all."""
+        await self.speaker_agreed()
         await decide(self.web, self.session, self.ref, "post")
 
         async def stored(campaign: str) -> Any:
@@ -639,9 +722,11 @@ class TheRoutes(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
@@ -709,6 +794,7 @@ class TheRoutes(Base):
         self.assertFalse((await self.mail())["on"])
 
     async def test_list_read_edit_and_decide(self) -> None:
+        await self.speaker_agreed()
         listed = await self.client.get("/me/recaps")
         self.assertEqual(listed.status_code, 200, listed.text)
         self.assertEqual(len(listed.json()["recaps"]), 1)
@@ -731,13 +817,13 @@ class TheRoutes(Base):
         bad = await self.client.put(f"/me/recaps/{self.ref}", json={"summary": 5})
         self.assertEqual(bad.status_code, 422)
         big = await self.client.put(
-            f"/me/recaps/{self.ref}", json={"summary": "x" * 8000, "housekeeping": []}
+            f"/me/recaps/{self.ref}", json={"summary": "x" * (SUMMARY_MAX + 1), "housekeeping": []}
         )
         self.assertEqual((big.status_code, big.json()["error"]), (422, "bad_text"))
         self.assertEqual((await self.client.post(f"/me/recaps/{self.ref}/zap")).status_code, 404)
         anonymous = httpx.AsyncClient(
             transport=self.client._transport,
-            base_url=API,
+            base_url="https://web-api.internal.test",
             headers=HEADERS,
         )
         self.assertEqual((await anonymous.get("/me/recaps")).status_code, 401)
@@ -759,9 +845,11 @@ class TheAudio(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.files = AudioFiles(Path(self.dir.name))
 
     async def asyncTearDown(self) -> None:
@@ -785,7 +873,7 @@ class TheAudio(Base):
         self.assertEqual(
             off,
             {"state": "off", "error": "", "current": False, "canAskAgain": False,
-             "postedNote": False},
+             "postedNote": False, "how": "", "why": "", "progress": None},
         )  # fmt: skip
         await self.make(self.one.id)
         ready = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
@@ -798,6 +886,92 @@ class TheAudio(Base):
         )
         stale = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
         self.assertEqual((stale["state"], stale["current"]), ("ready", False))
+
+    async def keep_manifest(self, campaign: str) -> None:
+        """What the bot keeps beside the audio of the recap's text as it is now (#2630)."""
+        from dmbot.recaps.audio import parts
+        from dmbot.recaps.audio import script as audio_script
+
+        job = await self.state(campaign)
+        script = audio_script.build(job.title, job.game_day, job.summary)
+        n = len(script.paragraphs)
+        folder = self.files.recap_dir(THURSDAY.id, campaign, 100)
+        parts.save_manifest(
+            folder,
+            parts.manifest_of(
+                script, mode="both", seed=100, seconds=[2.0] * n, cue_at=[[] for _ in range(n)]
+            ),
+        )
+
+    async def remake(self) -> dict[str, Any]:
+        got = await self.client.get(f"/me/recaps/{self.ref}/audio/remake")
+        self.assertEqual(got.status_code, 200, got.text)
+        return cast(dict[str, Any], got.json())
+
+    async def test_the_page_is_told_whether_a_change_remakes_only_the_voice(self) -> None:
+        await self.make(self.one.id)
+        await self.keep_manifest(self.one.id)
+        same = await self.remake()  # the text the audio was made from: a new take of all of it
+        self.assertEqual((same["how"], same["why"]), ("all", ""))
+        job = await self.state(self.one.id)
+        first = job.summary.split("\n\n")[0]
+        word = next(w for w in first.split() if w.isalpha() and len(w) > 3)
+        small = job.summary.replace(first, first.replace(word, word + "x", 1), 1)
+        await self.client.put(f"/me/recaps/{self.ref}", json={"summary": small, "housekeeping": []})
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"], got["changed"]), ("voice", "", 1))
+        self.assertGreaterEqual(got["total"], 2)
+        # a paragraph added: everything again, and the page is told why
+        more = small + "\n\nAnd then the door closed behind them."
+        await self.store.update(THURSDAY.id, self.one.id, 100, summary=more)
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"]), ("all", "paragraphs"))
+
+    async def test_nothing_kept_or_nothing_made_before_is_said_so(self) -> None:
+        await self.make(self.one.id, current=False)  # made before, and nothing kept beside it
+        got = await self.remake()
+        self.assertEqual((got["how"], got["why"]), ("all", "no_parts"))
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="off")
+        self.assertEqual((await self.remake())["how"], "new")
+
+    async def test_only_the_campaigns_dm_is_told(self) -> None:
+        await self.make(self.two.id)  # Bob's campaign
+        got = await self.client.get(f"/me/recaps/{self.other}/audio/remake")
+        self.assertEqual(got.status_code, 404)
+        anonymous = httpx.AsyncClient(
+            transport=self.client._transport, base_url=API, headers=HEADERS
+        )
+        self.assertEqual(
+            (await anonymous.get(f"/me/recaps/{self.ref}/audio/remake")).status_code, 401
+        )
+        await anonymous.aclose()
+
+    async def test_the_audio_under_way_carries_its_progress_in_the_shared_shape(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="queued")
+        await self.store.set_audio_progress(
+            THURSDAY.id, self.one.id, 100, stage="voice", done=2, total=3
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        progress = audio["progress"]
+        self.assertEqual(
+            (progress["stage"], progress["done"], progress["total"], progress["unit"]),
+            ("audio_voice", 2, 3, "parts"),
+        )
+        self.assertEqual((progress["state"], progress["reason"]), ("running", None))
+        self.assertGreater(progress["updatedAt"], 0)
+        self.assertNotIn("text", json.dumps(progress))  # counts and codes only
+        await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="ready")  # it ends
+        done = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertIsNone(done["progress"])
+
+    async def test_the_last_making_says_what_it_did(self) -> None:
+        await self.approved_with_audio()
+        await self.store.set_audio(
+            THURSDAY.id, self.one.id, 100, audio="ready", how="all", why="moods"
+        )
+        audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
+        self.assertEqual((audio["how"], audio["why"]), ("all", "moods"))
 
     async def test_a_failed_audio_carries_its_sentence_and_may_be_asked_for_again(self) -> None:
         await self.approved_with_audio()
@@ -836,7 +1010,9 @@ class TheAudio(Base):
         got = await self.client.get(f"/me/recaps/{self.other}/audio")  # Bob's campaign
         self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"))
         anonymous = httpx.AsyncClient(
-            transport=self.client._transport, base_url=API, headers=HEADERS
+            transport=self.client._transport,
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
         self.assertEqual((await anonymous.get(f"/me/recaps/{self.ref}/audio")).status_code, 401)
         await anonymous.aclose()
@@ -912,9 +1088,11 @@ class TheAudio(Base):
         await self.make(self.one.id)
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.assertEqual((await client.get(f"/me/recaps/{self.ref}/audio")).json(), {"links": {}})
         await client.aclose()
 
@@ -1026,9 +1204,11 @@ class TheAudio(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         got = await client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_off"))
@@ -1079,9 +1259,11 @@ class TheAudio(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         got = await client.post(f"/me/recaps/{self.ref}/audio/again")
         self.assertEqual((got.status_code, got.json()["error"]), (409, "not_in_plan"))
@@ -1187,9 +1369,11 @@ class TheApproval(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         async with self.db.guild(THURSDAY.id) as conn:  # the speaker is recorded (consent given)
             await conn.execute(
                 "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
@@ -1328,9 +1512,11 @@ class TheApproval(Base):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         ) as off:
-            off.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            off.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
             url = f"/me/recaps/{self.ref}/approve"
             got = await off.post(url, json={"choice": "both"})
             self.assertEqual((got.status_code, got.json()["error"]), (409, "audio_unavailable"))
@@ -1556,10 +1742,12 @@ class TheApproval(Base):
             payments=FakeProvider(b"h" * 32, SITE), clock=lambda: NOW,
         )  # fmt: skip
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=other), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=other),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         got = await self.approve("text")  # said yes for another outside company
         self.assertEqual((got.status_code, got.json()["error"]), (409, "stopped_recording"))
 
@@ -2093,3 +2281,184 @@ class ThePostStep(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MakeAgain(Base):
+    """A DM makes or redoes a session's recap from the page (#2608), through the database's door:
+    held to a DM of the campaign, a session that still has its lines, and a recap not being
+    written; an existing recap needs the DM's yes first; the bot's own door is not the website's."""
+
+    async def lines(self, campaign: str, at: int) -> None:
+        sid = f"{at:016x}" + campaign[:16]
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, ended_at,"
+                " line_count, speakers) VALUES (%s, %s, %s, %s, %s, 1, %s)",
+                (sid, THURSDAY.id, campaign, at, at + 60, [fx.ALICE]),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id, heard,"
+                " text) VALUES (%s, %s, 0, %s, 'raw', 'clean')",
+                (THURSDAY.id, sid, fx.ALICE),
+            )
+
+    async def test_it_asks_once_then_starts_the_recap_over(self) -> None:
+        await self.lines(self.one.id, 100)
+        with self.assertRaises(RecapError) as asked:
+            await redo_recap(self.web, self.session, self.ref)
+        self.assertEqual(asked.exception.code, "needs_confirm")
+        self.assertEqual((await self.state(self.one.id)).state, "ready")  # asking changed nothing
+        page = await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(
+            (page["state"], page["working"], page["restartedAt"] > 0), ("queued", True, True)
+        )
+        self.assertIsNone(page["previous"])  # (it was not approved: nothing is held)
+
+    async def test_an_approved_recap_is_held_and_shown_as_the_earlier_one(self) -> None:
+        await self.lines(self.one.id, 100)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET approved_hash = encode(sha256(convert_to(title || E'\\n'"
+                " || summary, 'UTF8')), 'hex') WHERE campaign_id = %s",
+                (self.one.id,),
+            )
+        page = await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(page["previous"]["title"], "The Silver Lock")
+        self.assertEqual(page["title"], "")
+
+    async def test_a_session_with_no_recap_yet_can_be_made_from_its_ref(self) -> None:
+        await self.lines(self.one.id, 300)
+        page = await redo_recap(
+            self.web, self.session, notify.job_ref(THURSDAY.id, self.one.id, 300)
+        )
+        self.assertEqual((page["sessionAt"], page["state"]), (300, "queued"))
+
+    async def test_no_lines_a_non_dm_and_a_busy_recap_are_refused(self) -> None:
+        with self.assertRaises(RecapError) as gone:  # the base session has no transcript rows
+            await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(gone.exception.code, "no_lines")
+        await self.lines(self.two.id, 100)  # Bob's campaign: Alice is no DM there
+        with self.assertRaises(RecapError) as other:
+            await redo_recap(self.web, self.session, self.other, replace=True)
+        self.assertEqual(other.exception.code, "not_allowed")
+        await self.lines(self.one.id, 100)
+        await self.store.update(THURSDAY.id, self.one.id, 100, state="beats")
+        async with self.db.guild(THURSDAY.id) as conn:  # a worker has it right now
+            # (the door judges "right now" by the clock; `NOW` was taken when this file was
+            # imported, so in a run longer than ten minutes `NOW + 600` has already passed)
+            await conn.execute("UPDATE recap_jobs SET leased_to = %s", (int(time.time()) + 600,))
+        with self.assertRaises(RecapError) as busy:
+            await redo_recap(self.web, self.session, self.ref, replace=True)
+        self.assertEqual(busy.exception.code, "busy")
+
+    async def test_the_bots_own_door_is_not_the_websites(self) -> None:
+        await self.lines(self.one.id, 100)
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                await conn.execute(
+                    "SELECT dmbot_recap_start_over(%s, %s, 100, %s, true)",
+                    (THURSDAY.id, self.one.id, BOB.id),
+                )
+        self.assertEqual(callers("dmbot_recap_start_over"), {"schema.py", "recaps/store.py"})
+        self.assertEqual(callers("dmbot_recap_redo"), {"schema.py", "web/recaps.py"})
+
+
+class UploadFromThePage(Base):
+    """A DM adds a recap written by someone at the table, on the page (#2609), through the
+    database's door: held to a DM of the campaign, the right to use asked once, an existing recap
+    replaced only with a yes (and kept as an earlier version), a Google Doc read through the
+    guarded reader."""
+
+    @property
+    def campaign_ref(self) -> str:
+        return f"{THURSDAY.id}.{self.one.id}"
+
+    async def read_link(self, link: object) -> str:
+        from dmbot.transcript import import_link
+
+        if link == "https://docs.google.com/document/d/" + "a" * 30 + "/edit":
+            return "Pasted from a doc.\n\nMira went."
+        raise import_link.DocError(import_link.NOT_SHARED)
+
+    async def add(self, **body: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "session": 300,
+            "writtenBy": "Mira",
+            "text": "Mira went home.",
+            "rights": True,
+        }
+        base.update(body)
+        return await upload_recap(
+            self.web, self.session, self.campaign_ref, base, read_link=self.read_link
+        )
+
+    async def test_pasted_text_is_stored_with_its_label(self) -> None:
+        page = await self.add()
+        self.assertEqual(
+            (page["writtenBy"], page["text"], page["state"], page["sessionAt"]),
+            ("Mira", "Mira went home.", "ready", 300),
+        )
+        self.assertTrue(page["approval"]["approved"])  # like an approved recap
+        self.assertEqual(page["title"], "Recap by Mira")
+
+    async def test_a_google_doc_is_read_and_a_file_sent_as_text_works_the_same(self) -> None:
+        link = "https://docs.google.com/document/d/" + "a" * 30 + "/edit"
+        page = await self.add(text=None, link=link, title="The doc")
+        self.assertEqual(
+            (page["title"], page["text"].startswith("Pasted from a doc")), ("The doc", True)
+        )
+        with self.assertRaises(RecapError) as unshared:
+            await self.add(
+                session=400, text=None, link="https://docs.google.com/document/d/" + "b" * 30
+            )
+        self.assertEqual(unshared.exception.code, "doc_not_shared")
+
+    async def test_the_first_upload_of_a_campaign_asks_for_the_right_to_use_once(self) -> None:
+        with self.assertRaises(RecapError) as asked:
+            await self.add(rights=False)
+        self.assertEqual(asked.exception.code, "needs_rights")
+        await self.add(rights=True)
+        again = await self.add(session=500, rights=False)  # not asked a second time
+        self.assertEqual(again["sessionAt"], 500)
+
+    async def test_replacing_asks_and_keeps_the_old_one_as_an_earlier_version(self) -> None:
+        await self.add()
+        with self.assertRaises(RecapError) as asked:
+            await self.add(text="A second telling.")
+        self.assertEqual(asked.exception.code, "needs_confirm")
+        page = await self.add(text="A second telling.", replace=True)
+        self.assertEqual(page["text"], "A second telling.")
+        self.assertEqual([e["text"] for e in page["earlier"]], ["Mira went home."])
+        self.assertEqual(page["earlier"][0]["writtenBy"], "Mira")
+
+    async def test_a_non_dm_bad_words_and_too_much_are_refused(self) -> None:
+        with self.assertRaises(RecapError) as other:
+            await upload_recap(
+                self.web, self.session, f"{THURSDAY.id}.{self.two.id}",
+                {"session": 300, "writtenBy": "Mira", "text": "x", "rights": True},
+                read_link=self.read_link,
+            )  # fmt: skip
+        self.assertEqual(other.exception.code, "not_allowed")
+        for bad in ({"text": "  "}, {"writtenBy": ""}, {"session": "soon"}, {"replace": 1}):
+            with self.subTest(bad=bad), self.assertRaises(RecapError) as refused:
+                await self.add(**bad)
+            self.assertEqual(refused.exception.code, "bad_text")
+        with self.assertRaises(RecapError) as big:
+            await self.add(text="x" * 50_001)
+        self.assertEqual(big.exception.code, "too_big")
+
+    async def test_the_bots_own_door_is_not_the_websites(self) -> None:
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+                await conn.execute(
+                    "SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),)
+                )
+                await conn.execute(
+                    "SELECT dmbot_recap_add_uploaded(%s, %s, 300, %s, 't', 'b', 'a', true, true)",
+                    (THURSDAY.id, self.one.id, BOB.id),
+                )
+        self.assertEqual(callers("dmbot_recap_add_uploaded"), {"schema.py", "recaps/store.py"})
+        self.assertEqual(callers("dmbot_recap_upload"), {"schema.py", "web/recaps.py"})

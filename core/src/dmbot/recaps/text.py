@@ -12,6 +12,7 @@ from collections.abc import Collection
 from dmbot.secrets_match import WHOLE_NAME as WHOLE_NAME
 from dmbot.secrets_match import names_a_secret as names_a_secret
 from dmbot.secrets_match import secret_rule as secret_rule
+from dmbot.word_end import at_word_end as at_word_end  # (kept here for the recaps' callers)
 
 _CUE = re.compile(r"《[^《》]{1,60}》")
 _PERFORMANCE = re.compile(r"\(\([^()]{1,60}\)\)")

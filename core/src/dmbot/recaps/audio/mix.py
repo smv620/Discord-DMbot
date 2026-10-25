@@ -6,6 +6,13 @@ voice speaks (a side-chain compressor keyed by the voice), the ambience at -38 L
 cut or padded to the voice's length, so the stems line up when played together. Outputs: the
 voice stem, the bed stem (music plus ambience) and the mix of both.
 
+**The ending (owner, 2026-10-24, #2629):** the music is never cut off at full volume. It runs
+1.5 seconds past the last spoken word (the render pads the voice track by that much), and its end
+is faded as a safety on top of the composed ending (`music.py` asks the composer for one): a
+diminuendo ending fades over the last 1.5 s; a crescendo ending, which should leave a held chord
+ringing, gets only a short 0.3 s fade so a chord past the cut never clicks off. The ambience bed
+fades out the same way, with the music.
+
 Needs ffmpeg 4.4 or newer (`amix normalize=0`). Loudness here is a single pass of `loudnorm`,
 which is close, not exact; the 6 dB of ducking depends on how loud the speech is, so the numbers
 are a starting point for the by-ear test on the server (dev1), kept as constants for that reason.
@@ -33,6 +40,8 @@ LRA = 11
 
 
 RATE = 44100  # loudnorm hands back 192 kHz: every branch is brought down to this
+DIMINUENDO_FADE_S = 1.5  # the safety fade of a diminuendo ending: the whole tail after the voice
+CRESCENDO_FADE_S = 0.3  # and of a crescendo ending: just enough that a ringing chord never clicks
 
 
 def _norm(lufs: int, peak: int) -> str:
@@ -42,6 +51,17 @@ def _norm(lufs: int, peak: int) -> str:
 def _fit(seconds: float) -> str:
     """Cut at the voice's length, and pad with silence if shorter."""
     return f"atrim=0:{seconds:.3f},asetpts=PTS-STARTPTS,apad=whole_dur={seconds:.3f}"
+
+
+def _tempo(factor: float) -> str:
+    """ffmpeg's `atempo` (0.5 to 2) when the factor is not 1; nothing otherwise."""
+    return f"atempo={min(2.0, max(0.5, factor)):.5f}," if abs(factor - 1.0) > 0.0005 else ""
+
+
+def _fade_out(seconds: float, ending: str) -> str:
+    """The music's (and the ambience's) closing fade for this kind of ending."""
+    length = min(CRESCENDO_FADE_S if ending == "crescendo" else DIMINUENDO_FADE_S, seconds)
+    return f"afade=t=out:st={max(0.0, seconds - length):.3f}:d={length:.3f}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,10 +74,21 @@ class MixPlan:
     mix_out: str = "[mix_out]"
 
 
-def plan(voice_seconds: float, *, with_music: bool = True, with_ambience: bool = True) -> MixPlan:
-    """The filter graph. Inputs are numbered in the order `command` adds them: the voice is 0,
-    then the music (if any), then the ambience (if any). A missing track leaves its branch out;
-    the bed is then what is there (or silence if neither is)."""
+def plan(
+    voice_seconds: float,
+    *,
+    with_music: bool = True,
+    with_ambience: bool = True,
+    ending: str = "diminuendo",
+    music_tempo: float = 1.0,
+) -> MixPlan:
+    """The filter graph. `ending`: "diminuendo" or "crescendo" (anything else fades down), how
+    the music and the ambience close (#2629). Inputs are numbered in the order `command` adds
+    them: the voice is 0, then the music (if any), then the ambience (if any). A missing track
+    leaves its branch out;
+    the bed is then what is there (or silence if neither is). `music_tempo`: the speed a kept
+    piece of music is played at so that its composed ending lands at the end of a voice of a
+    different length (#2630); 1 for music made for this voice."""
     seconds = max(0.001, float(voice_seconds))
     music_at = 1 if with_music else None
     ambience_at = (2 if with_music else 1) if with_ambience else None
@@ -68,7 +99,10 @@ def plan(voice_seconds: float, *, with_music: bool = True, with_ambience: bool =
     ]
     bed: list[str] = []
     if music_at is not None:
-        graph.append(f"[{music_at}:a]{_norm(MUSIC_LUFS, BED_PEAK_DB)},{_fit(seconds)}[music_raw]")
+        graph.append(
+            f"[{music_at}:a]{_tempo(music_tempo)}{_norm(MUSIC_LUFS, BED_PEAK_DB)},{_fit(seconds)},"
+            f"{_fade_out(seconds, ending)}[music_raw]"
+        )
         graph.append(
             "[music_raw][voice_key]sidechaincompress="
             f"threshold={_db_to_linear(DUCK_THRESHOLD_DB):.4f}:ratio={DUCK_RATIO}"
@@ -77,7 +111,8 @@ def plan(voice_seconds: float, *, with_music: bool = True, with_ambience: bool =
         bed.append("[music_ducked]")
     if ambience_at is not None:
         graph.append(
-            f"[{ambience_at}:a]{_norm(AMBIENCE_LUFS, BED_PEAK_DB)},{_fit(seconds)}[ambience_fit]"
+            f"[{ambience_at}:a]{_norm(AMBIENCE_LUFS, BED_PEAK_DB)},{_fit(seconds)},"
+            f"{_fade_out(seconds, ending)}[ambience_fit]"
         )
         bed.append("[ambience_fit]")
     if len(bed) == 2:

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import httpx
 
 from dmbot.web.app import create_app
-from tests.test_web_api import API, SITE, FakeDiscord, settings
+from tests.test_web_api import SITE, FakeDiscord, settings
 
 
 class Preflight(unittest.IsolatedAsyncioTestCase):
@@ -21,7 +21,9 @@ class Preflight(unittest.IsolatedAsyncioTestCase):
         # (a preflight is answered by the CORS layer before any route or database is touched)
         self.app = create_app(settings(), MagicMock(), FakeDiscord())
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
 
     async def asyncTearDown(self) -> None:
