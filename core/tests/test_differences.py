@@ -45,7 +45,7 @@ class Finding(ConfirmedMemoryTest):
 
     async def link(self, predicate: str, **kw: Any) -> str:
         made = await self.relate(self.bram, predicate, self.mira, status="confirmed", **kw)
-        return made.value[0].id
+        return str(made.value[0].id)
 
     async def guess(self, view: str, predicate: str) -> str:
         relation = new_id()
