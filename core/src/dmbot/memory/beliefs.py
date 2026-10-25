@@ -30,16 +30,20 @@ from dmbot.memory._changes import (
 )
 from dmbot.memory.evidence import CLAIM, LINE
 from dmbot.memory.models import (
+    ACCUSATION,
     BELIEF_STATUSES,
     CONFIRMED,
     DM,
+    EVASION_UNDER_MAGIC,
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
+    FALSE_EVIDENCE,
     KNOWN,
     MAGICALLY_VERIFIED,
     PARTY,
     REVEALED_FACT,
     SECRET_PLOT,
+    THEORY,
     TRUTH,
     Belief,
     MemoryRuleError,
@@ -242,6 +246,65 @@ async def believe_in(
     )
 
 
+BAD_READING = "That is not a belief DMbot can place."
+ALREADY_KNOWN = "The players already know that, so a guess about it adds nothing."
+SECRET_FIRST = "That connection is secret. Show it to the players first."
+
+
+async def place_belief(
+    w: Changes,
+    perspective_id: str,
+    relation_id: str,
+    confidence: float,
+    status: str,
+    *,
+    evidence: Sequence[str] = (),
+    session_at: int | None = None,
+) -> Belief:
+    """A belief the DM placed from a reading (#2412), inside an open write. `believe_in` is for
+    the DM's own beliefs and refuses a guess on the party's view; this is the one door a reading
+    comes through, so it holds each view to the kind of belief it may have:
+    - **The truth** (the DM's alone): a false public statement, 0.0 False Evidence.
+    - **The party**: a guess or an accusation or a dodge under a spell (above 0 and below 1) on
+      any connection; or, at 1.0, a Revealed Fact or a Magically Verified word on a connection that
+      is confirmed and shown (a secret one is revealed first, which is the DM's own step).
+    - **A character** (a player's or an NPC): a guess or an accusation, above 0 and below 1.
+    The relation it hangs on is whatever the caller found; this never changes it."""
+    perspective = await w.get(PERSPECTIVES, perspective_id)
+    relation = await w.get(RELATIONS, relation_id)
+    if perspective is None or relation is None:
+        raise MemoryRuleError(NOT_THERE)
+    kind = perspective["kind"]
+    guess = (THEORY, ACCUSATION)
+    if kind == TRUTH:
+        if w.source != DM:
+            raise MemoryRuleError(ONLY_THE_DM)
+        ok = status == FALSE_EVIDENCE and confidence == 0.0
+    elif kind == PARTY:
+        if status in (REVEALED_FACT, MAGICALLY_VERIFIED):
+            if confidence != KNOWN:
+                raise MemoryRuleError(BAD_READING)
+            if relation["status"] != CONFIRMED:
+                raise MemoryRuleError(NOT_A_REVEAL)
+            if relation["secret"] or relation["unrevealed"]:
+                raise MemoryRuleError(SECRET_FIRST)
+            ok = True
+        else:
+            ok = status in (*guess, EVASION_UNDER_MAGIC) and 0.0 < confidence < KNOWN
+            held = (await _newest(w, [relation_id])).get((relation_id, perspective_id))
+            if ok and held is not None and float(held["confidence"]) >= KNOWN:
+                # (the players' readers take the party's newest belief, so a guess would hide a
+                # connection they already know)
+                raise MemoryRuleError(ALREADY_KNOWN)
+    else:
+        ok = status in guess and 0.0 < confidence < KNOWN
+    if not ok:
+        raise MemoryRuleError(BAD_READING)
+    return belief_of(
+        await _add(w, perspective_id, relation_id, confidence, status, evidence, session_at)
+    )
+
+
 async def follow(w: Changes, relation: dict[str, Any]) -> None:
     """A connection was written: bring The truth's and The party's belief in line with its status
     and secret flag. Only a confirmed connection has beliefs. A secret one is believed by The
@@ -369,6 +432,12 @@ async def carry(w: Changes, old: dict[str, Any], new_id: str) -> None:
             continue
         if perspective_id == party and (new["secret"] or new["unrevealed"]):
             continue  # (the flag decides what the players know; see `follow`)
+        if (
+            perspective_id == party
+            and mine is not None
+            and float(mine["confidence"]) >= KNOWN > float(belief["confidence"])
+        ):
+            continue  # (a guess never hides what the players already know)
         await _add(
             w, perspective_id, new_id, float(belief["confidence"]), belief["status"],
             list(belief["evidence_ids"]), belief["session_at"], pinned=bool(belief["pinned"]),

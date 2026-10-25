@@ -55,6 +55,29 @@ class Web(Listing):
         return caught.exception.code
 
 
+class TheGuess(Web):
+    """A connection made only to hold what someone believes (#2412) is secret and proposed: no one
+    is drawn it, the DM included, and a count of names or pairs does not include it."""
+
+    async def test_no_door_draws_a_guess_connection_for_anyone(self) -> None:
+        before = {
+            who: await self.graph(who_session, center=self.mira, hops=2)
+            for who, who_session in (("dm", self.session), ("player", self.player))
+        }
+        guess = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", self.hall,
+            source="extractor", status="proposed", secret=True, confidence=0.5,
+        )  # fmt: skip
+        self.assertTrue(guess.value[0].id)
+        for who, who_session in (("dm", self.session), ("player", self.player)):
+            with self.subTest(who):
+                after = await self.graph(who_session, center=self.mira, hops=2)
+                self.assertEqual(after["edges"], before[who]["edges"])
+                self.assertEqual(after["nodes"], before[who]["nodes"])
+                overview = await relationships.read_overview(self.web, who_session, self.cref)
+                self.assertNotIn(guess.value[0].id, str(overview))
+
+
 class TheShape(Web):
     async def test_the_names_within_the_steps_and_the_connections_among_them(self) -> None:
         got = await self.graph(center=self.mira, hops=1)
