@@ -2721,6 +2721,7 @@ class MemoryStore:
         await _move_relations(w, keep_id, gone_id)
         await _move_standing(w, keep_id, gone_id)
         await merge_restore.move_notes(w.conn, w.ids, keep_id, gone_id)
+        await merge_restore.move_links(w.conn, w.ids, keep_id, gone_id, kept["type"])
         await beliefs.fold_perspective(w, keep_id, gone_id)
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])

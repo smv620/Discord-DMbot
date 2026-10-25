@@ -354,6 +354,12 @@ async def _link_reasons(
     connection). An entry that went away since the names were read adds no link; it does not stop
     the placing."""
     for kind, target in reasons:
+        # Asked again under the lock: the names were read before the write, and an entry may have
+        # been turned down, merged away or changed kind since. Only a kept entry of the right kind
+        # takes a link.
+        row = await w.get(ENTITIES, target)
+        if row is None or row["status"] != CONFIRMED or row["type"] != kind:
+            continue
         try:
             await evidence.add_in(
                 w, kind=kind, target_id=target, relation_id=relation_id, belief_id=belief_id,
