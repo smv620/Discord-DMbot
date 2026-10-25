@@ -605,6 +605,8 @@ class Beliefs(MemoryTest):
             original.pop(table), copy.pop(table)
         for row in original["memory_beliefs"]:  # the typed links carry evidence now (#2662)
             row["evidence_ids"] = []
+        for row in original["memory_claims"]:  # line references are not in a backup (#2676)
+            row["lines"] = []
         self.assertEqual(copy, original)
         self.assertEqual(len(copy["memory_perspectives"]), 2)
         self.assertTrue(copy["memory_beliefs"])
