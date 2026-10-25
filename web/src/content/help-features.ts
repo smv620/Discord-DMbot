@@ -74,6 +74,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "Who was in each scene",
+    text: "Below a recap's text, Who was in each scene lists the characters DMbot thinks were in each scene. Before you approve the recap, press Change on a scene, tick or untick characters and press Save. Your list wins: DMbot won't change it. The text above isn't changed; DMbot uses your list when it writes the recap again. Only the DM sees this.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Every name on the Story graph",
     text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },

@@ -1,0 +1,85 @@
+/** @jsxImportSource preact */
+// @vitest-environment happy-dom
+// "Who was in each scene" (#2577), against the shapes agreed on the issue: each scene's list, the DM's
+// change saved as a whole list, the refusals in plain words (a recap that changed is read again), and
+// nothing for a recap with no scenes or that can't be edited.
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { useState } from "preact/hooks";
+import { afterEach, describe, expect, it } from "vitest";
+
+import type { Recap } from "../src/account/api";
+import { mockApi } from "../src/account/mock";
+import PresentPerScene from "../src/account/PresentPerScene";
+import { presentWords as w } from "../src/content/present-words";
+
+afterEach(cleanup);
+
+const DRAFT = "200000000000000001.cmp1.1791000000";
+const POSTED = "200000000000000001.cmp1.1790000000";
+
+function Page({ api, first }: { api: ReturnType<typeof mockApi>; first: Recap }) {
+  const [recap, setRecap] = useState(first);
+  return <PresentPerScene api={api} recap={recap} onRecap={setRecap} />;
+}
+async function open(ref = DRAFT) {
+  const api = mockApi("table");
+  const recap = await api.recap!(ref);
+  render(<Page api={api} first={recap} />);
+  return api;
+}
+const scene = (n: number): string => screen.getByText(`Scene ${n}`).closest("li")!.textContent ?? "";
+
+describe("Who was in each scene", () => {
+  it("lists who was in each scene", async () => {
+    await open();
+    expect(scene(1)).toContain("Present: Mira, Tavian");
+    expect(scene(2)).toContain(`Present: ${w.nobody}`);
+  });
+
+  it("saves the whole new list for a scene and says what it will do", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.changeScene(2) }));
+    fireEvent.click(screen.getByLabelText("Brannoch"));
+    fireEvent.click(screen.getByLabelText("Tavian"));
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await waitFor(() => expect(screen.getByText(w.saved)).toBeTruthy());
+    expect(api.calls).toContain(`setBeatPresent:${DRAFT}:2:Tavian|Brannoch`);
+    expect(scene(2)).toContain("Present: Tavian, Brannoch");
+    // The keyboard stays on that scene's line.
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-scene")).toBe("2"));
+  });
+
+  it("can be cancelled without saving", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.changeScene(1) }));
+    fireEvent.click(screen.getByLabelText("Brannoch"));
+    fireEvent.click(screen.getByRole("button", { name: w.cancel }));
+    expect(scene(1)).toContain("Present: Mira, Tavian");
+    expect(api.calls.some((c) => c.startsWith("setBeatPresent"))).toBe(false);
+  });
+
+  it("reads the recap again when it changed, and says so", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.changeScene(3) }));
+    fireEvent.click(screen.getByLabelText("Tavian"));
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["stale"]));
+    expect(api.calls).toContain(`recap:${DRAFT}`);
+    // The scenes now show what the newer text says, and the message is still there after the re-read.
+    await waitFor(() => expect(scene(3)).toContain("Present: Brannoch, Mira"));
+    expect(screen.getByRole("alert").textContent).toBe(w.errors["stale"]);
+  });
+
+  it("changes nothing on a posted recap: the list is there, with no Change button", async () => {
+    await open(POSTED);
+    expect(scene(1)).toContain("Present: Mira");
+    expect(screen.queryByRole("button", { name: /Change/ })).toBeNull();
+  });
+
+  it("shows nothing for a recap with no scenes", async () => {
+    const api = mockApi("table");
+    const recap = { ...(await api.recap!(DRAFT)), beats: undefined };
+    render(<PresentPerScene api={api} recap={recap} onRecap={() => {}} />);
+    expect(screen.queryByRole("heading")).toBeNull();
+  });
+});

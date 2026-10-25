@@ -129,6 +129,7 @@ export const siteButtons = [
   "Session transcripts",
   "Forgot your password",
   "Merge selected", // the All names page (#2427), on the website, not in Discord
+  "Change", // the recap page (#2577): changes who was in a scene, on the website, not in Discord
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note

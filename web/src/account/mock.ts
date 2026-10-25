@@ -392,6 +392,13 @@ export function mockRecaps(): Recap[] {
         "The party owes the ferryman a story.",
       ],
       toConfirm: ["Brynwater Ferry"],
+      // Who was in each scene (#2577); scene 3's first save finds the recap changed (`stale`).
+      beats: [
+        { n: 1, present: ["Mira", "Tavian"] },
+        { n: 2, present: [] },
+        { n: 3, present: ["Brannoch"] },
+      ],
+      characters: ["Mira", "Tavian", "Brannoch"],
       canEdit: true,
       canPost: true,
       canTryAgain: true,
@@ -410,6 +417,7 @@ export function mockRecaps(): Recap[] {
       text: "The vault stayed shut.",
       summary: "The vault stayed shut.",
       housekeeping: [],
+      beats: [{ n: 1, present: ["Mira"] }],
       canEdit: false,
       canPost: false,
       canTryAgain: false,
@@ -776,6 +784,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // Recaps made or added on the past-sessions list, by the session's start time. The pretend sessions: 4 has
   // an approved recap, 3 has none, 2's recap failed, 1 has no transcript kept.
   const made = new Map<number, string>();
+  const staleSeen = new Set<string>(); // recaps whose scene 3 already answered `stale` (#2577)
   const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
@@ -967,6 +976,25 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     // "Names fixed this session" (#2645), the shapes agreed on the issue. A recap whose address contains
     // `.names-none` has nothing fixed; `.player` is refused. Undo marks the line undone (the line stays,
     // as "Put back"); the id `nf-gone` was already changed since (`gone`) and `nf-busy` can't be written now.
+    // Who was in a scene (#2577), the shapes agreed on the issue: refused when the recap can't be edited or
+    // a name is not one of its characters; scene 3 finds the recap changed the first time (`stale`).
+    async setBeatPresent(recapRef, n, present) {
+      calls.push(`setBeatPresent:${recapRef}:${n}:${present.join("|")}`);
+      await reachable();
+      signedIn();
+      const r = await find(recapRef);
+      if (!r.canEdit) throw new ApiError("not-allowed");
+      const beat = r.beats?.find((b) => b.n === n);
+      if (!beat) throw new ApiError("not-found");
+      if (n === 3 && !staleSeen.has(recapRef)) {
+        staleSeen.add(recapRef);
+        beat.present = ["Brannoch", "Mira"]; // what the newer text says
+        throw new ApiError("stale");
+      }
+      if (present.some((name) => !(r.characters ?? []).includes(name))) throw new ApiError("bad-present");
+      beat.present = [...present];
+      return { n, present: [...present] };
+    },
     async namesFixed(recapRef) {
       calls.push(`namesFixed:${recapRef}`);
       await reachable();
