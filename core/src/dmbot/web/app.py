@@ -89,6 +89,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import read_checks
 from dmbot.web.names import list_names, set_said_as
+from dmbot.web.names_fixed import read_names_fixed
 from dmbot.web.payments import (
     NotResumable,
     PaymentError,
@@ -1045,6 +1046,17 @@ def create_app(
         body = await bounded_json(request)
         try:
             return await answer_name_check(db, session, ref, entity_id, body)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # What the name pass fixed in the recap's session (#2684): the DM's alone. The spellings as
+    # heard are transcript words and are never logged.
+    @app.get("/me/recaps/{ref}/names-fixed")
+    async def me_recap_names_fixed(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await read_names_fixed(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

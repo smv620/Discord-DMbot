@@ -1174,3 +1174,8 @@ PlotBot's answer was cut) and `name_pass_fixes` one row for each name fixed (its
 name, how many times, and when it was undone). Counts and the campaign's own list names only; the
 spellings as heard stay in `transcript_respells`, read from there while a fix stands and never copied.
 Written by the pass; the Discord Undo marks a fix undone. A backup leaves both out (a log of a run).
+
+The recap page reads it through `GET /me/recaps/{ref}/names-fixed` (#2684, migration 0240, a DM-only door
+`dmbot_recap_names_fixed`): the counts, each fix with its Undo number, list name, times, whether it was
+undone, and the spellings as heard (only while the fix stands; transcript words, for the campaign's DM
+alone, never logged). A player, another DM or an unknown recap gets "not found".
