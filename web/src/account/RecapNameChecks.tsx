@@ -134,17 +134,20 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
           />
         ))}
       </ul>
+      {/* Always mounted, so a screen reader hears the stage and then the result. */}
+      <p class="sr-only" role="status">
+        {waiting ? (slow || seen.quiet ? "" : words.waiting) : said}
+      </p>
       {waiting && seen.startedAt !== null ? (
         <WorkProgress
           stage={words.waiting}
           startedAt={seen.startedAt}
           updatedAt={seen.movedAt}
-          serverNow={Math.floor(Date.now() / 1000)}
-          state={slow ? "stalled" : "running"}
-          whatToDo={words.slow}
+          state={slow || seen.quiet ? "stalled" : "running"}
+          {...(slow ? { whatToDo: words.slow } : {})}
         />
       ) : (
-        <p class="small muted" role="status">
+        <p class="small muted" aria-hidden="true">
           {said}
         </p>
       )}

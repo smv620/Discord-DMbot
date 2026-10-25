@@ -121,8 +121,7 @@ export default function CampaignDelete({
             <WorkProgress
               stage={words.backingUp}
               startedAt={backingUp.startedAt}
-              updatedAt={backingUp.movedAt}
-              serverNow={Math.floor(Date.now() / 1000)}
+              updatedAt={null}
               state="running"
             />
           )}

@@ -183,17 +183,20 @@ export default function RecapPlotCheck({
         {words.heading}
       </h3>
       <p class="muted">{words.lead}</p>
+      <p class="sr-only" role="status" aria-live="polite">
+        {checking ? (gaveUp || seen.quiet ? "" : changed.current ? words.checkingChange : words.checking) : said}
+      </p>
       {checking && seen.startedAt !== null ? (
         <WorkProgress
           stage={changed.current ? words.checkingChange : words.checking}
           startedAt={seen.startedAt}
           updatedAt={seen.movedAt}
-          serverNow={Math.floor(Date.now() / 1000)}
-          state={gaveUp ? "stalled" : "running"}
-          whatToDo={words.gaveUp}
+          state={gaveUp || seen.quiet ? "stalled" : "running"}
+          frozen={gaveUp}
+          {...(gaveUp ? { whatToDo: words.gaveUp } : {})}
         />
       ) : (
-        <p role="status" aria-live="polite" class="small">
+        <p class="small" aria-hidden="true">
           {said}
         </p>
       )}
@@ -503,14 +506,16 @@ function Issue({
               </li>
             ))}
           </ul>
+          <p class="sr-only" role="status">
+            {waiting && !chatSlow && !chatSeen.quiet ? words.thinking : ""}
+          </p>
           {waiting && chatSeen.startedAt !== null && (
             <WorkProgress
               stage={words.thinking}
               startedAt={chatSeen.startedAt}
               updatedAt={chatSeen.movedAt}
-              serverNow={Math.floor(Date.now() / 1000)}
-              state={chatSlow ? "stalled" : "running"}
-              whatToDo={words.chatSlow}
+              state={chatSlow || chatSeen.quiet ? "stalled" : "running"}
+              {...(chatSlow ? { whatToDo: words.chatSlow } : {})}
             />
           )}
           <label class="field">

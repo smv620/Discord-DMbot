@@ -117,7 +117,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
 
   // While the bot moves the campaign, look every 3 seconds (up to 3 minutes) for it among the person's own.
   const moving = view.kind === "moving" && !view.slow;
-  // The move gives no stage; the wait shows how long it has run, and "last moved" stays at the start until the campaign appears.
+  // The move gives no stage and nothing the page can see changes, so only the time it has run is shown (no "last change", no stall until the page gives up).
   const movingSeen = useObservedWait(view.kind === "moving", view.kind);
   const [tickMove, setTickMove] = useState(0);
   const misses = useRef(0); // looks in a row that failed: each waits twice as long (3 s, 6, 12, up to 30)
@@ -287,14 +287,16 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
             <WorkProgress
               stage={words.moving}
               startedAt={movingSeen.startedAt}
-              updatedAt={movingSeen.movedAt}
-              serverNow={Math.floor(Date.now() / 1000)}
+              updatedAt={null}
               state={view.slow ? "stalled" : "running"}
-              whatToDo={words.movingSlow}
+              {...(view.slow ? { whatToDo: words.movingSlow } : {})}
             />
           ) : (
-            <p role="status">{words.moving}</p>
+            <p>{words.moving}</p>
           )}
+          <p class="sr-only" role="status">
+            {view.slow ? "" : words.moving}
+          </p>
           {view.slow && (
             <p>
               <a class="button" href="/account">

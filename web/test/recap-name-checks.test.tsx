@@ -69,7 +69,7 @@ describe("names to check", () => {
     fireEvent.click(within(brannoch).getByRole("button", { name: w.yesWith("Brannoch") }));
     await waitFor(() => expect(calls(api, "answerNameCheck")).toHaveLength(1));
     expect(calls(api, "answerNameCheck")[0]).toContain('"action":"confirm","kind":"place"');
-    expect(await screen.findByText(w.waiting)).toBeTruthy();
+    expect(await screen.findAllByText(w.waiting)).not.toHaveLength(0);
     await waitFor(() => expect(screen.queryByRole("group", { name: "Brannoch" })).toBeNull(), slow);
     expect(screen.getByRole("group", { name: "Veshla" })).toBeTruthy(); // the others stay
   });

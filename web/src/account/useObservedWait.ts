@@ -9,10 +9,16 @@ export interface ObservedWait {
   startedAt: number | null;
   /** When what the page can see last changed (page clock, seconds). */
   movedAt: number | null;
+  /** True once nothing the page can see has changed for QUIET_SECONDS: the panel then says "no news for a while" (never a made-up percentage). */
+  quiet: boolean;
 }
 
+export const QUIET_SECONDS = 60;
+
+type Moments = Omit<ObservedWait, "quiet">;
+
 export function useObservedWait(active: boolean, signature: string): ObservedWait {
-  const [wait, setWait] = useState<ObservedWait>({ startedAt: null, movedAt: null });
+  const [wait, setWait] = useState<Moments>({ startedAt: null, movedAt: null });
   const last = useRef(signature);
   useEffect(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -30,5 +36,18 @@ export function useObservedWait(active: boolean, signature: string): ObservedWai
     last.current = signature;
     setWait((was) => (was.startedAt === null ? was : { ...was, movedAt: Math.floor(Date.now() / 1000) }));
   }, [active, signature]);
-  return wait;
+  // A timer, not a clock read at render: the page may not render again while nothing changes.
+  const [quiet, setQuiet] = useState(false);
+  useEffect(() => {
+    setQuiet(false);
+    if (wait.movedAt === null) return;
+    const left = wait.movedAt + QUIET_SECONDS - Math.floor(Date.now() / 1000);
+    if (left <= 0) {
+      setQuiet(true);
+      return;
+    }
+    const timer = setTimeout(() => setQuiet(true), left * 1000);
+    return () => clearTimeout(timer);
+  }, [wait.movedAt]);
+  return { ...wait, quiet };
 }

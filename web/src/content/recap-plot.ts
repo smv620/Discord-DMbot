@@ -12,7 +12,7 @@ export const plotWords = {
   lead: "DMbot compared this recap with your earlier sessions. These are questions, not rulings. You decide, and you can leave any question as it is.",
   checking: "Checking the recap…",
   checkingChange: "Checking the change…",
-  gaveUp: "The check is taking too long, so Approve is open. You can approve now, or open this page again in a minute to see its questions.",
+  gaveUp: "You can approve now without it, or open this page again in a minute to see its questions.",
   none: "Nothing to ask. DMbot found no mismatch.",
   loadFailed: "We couldn't load the plot check. Nothing was changed. Open this page again in a minute.",
   level: { likely: "Worth a look", probable: "Maybe", possible: "Small" } as Record<string, string>,
@@ -64,7 +64,7 @@ export const plotWords = {
   proposalDeclined: "Not saved.",
   chatClose: "Close the chat",
   thinking: "DMbot is thinking…",
-  chatSlow: "DMbot is taking a long time to answer. Your message is kept. Open this page again in a minute.",
+  chatSlow: "Your message is kept. You can wait here, or come back to this page in a minute.",
   // Why DMbot could not answer a message (the short codes the bot writes), so the DM can send it again.
   chatFailed: {
     bad_answer: "DMbot's answer didn't pass its checks, so it was thrown away. Send your message again, in other words.",

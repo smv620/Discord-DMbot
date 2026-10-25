@@ -6,11 +6,10 @@ import { act, cleanup, render, screen } from "@testing-library/preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useObservedWait } from "../src/account/useObservedWait";
-import { workWords } from "../src/content/work-progress";
 
 function Probe({ active, sig }: { active: boolean; sig: string }) {
   const w = useObservedWait(active, sig);
-  return <p>{w.startedAt === null ? "idle" : `${(w.movedAt ?? 0) - w.startedAt}`}</p>;
+  return <p>{w.startedAt === null ? "idle" : `${(w.movedAt ?? 0) - w.startedAt}${w.quiet ? " quiet" : ""}`}</p>;
 }
 
 beforeEach(() => {
@@ -42,7 +41,13 @@ describe("useObservedWait", () => {
     expect(screen.getByText("15")).toBeTruthy();
   });
 
-  it("has words for a stall that tell the person what to do", () => {
-    expect(workWords.stalledDo).toBeTruthy();
+  it("says 'quiet' after a minute without change, and a change clears it", () => {
+    const { rerender } = render(<Probe active sig="a" />);
+    act(() => void vi.advanceTimersByTime(59_000));
+    expect(screen.getByText("0")).toBeTruthy();
+    act(() => void vi.advanceTimersByTime(2_000));
+    expect(screen.getByText("0 quiet")).toBeTruthy();
+    rerender(<Probe active sig="b" />);
+    expect(screen.getByText(/^61$/)).toBeTruthy();
   });
 });
