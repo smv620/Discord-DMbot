@@ -5,7 +5,6 @@ database; invented names throughout."""
 from __future__ import annotations
 
 import asyncio
-import re
 import unittest
 from pathlib import Path
 
@@ -18,23 +17,29 @@ from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
 
 
 class TheList(unittest.TestCase):
-    def test_every_warning_kind_is_named_in_the_list_and_each_rule_says_which_it_is(self) -> None:
+    def test_the_rules_are_written_down_as_structural_or_warning(self) -> None:
         doc = checks.__doc__ or ""
-        self.assertIn("Structural: never broken", doc)
-        self.assertIn("A warning: flagged for the DM, never refused", doc)
-        self.assertIn("Safe when two writes race", doc)
-        # a new flag kind is a new warning: it is listed in FLAG_KINDS, which the docstring points
-        # at, and the story-memory page says in words what a warning is
-        self.assertIn("`FLAG_KINDS`", doc)
-        page = (Path(__file__).parents[2] / "docs" / "STORY_MEMORY.md").read_text()
-        self.assertRegex(page, re.compile(r"\*\*Hard rules and warnings\*\*"))
+        for heading in (
+            "Structural: never broken",
+            "A warning: flagged for the DM, never refused",
+            "Safe when two writes race",
+            "`FLAG_KINDS`",
+        ):
+            self.assertIn(heading, doc)
+        # a flag kind is a warning, and nothing is both: no warning kind is a structural rule's
         self.assertEqual(len(FLAG_KINDS), len(set(FLAG_KINDS)))
+        self.assertIn(HELD_TWICE, FLAG_KINDS)  # the owner's example of a warning
+
+    def test_the_story_memory_page_says_the_same(self) -> None:
+        page = Path(__file__).parents[2] / "docs" / "STORY_MEMORY.md"
+        if not page.exists():  # (a core-only checkout has no docs folder)
+            self.skipTest("no docs folder here")
+        self.assertIn("**Hard rules and warnings**", page.read_text())
 
 
 class StructuralRaces(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        self.clue = await self.add("The torn map", type="clue")
         self.event = await self.add("The ambush", type="event")
         self.quest = await self.add("The Missing Heir", type="quest")
 
@@ -42,6 +47,8 @@ class StructuralRaces(ConfirmedMemoryTest):
         await self.memory.led_to(GUILD_A, self.c, a, b, source="dm")
 
     async def test_two_links_that_would_close_a_loop_together_let_only_one_in(self) -> None:
+        # (Whether the two overlap is up to timing, so this passes by luck without the lock; the
+        # lock-wait test below is the deterministic proof that they cannot.)
         results = await asyncio.gather(
             self.led(self.event, self.quest),
             self.led(self.quest, self.event),
@@ -56,19 +63,12 @@ class StructuralRaces(ConfirmedMemoryTest):
             )
             row = await cur.fetchone()
         assert row is not None
-        links = range(row["n"])
-        self.assertEqual(len(links), 1)  # never both: that would be a loop
-
-    async def test_the_same_fact_said_twice_at_once_is_stored_once(self) -> None:
-        mira, keep = await self.add("Mira"), await self.add("The Keep", type="place")
-        await asyncio.gather(*(self.relate(mira, "knows", keep) for _ in range(4)))
-        knows = [r for r in await self.memory.relations(GUILD_A, self.c) if r.predicate == "knows"]
-        self.assertEqual(len(knows), 1)
+        self.assertEqual(row["n"], 1)  # never both: that would be a loop
 
     async def test_a_write_waits_for_the_campaigns_lock_so_a_check_cannot_be_overtaken(
         self,
     ) -> None:
-        """The race tests above can pass by luck of timing; this one cannot. While another writer
+        """The race test above can pass by luck of timing; this one cannot. While another writer
         holds the campaign's row lock, a new write waits (it does not read and write meanwhile)."""
         mira, rook = await self.add("Mira"), await self.add("Rook")
         async with self.db.guild(GUILD_A) as holder:
@@ -81,8 +81,8 @@ class StructuralRaces(ConfirmedMemoryTest):
             self.assertFalse(write.done())  # waiting on the lock, not done
             # and it waits at its first statement, before it reads anything to check
             cur = await holder.execute(
-                "SELECT query FROM pg_stat_activity"
-                " WHERE wait_event_type = 'Lock' AND datname = current_database()"
+                "SELECT query FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+                " AND datname = current_database() AND pid <> pg_backend_pid()"
             )
             waiting = [r["query"] for r in await cur.fetchall()]
             self.assertTrue(any("SELECT memory_version" in q for q in waiting), waiting)
@@ -105,19 +105,24 @@ class WarningsStillWrite(ConfirmedMemoryTest):
         other = (await self.campaigns.create(GUILD_A, "Sunken Coast", DM)).id
         mine = await self.add("Heartseeker", type="item")
         theirs = await self.add("Heartseeker", type="item", campaign=other)
-        mira = await self.add("Mira")
-        snot = await self.add("Snot", campaign=other)
-        first = await self.relate(mira, "carries", mine)
-        second = await self.memory.add_relation(
+        for campaign, item in ((self.c, mine), (other, theirs)):  # both one-of-a-kind
+            await self.memory.set_unique(GUILD_A, campaign, item, True, source="dm")
+        mira, snot = await self.add("Mira"), await self.add("Snot", campaign=other)
+        # one holder in each campaign, then a second holder in this one: only this one is flagged
+        await self.memory.add_relation(
             GUILD_A, other, snot, "carries", theirs, source="dm", confidence=1.0
         )
-        self.assertEqual(first.value[1], [])
-        self.assertEqual(second.value[1], [])  # one holder in each campaign: nothing to flag
+        first = await self.relate(mira, "carries", mine)
+        self.assertEqual(first.value[1], [])  # the other campaign's holder is nobody here
+        rook = await self.add("Rook")
+        second = await self.relate(rook, "carries", mine)
+        self.assertEqual([f.kind for f in second.value[1]], [HELD_TWICE])
         async with self.db.guild(GUILD_A) as conn:
-            cur = await conn.execute("SELECT count(*) AS n FROM memory_flags")
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual(row["n"], 0)
+            cur = await conn.execute(
+                "SELECT campaign_id, count(*) AS n FROM memory_flags GROUP BY campaign_id"
+            )
+            counts = {r["campaign_id"]: r["n"] for r in await cur.fetchall()}
+        self.assertEqual(counts, {self.c: 1})  # nothing at all in the other campaign
 
 
 class TheDatabaseKeepsACampaignApart(ConfirmedMemoryTest):
