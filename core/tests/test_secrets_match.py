@@ -278,7 +278,7 @@ class OneMatcher(unittest.TestCase):
             "recaps/pipeline.py": "names_a_secret",
             "transcript/cleaner.py": "secrets_match",
             "ui/line_fix.py": "text_names_a_secret",
-            "bot.py": "names_a_secret",
+            "recaps/discord.py": "names_a_secret",  # (moved out of bot.py, #2129)
             "devtools/recap_run/__main__.py": "names_a_secret",
             "devtools/recap_measure/__main__.py": "names_a_secret",
         }

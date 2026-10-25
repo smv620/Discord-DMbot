@@ -139,6 +139,26 @@ TOLD_EXPIRED_EMAIL = (
     "You can offer it again from ⚙️ Settings → 🗂️ Campaign management → 🤝 Hand over, or from "
     "your account page."
 )
+# A campaign moved to the new owner's other server after an offer by email (#2532, slice C).
+MOVED_OLD_OWNER = (
+    "**{campaign}** now runs on **{server}**: **{name}** took it over there, so it is gone from "
+    "this server. You are still one of its DMs."
+)
+MOVED_NEW_OWNER = (
+    "✅ **{campaign}** is yours now, on **{server}**. Run `/dmbot start` there to pick its "
+    "channels. Players there are asked again to agree to being recorded. **{owner}** is still "
+    "one of its DMs."
+)
+# The owner is told only that it did not happen, never why: a reason can be about the other
+# person's plan. That person is told the reason, privately, and their page shows it too.
+MOVE_FAILED = "They couldn't take **{campaign}** over this time. Nothing was lost. " + _OFFER_AGAIN
+MOVE_ENDED_NEW_OWNER = (
+    "DMbot couldn't move **{campaign}** to your other server: {reason} The offer has ended."
+)
+MOVE_FAILED_NEW_OWNER = (
+    "DMbot couldn't move **{campaign}** to your other server: {reason} The offer is open "
+    "again; open the link in your email to try again."
+)
 # An offer made on the website that DMbot never managed to send (Discord kept failing).
 TOLD_EXPIRED_UNSENT = (
     "DMbot couldn't get your offer of **{campaign}** to **{name}** within {days} days, so "
