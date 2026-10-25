@@ -407,6 +407,11 @@ export interface Recap {
   /** When a fixed spelling changed this recap's text (Unix seconds), else null (#2178). A posted
    * recap's Discord message keeps the old spelling. Missing from an older API. */
   respelledAt?: number | null;
+  /** The scenes and who was in each, in the order of the text (#2577; DM's view only). Missing from an
+   * older API, and then the page shows nothing. */
+  beats?: RecapBeat[];
+  /** The player characters the DM may pick from for a scene (names only, DM's view only; #2577). */
+  characters?: string[];
   /** The words a cue may use (#2084). Missing from an API older than #2083. */
   cueWords?: CueWords;
   /** The DM's approval of the text before any audio (#2083). Missing from an older API. */
@@ -416,6 +421,13 @@ export interface Recap {
   /** The public link, for the DM of a posted recap (#2118). `path` is `/r/<token>`; the page adds
    * its own address. Missing from an older API. */
   share?: RecapShare;
+}
+
+/** One scene of a recap and the player characters who were there (#2577). `n` is stable while the recap
+ * isn't written again. The DM's word wins: DMbot never changes a list the DM has set. */
+export interface RecapBeat {
+  n: number;
+  present: string[];
 }
 
 /** One past session as the recap maker lists it (`GET /me/campaigns/{ref}/past-sessions`, #2610). */
@@ -1390,6 +1402,8 @@ export type ApiErrorKind =
   | "stopped-recording" // someone it cites is no longer recorded, so the fact was thrown away (#2635)
   | "cannot-write" // the rules refuse to write that fact now; it stays waiting (#2635)
   | "queue-full" // too many connections wait already: answer some first (#2652)
+  | "stale" // the recap changed since the page read it, so its scenes were read again (#2577)
+  | "bad-present" // a name that isn't one of the campaign's characters (#2577)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
   | "bad-clip" // a spoken note that can't be heard as audio
@@ -1556,6 +1570,10 @@ export interface AccountApi {
   /** One answer to one item, queued for the bot like #2638's; resolves once it is saved. `undo` puts the
    * item back to open. A refusal is an `ApiError` (`gone`, `cannot-write`, `queue-full`). */
   answerReport?(campaignRef: string, at: number, id: string, action: ReportAction | "undo"): Promise<void>;
+  /** Save who was in one scene before the recap is approved (DM only; #2577): the whole new list, 0 to 12
+   * names, each one of the recap's `characters`. Refusals: `not-found`, `stale`, `not-allowed`,
+   * `bad-present`. */
+  setBeatPresent?(recapRef: string, n: number, present: string[]): Promise<RecapBeat>;
   /** What the name pass fixed in this recap's session (DMs only; #2645). Missing from an older API. */
   namesFixed?(recapRef: string): Promise<NamesFixed>;
   /** Undo one fix, queued for the bot like the DM screen's Undo; resolves with how many lines were put back.
@@ -1783,6 +1801,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   gone: "gone",
   cannot_write: "cannot-write",
   queue_full: "queue-full",
+  stale: "stale",
+  bad_present: "bad-present",
   no_lines: "no-lines",
   needs_rights: "needs-rights",
   not_a_google_doc: "not-a-google-doc",
@@ -2132,6 +2152,8 @@ export function httpApi(
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
     },
+    setBeatPresent: async (recapRef, n, present) =>
+      (await call("PUT", `/me/recaps/${encodeURIComponent(recapRef)}/beats/${n}/present`, { present })) as RecapBeat,
     namesFixed: async (recapRef) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
     undoNameFix: async (recapRef, id) => {
