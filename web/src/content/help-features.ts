@@ -119,6 +119,11 @@ export const featureSteps: FeatureStep[] = [
     text: "Under a recap on the website, Names to check lists the new names DMbot was not sure about. For each one, say what it is, that it is a name you already have, how it is spelled, or that it is not a name. You can also explain it in a few words. It does the same as the new names list in Discord, so answering in one place answers both. DMbot never decides what a name is.",
   },
   {
+    audience: "gameMaster",
+    whatsNew: "Plot check on a recap",
+    text: "Before you approve a recap, its page can show a Plot check: things that don't seem to match your earlier sessions, with the recap's sentence and the earlier note beside it. For each one you can fix the recap (that adds the words to the box under Tell DMbot what to fix), talk it through (DMbot may suggest a note, and it is kept only if you say Save), say it is not a problem, or leave it as it is. Approve opens when every question has an answer. DMbot only asks. You decide, and only you see these questions.",
+  },
+  {
     audience: "player",
     whatsNew: "Go off the record for a while",
     text: "Need a break from being recorded? Press ⏸️ Pause recording me in your 🗂️ Menu, or on the reminder DMbot sends when a session starts. Pick 5 minutes, 15 minutes or Until I resume. While you are paused, nothing you say is recorded. It does not remove what you said before you paused. Press ▶️ Resume now to come back sooner. A pause ends when the session ends. Your yes stays as it was, and Stop recording me is still in the menu.",

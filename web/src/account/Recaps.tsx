@@ -20,7 +20,7 @@ import { accountWords as audioWords, price as audioPrice } from "../content/reca
 import { campaignPage as campaignWords } from "../content/campaign-page";
 import { panelWords, remakeSentence, remakeWords } from "../content/recap-panel";
 import { stageWords } from "../content/work-progress";
-import { RECAP_AUDIO_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { PLOT_CHECK_LIVE, RECAP_AUDIO_LIVE, RECAP_NAME_CHECKS_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_MAKE_LIVE, makeWords } from "../content/recap-make";
 import {
   ApiError,
@@ -40,6 +40,7 @@ import RecapMake from "./RecapMake";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapNameChecks from "./RecapNameChecks";
+import RecapPlotCheck from "./RecapPlotCheck";
 import RecapFixName from "./RecapFixName";
 import { audioIsStale, useRemake } from "./useRemake";
 import WorkProgress from "./WorkProgress";
@@ -524,6 +525,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // The email switch as the DM has it now (null until the choices have loaded), so the line while a
   // recap is made follows it instead of the first read of the recap.
   const [emailOn, setEmailOn] = useState<boolean | null>(null);
+  // The Plot check (#2124): why Approve waits, and words its "Fix the recap" puts in the fix box.
+  const [plotWhy, setPlotWhy] = useState<string | null>(null);
+  const [plotNonce, setPlotNonce] = useState(0);
+  const [fixPrefill, setFixPrefill] = useState<{ n: number; text: string } | null>(null);
   // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
   const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
 
@@ -905,14 +910,28 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
-      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
-      <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />
+      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} prefill={fixPrefill} />}
+      {/* (the switch is tested here so the build drops a panel that is not live: the page stays within its weight budget) */}
+      {RECAP_NAME_CHECKS_LIVE && <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />}
+      {PLOT_CHECK_LIVE && !editing && recap.status === "draft" && recap.canEdit && (
+        <RecapPlotCheck
+          key={`plot-${recap.ref}`}
+          api={api}
+          refId={recap.ref}
+          text={recap.text}
+          onBlocked={setPlotWhy}
+          reloadKey={plotNonce}
+          onFix={(text) => setFixPrefill((was) => ({ n: (was?.n ?? 0) + 1, text }))}
+        />
+      )}
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
           recap={recap}
           onRecap={setRecap}
           pageFocus={() => headingRef.current}
+          blockedBy={plotWhy}
+          onPlotOpen={() => setPlotNonce((n) => n + 1)}
           remake={remake}
         />}
       {!editing && (

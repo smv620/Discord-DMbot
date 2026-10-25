@@ -48,7 +48,7 @@ import type {
   MyNpcNote,
   NpcPage,
 } from "./api";
-import { ApiError } from "./api";
+import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -879,6 +879,36 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // and is gone on the one after, as the bot's queue would. `Garrick` answers with a failure.
   const nameLooks = new Map<string, number>();
   const nameFailed = new Set<string>();
+  // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
+  const plotText = new Map<string, string>();
+  const plotLooks = new Map<string, number>();
+  const plotIssues = new Map<string, PlotIssue[]>();
+  const plotTalk = new Map<string, PlotMessage[]>(); // the talk about each question
+  const plotAnswerIn = new Map<string, number>(); // looks left before PlotBot answers
+  const plotWontSave = new Set<string>(); // notes whose Save fails (a message with "nosave" in it)
+  const plotSavingSeen = new Set<string>(); // notes that have been read once as "saving"
+  const seedPlot = (): PlotIssue[] => [
+    {
+      id: "i1",
+      kind: "dead_acts",
+      level: "likely",
+      sentence: 1,
+      sentenceText: "Ulfgar opened the gate.",
+      reason: "Ulfgar died in session 6.",
+      source: { text: "Ulfgar fell to the ghoul at the bridge.", session: "The Bridge at Dusk" },
+      answer: null,
+    },
+    {
+      id: "i2",
+      kind: "item_twice",
+      level: "probable",
+      sentence: 2,
+      sentenceText: "Mara kept the silver key.",
+      reason: "The silver key was last with Brannoch.",
+      source: { text: "Brannoch pocketed the silver key.", session: "The Silver Key" },
+      answer: null,
+    },
+  ];
   const voiceLooks = new Map<string, { looks: number; size: number }>();
   let sharedCount = 0;
   // A recap asked to try again is "being made" for one more read, then ready (the real API takes
@@ -1934,6 +1964,126 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           { key: "thing", label: "A thing" },
         ],
       };
+    },
+    // The Plot check (#2124; core #2122, #2123): two questions the first time; a recap whose text changed
+    // shows "checking" for one look, then the new question list. A DM's message is "waiting" for one look,
+    // then PlotBot's answer is there with a suggested note; Save reads "saving" for one look, then "saved".
+    async plotCheck(ref) {
+      calls.push(`plotCheck:${ref}`);
+      await reachable();
+      signedIn();
+      const r = await find(ref);
+      const seen = plotText.get(ref);
+      if (seen !== undefined && seen !== r.text) {
+        plotText.set(ref, r.text);
+        plotIssues.delete(ref);
+        plotLooks.set(ref, 0);
+      }
+      if (seen === undefined) plotText.set(ref, r.text);
+      const looks = plotLooks.get(ref);
+      if (looks !== undefined && looks < 1) {
+        plotLooks.set(ref, looks + 1);
+        return { state: "checking" as const, approveBlocked: true, version: 2, textHash: "h", issues: [], versions: [] };
+      }
+      const issues = plotIssues.get(ref) ?? seedPlot();
+      plotIssues.set(ref, issues);
+      return {
+        state: "ready" as const,
+        approveBlocked: issues.some((i) => i.answer === null),
+        version: 2,
+        textHash: "h",
+        issues: issues.map((i) => ({ ...i })),
+        versions: [{ version: 1, acceptedBy: "100000000000000001", acceptedAt: 1790000000 }],
+      };
+    },
+    async answerPlotIssue(ref, issue, answer) {
+      calls.push(`answerPlotIssue:${ref}:${issue}:${JSON.stringify(answer)}`);
+      await reachable();
+      signedIn();
+      const found = (plotIssues.get(ref) ?? []).find((i) => i.id === issue);
+      if (!found) throw new ApiError("not-found");
+      found.answer = answer.note ? { kind: answer.kind, note: answer.note } : { kind: answer.kind };
+      return { ...found };
+    },
+    async plotChatSend(ref, issue, text) {
+      calls.push(`plotChatSend:${ref}:${issue}`);
+      await reachable();
+      signedIn();
+      if (!(plotIssues.get(ref) ?? []).some((i) => i.id === issue)) throw new ApiError("not-found");
+      if (text.trim() === "" || text.length > 1000) throw new ApiError("bad-text");
+      const key = `${ref}:${issue}`;
+      const talk = plotTalk.get(key) ?? [];
+      if (talk.some((m) => m.role === "dm" && m.state === "waiting")) throw new ApiError("slow-down");
+      if (talk.filter((m) => m.role === "dm").length >= 15) throw new ApiError("too-soon");
+      plotTalk.set(key, [...talk, { id: `m${talk.length}`, role: "dm", text, state: "waiting", error: "", proposals: [], at: 1790000000 + talk.length }]);
+      plotAnswerIn.set(key, 1); // PlotBot's answer shows on the next look
+    },
+    async plotChat(ref, issue) {
+      calls.push(`plotChat:${ref}:${issue}`);
+      await reachable();
+      signedIn();
+      const key = `${ref}:${issue}`;
+      let talk = plotTalk.get(key) ?? [];
+      const left = plotAnswerIn.get(key);
+      if (left !== undefined) {
+        if (left > 0) plotAnswerIn.set(key, left - 1);
+        else {
+          plotAnswerIn.delete(key);
+          // The first message gets an answer with a suggested note; "fail" in the words makes the bot give up.
+          const asked = talk.filter((m) => m.role === "dm" && m.state === "waiting");
+          if (asked.some((m) => /nosave/.test(m.text))) plotWontSave.add(`p${talk.length}`);
+          talk = talk.map((m) => (m.role === "dm" && m.state === "waiting" ? { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" } : m));
+          if (asked.length > 0 && !/fail/.test(asked[0]!.text))
+            talk = [
+              ...talk,
+              {
+                id: `b${talk.length}`,
+                role: "bot",
+                text: "Thanks. If Ulfgar is alive again from session 7, I can suggest a note. You decide.",
+                state: "done",
+                error: "",
+                proposals: [{ id: `p${talk.length}`, kind: "condition", label: "Ulfgar: alive again from session 7", state: "open" }],
+                at: 1790000100 + talk.length,
+              },
+            ];
+        }
+      }
+      // A note being saved reads "saving" on the first look and "saved" on the one after.
+      talk = talk.map((m) => ({
+        ...m,
+        proposals: m.proposals.map((p) => {
+          if (p.state !== "saving") return p;
+          const seen = plotSavingSeen.has(p.id);
+          plotSavingSeen.add(p.id);
+          if (!seen) return p;
+          return plotWontSave.has(p.id)
+            ? { ...p, state: "failed" as const, error: "Ulfgar's note changed while it was being saved, so nothing was changed." }
+            : { ...p, state: "saved" as const };
+        }),
+      }));
+      plotTalk.set(key, talk);
+      return talk.map((m) => ({ ...m, proposals: m.proposals.map((p) => ({ ...p })) }));
+    },
+    async decidePlotProposal(ref, issue, proposal, action) {
+      calls.push(`decidePlotProposal:${ref}:${issue}:${proposal}:${action}`);
+      await reachable();
+      signedIn();
+      const key = `${ref}:${issue}`;
+      let found: PlotProposal | undefined;
+      plotTalk.set(
+        key,
+        (plotTalk.get(key) ?? []).map((m) => ({
+          ...m,
+          proposals: m.proposals.map((p) => {
+            if (p.id !== proposal) return p;
+            if (p.state !== "open") throw new ApiError("not-allowed");
+            found = { ...p, state: action === "save" ? "saving" : "declined" };
+            return found;
+          }),
+        })),
+      );
+      if (!found) throw new ApiError("not-found");
+      return found;
     },
     async answerNameCheck(ref, id, answer) {
       calls.push(`answerNameCheck:${ref}:${id.slice(0, 1)}:${JSON.stringify(answer)}`);
