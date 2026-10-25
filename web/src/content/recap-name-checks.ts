@@ -4,6 +4,7 @@
 // Shown only while RECAP_NAME_CHECKS_LIVE is true (recap-words.ts).
 export const NOTE_MAX_LETTERS = 300; // core's limit for a note kept with a name (name_answers.NOTE_MAX)
 export const SPELLING_MAX_LETTERS = 80;
+export const NAME_MAX_LETTERS = 100; // core's NAME_MAX; the door still checks
 
 export const nameCheckWords = {
   heading: "Names to check",
@@ -28,6 +29,14 @@ export const nameCheckWords = {
   explainSend: "Send note",
   explainFor: (name: string): string => `Send note: ${name}`,
   left: (n: number): string => `${n} letters left`,
+  // Change the words (#2593): "Harrow" is often "Harrow's Keep".
+  changeLabel: "What is the whole name?",
+  changeHint: "Add the words around it, or fix the spelling.",
+  changeUse: "Change the words",
+  changeFor: (name: string): string => `Change the words: ${name}`,
+  longerLabel: "Or pick a longer name",
+  changed: "Changed. Now say what it is.",
+  changeFailedHint: "The words didn't change. Press the button again.",
   noteFrom: "From the recap:",
   waiting: "DMbot is saving your answer…",
   slow: "Still saving. Your answer is kept, and the name will leave this list when it is done.",
@@ -44,6 +53,12 @@ export const nameCheckWords = {
     "not-allowed": "Only this campaign's DM can answer these names.",
     // What the bot writes when it could not apply an answer (core/.../recaps/name_answers.py), by its code
     // with the underscore as a hyphen. A test reads the codes from core so a new one needs words here.
+    // Change the words refusals (core #2570), by code with the underscore as a hyphen. Which other name
+    // clashes is never said, because it may be a secret one.
+    empty: "Type the name first.",
+    "too-long": "That name is too long. Use fewer words.",
+    "already-known": "You already have a name like that. Use \"It's the same as…\" instead.",
+    "secret-clash": "That name can't be used. Try other words.",
     gone: "That name was already answered, here or in Discord. The list is up to date now.",
     "bad-kind": "That kind can't be used for a name. Pick another kind.",
     "not-joined": "Those two names can't be joined here. Choose another name, or open the Names page.",

@@ -7,8 +7,8 @@
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
-import { RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { NAME_MAX_LETTERS, NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
+import { NAME_CHANGE_WORDS_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
 import { keepFocus } from "./focus";
 import { useObservedWait } from "./useObservedWait";
@@ -48,7 +48,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
 
   const waiting = (list?.names ?? []).some((n) => n.answering) || busy.size > 0;
   // The wait shows how long it has run and when the list last changed (the page sees no stage from the bot).
-  const seen = useObservedWait(waiting, (list?.names ?? []).map((n) => `${n.id}:${n.answering ? 1 : 0}`).join(","));
+  const seen = useObservedWait(waiting, (list?.names ?? []).map((n) => `${n.id}:${n.answering ? 1 : 0}:${n.name}`).join(","));
   useEffect(() => {
     if (!waiting) {
       looks.current = 0;
@@ -58,18 +58,26 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     if (slow) return; // gave up after about a minute; a new answer starts the watching again
     const timer = setTimeout(async () => {
       looks.current += 1;
-      const before = new Set((list?.names ?? []).map((n) => n.id));
+      const before = new Map((list?.names ?? []).map((n) => [n.id, n.name]));
       const got = await read();
       if (got) {
         const now = new Set(got.names.map((n) => n.id));
+        // Change the words keeps the card and gives it new words (#2593), which also ends its wait.
+        const renamed = got.names.some((n) => before.has(n.id) && before.get(n.id) !== n.name);
         // A name that left the list is answered; one that is still there with a word in `error` failed.
         setBusy((was) => {
           const next = new Set(was);
-          for (const id of was) if (!now.has(id) || (got.names.find((n) => n.id === id)?.error ?? "") !== "") next.delete(id);
+          for (const id of was) {
+            const card = got.names.find((n) => n.id === id);
+            if (!card || card.error !== "" || (before.has(id) && before.get(id) !== card.name)) next.delete(id);
+          }
           return next;
         });
-        if ([...before].some((id) => !now.has(id))) {
+        if ([...before.keys()].some((id) => !now.has(id))) {
           setSaid(words.done);
+          keepFocus(() => heading.current);
+        } else if (renamed) {
+          setSaid(words.changed);
           keepFocus(() => heading.current);
         }
       }
@@ -176,6 +184,10 @@ function NameRow({
   const [spelling, setSpelling] = useState("");
   const [note, setNote] = useState("");
   const room = NOTE_MAX_LETTERS - note.length;
+  // Change the words (#2593): starts as the name itself; a longer name picked from the card fills the box.
+  const [words2, setWords2] = useState(name.name);
+  const [heard, setHeard] = useState("");
+  const longer = (name.longerNames ?? []).slice(0, 3);
   return (
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`}>
@@ -204,6 +216,36 @@ function NameRow({
         </div>
         <details>
           <summary>{words.more}</summary>
+          {NAME_CHANGE_WORDS_LIVE && (
+            <fieldset class="stack" disabled={busy}>
+              <legend>{words.changeLabel}</legend>
+              <p class="small muted">{words.changeHint}</p>
+              <div class="row">
+                <label for={`${id}-words`} class="visually-hidden">
+                  {words.changeLabel}
+                </label>
+                <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={words2} onInput={(e) => { setWords2((e.target as HTMLInputElement).value); setHeard(""); }} />
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={words2.trim() === "" || words2.trim() === name.name}
+                  aria-label={words.changeFor(name.name)}
+                  onClick={() => onSend({ action: "change_words", words: words2.trim(), ...(heard !== "" ? { heard } : {}) })}
+                >
+                  {words.changeUse}
+                </button>
+              </div>
+              {longer.length > 0 && (
+                <div class="row" role="group" aria-label={words.longerLabel}>
+                  {longer.map((l) => (
+                    <button key={l} type="button" class="button secondary" onClick={() => { setWords2(l); setHeard(l); }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </fieldset>
+          )}
           <fieldset class="stack" disabled={busy}>
             <legend>{words.actually}</legend>
             <div class="row">
