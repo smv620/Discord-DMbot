@@ -92,6 +92,9 @@ class Settings:
     # image is noted as not described.
     table_images_on: bool = False
     table_images_per_day: int = 40
+    # Hand-over by email (#2532): off until slices B to D and the accept page are live. While it is
+    # off, 🤝 Hand over keeps its member picker and the email route answers 404.
+    handover_email_on: bool = False
     recaps_on: bool = False  # cinematic recaps (#1382): off until dev1's quality check
     # PlotBot's check of each recap before it is accepted (#2122); needs recaps on. Off by default.
     plot_check_on: bool = False
@@ -317,6 +320,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_RECAPS must be 1 (on) or 0 (off), got "' + recaps_raw + '".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "' + handover_email_raw + '".'
+        )
     imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
     if imports_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_IMPORTS must be 1 (on) or 0 (off), got "' + imports_raw + '".')
@@ -417,6 +425,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),

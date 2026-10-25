@@ -1353,17 +1353,27 @@ WEB_ROLE_RECAP_POLICY = """
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
 WEB_ROLE_OFFER_POLICY = """
-    -- Creating an offer (#728, #690 follow-up). The website's role has no INSERT on offers
-    -- today (#625 only answers them). Whoever adds a route that creates offers must grant
-    -- exactly OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
-    -- from the website is the signed-in person's own, still open, and not marked as sent,
-    -- claimed or announced. Otherwise the site could save an offer as already delivered and the
-    -- bot's check that the person is still in the server would be skipped.
+    -- Creating an offer (#728, #690 follow-up; #2532). The website's role may INSERT only the
+    -- columns in OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
+    -- from the website is the signed-in owner's own, by email, still open, and not claimed or
+    -- announced. Otherwise the site could write itself an offer on someone else's campaign.
     DROP POLICY IF EXISTS web_new_offer ON campaign_handover_offers;
     CREATE POLICY web_new_offer ON campaign_handover_offers AS RESTRICTIVE FOR INSERT TO dmbot_web
-        WITH CHECK (delivered_at IS NULL AND claimed_at IS NULL AND message_id IS NULL
+        WITH CHECK (via_email AND token_hash IS NOT NULL AND to_user_id = 0
+                    -- an offer from the website is only ever by email (#2532): a Discord offer
+                    -- would be sent to a person as buttons, which PLAN retires; it is born
+                    -- delivered, because the bot has no Discord message to send for it
+                    AND delivered_at = created_at
+                    AND created_at BETWEEN dmbot_now() - 300 AND dmbot_now() + 300
+                    AND claimed_at IS NULL AND message_id IS NULL
                     AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
-                    AND from_user_id = dmbot_current_user());
+                    AND from_user_id = dmbot_current_user()
+                    -- only the campaign's own owner can offer it: without this, anyone in the
+                    -- server could write themselves an offer and then accept it
+                    AND EXISTS (SELECT 1 FROM campaigns c
+                                WHERE c.guild_id = campaign_handover_offers.guild_id
+                                  AND c.id = campaign_handover_offers.campaign_id
+                                  AND c.owner_user_id = campaign_handover_offers.from_user_id));
 """
 
 ACCESS_GRANTS = (
@@ -3462,6 +3472,17 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_approve_unchecked",
         "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)",
     ),
+    # How many hand-over emails a person sent today, for the limit of five (#2532).
+    ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
+    ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
+    ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
+    (
+        "dmbot_handover_request_move",
+        "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)",
+    ),  # #2532, slice C (granted now that the bot's move exists)
+    ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
+    ("dmbot_handover_shares_rules", "dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)"),  # #2532
+    ("dmbot_handover_move_failed", "dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)"),  # #2532
     # The owner's own campaigns in any server, and deleting one from the website (#2554).
     ("dmbot_web_owned_campaigns", "dmbot_web_owned_campaigns()"),
     ("dmbot_web_delete_campaign", "dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)"),
@@ -3571,6 +3592,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # Every name the caller may see and which pairs are connected, for the Story graph's count line,
     # its "Not connected yet" tray and its other groups (#2632).
     ("dmbot_web_graph_overview", "dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)"),
+    # What waits for the DM: claims, a backstory's connections and "Which Mara?" questions (#2652).
+    ("dmbot_web_waiting", "dmbot_web_waiting(BIGINT, TEXT)"),
     # A move code asked for on the website (#1246).
     ("dmbot_web_move_code", "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_cancel_move_code", "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"),
@@ -3590,6 +3613,11 @@ OFFER_INSERT_COLUMNS: tuple[str, ...] = (
     "created_at",
     "from_name",
     "to_name",
+    # By email (#2532): the link's hash, the mark that says so, and delivered_at, set at once
+    # because the bot has no Discord message to send for it (the policy allows that only here).
+    "via_email",
+    "token_hash",
+    "delivered_at",
 )
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
@@ -3612,6 +3640,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (owner_user_id)", ("campaigns",)),
     ("SELECT, INSERT", ("campaign_dms",)),
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
+    (f"INSERT ({', '.join(OFFER_INSERT_COLUMNS)})", ("campaign_handover_offers",)),  # #2532
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     # The unsubscribe link (#1229) may be written, never read: the list stays the bot's. The
@@ -10569,7 +10598,8 @@ WEB_LINK_ACTIONS = r"""
             RETURN jsonb_build_object('status', 'needs_confirm');
         END IF;
         IF is_link AND act <> 'link-add' THEN
-            -- the connection itself: it must be a confirmed one of this campaign, between two
+            -- an edit to a connection (words, secret, remove, pin): it must be a confirmed one
+            -- of this campaign, between two
             -- confirmed names; the entry the action is filed under is its first name
             SELECT r.subject_id INTO subject FROM memory_relations r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.id = tgt AND r.status = 'confirmed'
@@ -11757,6 +11787,128 @@ LINK_PIN_ACTION = (
         (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 """
 )
+
+WAITING_ACTIONS = (
+    "claim-confirm", "claim-reject", "backstory-keep", "backstory-skip", "backstory-keep-all",
+)  # fmt: skip
+_WAITING_LIST = ", ".join(f"'{a}'" for a in WAITING_ACTIONS)
+_WAITING_NEED_TARGET = ", ".join(f"'{a}'" for a in WAITING_ACTIONS[:4])  # keep-all has none
+_KEEP_ALL_IDS = "'^[0-9a-f]{32}( [0-9a-f]{32}){0,49}$'"  # Keep all names the ids the page showed
+
+LINK_DECIDE_ACTIONS = (
+    """
+    -- The website's answers to the connections that wait for the DM (#2635, #2642), through the
+    -- queue of the other name actions. PlotBot's waiting connections are of two kinds, and neither
+    -- is a proposed row of `memory_relations`:
+    --   'claim-confirm' / 'claim-reject': `target_id` is a waiting `memory_claims` row (said at the
+    --       table); `flag` on a confirm is "truth but secret". The bot makes the same call as the
+    --       DM screen's ✅ and ❌ (`ClaimStore.confirm` / `reject`), so consent, the plan and
+    --       instruction checks, the DM's own word and Undo are the same.
+    --   'backstory-keep' / 'backstory-skip': `target_id` is a waiting `backstory_links` row (from
+    --       the DM's own backstory); `flag` on a keep is "keep as secret". 'backstory-keep-all'
+    --       keeps every one that is ready (no target). The bot keeps them as the one-by-one cards
+    --       do (the DM's word, unrevealed), and answers how many in `result_id`.
+    -- `entity_id` is empty for these: they belong to no one name. A backstory link gets an id of
+    -- its own, so the page and the queue can point at one. No existing row changes (the column has
+    -- a default, filled for old rows by the table rewrite).
+    ALTER TABLE backstory_links
+        ADD COLUMN id TEXT NOT NULL DEFAULT replace(gen_random_uuid()::TEXT, '-', '')
+            CHECK (id ~ '^[0-9a-f]{32}$');
+    CREATE UNIQUE INDEX backstory_links_id ON backstory_links (guild_id, campaign_id, id);
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',
+         """
+    + _WAITING_LIST
+    + """));
+    -- Keep all carries the ids of the connections the page showed (at most 50 of 32 letters, space
+    -- apart), so a link that turned ready while the DM was looking is not kept unseen.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check CHECK (char_length(text) <=
+        CASE WHEN action IN ('merge-many', 'backstory-keep-all') THEN 1700 ELSE 100 END);
+"""
+)
+# Built from the door as it stands now (with `link-pin`, 0193), not from an older text: a door
+# built from before would drop the actions added since (the lesson of #2456).
+_decide_door = _pin_door
+_waiting_check = """        IF act LIKE 'claim-%' OR act LIKE 'backstory-%' THEN
+            -- a waiting connection: it must still be waiting in this campaign (the bot checks
+            -- again when it applies it, and both of its ends are confirmed names then)
+            subject := '';
+            IF act LIKE 'claim-%' AND NOT EXISTS (
+                   SELECT 1 FROM memory_claims m WHERE m.guild_id = g AND m.campaign_id = c
+                   AND m.id = tgt AND m.status = 'proposed') THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            ELSIF act IN ('backstory-keep', 'backstory-skip') AND NOT EXISTS (
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c
+                   AND b.id = tgt) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (
+                   SELECT 1 FROM backstory_links b WHERE b.guild_id = g AND b.campaign_id = c
+                   AND b.id = ANY (string_to_array(clean, ' '))) THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+        ELSIF is_link AND act <> 'link-add' THEN"""
+for _old, _new in (
+    (
+        "                'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        f"                'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        f"                {_WAITING_LIST})",
+    ),
+    (
+        "'link-secret', 'link-remove', 'link-pin')\n               AND clean <> '')",
+        f"'link-secret', 'link-remove', 'link-pin',\n"
+        f"                       {_WAITING_NEED_TARGET})\n               AND clean <> '')",
+    ),
+    (
+        "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin')",
+        "OR (act IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',\n"
+        f"                       {_WAITING_NEED_TARGET})",
+    ),
+    (
+        "OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', "
+        "'link-pin')",
+        "OR (act NOT IN ('merge', 'link-add', 'link-words', 'link-secret', 'link-remove', "
+        f"'link-pin',\n                       {_WAITING_NEED_TARGET})",
+    ),
+    (
+        "('secret', 'hide', 'link-add', 'link-secret', 'link-pin') AND fl IS NULL",
+        "('secret', 'hide', 'link-add', 'link-secret', 'link-pin', 'claim-confirm',\n"
+        "                       'backstory-keep') AND fl IS NULL",
+    ),
+    ("        IF is_link AND act <> 'link-add' THEN", _waiting_check),
+    (
+        "char_length(clean) > (CASE WHEN act = 'merge-many' THEN 1700 ELSE 100 END)",
+        "char_length(clean) > (CASE WHEN act IN ('merge-many', 'backstory-keep-all')"
+        " THEN 1700 ELSE 100 END)",
+    ),
+    (
+        "OR (act = 'merge-many' AND (clean = '' OR clean !~",
+        "OR (act = 'backstory-keep-all' AND (clean = '' OR clean !~ " + _KEEP_ALL_IDS + "))\n"
+        "           OR (act = 'merge-many' AND (clean = '' OR clean !~",
+    ),
+):
+    assert _decide_door.count(_old) == 1, (_old, _decide_door.count(_old))
+    _decide_door = _decide_door.replace(_old, _new)
+LINK_DECIDE_ACTIONS = (
+    LINK_DECIDE_ACTIONS
+    + _decide_door
+    + """
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
+)
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -12227,6 +12379,260 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+HANDOVER_EMAIL = """
+    -- Hand-over by email (#2532, docs/PLAN.md, "Hand-over by email"): an offer is no longer made to
+    -- a Discord account but sent to an email address, and the person who opens its one-use link
+    -- on the website and accepts becomes the new owner. The address is never stored here (it goes
+    -- in the email and nowhere else): the offer holds only a SHA-256 of the link's token. Until
+    -- the link is used `to_user_id` is 0, which matches nobody; the website's claim sets it to
+    -- the signed-in person, and the rest is the offer machinery of 0021 (one open offer per
+    -- campaign, seven days, the owner told when it ends). A new column on an existing table: no
+    -- rows change, so there is no backfill policy.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN via_email  BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN token_hash TEXT CHECK (token_hash IS NULL OR char_length(token_hash) = 64);
+    CREATE UNIQUE INDEX campaign_handover_offers_token
+        ON campaign_handover_offers (token_hash) WHERE token_hash IS NOT NULL;
+
+    -- How many offers by email this person has sent in the last day, for the limit of five a
+    -- day, counted over all their campaigns and servers (the offers table is scoped to one
+    -- server at a time, so the count reads the mail log, which is everyone's). The caller must
+    -- be that person, or a job with no person set.
+    CREATE FUNCTION dmbot_handover_emails_since(p_user BIGINT, p_since BIGINT) RETURNS INTEGER
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_user() IS NOT NULL AND dmbot_current_user() <> p_user THEN
+            RETURN 0;
+        END IF;
+        RETURN (SELECT count(*)::INTEGER FROM sent_emails e
+                WHERE e.user_id = p_user AND e.kind LIKE 'handover:%' AND e.sent_at >= p_since);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT) FROM PUBLIC;
+"""
+
+HANDOVER_CLAIM = """
+    -- Opening a hand-over link on the website (#2532, slice B). The link names the server and the
+    -- offer and carries a secret whose SHA-256 the offer holds, so the door can read the one offer
+    -- in the one server (every server table is scoped by server) and nothing else. It answers only
+    -- for a signed-in person, and only for an offer that is still open, by email, unexpired, not
+    -- yet claimed by someone else, and whose campaign still belongs to the person who offered it.
+    -- Anything else is NULL, the same whatever the reason, so a link says nothing about why it
+    -- ended. With p_claim the offer becomes this person's (their id and name are written once; the
+    -- link then works for no one else), unless they are the owner. The rest of the answer (plan,
+    -- slot, ownership) is the campaign store's own accept, with the person's session as always.
+    -- The caller connects scoped to the server `g` (the door refuses any other).
+    CREATE FUNCTION dmbot_handover_open(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_claim BOOLEAN) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        r RECORD;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        IF p_claim THEN  -- two claims at once: one waits for the other, then sees it taken
+            PERFORM 1 FROM campaign_handover_offers WHERE guild_id = g AND id = o FOR UPDATE;
+        END IF;
+        SELECT f.campaign_id, f.from_user_id, f.from_name, f.to_user_id, f.created_at,
+               c.name AS campaign_name
+            INTO r
+            FROM campaign_handover_offers f
+            JOIN campaigns c ON c.guild_id = f.guild_id AND c.id = f.campaign_id
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me)
+              AND c.owner_user_id = f.from_user_id;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF p_claim AND r.from_user_id <> me AND r.to_user_id = 0 THEN
+            UPDATE campaign_handover_offers
+                SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80)
+                WHERE guild_id = g AND id = o;
+        END IF;
+        RETURN jsonb_build_object(
+            'campaign_id', r.campaign_id, 'campaign_name', r.campaign_name,
+            'from_user_id', r.from_user_id, 'from_name', r.from_name,
+            'expires_at', r.created_at + 604800);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+
+    -- Gives a claim back (#2532): an accept that fails after the link was claimed (no room any
+    -- more, the campaign changed hands) must not leave the link dead for the person it was for.
+    -- Only the person who holds the claim, only on an offer still open and still unanswered.
+    CREATE FUNCTION dmbot_handover_release(g BIGINT, o BIGINT, p_hash TEXT) RETURNS VOID
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN;
+        END IF;
+        UPDATE campaign_handover_offers SET to_user_id = 0, to_name = ''
+            WHERE guild_id = g AND id = o AND via_email AND token_hash = p_hash
+              AND status = 'open' AND to_user_id = me;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- "No thanks" from whoever holds the link, wherever they are (#2532): the website's role can
+    -- write an answer only in the servers of its session, and the person who was emailed is often
+    -- not in the campaign's server. Same checks as dmbot_handover_open; the offer is declined
+    -- under their id and name, and the bot is told (as for every answer made on the website) so
+    -- the owner hears. NULL, the same as any ended link; the owner cannot decline their own.
+    CREATE FUNCTION dmbot_handover_decline(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;
+        END IF;
+        UPDATE campaign_handover_offers f
+            SET status = 'declined', decided_at = dmbot_now(), to_user_id = me,
+                to_name = left(coalesce(p_name, ''), 80)
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN
+            PERFORM pg_notify('dmbot_handover_decided', g::text || ':' || o::text);
+        END IF;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+HANDOVER_MOVE = """
+    -- A campaign handed over by email to a person who wants it in another server (#2532, slice C;
+    -- docs/PLAN.md, "Hand-over by email", point 7). The website cannot copy a campaign between
+    -- servers (it must never read or write another server's tables), so it only records the wish
+    -- here: `move_to_guild_id`. DMbot's bot then moves the campaign: one update of its row, which
+    -- migration 0215 lets every table follow. (`moved_campaign_id` was for an earlier design that
+    -- copied the campaign; nothing writes it.) While a move is asked for, the offer stays 'open'
+    -- but cannot be answered, taken back or run out. Two new columns on an existing table: no
+    -- rows change.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN move_to_guild_id BIGINT
+            CHECK (move_to_guild_id IS NULL OR move_to_guild_id > 0),
+        ADD COLUMN moved_campaign_id TEXT;
+
+    -- Claims the link for this person and asks for the move, in one step (#2532). Same rules as
+    -- dmbot_handover_open with a claim, and the target must be one of the session's own servers
+    -- with DMbot installed. NULL, whatever the reason, the same as any ended link.
+    CREATE FUNCTION dmbot_handover_request_move(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_target BIGINT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ready BOOLEAN;
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
+            RETURN false;
+        END IF;
+        IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', p_target::text, true);
+        SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
+            INTO ready;
+        IF NOT ready THEN
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers f
+            SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80),
+                move_to_guild_id = p_target
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND f.move_to_guild_id IS NULL
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)
+        FROM PUBLIC;
+"""
+
+
+# A pending move makes the doors of 0213 look away (#2532, slice C): the claimant's look says the
+# link has ended, a release leaves the claim alone, and nobody can decline underneath the move.
+# Built from 0213's own text, so the two cannot drift: the same doors, the same grants and pinned
+# search_path, with one more condition each.
+_MOVE_BLIND = (
+    HANDOVER_CLAIM.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+    .replace(
+        "AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()",
+        "AND f.status = 'open' AND f.move_to_guild_id IS NULL"
+        " AND f.created_at + 604800 > dmbot_now()",
+    )
+    .replace(
+        "AND status = 'open' AND to_user_id = me;",
+        "AND status = 'open' AND move_to_guild_id IS NULL AND to_user_id = me;",
+    )
+)
+assert _MOVE_BLIND.count("move_to_guild_id IS NULL") == 3, "0214 must change all three doors"
+HANDOVER_MOVE += _MOVE_BLIND
+
+
 RECAP_STORY_ROOM = """
     -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
     -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
@@ -12596,6 +13002,202 @@ IMPORT_STEPS = """
     $do$;
 """
 
+
+# A campaign moves to another server by changing `guild_id` on its `campaigns` row (#2532, slice
+# C2); every foreign key that carries `guild_id` must follow it, or the move would be refused for
+# the first child row or leave rows behind. Rebuilt from the catalog so no table is forgotten
+# (tests/test_campaign_move_cascade.py checks it still holds). Dropping a key takes an exclusive
+# lock on its table, and the migration is one transaction, so those locks last until it ends: deploy
+# it with the bot stopped (docs/testing-status.log). Each key is added NOT VALID and then validated.
+# Every foreign key that carries `guild_id` becomes ON UPDATE CASCADE (found from the catalog, so
+# no table is forgotten). Run by 0215 and again by 0234: a table made between them (0225's
+# `recap_upload_rights`) was missed the first time. Already-cascading keys are left alone.
+_CASCADE_ALL_KEYS = """
+    DO $$
+    DECLARE r record;
+    BEGIN
+        FOR r IN
+            -- ON UPDATE has to come before DEFERRABLE, so it is put in ahead of it.
+            SELECT c.conrelid::regclass AS tbl, c.conname,
+                   regexp_replace(pg_get_constraintdef(c.oid),
+                                  '( (NOT )?DEFERRABLE.*)?$', ' ON UPDATE CASCADE\\1') AS def
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 AND a.attname = 'guild_id'
+            WHERE c.contype = 'f' AND n.nspname = current_schema() AND c.confupdtype = 'a'
+        LOOP
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
+            EXECUTE format(
+                'ALTER TABLE %s ADD CONSTRAINT %I %s NOT VALID',
+                r.tbl, r.conname, r.def);
+            EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', r.tbl, r.conname);
+        END LOOP;
+    END $$;
+"""
+
+# The same catalog loop again, for the tables made after 0215 (0225's `recap_upload_rights`); a
+# table made later than this declares ON UPDATE CASCADE itself (CLAUDE.md, #2550).
+MOVE_CASCADE_LATE = _CASCADE_ALL_KEYS
+
+CAMPAIGN_MOVE_CASCADE = (
+    _CASCADE_ALL_KEYS
+    + """
+
+    -- The bot's lease on a move that is under way, and the door that asks for a move, made again
+    -- (0214 is the same as it was when it first shipped): it now also checks that the caller is
+    -- scoped to the campaign's server, goes back to that scope when the target has no DMbot,
+    -- and wakes the bot. A new column and a function: no rows change.
+    ALTER TABLE campaign_handover_offers ADD COLUMN move_claimed_at BIGINT;
+    CREATE OR REPLACE FUNCTION dmbot_handover_request_move(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_target BIGINT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ready BOOLEAN;
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;  -- (the caller connects scoped to the campaign's server, like every door)
+        END IF;
+        IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN false;
+        END IF;
+        -- Whether DMbot is installed in the target is a fact of the TARGET server, whose rows are
+        -- visible only when scoped to it: so the door looks there for this one read and comes
+        -- straight back. It reads nothing else there.
+        PERFORM set_config('dmbot.guild_id', p_target::text, true);
+        SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
+            INTO ready;
+        IF NOT ready THEN
+            PERFORM set_config('dmbot.guild_id', g::text, true);  -- back where the caller was
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers f
+            SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80),
+                move_to_guild_id = p_target
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND f.move_to_guild_id IS NULL
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN  -- wakes the bot, which does the move (a sweep catches a missed one)
+            PERFORM pg_notify('dmbot_handover_move', g::text || ':' || o::text);
+        END IF;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+
+    -- The one write that may take a campaign out of the server in scope: the move sets both
+    -- settings in its own transaction (campaigns/moves.py), and the policy then lets that one
+    -- campaign be seen and written in the server it goes to. (It is for all commands because an
+    -- update's new row must also be readable, which a policy for updates alone does not give.)
+    -- Policies add up, so with the settings unset every other write stays as it was.
+    -- Only for the role the bot connects as (the one that ran this migration), as `move_all` is:
+    -- the website's role never gets it.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY campaign_move ON campaigns TO %I'
+            ' USING ((guild_id = dmbot_current_guild()'
+            '         OR guild_id = NULLIF(current_setting(''dmbot.moving_to'', true),'
+            ' '''')::BIGINT)'
+            '        AND id = NULLIF(current_setting(''dmbot.moving_campaign'', true), ''''))'
+            ' WITH CHECK (guild_id = NULLIF(current_setting(''dmbot.moving_to'', true),'
+            ' '''')::BIGINT'
+            '             AND id = NULLIF(current_setting(''dmbot.moving_campaign'', true), ''''))',
+            current_user);
+    END
+    $do$;
+
+    -- Whether the campaign an emailed link is for shares a rule set: such a campaign cannot move to
+    -- another server yet (#2551), and the page says so before anyone accepts or buys a plan. Only
+    -- the link's own secret opens the question.
+    CREATE FUNCTION dmbot_handover_shares_rules(g BIGINT, o BIGINT, p_hash TEXT) RETURNS BOOLEAN
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT g IS NOT NULL AND o IS NOT NULL AND p_hash ~ '^[0-9a-f]{64}$'
+            AND current_setting('dmbot.guild_id', true) IS NOT DISTINCT FROM g::text
+            AND EXISTS (
+                SELECT 1 FROM campaign_handover_offers f
+                JOIN rule_sets s ON s.guild_id = f.guild_id AND s.campaign_id = f.campaign_id
+                WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+                  AND f.status = 'open' AND s.status = 'shared')
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- Three more facts about a hand-over that moves: when the move was asked for (an offer whose
+    -- move never ran is opened again after an hour), and, when a move did not happen, who had
+    -- accepted and the plain reason, which only that person is shown (the owner is told only that
+    -- it did not happen, because the reason can be about the other person's plan).
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN move_asked_at BIGINT,
+        ADD COLUMN move_failed_for BIGINT,
+        ADD COLUMN move_failed_reason TEXT;
+    CREATE FUNCTION dmbot_note_move_asked() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF NEW.move_to_guild_id IS NOT NULL AND OLD.move_to_guild_id IS NULL THEN
+            NEW.move_asked_at := dmbot_now();
+            NEW.move_failed_for := NULL;
+            NEW.move_failed_reason := NULL;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER campaign_handover_offers_move_asked
+        BEFORE UPDATE OF move_to_guild_id ON campaign_handover_offers
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_move_asked();
+
+    -- The plain reason a move did not happen, for the person who had accepted and nobody else
+    -- (the owner is told only that it did not happen). Shown on that person's page.
+    CREATE FUNCTION dmbot_handover_move_failed(g BIGINT, o BIGINT, p_hash TEXT) RETURNS TEXT
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT f.move_failed_reason FROM campaign_handover_offers f
+        WHERE dmbot_current_user() IS NOT NULL AND f.guild_id = g AND f.id = o AND f.via_email
+          AND f.token_hash = p_hash AND f.status = 'open'
+          AND f.move_failed_for = dmbot_current_user()
+          AND current_setting('dmbot.guild_id', true) IS NOT DISTINCT FROM g::text
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_move_failed(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- The server it arrives in is one that holds campaigns now (the retention job's routing list).
+    CREATE TRIGGER campaign_guilds_note_move
+        AFTER UPDATE OF guild_id ON campaigns
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_campaign_guild();
+"""
+)
 
 WEB_BACKUPS = (
     """
@@ -13011,6 +13613,54 @@ GRAPH_OVERVIEW = (
     REVOKE ALL ON FUNCTION dmbot_web_graph_overview(BIGINT, TEXT, INT, INT) FROM PUBLIC;
     """
 )
+
+BACKSTORY_LINK_UPLOAD = """
+    -- Which upload a waiting backstory connection came from (#2650): its name and date as the DM
+    -- saw them ("Tavin's backstory, 24 Oct"), so Keep all can mean "from this backstory" and the
+    -- DM screen can say "3 connections from Tavin's backstory are ready to check". `told` is set
+    -- once the DM screen has said a connection is ready, so it is said once. Both columns have
+    -- defaults: no existing row changes, and an old connection has no label.
+    ALTER TABLE backstory_links
+        ADD COLUMN upload TEXT NOT NULL DEFAULT '' CHECK (char_length(upload) <= 120),
+        ADD COLUMN told BOOLEAN NOT NULL DEFAULT false;
+"""
+
+BACKSTORY_WHICH = """
+    -- A backstory connection whose one end fits two names equally ("Mara" when the campaign has
+    -- Mara Ashgrove and Mara Voss) waits here for the DM to pick (#2650), instead of being left
+    -- out. It holds the end that is a name (`other_id`, and which side of the connection it is),
+    -- the end as written (`word`: the DM's own text, a name), the candidate entry ids and the
+    -- same short quote and flags a waiting connection holds. Picking one moves it to
+    -- `backstory_links` (ready as soon as both names are answered); "Neither" deletes it. Never
+    -- the text itself. Same lifetime as `backstory_links`: deleted with the campaign or its name,
+    -- left out of backups (a wait, not content). Its foreign keys follow a campaign that moves
+    -- to another server (ON UPDATE CASCADE).
+    CREATE TABLE backstory_which (
+        guild_id         BIGINT NOT NULL,
+        campaign_id      TEXT NOT NULL,
+        id               TEXT NOT NULL DEFAULT replace(gen_random_uuid()::TEXT, '-', '')
+            CHECK (id ~ '^[0-9a-f]{32}$'),
+        other_id         TEXT NOT NULL,
+        other_is_subject BOOLEAN NOT NULL,
+        predicate        TEXT NOT NULL CHECK (char_length(predicate) BETWEEN 1 AND 80),
+        word             TEXT NOT NULL CHECK (char_length(word) BETWEEN 1 AND 80),
+        candidates       TEXT[] NOT NULL CHECK (cardinality(candidates) BETWEEN 2 AND 10),
+        quote            TEXT NOT NULL CHECK (char_length(quote) <= 400),
+        secret           BOOLEAN NOT NULL DEFAULT false,
+        detail           TEXT NOT NULL DEFAULT '',
+        truth            BOOLEAN NOT NULL DEFAULT false,
+        upload           TEXT NOT NULL DEFAULT '' CHECK (char_length(upload) <= 120),
+        created_at       BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, id),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, other_id)
+            REFERENCES memory_entities (guild_id, campaign_id, id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE UNIQUE INDEX backstory_which_once ON backstory_which
+        (guild_id, campaign_id, other_id, other_is_subject, predicate, word);
+    """ + _isolate("backstory_which")
 
 
 def _approve_with_versions() -> str:
@@ -13560,6 +14210,190 @@ PLOT_CHAT = (
     """
 )
 
+WEB_WAITING_ACTIONS_LIST = ", ".join(
+    f"'{a}'" for a in (*WAITING_ACTIONS, "backstory-which-pick", "backstory-which-neither")
+)
+_which_door = LINK_DECIDE_ACTIONS[
+    LINK_DECIDE_ACTIONS.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(") :
+]
+_which_door = _which_door[: _which_door.index("    -- (a redefined function loses")]
+for _old, _new in (
+    (
+        "'backstory-skip', 'backstory-keep-all')\n        THEN",
+        "'backstory-skip', 'backstory-keep-all',\n"
+        "                'backstory-which-pick', 'backstory-which-neither')\n        THEN",
+    ),
+    (
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip')\n"
+        "               AND clean <> '')",
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip',\n"
+        "                       'backstory-which-neither')\n               AND clean <> '')",
+    ),
+    (
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip')\n"
+        "               AND (tgt IS NULL",
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip',\n"
+        "                       'backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND (tgt IS NULL",
+    ),
+    (
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip')\n"
+        "               AND COALESCE(tgt, '') <> '')",
+        "'claim-confirm', 'claim-reject', 'backstory-keep', 'backstory-skip',\n"
+        "                       'backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND COALESCE(tgt, '') <> '')",
+    ),
+    (
+        "           OR (act = 'link-words' AND COALESCE(fl, false)) THEN",
+        "           OR (act IN ('backstory-which-pick', 'backstory-which-neither')\n"
+        "               AND COALESCE(fl, false))\n"
+        "           OR (act = 'link-words' AND COALESCE(fl, false)) THEN",
+    ),
+    (
+        "           OR (act = 'backstory-keep-all' AND (clean = ''",
+        "           OR (act = 'backstory-which-pick' AND clean !~ '^[0-9a-f]{32}$')\n"
+        "           OR (act = 'backstory-keep-all' AND (clean = ''",
+    ),
+    (
+        "            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (",
+        "            ELSIF act IN ('backstory-which-pick', 'backstory-which-neither')\n"
+        "                   AND NOT EXISTS (\n"
+        "                   SELECT 1 FROM backstory_which w WHERE w.guild_id = g\n"
+        "                   AND w.campaign_id = c AND w.id = tgt\n"
+        "                   AND (act = 'backstory-which-neither'\n"
+        "                        OR clean = ANY (w.candidates))) THEN\n"
+        "                RETURN jsonb_build_object('status', 'not_found');\n"
+        "            ELSIF act = 'backstory-keep-all' AND NOT EXISTS (",
+    ),
+):
+    assert _which_door.count(_old) == 1, (_old, _which_door.count(_old))
+    _which_door = _which_door.replace(_old, _new)
+
+WEB_WAITING = (
+    f"""
+    -- The website's answer to a "Which Mara?" question (#2652): two more actions in the queue of
+    -- the other name actions. 'backstory-which-pick': `target_id` is the waiting question
+    -- (`backstory_which`), `text` the entry the DM picked (one of its candidates); and
+    -- 'backstory-which-neither': the question is dropped. The bot applies them with
+    -- `BackstoryLinks.pick_which`, the call the Discord card makes. No row changes.
+    ALTER TABLE name_actions DROP CONSTRAINT name_actions_action_check;
+    ALTER TABLE name_actions ADD CONSTRAINT name_actions_action_check CHECK (action IN
+        ('spell', 'kind', 'add-other', 'remove-other', 'secret', 'hide', 'merge', 'merge-many',
+         'remove', 'link-add', 'link-words', 'link-secret', 'link-remove', 'link-pin',
+         {WEB_WAITING_ACTIONS_LIST}));
+    """
+    + _which_door
+    + r"""
+    -- (a redefined function loses its pinned search path)
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_name_action_add'
+            '(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_name_action_add
+        (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+
+    -- What waits for the DM, for the website (#2652, Supervisor's answer on #2642): the claims
+    -- PlotBot found at the table, the connections a backstory found, and the "Which one?"
+    -- questions, with the counts. DM only (anyone else gets NULL, as from the other doors). Counts
+    -- and the DM's own words (a name, a short quote), never a transcript. A connection to a name
+    -- that was refused or merged away is left out: the bot cleans the queue when it next reads it.
+    CREATE OR REPLACE FUNCTION dmbot_web_waiting(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        out := jsonb_build_object(
+            'status', 'ok',
+            'claims', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', m.id, 'subject', m.subject, 'relationship', m.relationship,
+                    'object', m.object, 'details', m.details, 'how', m.how,
+                    'at', m.session_started_at)
+                    ORDER BY m.created_at, m.id)
+                FROM (SELECT * FROM memory_claims k
+                      WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'
+                        AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0
+                        AND k.reason <> 'waiting for its name to be proposed'
+                      ORDER BY k.created_at, k.id LIMIT 200) m), '[]'::jsonb),
+            'backstory', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', l.id, 'subjectId', l.subject_id, 'subject', s.name,
+                    'objectId', l.object_id, 'object', o.name, 'predicate', l.predicate,
+                    'detail', l.detail, 'quote', l.quote,
+                    'secret', l.secret OR s.audience_limited OR o.audience_limited,
+                    'truth', l.truth, 'upload', l.upload,
+                    'ready', s.status = 'confirmed' AND o.status = 'confirmed',
+                    'waitingOn', to_jsonb(ARRAY(
+                        SELECT x.name
+                        FROM (VALUES (s.name, s.status), (o.name, o.status)) x(name, status)
+                        WHERE x.status <> 'confirmed')))
+                    ORDER BY l.created_at, l.id)
+                FROM (SELECT * FROM backstory_links b
+                      WHERE b.guild_id = g AND b.campaign_id = c
+                      ORDER BY b.created_at, b.id LIMIT 300) l
+                JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c
+                                      AND s.id = l.subject_id
+                                      AND s.status IN ('confirmed', 'proposed')
+                JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c
+                                      AND o.id = l.object_id
+                                      AND o.status IN ('confirmed', 'proposed')), '[]'::jsonb),
+            -- the true sizes, since the lists above are cut at their caps
+            'totals', jsonb_build_object(
+                'claims', (SELECT count(*) FROM memory_claims k
+                           WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'
+                             AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0
+                             AND k.reason <> 'waiting for its name to be proposed'),
+                'backstory', (SELECT count(*) FROM backstory_links b
+                              WHERE b.guild_id = g AND b.campaign_id = c)),
+            -- (a question left with fewer than two live candidates is not shown: nothing can be
+            -- picked, and the bot deletes it when it next reads the queue)
+            'which', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', w.id, 'word', w.word, 'otherId', w.other_id, 'other', o.name,
+                    'otherIsSubject', w.other_is_subject, 'predicate', w.predicate,
+                    'detail', w.detail, 'quote', w.quote, 'secret', w.secret OR o.audience_limited,
+                    'upload', w.upload, 'candidates', w.cands) ORDER BY w.created_at, w.id)
+                FROM (
+                    SELECT q.*, (
+                        SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name,
+                                                           'limited', e.audience_limited)
+                                         ORDER BY lower(e.name), e.id)
+                        FROM memory_entities e
+                        WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (q.candidates)
+                          AND e.id <> q.other_id AND e.status IN ('confirmed', 'proposed')) AS cands
+                    FROM backstory_which q
+                    WHERE q.guild_id = g AND q.campaign_id = c) w
+                JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c
+                                      AND o.id = w.other_id
+                                      AND o.status IN ('confirmed', 'proposed')
+                WHERE jsonb_array_length(COALESCE(w.cands, '[]'::jsonb)) >= 2), '[]'::jsonb));
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_waiting(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_waiting(BIGINT, TEXT) FROM PUBLIC;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -13799,6 +14633,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0209_recap_accepted", RECAP_ACCEPTED),  # each approved version of a recap (#2122)
     ("0210_plot_issues", PLOT_ISSUES),  # PlotBot's check of a recap and its issues (#2122)
     ("0211_plot_chat", PLOT_CHAT),  # the DM's talk with PlotBot about an issue (#2123)
+    ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
+    ("0213_handover_claim", HANDOVER_CLAIM),  # opening a hand-over link on the website (#2532)
+    ("0214_handover_move", HANDOVER_MOVE),  # a hand-over to another server is asked for (#2532)
+    ("0215_campaign_move_cascade", CAMPAIGN_MOVE_CASCADE),  # a campaign can change server (#2532)
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
@@ -13815,7 +14653,15 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0228_graph_overview",
         GRAPH_OVERVIEW,
     ),  # every name on the Story graph, not only the centre's web (#2632)
+    ("0229_link_decide", LINK_DECIDE_ACTIONS),  # Confirm / Not right from the website (#2635)
     ("0230_audio_remake", RECAP_AUDIO_REMAKE),  # what the audio did and how far (#2630)
+    ("0231_link_upload", BACKSTORY_LINK_UPLOAD),  # where a waiting connection came from (#2650)
+    ("0232_link_which", BACKSTORY_WHICH),  # "Which Mara?" waits for the DM's pick (#2650)
+    ("0233_web_waiting", WEB_WAITING),  # the website reads and answers what waits (#2652)
+    (
+        "0234_move_cascade_late",
+        MOVE_CASCADE_LATE,
+    ),  # keys of tables made after 0215 cascade too (#2550)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -13827,6 +14673,7 @@ ISOLATED_TABLES = (
     "plot_checks",
     "plot_issues",
     "plot_fine",
+    "backstory_which",
     "transcript_erasures",
     "secret_exposures",
     "web_delete_notices",

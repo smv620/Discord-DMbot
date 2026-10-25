@@ -176,6 +176,8 @@ services:
       DMBOT_IMPORTS_SERVERS: ${DMBOT_IMPORTS_SERVERS:-}
       # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
+      # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
+      DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
       DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

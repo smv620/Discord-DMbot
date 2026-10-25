@@ -15,13 +15,20 @@ whatever happened, and a claimed row that stalled is picked up again.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Collection
+from dataclasses import dataclass, replace
 
 from dmbot.db import Database
+from dmbot.memory import backstory_keep as keep
+from dmbot.memory import claims as claims_mod
 from dmbot.memory import link_edits
+from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
+from dmbot.memory.claims import ClaimStore
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.models import (
+    CLAIM_CONFIRMED,
+    CLAIM_PROPOSED,
+    CLAIM_REJECTED,
     CONFIRMED,
     DM,
     MERGE_MANY_MAX,
@@ -46,7 +53,29 @@ BAD_KIND = "bad_kind"  # a kind the rules do not take
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
+GONE = "gone"  # a waiting question that is not waiting any more
+NAME_FIRST = "name_first"  # a new name in it has to be answered first (in Check new names)
+STOPPED = "stopped_recording"  # someone whose words it holds is no longer recorded
+CANNOT_WRITE = "cannot_write"  # the rules refuse to write that fact now
+QUEUE_FULL = "queue_full"  # too many connections wait already: answer some of them first
 
+WAITING = (
+    "claim-confirm",
+    "claim-reject",
+    "backstory-keep",
+    "backstory-skip",
+    "backstory-keep-all",
+    "backstory-which-pick",
+    "backstory-which-neither",
+)
+CLAIM_REFUSALS = {
+    claims_mod.GONE: GONE,
+    claims_mod.NAME_FIRST: NAME_FIRST,
+    claims_mod.STOPPED_NOW: STOPPED,
+    # A claim that reads like an instruction is dropped for good as it is looked at, so the answer
+    # is final: the question is gone, not "try again" (Supervisor, #2638).
+    claims_mod.ODD_NOW: GONE,
+}
 ALIAS_KIND = "nickname"  # what the name card calls an other name the DM adds
 
 
@@ -158,13 +187,34 @@ def _failed(why: str) -> Outcome:
     return Outcome(error=why)
 
 
+@dataclass(frozen=True, slots=True)
+class Waiting:
+    """What the answers to waiting connections need besides the memory store (#2635): the claims
+    PlotBot found in a session, the connections a backstory found, and who may be recorded now."""
+
+    claims: ClaimStore
+    backstory: BackstoryLinks
+    opted_in: Callable[[], Awaitable[Collection[int]]]
+
+
 async def apply(
-    memory: MemoryStore, guild_id: int, dm_user_ids: Collection[int], action: Action
+    memory: MemoryStore,
+    guild_id: int,
+    dm_user_ids: Collection[int],
+    action: Action,
+    waiting: Waiting | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
+    if action.action in WAITING:
+        if waiting is None:
+            return _failed(FAILED)
+        try:
+            return await _answer_waiting(memory, guild_id, cid, action, waiting)
+        except MemoryRuleError:
+            return _failed(NOT_FOUND)
     entity = await memory.entity(guild_id, cid, action.entity_id)
     if entity is not None and entity.type != PERSON and entity.status != CONFIRMED:
         # A claim taken again after a first run that did its work but did not get to say so:
@@ -356,6 +406,71 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
     except MemoryRuleError:
         return _failed(BAD_TARGET)
     return Outcome(**pair)
+
+
+async def _answer_waiting(
+    memory: MemoryStore, guild_id: int, cid: str, a: Action, w: Waiting
+) -> Outcome:
+    """The DM's answer to a waiting connection from the website (#2635, #2642): the very calls
+    the DM screen's buttons make, so the fact is the DM's own word, consent and the plan are
+    checked again, and Undo is the same. A retried job finds the answer already given: done."""
+    if a.action in ("claim-confirm", "claim-reject"):
+        claim = await w.claims.get(guild_id, cid, a.target_id)
+        if claim is None:
+            return _failed(NOT_FOUND)
+        if claim.status != CLAIM_PROPOSED:
+            done = CLAIM_CONFIRMED if a.action == "claim-confirm" else CLAIM_REJECTED
+            return (
+                Outcome(result_id=claim.fact_id or "")
+                if claim.status == done
+                else _failed(NOT_FOUND)
+            )
+        if a.action == "claim-reject":
+            await w.claims.reject(guild_id, cid, a.target_id)
+            return Outcome()
+        try:
+            confirmed = await w.claims.confirm(
+                guild_id, cid, a.target_id, opted_in=await w.opted_in(), secret=a.flag
+            )
+        except MemoryRuleError as exc:
+            # the page words these: the question is gone, a new name has to be answered first,
+            # someone who said it stopped being recorded, or the rules refuse the fact now
+            return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
+        return Outcome(result_id=confirmed.claim.fact_id or "")
+    if a.action in ("backstory-which-pick", "backstory-which-neither"):
+        # "Which Mara?" (#2652): the call the Discord card makes. `text` is the entry picked (one
+        # of the question's candidates, which `pick_which` checks again); Neither drops it.
+        picked = a.text if a.action == "backstory-which-pick" else None
+        result = await w.backstory.pick_which(guild_id, cid, a.target_id, picked)
+        if result == FULL:
+            return _failed(QUEUE_FULL)
+        return Outcome() if result == DONE else _failed(GONE)
+    onto = await memory.ontology(guild_id, cid)
+    symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
+    # both ends are read again here: only a connection whose two names are confirmed is kept
+    waiting = await w.backstory.waiting(guild_id, cid, symmetric=symmetric)
+    ready = [x for x in waiting if x.ready]
+    if a.action == "backstory-keep-all":
+        shown = set(a.text.split())  # the ids the page showed: no other is kept
+        todo = [x for x in ready if x.id in shown]
+        if not todo:
+            return _failed(NOT_FOUND)
+        done_all = await keep.keep_all(memory, w.backstory, guild_id, cid, todo)
+        return Outcome(result_id=str(len(done_all.kept))) if done_all.kept else _failed(BAD_TARGET)
+    if a.action == "backstory-skip":
+        # Skipping writes no fact, so a link may be dismissed while it still waits on a name that
+        # is not confirmed yet; only keeping needs both ends confirmed.
+        skipped = next((x for x in waiting if x.id == a.target_id), None)
+        if skipped is None:
+            return _failed(NOT_FOUND)
+        await w.backstory.remove(guild_id, cid, skipped)
+        return Outcome()
+    link = next((x for x in ready if x.id == a.target_id), None)
+    if link is None:
+        return _failed(NOT_FOUND)
+    one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
+    kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one])
+    return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 
 
 async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action) -> bool:

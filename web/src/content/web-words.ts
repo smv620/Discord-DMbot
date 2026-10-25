@@ -65,8 +65,11 @@ export const webPage = {
   makeMiddle: (name: string): string => `Put ${name} in the middle`,
   inMiddle: "In the middle",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
-  lineText: (a: string, b: string, label: string, more: number): string =>
-    `${a} ↔ ${b}: ${label}${more > 0 ? ` (+${more})` : ""}`,
+  // One connection as a sentence, read subject, then what it does, then object (#2666).
+  lineText: (from: string, words: string, to: string): string => `${from} ${words} ${to}`,
+  furtherOut: "Further out",
+  furtherOutHint: (name: string): string => `Connections between other names, not ${name}.`,
+  theoryWords: "only a theory",
   readOnly: "Only this campaign's DM can change names and connections.",
   undoNote: "DMbot only uses what you confirm. Changes made here can be undone with ↩️ Undo on the name's card in Discord.",
   close: "Close",
@@ -80,8 +83,8 @@ export const webPage = {
   kindChange: "What it is",
   saveKind: "Save what it is",
   edgePanel: (a: string, b: string): string => `${a} and ${b}`,
-  linkText: (a: string, b: string, words: string, direction: "ab" | "ba" | "both"): string =>
-    direction === "ab" ? `${a} ${words} ${b}` : direction === "ba" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
+  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both"): string =>
+    direction === "a-b" ? `${a} ${words} ${b}` : direction === "b-a" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
   wordsLabel: (n: number): string => `Words for connection ${n}`,
   saveWords: (n: number): string => `Save words for connection ${n}`,
   makeSecretShort: "Make secret",
