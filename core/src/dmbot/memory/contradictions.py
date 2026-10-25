@@ -16,7 +16,7 @@ Pure functions plus one reader. The reader reads one campaign, in one snapshot.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from dmbot.memory._changes import BELIEFS, ENTITIES, PERSPECTIVES, RELATIONS
@@ -57,6 +57,7 @@ class Held:
     held_from: int | None
     held_until: int | None
     kind: str = "party"  # whose view: truth, party, pc or npc
+    guess: bool = False  # the connection only holds a guess nobody has kept (read as if kept)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +69,7 @@ class Candidate:
     first_relation_id: str  # the smaller id, so the pair is one candidate whichever way it is met
     second_relation_id: str
     times_unknown: bool  # no game time on one of them: "The game times aren't known"
+    involves_guess: bool = False  # one of the two is a guess a character voiced, not a kept fact
 
 
 def asserts(belief: Belief) -> bool:
@@ -148,8 +150,12 @@ def candidates(
     ones whose game times are known come before those that are not). Pure.
     `types`: each entry's kind; `unique`: the items of which only one exists; `nesting`: the places
     inside places (being in the inn and in the town it is in is one place, not two)."""
-    held = [h for h in held if asserts(h.belief) and not waiting_guess(h.relation)]
+    held = [h for h in held if asserts(h.belief)]
     relations = {h.relation.id: h.relation for h in held}
+    guesses = {h.relation.id for h in held if h.guess}
+    # The connections The truth holds: the party's and the characters' copies of two facts the DM
+    # holds together are not a disagreement (the DM was warned when confirming them).
+    truth_has = {h.relation.id for h in held if h.kind == TRUTH}
     # What a point of view holds, by the names it touches: a rule only ever meets facts that share
     # a name with the one it checks, so each belief meets a few neighbours, not every other belief.
     touching: dict[tuple[str, str], list[Held]] = {}
@@ -169,13 +175,20 @@ def candidates(
             other = relations.get(problem.other_id or "")
             if other is None:
                 continue
+            if (
+                problem.kind in BY_BELIEF_ONLY
+                and mine.relation.id in truth_has
+                and other.id in truth_has
+            ):
+                continue
             first, second = sorted((mine.relation.id, other.id))
             key = (perspective, problem.kind, first, second)
             if key in seen:
                 continue
             seen.add(key)
             unknown = None in (mine.relation.from_game_time, other.from_game_time)
-            out.append(Candidate(perspective, problem.kind, first, second, unknown))
+            involves = mine.relation.id in guesses or other.id in guesses
+            out.append(Candidate(perspective, problem.kind, first, second, unknown, involves))
     return sorted(out, key=lambda c: (c.times_unknown, c.kind, c.first_relation_id))
 
 
@@ -192,8 +205,16 @@ class Contradictions:
 
         async with self._store._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
+            # Kept connections, and the waiting guess connections a reading placed (a secret
+            # proposal made by the extractor): a character's guesses can clash too.
             relations = {
-                r["id"]: r for r in await scope.select(RELATIONS, " AND status = %s", [CONFIRMED])
+                r["id"]: r
+                for r in await scope.select(
+                    RELATIONS,
+                    " AND (status = %s OR (status = 'proposed' AND secret"
+                    " AND source = 'extractor'))",
+                    [CONFIRMED],
+                )
             }
             # Beliefs hold no word of anyone's: ids, numbers and a status, read as the store does.
             rows = await scope.select(BELIEFS, "")
@@ -210,12 +231,28 @@ class Contradictions:
                 key = (row["perspective_id"], row["relation_id"])
                 histories.setdefault(key, []).append(belief_of(row))
         held = [
-            Held(belief, _relation(relations[relation_id]), start, end, kept[perspective_id])
+            Held(
+                belief,
+                _read_as_kept(relations[relation_id]),
+                start,
+                end,
+                kept[perspective_id],
+                waiting_guess(_relation(relations[relation_id])),
+            )
             for (perspective_id, relation_id), history in histories.items()
             for belief, start, end in spans(history)
         ]
         # Every belief in the history is offered: the spans decide which ones overlap in time.
         return candidates(onto, held, types, unique, nesting)
+
+
+def _read_as_kept(row: Mapping[str, object]) -> Relation:
+    """A connection as the rules should see it: a waiting guess connection is compared as if it
+    were kept, since the question is whether two things one character believes clash."""
+    from dmbot.memory.store import _relation
+
+    relation = _relation(dict(row))
+    return replace(relation, status=CONFIRMED) if waiting_guess(relation) else relation
 
 
 def _is_unique(row: Mapping[str, object]) -> bool:

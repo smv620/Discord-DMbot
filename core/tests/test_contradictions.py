@@ -69,6 +69,19 @@ class Finding(ConfirmedMemoryTest):
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute("UPDATE memory_beliefs SET session_at = 0 WHERE session_at IS NULL")
 
+    async def guess(self, view: str, predicate: str) -> None:
+        """A waiting guess connection between Bram and Mira and one character's guess on it (the
+        proposed, secret connection a reading placed holds, made by the extractor)."""
+        relation = new_id()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
+                " object_id, detail, confidence, status, source, mention_ids, secret, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, '', 0.5, 'proposed', 'extractor', '{}', true, 1)",
+                (GUILD_A, self.c, relation, self.bram, predicate, self.mira),
+            )
+        await self.believe(view, relation, 0.75, "accusation", session_at=0)
+
     async def character(self, name: str) -> str:
         """A point of view of one character (a perspective row, as placing makes one)."""
         entity = await self.add(name, type="character", role="player_character", played_by=9)
@@ -186,35 +199,83 @@ class Finding(ConfirmedMemoryTest):
         await self.relate(self.bram, "located_in", town, status="confirmed")
         self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
 
-    async def test_too_many_is_found_for_a_point_of_view_that_believes_it_but_not_for_the_truth(
+    async def test_the_partys_copies_of_two_facts_the_dm_holds_together_are_no_candidate(
         self,
     ) -> None:
         one = await self.add("Harrowmere", type="place")
         two = await self.add("Stonebridge", type="place")
         await self.relate(self.bram, "located_in", one, status="confirmed")
         await self.relate(self.bram, "located_in", two, status="confirmed")
-        party = await self.view("party")
+        # The truth holds both and so do the party's copies: the DM was warned when confirming
+        self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
+
+    async def test_too_many_is_found_when_a_view_believes_what_the_truth_does_not_hold_together(
+        self,
+    ) -> None:
+        one = await self.add("Harrowmere", type="place")
+        two = await self.add("Stonebridge", type="place")
+        await self.relate(self.bram, "located_in", one, status="confirmed")
+        later = await self.relate(self.bram, "located_in", two, status="confirmed")
+        truth, party = await self.view("truth"), await self.view("party")
+        await self.anchor()
+        await self.believe(truth, later.value[0].id, 0.0, "false_evidence", session_at=0)
         found = await self.finder.find(GUILD_A, self.c)
         self.assertEqual([(c.perspective_id, c.kind) for c in found], [(party, "too_many")])
 
-    async def test_a_one_of_a_kind_item_in_two_hands_is_found_for_a_belief_not_for_the_truth(
+    async def test_two_clashing_guesses_of_one_character_are_found_and_marked(self) -> None:
+        rook = await self.character("Rook")
+        for predicate in ("ally_of", "enemy_of"):
+            await self.guess(rook, predicate)
+        found = await self.finder.find(GUILD_A, self.c)
+        (candidate,) = found
+        self.assertEqual((candidate.perspective_id, candidate.kind), (rook, CONTRADICTION))
+        self.assertTrue(candidate.involves_guess)
+
+    async def test_a_guess_against_a_kept_fact_of_the_same_view_is_marked_too(self) -> None:
+        ally, _ = await self.pair()
+        rook = await self.character("Rook")
+        await self.believe(rook, ally, 0.9, "revealed_fact", session_at=0)  # holds the kept one
+        await self.guess(rook, "enemy_of")
+        (candidate,) = [
+            c for c in await self.finder.find(GUILD_A, self.c) if c.perspective_id == rook
+        ]
+        self.assertTrue(candidate.involves_guess)
+
+    async def test_a_kept_pair_is_not_marked_as_a_guess(self) -> None:
+        await self.pair()
+        found = await self.finder.find(GUILD_A, self.c)
+        self.assertTrue(found)
+        self.assertFalse(any(c.involves_guess for c in found))
+
+    async def test_a_one_of_a_kind_item_in_two_hands_is_found_for_a_belief_the_truth_denies(
         self,
     ) -> None:
         sword = await self.add("Heartseeker", type="item")
         await self.relate(self.bram, "carries", sword, status="confirmed")
-        await self.relate(self.mira, "carries", sword, status="confirmed")
-        party = await self.view("party")
+        theirs = await self.relate(self.mira, "carries", sword, status="confirmed")
+        truth, party = await self.view("truth"), await self.view("party")
+        await self.anchor()
+        await self.believe(truth, theirs.value[0].id, 0.0, "false_evidence", session_at=0)
         found = await self.finder.find(GUILD_A, self.c)
         self.assertEqual([(c.perspective_id, c.kind) for c in found], [(party, "held_twice")])
+
+    async def test_a_one_of_a_kind_item_in_two_hands_the_truth_holds_is_no_candidate(self) -> None:
+        sword = await self.add("Heartseeker", type="item")
+        await self.relate(self.bram, "carries", sword, status="confirmed")
+        await self.relate(self.mira, "carries", sword, status="confirmed")
+        self.assertEqual(await self.finder.find(GUILD_A, self.c), [])
 
     async def test_a_pair_is_reported_once_however_it_is_met(self) -> None:
         sword = await self.add("Heartseeker", type="item")
         await self.relate(self.bram, "carries", sword, status="confirmed")
-        await self.relate(self.mira, "carries", sword, status="confirmed")
+        theirs = await self.relate(self.mira, "carries", sword, status="confirmed")
+        await self.anchor()
+        await self.believe(await self.view("truth"), theirs.value[0].id, 0.0, "false_evidence", 0)
         found = await self.finder.find(GUILD_A, self.c)
         self.assertEqual(
             len(found), len({(c.first_relation_id, c.second_relation_id) for c in found})
         )
+        self.assertEqual(len(found), 1)  # (each of the two beliefs raises it; it is one pair)
 
     async def test_a_middle_belief_of_less_than_even_odds_splits_the_history(self) -> None:
         ally, enemy = await self.pair()

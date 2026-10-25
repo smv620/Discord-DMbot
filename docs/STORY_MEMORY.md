@@ -723,7 +723,7 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   is held from the session it was formed in until the next belief of that point of view in that
   connection (the newest has no end); one replaced by a belief with no known session has no knowable end
   and is left out. A candidate holds ids only, and `times_unknown` is set when either connection has no
-  game time ("The game times aren't known"; those sort last). A clashing pair counts for every point of view; "too many" and "held twice" only for a point of view that is not The truth (the DM's own confirmed connections were warned about when confirmed), and being in the inn and in the town it is in is one place. A belief formed and changed in the same session was never held. It reads one campaign and writes nothing.
+  game time ("The game times aren't known"; those sort last). A clashing pair counts for every point of view; "too many" and "held twice" only for a point of view that is not The truth (the DM's own confirmed connections were warned about when confirmed), and being in the inn and in the town it is in is one place. A belief formed and changed in the same session was never held. Two connections The truth holds together are not raised for a point of view that merely copies them. A waiting guess connection (a character's guess a reading placed) is read as if kept, and a candidate that involves one says so (`involves_guess`). It reads one campaign and writes nothing.
   Still to build: the PlotBot grade (major or minor, with a reason), the cap of 3 said on the DM screen,
   and the minor ones kept for the after-session report.
 
