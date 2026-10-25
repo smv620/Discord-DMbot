@@ -20,8 +20,8 @@ from dataclasses import dataclass, replace
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
+from dmbot.memory import beliefs, link_edits, placing
 from dmbot.memory import claims as claims_mod
-from dmbot.memory import link_edits
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.link_words import predicate_for_either
@@ -68,6 +68,17 @@ WAITING = (
     "backstory-which-pick",
     "backstory-which-neither",
 )
+READING_ACTIONS = ("reading-place", "reading-no", "reading-undo")
+# What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
+READING_REFUSALS = {
+    placing.WAITING_ALREADY: "waiting_already",
+    placing.PLOT_IS_KNOWN: "plot_is_known",
+    placing.UNKNOWN_CHARACTER: "unknown_character",
+    placing.A_STATE: "bad_reading",
+    placing.NOT_A_READING: "gone",
+    beliefs.BAD_READING: "bad_reading",
+    beliefs.ALREADY_KNOWN: "already_known",
+}
 CLAIM_REFUSALS = {
     claims_mod.GONE: GONE,
     claims_mod.NAME_FIRST: NAME_FIRST,
@@ -165,6 +176,30 @@ class ActionStore:
             )
             return bool(cur.rowcount)
 
+    async def kept_reading(
+        self, guild_id: int, campaign_id: str, user_id: int, answer_id: str
+    ) -> tuple[str, int] | None:
+        """The keep of a reading that this DM made (the answer `answer_id`), as (the claim, the
+        change batch) for its Undo; None when it is not theirs, not done, or already undone."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT target_id, result_other FROM name_actions WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND user_id = %s AND action = 'reading-place'"
+                " AND state = 'done' AND result_other ~ '^[0-9]+$'",
+                (guild_id, campaign_id, answer_id, user_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (str(row["target_id"]), int(row["result_other"]))
+
+    async def spent(self, guild_id: int, campaign_id: str, answer_id: str) -> None:
+        """The keep was undone: the same answer is not offered an Undo again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE name_actions SET result_other = '' WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s",
+                (guild_id, campaign_id, answer_id),
+            )
+
     async def sweep(self, guild_id: int) -> int:
         """Delete actions older than `KEEP_FOR_S`, whatever their state."""
         async with self._db.guild(guild_id) as conn:
@@ -197,6 +232,11 @@ class Waiting:
     claims: ClaimStore
     backstory: BackstoryLinks
     opted_in: Callable[[], Awaitable[Collection[int]]]
+    # An earlier keep of a reading, for its Undo: given the campaign, the DM and the answer, the
+    # (claim id, change batch), or None when it is not theirs, not done, or already undone (#2412).
+    # `spent` marks the Undo as used.
+    kept_reading: Callable[[str, int, str], Awaitable[tuple[str, int] | None]] | None = None
+    spent: Callable[[str, str], Awaitable[None]] | None = None
 
 
 async def apply(
@@ -210,7 +250,7 @@ async def apply(
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
-    if action.action in WAITING:
+    if action.action in WAITING or action.action in READING_ACTIONS:
         if waiting is None:
             return _failed(FAILED)
         try:
@@ -439,6 +479,8 @@ async def _answer_waiting(
             # someone who said it stopped being recorded, or the rules refuse the fact now
             return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
         return Outcome(result_id=confirmed.claim.fact_id or "")
+    if a.action in READING_ACTIONS:
+        return await _answer_reading(memory, guild_id, cid, a, w)
     if a.action in ("backstory-which-pick", "backstory-which-neither"):
         # "Which Mara?" (#2652): the call the Discord card makes. `text` is the entry picked (one
         # of the question's candidates, which `pick_which` checks again); Neither drops it.
@@ -473,6 +515,47 @@ async def _answer_waiting(
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one])
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
+
+
+async def _answer_reading(
+    memory: MemoryStore, guild_id: int, cid: str, a: Action, w: Waiting
+) -> Outcome:
+    """What people believe, from the website (#2412 slice 3b): the calls the DM screen would make.
+    `reading-place` keeps the reading as a belief (never a fact; `ClaimStore.place`, which asks who
+    is recorded again inside its write), `reading-no` turns it down, `reading-undo` puts a keep
+    back through the store's Undo. A retried job finds the answer already given: done."""
+    if a.action == "reading-undo":
+        if w.kept_reading is None or w.spent is None:
+            return _failed(FAILED)
+        kept = await w.kept_reading(cid, a.user_id, a.target_id)
+        if kept is None:
+            return _failed(GONE)
+        claim_id, batch = kept
+        try:
+            await memory.undo(
+                guild_id, cid, batch, after=lambda c: ClaimStore.reopen_in(c, claim_id)
+            )
+        except MemoryRuleError:
+            return _failed(GONE)  # something changed the same connection since: not undone
+        await w.spent(cid, a.target_id)
+        return Outcome(result_id=claim_id)
+    claim = await w.claims.get(guild_id, cid, a.target_id)
+    if claim is None or claim.reading is None:
+        return _failed(NOT_FOUND)
+    if claim.status != CLAIM_PROPOSED:
+        done = CLAIM_CONFIRMED if a.action == "reading-place" else CLAIM_REJECTED
+        return Outcome(result_id=claim.fact_id or "") if claim.status == done else _failed(GONE)
+    if a.action == "reading-no":
+        await w.claims.reject(guild_id, cid, a.target_id)
+        return Outcome()
+    try:
+        placed = await w.claims.place(guild_id, cid, a.target_id, opted_in=w.opted_in)
+    except MemoryRuleError as exc:
+        why = str(exc)
+        return _failed(CLAIM_REFUSALS.get(why) or READING_REFUSALS.get(why) or CANNOT_WRITE)
+    return Outcome(
+        result_id=placed.relation_id, result_other=str(placed.batch) if placed.batch else ""
+    )
 
 
 async def _already(memory: MemoryStore, guild_id: int, cid: str, link: Relation, a: Action) -> bool:

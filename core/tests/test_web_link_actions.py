@@ -1158,6 +1158,176 @@ class TheReveal(Editing):
         self.assertEqual(await self.refused_reveal("name", "not an id"), "not_found")
 
 
+class WhatPeopleBelieve(Editing):
+    """The website's list of readings and its three answers (#2412 slice 3b): the DM keeps a reading
+    as a belief (never a fact), says no, or undoes a keep; the bot makes the calls the DM screen
+    would."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.recorded = {7}
+
+    async def reading(
+        self, status: str = "theory", confidence: float = 0.5, obj: str = "Far Hall"
+    ) -> str:
+        from dmbot.memory import readings
+
+        theory = readings.BeliefProposal(
+            "pc:Rook", "Mira Voss", "knows", obj, confidence, status, ("1",)
+        )
+        await self.claims.propose(
+            self.g, self.one.id, [readings.as_claim(theory, "player_said")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE reading IS NOT NULL AND status = 'proposed'"
+                " ORDER BY created_at DESC, id LIMIT 1"
+            )
+            return str((await cur.fetchone() or {})["id"])
+
+    async def listed(self, who: Any = None) -> dict[str, Any]:
+        return await relationships.read_readings(self.web, who or self.session, self.cref)
+
+    async def answer(self, action: str, ident: str, who: Any = None) -> str:
+        return await relationships.queue_reading(
+            self.web, who or self.session, self.cref, {"action": action, "id": ident}
+        )
+
+    async def run_bot(self) -> list[wa.Outcome]:
+        async def now() -> set[int]:
+            return self.recorded
+
+        async def kept(cid: str, uid: int, answer: str) -> tuple[str, int] | None:
+            return await self.actions.kept_reading(self.g, cid, uid, answer)
+
+        async def spent(cid: str, answer: str) -> None:
+            await self.actions.spent(self.g, cid, answer)
+
+        return await self.apply_all(
+            waiting=wa.Waiting(self.claims, self.backstory, now, kept, spent)
+        )
+
+    async def connections(self) -> list[Any]:
+        return [r for r in await self.memory.relations(self.g, self.one.id, include_secret=True)]
+
+    async def test_the_list_has_the_words_and_leaves_plain_claims_out(self) -> None:
+        await self.claims.propose(
+            self.g, self.one.id, [said("Mira Voss", "knows", "Far Hall")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        ident = await self.reading("accusation", 0.75)
+        got = await self.listed()
+        (item,) = got["readings"]
+        self.assertEqual(item["id"], ident)
+        self.assertEqual(
+            (item["rule"], item["who"], item["statement"], item["sureness"], item["canPlace"]),
+            ("accusation", "Rook", "Mira Voss knows Far Hall", "fairly sure", True),
+        )
+        self.assertEqual((got["counts"], got["capped"]), ({"readings": 1}, False))
+
+    async def test_only_a_dm_reads_them_or_answers(self) -> None:
+        ident = await self.reading()
+        with self.assertRaises(RecapError):
+            await self.listed(self.player)
+        with self.assertRaises(RecapError):
+            await self.answer("place", ident, self.player)
+
+    async def test_keeping_one_writes_a_belief_not_a_fact_and_the_answer_shows_its_wait(
+        self,
+    ) -> None:
+        ident = await self.reading()
+        answer = await self.answer("place", ident)
+        early = await self.poll(answer)
+        self.assertEqual(
+            (early["state"], early["waits"]["stage"], early["undoable"]),
+            ("waiting", "queued", False),
+        )
+        (outcome,) = await self.run_bot()
+        self.assertEqual(outcome.error, "")
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"], done["undoable"]), ("done", "", True))
+        self.assertEqual(done["waits"]["stage"], "done")
+        self.assertGreater(done["waits"]["lastMovedAt"], 0)
+        self.assertEqual((await self.listed())["readings"], [])  # it left the list
+        host = [r for r in await self.connections() if r.status != "confirmed"]
+        self.assertEqual(len(host), 0)  # (a guess connection is not a connection: not even listed)
+        claim = await self.claims.get(self.g, self.one.id, ident)
+        assert claim is not None
+        self.assertEqual(claim.status, "confirmed")
+        self.assertTrue(claim.fact_id)
+
+    async def test_no_writes_nothing(self) -> None:
+        ident = await self.reading()
+        answer = await self.answer("no", ident)
+        await self.run_bot()
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        claim = await self.claims.get(self.g, self.one.id, ident)
+        assert claim is not None
+        self.assertEqual(claim.status, "rejected")
+        self.assertEqual((await self.listed())["readings"], [])
+
+    async def test_undo_puts_the_question_back_and_only_once(self) -> None:
+        ident = await self.reading()
+        kept = await self.answer("place", ident)
+        await self.run_bot()
+        undo = await self.answer("undo", kept)
+        await self.run_bot()
+        self.assertEqual((await self.poll(undo))["state"], "done")
+        self.assertEqual([r["id"] for r in (await self.listed())["readings"]], [ident])
+        self.assertFalse((await self.poll(kept))["undoable"])
+        with self.assertRaises(RecapError):  # nothing left to undo
+            await self.answer("undo", kept)
+
+    async def test_a_stale_press_ends_gone_and_a_stopped_speaker_ends_stopped(self) -> None:
+        ident = await self.reading()
+        first = await self.answer("place", ident)
+        await self.run_bot()
+        with self.assertRaises(RecapError):  # it is not waiting any more
+            await self.answer("place", ident)
+        self.assertEqual((await self.poll(first))["error"], "")
+        other = await self.reading("theory", 0.25, "Greywater Keep")
+        self.recorded = set()  # the speaker stopped being recorded after the page was drawn
+        stopped = await self.answer("place", other)
+        await self.run_bot()
+        done = await self.poll(stopped)
+        self.assertEqual((done["state"], done["error"]), ("failed", "stopped_recording"))
+
+    async def test_the_door_refuses_bad_shapes(self) -> None:
+        for body in ({}, {"action": "keep", "id": "a" * 32}, {"action": "place", "id": "nope"}):
+            with self.subTest(body), self.assertRaises(RecapError):
+                await relationships.queue_reading(self.web, self.session, self.cref, body)
+
+    async def test_the_routes_list_queue_and_answer(self) -> None:
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        ident = await self.reading()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+            listed = await client.get(f"/me/campaigns/{self.cref}/web/readings")
+            self.assertEqual([r["id"] for r in listed.json()["readings"]], [ident])
+            posted = await client.post(
+                f"/me/campaigns/{self.cref}/web/readings", json={"action": "place", "id": ident}
+            )
+            self.assertEqual(posted.status_code, 202)
+            await self.run_bot()
+            answer = await client.get(
+                f"/me/campaigns/{self.cref}/web/answers/{posted.json()['answer']}"
+            )
+            self.assertEqual((answer.json()["state"], answer.json()["undoable"]), ("done", True))
+            bad = await client.post(
+                f"/me/campaigns/{self.cref}/web/readings", json={"action": "keep", "id": ident}
+            )
+            self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_action"))
+
+
 class TheRoutes(Editing):
     async def test_the_routes_queue_and_answer(self) -> None:
         from dmbot.web import sessions
