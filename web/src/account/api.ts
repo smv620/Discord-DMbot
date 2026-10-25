@@ -1543,7 +1543,6 @@ export type ApiErrorKind =
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
   | "bad-answer" // the Plot check's answer was not one it takes (#2122)
-  | "stale" // the recap changed since its Plot check (#2122)
   | "plot-open" // Approve waits for the Plot check's open questions (#2122)
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
@@ -1919,7 +1918,6 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_email: "no-email",
   too_soon: "too-soon",
   bad_answer: "bad-answer",
-  stale: "stale",
   plot_open: "plot-open",
   ended: "ended",
   owner: "owner-offer",
