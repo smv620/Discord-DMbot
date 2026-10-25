@@ -251,6 +251,8 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
     "not-editable":
       "This recap can't be changed any more. Reload the page to see where it is now.",
     "bad-text": "The recap is empty or too long. Shorten it and save again.",
+    "fixed-lines":
+      "Nothing was saved. The first and last lines of a recap are DMbot's and can't be changed. Put them back as they were.",
     "bad-cues": "Nothing was saved. Some cues need fixing. See the list under the text box.",
     other: "Something went wrong on our side. Try again in a minute.",
   };

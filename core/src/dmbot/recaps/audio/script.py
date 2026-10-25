@@ -18,6 +18,7 @@ import re
 from collections.abc import Collection
 from dataclasses import dataclass
 
+from dmbot.recaps import fixed_lines
 from dmbot.recaps.text import CUE, PERFORMANCE
 from dmbot.secrets_match import secret_rule as matcher
 
@@ -42,6 +43,7 @@ _PERFORMANCE_TAGS = {
 }
 PERFORMANCE_WORDS = tuple(_PERFORMANCE_TAGS)  # the pacing words the cue check allows
 SCENE_BREAK_TAG = "[long pause]"
+CLOSING_PAUSE_TAG = "[long pause]"  # before the closing line (owner, 2026-10-24, #2627)
 
 # The voice's delivery tag for each mood the music has a style for (#1983), keyed by the music
 # table's own words (`music.style_key` maps a cue's word, synonyms included, to them). Fixed on
@@ -89,6 +91,7 @@ class Paragraph:
     previous_text: str
     next_text: str
     cues: tuple[Cue, ...]
+    closing: bool = False  # the recap's closing line: said after a long pause (#2627)
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,8 +310,15 @@ def build(
     for i, (sp, tg, cs) in enumerate(pieces):
         prev_text = pieces[i - 1][0][-NEIGHBOUR_CHARS:] if i > 0 else ""
         next_text = pieces[i + 1][0][:NEIGHBOUR_CHARS] if i + 1 < len(pieces) else ""
-        cue_tuple = tuple(Cue(cursor + o, to, k, n, t) for o, to, k, n, t in cs)
-        paragraphs.append(Paragraph(sp, tg, cursor, prev_text, next_text, cue_tuple))
+        shift = 0
+        closing = i == len(pieces) - 1 and i > 0 and fixed_lines.is_closing(sp)
+        if closing:
+            # The closing line is said after a dramatic pause (#2627): the tag asks the voice for
+            # it, and the render adds silence before it (`CLOSING_GAP_SECONDS`).
+            tg = f"{CLOSING_PAUSE_TAG} {tg}"
+            shift = len(CLOSING_PAUSE_TAG) + 1  # (the voice's timestamps count the tag)
+        cue_tuple = tuple(Cue(cursor + o, to + shift, k, n, t) for o, to, k, n, t in cs)
+        paragraphs.append(Paragraph(sp, tg, cursor, prev_text, next_text, cue_tuple, closing))
         spoken_all.append(sp)
         cursor += len(sp) + 2  # the blank line between paragraphs
     return Script(tuple(paragraphs), "\n\n".join(spoken_all))

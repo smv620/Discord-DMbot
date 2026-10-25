@@ -19,7 +19,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, callers
 from tests.test_web_all_names import MEMBER, Listing
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 BOB_USER = DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email)
 
@@ -207,6 +207,21 @@ class Shaping(unittest.TestCase):
         self.assertEqual(links["3"]["direction"], "a-b")
         self.assertEqual([x["secret"] for x in edge["links"]], [False, False, True])
 
+    def test_every_connection_with_a_reading_back_sends_it_not_only_family(self) -> None:
+        """#2666: the page writes each line from the name in the middle, so a one-way link that
+        reads into the middle ("has as a member") needs its `back` whatever the predicate."""
+        rows = [
+            self.row("1", "a", "b", "member_of", 1),
+            self.row("2", "a", "b", "serves", 2),
+            self.row("3", "a", "b", "ally_of", 3),  # reads the same either way: no back
+        ]
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        links = {x["id"]: x for x in edge["links"]}
+        self.assertEqual(links["1"]["back"], "has as a member")
+        self.assertEqual(links["2"]["back"], "is the boss of")
+        self.assertIsNone(links["3"]["back"])
+        self.assertEqual(links["1"]["words"], "is a member of")
+
     def test_the_secret_flag_is_a_dms_only_and_never_picks_the_label(self) -> None:
         rows = [
             self.row("1", "a", "b", "knows", 1),
@@ -392,11 +407,11 @@ class TheRoute(Web):
             clock=lambda: NOW,
         )  # fmt: skip
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API,
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test",
             headers={"X-DMbot-Request": "1"},
         )  # fmt: skip
         token = await self.token_of(who)
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         return client
 
     async def token_of(self, who: Any) -> str:

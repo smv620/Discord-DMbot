@@ -26,11 +26,13 @@ from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
-    BOTH_WAYS,
     CARD_BACK,
     CONNECTION_BACK,
     CONNECTION_WORDS,
+    back_words,
     connection_words,
+    link_words,
+    reads_both_ways,
 )
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -147,7 +149,9 @@ def fact_words(r: Relation) -> str:
     ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
         return _md(r.detail)  # transcript words: never let them format or ping
-    return connection_words(r.predicate)
+    return link_words(
+        r.predicate, r.detail, r.directional
+    )  # (family reads with its role: "is the niece of")
 
 
 def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
@@ -217,7 +221,7 @@ def _rows(
             continue
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
-        ahead = r.subject_id == entity_id or r.predicate in BOTH_WAYS
+        ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
@@ -227,7 +231,11 @@ def _rows(
             else (
                 f"is linked (“{_md(r.detail)}”) to"
                 if r.predicate == FALLBACK_PREDICATE and r.detail
-                else CARD_BACK.get(r.predicate, "is connected to")
+                else (
+                    (back_words(r.predicate, r.detail, r.directional) or "is connected to")
+                    if r.predicate == "kin_of"
+                    else CARD_BACK.get(r.predicate, "is connected to")
+                )
             )
         )
         found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r))

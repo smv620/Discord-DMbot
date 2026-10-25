@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
-import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
+import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
 import { initiativeLine, peopleListLine, storyStatesLine } from "../src/content/privacy-channels";
@@ -155,12 +155,39 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("names Voyage AI as a processor, with what it gets and what is deleted (#2664)", () => {
+    const voyage = privacy().slice(privacy().indexOf("MongoDB, Inc.)"));
+    expect(voyage.slice(0, 900)).toContain("the campaign's own text");
+    expect(voyage.slice(0, 900)).toContain("never sound");
+    expect(voyage.slice(0, 900)).toContain("only while it keeps that text, and deletes it when the text, or the campaign, is deleted");
+    expect(voyage.slice(0, 900)).toContain("Voyage AI does not use your campaign's text to train its models");
+    expect(privacy()).toContain("Voyage AI (part of MongoDB, Inc.)");
+  });
+
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, Voyage AI \(MongoDB\), OVH US, Cloudflare, GitHub and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
+  });
+
+  it("lists Google (Gemini) as the recap writer only if switched on, says what it is sent, and links its terms (#2583)", () => {
+    const p = privacy();
+    expect(p).toContain("Google (Gemini): only if switched on.");
+    expect(p).toContain("It is off unless DMbot LLC turns it on.");
+    // what the writer is sent (owner decision 2026-10-23, #2590): the cleaned transcript, the list of what happened,
+    // the names, the last recap, style notes and fixes; never sound, the as-heard transcript or the DM screen
+    expect(p).toContain("the session's cleaned transcript (what was said at the table by people who agreed to be recorded, with the off-topic chat left out)");
+    expect(p).toContain("a short list of what happened (and who and where)");
+    expect(p).toContain("It never gets sound, the as-heard transcript, or anything from the DM screen.");
+    expect(p).not.toContain("full transcript"); // the earlier wording, which stopped being true with #2590
+    expect(p).toContain("Google's paid terms say it doesn't use that text to train its AI.");
+    expect(p).toContain("Google is a company in the United States.");
+    const link = doc("privacy").querySelector('a[href="https://ai.google.dev/gemini-api/terms"]');
+    expect(link?.textContent).toBe("Google's terms for paid use");
+    // the Anthropic line keeps its own training sentence
+    expect(p).toContain(aiTrainingSentence);
   });
 
   it("states the owner's choices on prices, closing, Try It, takedowns and service level", () => {
@@ -337,7 +364,10 @@ describe("what the AI company does with the text (#1328)", () => {
     // The public Q&A section (#1356) repeats the same sentence once it is switched on, so it counts
     // there too; qabot-privacy.test.ts checks that it is the same sentence.
     // The Recaps section (#1384) repeats it too once recaps are live: it says the same of the recap writer.
-    expect(privacy().match(/train/gi)).toHaveLength(1 + (QABOT_LIVE ? 1 : 0) + (RECAPS_LIVE ? 1 : 0));
+    // The Google (Gemini) line (#2583) has its own paid-terms sentence, which is about Google's AI.
+    // Voyage AI's line makes its own promise (#2664): it counts once, and the owner's opt-out in
+    // Voyage's settings must be done before that line is merged.
+    expect(privacy().match(/train/gi)).toHaveLength(3 + (QABOT_LIVE ? 1 : 0) + (RECAPS_LIVE ? 1 : 0));
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {

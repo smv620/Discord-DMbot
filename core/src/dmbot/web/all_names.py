@@ -31,7 +31,7 @@ PAGE_LIMIT = 100_000  # far past any campaign: 2 million names
 # `memory/background.LABELS`, as in 📝 Check new names) are shown in those words, so the website and
 # Discord agree (#2376). The rest are the website's own.
 KIND_LABELS: dict[str, str] = {
-    "player_character": "Player characters",
+    "player_character": "PCs",
     "character": "Characters",
     "creature": "Creatures",
     "clue": "Clues",
@@ -48,7 +48,8 @@ KIND_LABELS: dict[str, str] = {
 
 def _label(key: str) -> str:
     if key in LABELS:
-        return LABELS[key][1].capitalize()
+        plural = LABELS[key][1]
+        return plural[:1].upper() + plural[1:]  # (not capitalize(): it would turn NPCs into Npcs)
     return KIND_LABELS.get(key) or key.replace("_", " ").capitalize()
 
 

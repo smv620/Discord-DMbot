@@ -20,12 +20,14 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
-from dmbot.recaps import critics, cues
+from dmbot.recaps import critics, cues, fixed_lines
+from dmbot.recaps import progress as recap_progress
 from dmbot.recaps.allowance import month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
-from dmbot.recaps.draft import BULLET_MAX, HOUSEKEEPING_BULLETS, SUMMARY_MAX
+from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.held import apply_held
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
@@ -37,13 +39,18 @@ LIST_LIMIT = 20
 
 _COLUMNS = (
     "r.guild_id, r.campaign_id, r.session_at, r.state, r.status, r.title, r.summary,"
-    " r.housekeeping, r.music, r.tries, r.last_error, r.game_day, c.name AS campaign,"
+    " r.housekeeping, r.music, r.tries, r.last_error, r.next_at, r.game_day, c.name AS campaign,"
     " r.audio, r.audio_error, r.audio_text_hash, r.to_confirm,"
     " r.approved_by, r.approved_at, r.approved_hash, r.audio_choice, r.speakers, r.share_token,"
     " r.respelled_at, r.critics, c.recaps_email AS mail_on,"
     # The posting clock's columns (#2435): the page's `postingSince`, `postingStep` and `postedUrl`
     # are made from them in `_view` (WebDev's #2436 owns those keys).
-    " r.posting_since, r.posting_step, r.posted_url,"
+    " r.posting_since, r.posting_step, r.posted_url, r.restarted_at, r.previous,"
+    " r.written_by, r.uploaded_at, r.earlier,"
+    # How far the work has got (#2636): `progress` in `_view` is made from these (counts and times).
+    " r.created_at, r.updated_at, r.window_count, r.window_done, r.calls, r.errors,"
+    # What the last making of the audio did and how far the one under way has got (#2630).
+    " r.audio_how, r.audio_why, r.audio_stage, r.audio_done, r.audio_total, r.audio_moved_at,"
     # The signed-in person's own address, the one `recaps/notify.py` mails (the payment company's,
     # else the sign-in one; the same COALESCE as `dmbot_recap_address`). web_users is forced to
     # the person's own row, so no other DM's address can come out of this (#2334).
@@ -99,7 +106,33 @@ def _audio_view(row: dict[str, Any], *, ready: bool, approved: bool = False) -> 
         and (row["status"] != "posted" or not current),
         # The page says what the new narration is for: the Discord message keeps the old one.
         "postedNote": row["status"] == "posted",
+        # What the last making did (#2630): `new`, `voice` (only the changed paragraphs were spoken
+        # again, the music kept), `all` (everything again, `why` says why: paragraphs, moods, size
+        # or no_parts) or `same` (the words the voice reads had not changed); fixed words only.
+        "how": row.get("audio_how") or "",
+        "why": row.get("audio_why") or "",
+        # While it is made: the shared progress shape (stage audio_voice / audio_music / audio_mix,
+        # the paragraphs spoken `done` of `total`, when it last moved). Counts and codes only.
+        "progress": _audio_progress(row),
     }
+
+
+def _audio_progress(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    stage = row.get("audio_stage") or ""
+    if row["audio"] != "queued" or not stage:
+        return None
+    moved = int(row.get("audio_moved_at") or 0)
+    began = int(row.get("posting_since") or 0) or moved
+    voice = stage == "voice"
+    return progress.shape(
+        f"audio_{stage}",
+        started_at=began,
+        updated_at=moved,
+        now=int(time.time()),
+        done=int(row["audio_done"]) if voice else None,
+        total=int(row["audio_total"]) if voice else None,
+        unit=progress.UNITS.get(f"audio_{stage}"),
+    )
 
 
 def _approved(row: dict[str, Any]) -> bool:
@@ -150,12 +183,6 @@ def _unchecked_sentences(row: Mapping[str, Any], ready: bool) -> list[int]:
     ]
 
 
-# Whether the recap page may offer "approve it as it is" for a draft unchecked for 3 days (#2305).
-# The page and this read side are built; the approve itself changes where the job is in the bot's
-# steps, which is the bot's to do, so the route stays off until it does.
-APPROVE_UNCHECKED_LIVE = False
-
-
 def _unchecked_draft(row: Mapping[str, Any], ready: bool) -> list[str]:
     """The draft's sentences, for the DM to read, once it has waited for its check for 3 days
     (#2297): empty before that, and for a recap that is ready. The same split the marked sentence
@@ -164,6 +191,8 @@ def _unchecked_draft(row: Mapping[str, Any], ready: bool) -> list[str]:
     import time
 
     since = _unchecked_since(row, ready)
+    # (the database's door counts the same 3 days by its own clock; at the boundary the page can
+    # offer the button a moment before the door agrees, and the door's answer stands)
     if since == 0 or time.time() - since < critics.UNCHECKED_AFTER_S:
         return []
     from dmbot.recaps import draft
@@ -179,6 +208,33 @@ def _mail_view(row: dict[str, Any]) -> dict[str, Any]:
     address = row.get("mail_address") or None
     source = "none" if address is None else ("payment" if row.get("mail_is_payment") else "signin")
     return {"address": address, "source": source, "on": bool(row.get("mail_on", True))}
+
+
+def _previous_view(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The earlier approved or posted recap, while it is still held for the DM (#2608): only until
+    the new text is approved or posted, as `Job.keeps_previous` says."""
+    kept = row.get("previous")
+    if not isinstance(kept, dict) or row.get("approved_hash") or row["status"] != "draft":
+        return None
+    return {
+        "title": kept.get("title", ""),
+        "text": strip_cues(str(kept.get("summary", ""))),
+        "status": kept.get("status", ""),  # draft (approved) or posted
+        "postedUrl": kept.get("posted_url") or "",
+    }
+
+
+def _earlier_view(raw: object) -> list[dict[str, Any]]:
+    return [
+        {
+            "title": str(e.get("title", "")),
+            "text": strip_cues(str(e.get("summary", ""))),
+            "writtenBy": e.get("written_by") or None,
+            "replacedAt": int(e.get("replaced_at") or 0),
+        }
+        for e in (raw if isinstance(raw, list) else [])
+        if isinstance(e, dict)
+    ]
 
 
 def _view(row: dict[str, Any]) -> dict[str, Any]:
@@ -205,6 +261,10 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         # The recap is written and waits for its last check (#2255): a note for the DM's card
         # (the words are `error`); not a failure and nothing to do.
         "waitingForCheck": row["last_error"] == critics.CHECK_WAIT and not ready,
+        # When DMbot tries the check again (Unix seconds), while it waits; else 0 (#2596).
+        "nextTryAt": (
+            int(row["next_at"] or 0) if row["last_error"] == critics.CHECK_WAIT and not ready else 0
+        ),
         # While it waits for its check: since when (Unix seconds, 0 before the first wait), and the
         # sentences the word list marks as likely to state a reason or a plan (their numbers, from
         # 1), which no check has read: for the DM's page, where they may read it and approve it
@@ -212,11 +272,14 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "uncheckedSince": _unchecked_since(row, ready),
         "uncheckedSentences": _unchecked_sentences(row, ready),
         "uncheckedDraft": (unchecked := _unchecked_draft(row, ready)),
+        # The hash of the words the page shows (title and summary), sent back with "approve it as
+        # it is" so that only the text the DM read is approved (#2305).
+        "textHash": text_hash(row["title"], row["summary"]),
         # Only while it still waits (a failed or dropped recap is not opened this way).
-        "canApproveUnchecked": APPROVE_UNCHECKED_LIVE
-        and bool(unchecked)
-        and status == "draft"
-        and state not in ("ready", "failed"),
+        "canApproveUnchecked": bool(unchecked)
+        and state == "prose"
+        and not critics.loop_from_json(row.get("critics")).approved_at
+        and status == "draft",
         "canEdit": ready,
         "canPost": ready,
         # While it goes out or its audio is made (#2419): when the work started on the server, the
@@ -227,12 +290,32 @@ def _view(row: dict[str, Any]) -> dict[str, Any]:
         "postingSince": row.get("posting_since"),
         "postingStep": row.get("posting_step"),
         "postedUrl": row.get("posted_url"),
-        "serverNow": int(time.time()),
+        "serverNow": (now := int(time.time())),
+        # While it is made (#2636): the shared progress shape of every website wait, with the step
+        # (`stage`), the parts of a long session read (`done` of `total`), when it began and when
+        # it last moved, and `state` (running, stalled, failed or done); a failure is a fixed code
+        # in `reason`. Counts and codes only. Null once the recap is posted or dropped.
+        "progress": recap_progress.of(row, now=now),
         "canTryAgain": status == "draft"
         and state in ("ready", "failed")
         and row["tries"] < MAX_TRIES,
         "triesLeft": max(0, MAX_TRIES - row["tries"]),
         "canDrop": status == "draft",
+        # Start the recap over (#2608): from a finished or failed one (not while it is being
+        # written or sent). `restartedAt` is when the DM last did (Unix seconds, 0: never).
+        # (a recap waiting for its check or between tries can be started over too: the DM's way out)
+        "canMakeAgain": status in ("draft", "posted")
+        and (state in ("ready", "failed") or row["last_error"] == critics.CHECK_WAIT),
+        "restartedAt": int(row.get("restarted_at") or 0),
+        # A recap written by someone at the table (#2609): who wrote it, null for DMbot's own;
+        # the DM who added it and when; the recaps it replaced, newest first (words and who wrote
+        # them, never where they were posted).
+        "writtenBy": row.get("written_by") or None,
+        "uploadedAt": int(row.get("uploaded_at") or 0),
+        "earlier": _earlier_view(row.get("earlier")),
+        # The recap that was approved or posted before the DM started over, kept until the new
+        # one is approved (#2608); null otherwise. `Keep the earlier one` is `/keep` below.
+        "previous": _previous_view(row),
         "audio": _audio_view(
             row,
             ready=status in ("draft", "posting", "posted") and state == "ready",
@@ -497,10 +580,12 @@ async def edit_recap(
         raise RecapError("bad_text")
     if refusal := cue_refusal(text):  # the edit stays unsaved until the cues are right (#2083)
         raise refusal
-    if len(bullets) > HOUSEKEEPING_BULLETS or any(len(b) > BULLET_MAX for b in bullets):
+    if len(bullets) > HOUSEKEEPING_HARD or any(len(b) > BULLET_HARD for b in bullets):
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
+        if fixed_lines.changes_fixed_lines(_row["summary"], text):
+            raise RecapError("fixed_lines")  # the opening and closing lines are DMbot's (#2630)
         cur = await conn.execute(
             "UPDATE recap_jobs SET summary = %s, housekeeping = %s WHERE guild_id = %s"
             " AND campaign_id = %s AND session_at = %s AND state = 'ready' AND status = 'draft'",
@@ -512,10 +597,28 @@ async def edit_recap(
     return _view(row)
 
 
-async def decide(db: Database, session: Session, ref: str, action: str) -> dict[str, Any]:
+async def decide(
+    db: Database,
+    session: Session,
+    ref: str,
+    action: str,
+    *,
+    plot_gate: bool = False,
+    outside_engine: str | None = None,
+) -> dict[str, Any]:
     """`post` (the bot sends it), `drop` or `again` (Try again, at most twice). The page no longer
     offers `drop` (#2419: a recap the DM does not approve simply stays a draft); the route stays
-    so an older open page still works."""
+    so an older open page still works. **Posting a draft that is not approved counts as approving
+    it** (Supervisor, 2026-10-23, #2122): it goes through the approval door (text only, posted in
+    the same statement), so the version is kept and PlotBot's open points hold it (`plot_open`),
+    as for the Approve button. `plot_gate`, `outside_engine`: as for `approve_recap`."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, current = await _one(conn, ref, session, marks=False)
+    if action == "post" and not _approved(current):
+        return await approve_recap(
+            db, session, ref, TEXT, audio_in_plan=False, post=True,
+            outside_engine=outside_engine, plot_gate=plot_gate,
+        )  # fmt: skip
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await _one(conn, ref, session, marks=False)
         where = " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
@@ -524,7 +627,11 @@ async def decide(db: Database, session: Session, ref: str, action: str) -> dict[
             cur = await conn.execute(
                 "UPDATE recap_jobs SET status = 'posting' "
                 + where
-                + " AND state = 'ready' AND status = 'draft'",
+                + " AND state = 'ready' AND status = 'draft'"
+                # Only the text the DM approved: an edit between the read above and this statement
+                # (or since the approval) posts nothing. The page's role may read the hash.
+                + " AND approved_hash = encode(sha256(convert_to(title || E'\\n' || summary,"
+                " 'UTF8')), 'hex')",
                 args,
             )
         elif action == "drop":
@@ -594,6 +701,7 @@ async def approve_recap(
     audio_unavailable: str = "",
     post: bool = False,
     outside_engine: str | None = None,
+    plot_gate: bool = False,
 ) -> dict[str, Any]:
     """✅ Approve the text and pick what to make (#2083): the cues are checked here, then the
     database's door (`dmbot_recap_approve`) records who and when and the hash of this very text and
@@ -604,7 +712,9 @@ async def approve_recap(
     it can't be ("not_set_up", "allowance", "unavailable") is refused ("audio_unavailable").
     `post` (#2419, "Approve and post text only"): approve a text-only choice and hand it to the bot
     to post in the same transaction, so a failure leaves nothing approved and half-posted; it is
-    only for the text-only choice, since audio is made and reviewed before anything is posted."""
+    only for the text-only choice, since audio is made and reviewed before anything is posted.
+    `plot_gate` (#2122): PlotBot's check is on, so the door refuses ("plot_open") while an issue it
+    found has no answer, under the same lock as the approval."""
     if choice not in CHOICES or (post and choice != TEXT):
         raise RecapError("bad_choice")
     if choice != TEXT and not audio_in_plan:
@@ -616,11 +726,15 @@ async def approve_recap(
         if refusal := cue_refusal(row["summary"]):
             raise refusal
         await post_checks(conn, gid, cid, row, outside_engine)
+        if plot_gate:
+            await conn.execute("SELECT set_config('dmbot.plot_gate', 'on', true)")
         cur = await conn.execute(
             "SELECT dmbot_recap_approve(%s, %s, %s, %s, %s) AS r",
             (gid, cid, at, choice, text_hash(row["title"], row["summary"])),
         )  # (the hash of the very text whose cues were just checked)
         outcome = (await cur.fetchone() or {}).get("r")
+        if outcome == "plot_open":
+            raise RecapError("plot_open")
         if outcome != "approved":
             raise RecapError("not_allowed")
         if post:  # the same hand-over as `decide(..., "post")`, in this transaction
@@ -631,6 +745,36 @@ async def approve_recap(
             )
             if not cur.rowcount:
                 raise RecapError("not_allowed")  # (the approval is rolled back with it)
+        *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
+async def approve_unchecked(
+    db: Database, session: Session, ref: str, expected: str
+) -> dict[str, Any]:
+    """The DM read a draft that waited 3 days for its check and approves it as it is (#2305).
+    Only through the database's door, which holds it to a DM of the campaign, a draft still
+    waiting in the critics' loop, and the 3 days (`critics.UNCHECKED_AFTER_S`, passed in so the
+    number lives in one place). It does not make the recap ready by itself: it marks the check
+    done and the bot's worker finishes it (title and housekeeping), after which the usual approval
+    and posting apply. The sentences that were not checked stay marked in `criticNotes`, and
+    players see nothing until the DM posts, as with any recap. `expected` is the `textHash` the
+    page showed with the draft: a draft the worker revised since (a waiting try may) approves
+    nothing (`changed`), so the DM only ever approves the words they read. Pressing again after an
+    approval answers the same and changes nothing."""
+    if not isinstance(expected, str) or not 0 < len(expected) <= 64:
+        raise RecapError("bad_hash")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, at, _row = await _one(conn, ref, session, marks=False)  # (not found: not a DM)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_approve_unchecked(%s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, critics.UNCHECKED_AFTER_S, critics.APPROVED_UNCHECKED, expected),
+        )
+        outcome = (await cur.fetchone() or {}).get("r")
+        if outcome in ("not_yet", "changed"):
+            raise RecapError(outcome)
+        if outcome != "approved":
+            raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)
     return _view(row)
 
@@ -688,4 +832,90 @@ async def audio_again(
         if outcome != "queued":
             raise RecapError("not_allowed")
         *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
+async def redo_recap(
+    db: Database, session: Session, ref: str, *, replace: bool = False
+) -> dict[str, Any]:
+    """Make the recap of a session, or make it again (#2608), through the database's door, which
+    holds it to a DM of the campaign, a session that still has its lines, and a recap that is not
+    being written or sent. `ref` may name a session with no recap yet. An existing recap needs
+    `replace` (the page asks once); an approved or posted one stays, in `previous`, until the new
+    one is approved. The bot writes it next round, with the plan and the month's allowance checked
+    there. Returns the recap as `GET /me/recaps/{ref}`."""
+    parsed = parse_ref(ref)
+    if parsed is None:
+        raise RecapError("not_found")
+    gid, cid, at = parsed
+    _guild_of(session, gid)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, gid)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_redo(%s, %s, %s, %s) AS r", (gid, cid, at, replace)
+        )
+        found = await cur.fetchone()
+        outcome = found["r"] if found else "not_allowed"
+        if outcome != "queued":
+            raise RecapError(
+                outcome if outcome in ("needs_confirm", "busy", "no_lines") else "not_allowed"
+            )
+        *_, row = await _one(conn, ref, session)
+    return _view(row)
+
+
+async def upload_recap(
+    db: Database, session: Session, campaign_ref: str, body: object, *, read_link: Any
+) -> dict[str, Any]:
+    """Keep a recap written by someone at the table as a session's recap (#2609). `body`:
+    `{"session": <Unix seconds>, "text": "..." | "link": <a shared Google Doc>, "writtenBy": "...",
+    "title": "..." (optional), "replace": bool, "rights": bool}`. The session need not have a
+    transcript: the DM names it by when it began. The text goes through the database's door
+    whole (up to 50,000 characters), approved by the DM who adds it; the AI writer never sees it.
+    `rights` is the one confirmation per campaign ("written by someone at your table, and you
+    have their OK to use it"); `replace` is the DM's yes to replacing a recap the session has,
+    which is then kept as an earlier version. `read_link` reads a Google Doc's text (raises
+    `DocError`). The bot checks its names next round. Returns the recap as
+    `GET /me/recaps/{ref}`."""
+    from dmbot.recaps import uploaded
+    from dmbot.transcript import import_link
+
+    parsed = parse_ref(f"{campaign_ref}.0")
+    if parsed is None or not isinstance(body, dict):
+        raise RecapError("not_found")
+    gid, cid = parsed[0], parsed[1]
+    _guild_of(session, gid)
+    at = body.get("session")
+    replace, rights = body.get("replace", False), body.get("rights", False)
+    if type(at) is not int or not 0 < at < 2**40 or not isinstance(replace, bool):
+        raise RecapError("bad_text")
+    if not isinstance(rights, bool):
+        raise RecapError("bad_text")
+    author = uploaded.clean_author(body.get("writtenBy"))
+    if author is None:
+        raise RecapError("bad_text")
+    raw = body.get("text")
+    if raw is None and body.get("link") is not None:
+        try:
+            raw = await read_link(body["link"])
+        except import_link.DocError as err:
+            raise RecapError(err.code) from None
+    text = uploaded.clean_text(raw)
+    if text is None:
+        raise RecapError("too_big" if isinstance(raw, str) and raw.strip() else "bad_text")
+    given = body.get("title")
+    title = " ".join(given.split())[: uploaded.TITLE_MAX] if isinstance(given, str) else ""
+    title = title or uploaded.title_for(text, author)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, gid)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_upload(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, title, text, author, replace, rights),
+        )
+        found = await cur.fetchone()
+        outcome = found["r"] if found else "not_allowed"
+        if outcome != "stored":
+            known = ("needs_rights", "needs_confirm", "busy", "bad_text")
+            raise RecapError(outcome if outcome in known else "not_allowed")
+        *_, row = await _one(conn, job_ref(gid, cid, at), session)
     return _view(row)

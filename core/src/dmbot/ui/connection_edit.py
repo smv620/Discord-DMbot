@@ -249,8 +249,9 @@ class OneConnection(_Menu):
         c = found.campaign
         try:
             moved = await link_edits.change_words(
-                found.memory, c.guild_id, c.id, found.relation, predicate, detail
-            )
+                found.memory, c.guild_id, c.id, found.relation, predicate, detail,
+                first=self.entity_id,
+            )  # fmt: skip
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change that. {exc}")
             return
@@ -259,18 +260,25 @@ class OneConnection(_Menu):
             return
         changed(interaction, c)
         self.stop()
+        reads = _md(self._now_reads(found, moved.value, self.entity_id))
         await show_card(
             interaction, c.id, self.entity_id, replace=True,
-            note=f"Changed to: {_md(self._now_reads(found, predicate, detail))}. {UNDO_NOTE}",
+            note=f"Changed to: {reads}. {UNDO_NOTE}",
             undo_connection=moved.batch,
         )  # fmt: skip
 
     @staticmethod
-    def _now_reads(found: Found, predicate: str, detail: str) -> str:
-        r = found.relation
-        subject = found.names.entities.get(r.subject_id)
-        other = found.names.entities.get(r.object_id)
-        words = link_words(predicate, detail)
+    def _now_reads(found: Found, stored: Relation, card_id: str) -> str:
+        # From the row as stored, not the words typed: a family role may have put the two names
+        # the other way round (#2457), and the note must say what the card will now say. A
+        # connection with no direction ("is an enemy of") is said from the card the DM is on,
+        # whichever way round the row happens to be stored, as the card itself reads it.
+        first, second = stored.subject_id, stored.object_id
+        if not stored.directional and second == card_id:
+            first, second = second, first
+        subject = found.names.entities.get(first)
+        other = found.names.entities.get(second)
+        words = link_words(stored.predicate, stored.detail, directional=stored.directional)
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
     async def _other_words(self, interaction: discord.Interaction) -> None:

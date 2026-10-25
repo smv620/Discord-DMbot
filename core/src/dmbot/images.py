@@ -27,6 +27,7 @@ import yarl
 from dmbot import fetch as fetching
 from dmbot.ai import AIError, AIOutOfFunds, Image
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +227,7 @@ def clean(value: object, limit: int, *, lines: bool = False) -> str:
         value = re.sub(r"\n{3,}", "\n\n", value)
     else:
         value = " ".join(value.split())
-    return value[:limit].rstrip()
+    return at_word_end(value, limit).rstrip()
 
 
 def _json(raw: str) -> dict[str, Any] | None:
@@ -330,6 +331,9 @@ async def read(image: Image, fast: Vision, careful: Vision) -> Read | None:
 NOT_DESCRIBED = "a picture was posted (not described)"
 
 
+TEXT_MARK = '. Text written on it: "'  # between a picture of text's description and its words
+
+
 def line_text(read: Read | None) -> str:
     """The transcript words for one image: the AI's description, not the poster's own words.
     What it shows, and for a picture of text the words in it. A map says it is a map (its places
@@ -339,5 +343,20 @@ def line_text(read: Read | None) -> str:
         return NOT_DESCRIBED
     head = f"{'a map' if read.kind == MAP else 'a picture'}: {read.alt}"
     if read.kind == TEXT and read.text:
-        return f'{head.rstrip(".")}. Text written on it: "{read.text}"'
+        return f'{head.rstrip(".")}{TEXT_MARK}{read.text}"'
     return head
+
+
+def words_of_line(line: str) -> str | None:
+    """The words in a transcript line made by `line_text` for a picture of text, or None for any
+    other line (a picture, a map, a note that one was posted)."""
+    _, mark, rest = line.partition(TEXT_MARK)
+    return rest[:-1] if mark and rest.endswith('"') else None
+
+
+def line_with_words(line: str, words: str) -> str | None:
+    """The same line with the words in it replaced (a poster's or a DM's correction), cleaned
+    like the AI's own. None when the line holds no words to replace or the new ones are empty."""
+    head, mark, rest = line.partition(TEXT_MARK)
+    kept = clean(words, TEXT_MAX, lines=True).replace('"', "'")  # a quote would end the words early
+    return f'{head}{mark}{kept}"' if mark and rest.endswith('"') and kept else None

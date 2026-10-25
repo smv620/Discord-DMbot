@@ -16,7 +16,7 @@ from psycopg.types.json import Jsonb
 from dmbot.db import Conn
 from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
-from dmbot.memory.ontology import MIGRATED_KINDS
+from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 ALREADY_UNDONE = "That was already undone."
@@ -107,8 +107,9 @@ CLAIMS = Table(
     "id",
     ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_ids",
      "source", "prompt_version", "model", "status", "reason", "session_started_at",
-     "created_at", "decided_at", "fact_id"),
+     "created_at", "decided_at", "fact_id", "reading"),
     logged=False,
+    defaults={"reading": None},  # a claim that is a belief for the DM to place (#2412)
 )  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
@@ -142,8 +143,10 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at", "definition_version", "unrevealed"),
-    defaults={"unrevealed": False},  # held back from the players until said at the table (#2404)
+     "secret", "created_at", "definition_version", "unrevealed", "directional"),
+    # unrevealed: held back from the players until said at the table (#2404). directional: an
+    # older row's role has no direction (#2457)
+    defaults={"unrevealed": False, "directional": False},
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -183,6 +186,15 @@ BELIEFS = Table(
      "evidence_ids", "seq", "recorded_at", "pinned"),
     defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
 )  # fmt: skip
+# What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
+# Undo must not bring back a line's reference once the line's words were removed (the link is
+# then a placeholder). Deleted with its connection or belief by the database.
+EVIDENCE = Table(
+    "memory_evidence",
+    "id",
+    ("id", "relation_id", "belief_id", "kind", "target_id", "session_started_at", "added_at"),
+    logged=False,
+)
 # The DM's word that a book entry and a table entry are one, or are not (#1715).
 PLAN_SAME_AS = Table(
     "plan_same_as",
@@ -195,7 +207,7 @@ PLAN_POSITION = Table(
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS)  # fmt: skip
+       BELIEFS, EVIDENCE)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,
@@ -609,7 +621,7 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
-    "memory_relations": {"definition_version": 1, "unrevealed": False},
+    "memory_relations": {"definition_version": 1, "unrevealed": False, "directional": False},
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
     "memory_entities": {
@@ -637,6 +649,13 @@ def _filled(table: Table, snapshot: Any) -> Any:
         return snapshot
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name == "memory_entities" and snapshot.get("role") == "god":
+        # a god is an NPC now (#2562), with the word kept in its description
+        return {
+            **snapshot,
+            "role": "npc",
+            "description": god_is_an_npc(str(snapshot.get("description") or "")),
+        }
     if table.name != "memory_entities" or "role" in snapshot:
         return snapshot
     kind, role, look = MIGRATED_KINDS.get(

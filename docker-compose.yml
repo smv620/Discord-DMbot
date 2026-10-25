@@ -119,6 +119,9 @@ services:
       # the speech key stays out of this container.
       RECAP_AUDIO_KEY_SET: ${ELEVENLABS_API_KEY:+1}
       RECAP_AUDIO_VOICE_SET: ${ELEVENLABS_VOICE_ID:+1}
+      # The bot's setting for mood tags in the narration, so the page can tell which paragraphs a
+      # change would speak again (#2630). It changes nothing the bot does.
+      DMBOT_RECAP_VOICE_TAGS: ${DMBOT_RECAP_VOICE_TAGS:-1}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its
@@ -173,6 +176,9 @@ services:
       DMBOT_IMPORTS_SERVERS: ${DMBOT_IMPORTS_SERVERS:-}
       # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
+      # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
+      DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
+      DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the

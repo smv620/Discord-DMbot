@@ -361,6 +361,15 @@ def _drop_reusable() -> None:
     _FREE.clear()
 
 
+def sender_pids(*dbs: Database) -> set[int]:
+    """The backend pids of the connections these test pools hold. NOTIFY is cluster-wide, and
+    every worker of a parallel run shares the one database server: a test that LISTENs on a channel
+    hears the same-looking notices (same server id, same first offer number) that other workers'
+    tests send from their own schemas. A notice carries its sender's pid, so a test keeps only the
+    ones sent by its own pools (read this once the work is done, when its connections are idle)."""
+    return {conn.info.backend_pid for db in dbs for conn in db._pool._pool}
+
+
 class DatabaseTest(unittest.IsolatedAsyncioTestCase):
     """Gives each test `self.db`: an empty, fully migrated schema (see the top of this file for
     how it is reused)."""

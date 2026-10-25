@@ -24,6 +24,18 @@ export const webPage = {
   bigYes: "Show it anyway",
   bigNo: "Not now",
   truncated: "Some names are left out because there are too many. Choose a smaller number to see the middle clearly.",
+  // The overview above the map (#2632): every name, not only the ones drawn.
+  overviewLine: (names: number, connections: number): string =>
+    `${names} ${names === 1 ? "name" : "names"}, ${connections} ${connections === 1 ? "connection" : "connections"}`,
+  overviewTruncated: "This campaign is very large, so the lists below show only the first part of it.",
+  trayHeading: "Not connected yet",
+  trayLead: "These names are not linked to anything yet. Tap one to check.",
+  trayKind: (label: string, n: number): string => `${label} (${n})`,
+  noConnectionsYet: (name: string): string => `${name} has no connections yet.`,
+  groupsHeading: "Other groups of linked names",
+  groupsLead: "Names linked to each other form a group. Tap a group to put it in the middle of the map.",
+  groupButton: (centre: string, size: number): string => `${centre}'s group (${size} names)`,
+  groupHere: "shown now",
   howMany: (names: number, lines: number): string =>
     `${names} ${names === 1 ? "name" : "names"}, ${lines} ${lines === 1 ? "line" : "lines"}`,
   mapLabel: (names: number, centre: string): string =>
@@ -35,7 +47,8 @@ export const webPage = {
   legendHeading: "What the shapes mean",
   // Kinds the API may send; any other key is shown as it comes.
   kinds: {
-    npc: "People",
+    npc: "NPCs",
+    player_character: "PCs",
     place: "Places",
     group: "Groups",
     item: "Items",
@@ -52,8 +65,11 @@ export const webPage = {
   makeMiddle: (name: string): string => `Put ${name} in the middle`,
   inMiddle: "In the middle",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
-  lineText: (a: string, b: string, label: string, more: number): string =>
-    `${a} ↔ ${b}: ${label}${more > 0 ? ` (+${more})` : ""}`,
+  // One connection as a sentence, read subject, then what it does, then object (#2666).
+  lineText: (from: string, words: string, to: string): string => `${from} ${words} ${to}`,
+  furtherOut: "Further out",
+  furtherOutHint: (name: string): string => `Connections between other names, not ${name}.`,
+  theoryWords: "only a theory",
   readOnly: "Only this campaign's DM can change names and connections.",
   undoNote: "DMbot only uses what you confirm. Changes made here can be undone with ↩️ Undo on the name's card in Discord.",
   close: "Close",
@@ -67,8 +83,8 @@ export const webPage = {
   kindChange: "What it is",
   saveKind: "Save what it is",
   edgePanel: (a: string, b: string): string => `${a} and ${b}`,
-  linkText: (a: string, b: string, words: string, direction: "ab" | "ba" | "both"): string =>
-    direction === "ab" ? `${a} ${words} ${b}` : direction === "ba" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
+  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both"): string =>
+    direction === "a-b" ? `${a} ${words} ${b}` : direction === "b-a" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
   wordsLabel: (n: number): string => `Words for connection ${n}`,
   saveWords: (n: number): string => `Save words for connection ${n}`,
   makeSecretShort: "Make secret",
@@ -133,6 +149,8 @@ export const webPage = {
     "not-allowed": "Only this campaign's DM can change names and connections.",
     "not-found": "That is gone. The web is up to date now.",
     "needs-confirm": "Press Yes, remove it to confirm.",
+    // The bot may still make the change later, so this never says nothing happened.
+    "still-waiting": "DMbot hasn't finished that yet. It may still happen. Reload this page to check before trying again.",
     network: "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
   } as Record<string, string>,
   errorFallback: "That didn't work. Try again in a minute.",
