@@ -32,6 +32,16 @@ export const RECAP_FIX_LIVE = false;
 // microphone header (public/_headers) live, and dev1 to have seen a note spoken and heard back. It moves
 // with the What's new entry "Speak a note to DMbot" and can only be true with RECAP_FIX_LIVE.
 export const RECAP_VOICE_LIVE = false;
+// RECAP_NAME_CHECKS_LIVE is "Names to check" on the recap page (#2113, #2114 part 3): the DM answers
+// the new names of a recap on the website, with the same effect as Discord's 📝 Check new names. It
+// needs the web API's names-to-check routes deployed and seen to work. It moves with the What's new
+// entry "Check a recap's new names online" and can only be true with RECAPS_LIVE.
+export const RECAP_NAME_CHECKS_LIVE = false;
+// PLOT_CHECK_LIVE is the "Plot check" panel on the recap page (#2124; core #2122, #2123): PlotBot's
+// questions about a recap, the chat to talk one through, and Approve waiting until each has an answer.
+// It needs those routes deployed and seen to work. It moves with the What's new entry "Plot check on a
+// recap" and can only be true with RECAPS_LIVE.
+export const PLOT_CHECK_LIVE = false;
 // RECAP_SHARE_LIVE is the shared recap link (#2118, #2119): a game master shares a posted recap by a
 // link anyone can open without signing in (owner decision, 2026-10-20). It moves with the What's new
 // entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing

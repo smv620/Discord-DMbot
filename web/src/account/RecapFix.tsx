@@ -29,10 +29,13 @@ export default function RecapFix({
   api,
   recap,
   onRecap,
+  prefill,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
+  /** Words from the Plot check's "Fix the recap" (#2124): added to the box, never sent by themselves. */
+  prefill?: { n: number; text: string } | null;
 }) {
   const [text, setText] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
@@ -119,6 +122,16 @@ export default function RecapFix({
       if (timer) clearTimeout(timer);
     };
   }, [api, recap.ref, requestId, checks]);
+
+  // "Fix the recap" in the Plot check puts its words in the box after whatever was typed; the DM sends them.
+  const lastPrefill = useRef(0);
+  useEffect(() => {
+    if (!prefill || prefill.n === lastPrefill.current) return;
+    lastPrefill.current = prefill.n;
+    const now = textRef.current;
+    setText((now.trim() === "" ? prefill.text : `${now.trimEnd()} ${prefill.text}`).slice(0, FIX_MAX_LETTERS));
+    noteRef.current?.focus();
+  }, [prefill]);
 
   // The "being written again" line goes when the new draft is ready and can be changed again.
   useEffect(() => {
