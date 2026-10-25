@@ -128,8 +128,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
-    "memory_contradictions": "PlotBot's grade of each contradiction candidate: made again by the "
-    "next check from the beliefs, which a backup does carry (#2660)",
+    "memory_contradictions": "PlotBot's contradiction candidates and grades: made again by the "
+    "next pass, nothing the DM wrote (#2660)",
     # Decided on #2552 (Supervisor, 2026-10-23):
     "session_usage": "the hours meter: a restore must not reset or double it",
     "waiting_name_questions": _QUEUE,
