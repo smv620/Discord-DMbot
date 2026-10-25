@@ -161,6 +161,29 @@ class TheArguments(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_args(argv)
 
+    def test_two_claude_writers_need_no_gemini_model_or_key_confirmation(self) -> None:
+        args = parse_args(
+            ["--session", "1", "c", "2", "--compare", "--out", "x", "--writers", "claude,claude"]
+        )
+        self.assertTrue(args.compare)
+        self.assertIsNone(args.gemini_model)
+
+    def test_a_gemini_writer_still_needs_the_model_and_the_confirmation(self) -> None:
+        for argv in (
+            ["--writers", "claude,gemini"],
+            ["--writers", "gemini,gemini"],
+            ["--writers", "claude,gemini", "--gemini-model", "g"],
+            ["--writers", "claude,gemini", "--paid-gemini-key"],
+        ):
+            with self.subTest(argv), self.assertRaises(SystemExit):
+                parse_args(["--session", "1", "c", "2", "--compare", "--out", "x", *argv])
+
+    def test_a_session_run_accepts_out_to_keep_its_draft(self) -> None:
+        args = parse_args(["--session", "1", "c", "2", "--reads", "transcript", "--out", "x"])
+        self.assertEqual(args.out, "x")
+        with self.assertRaises(SystemExit):  # (still not on its own)
+            parse_args(["--golden", "--out", "x"])
+
     def test_the_model_flags_go_only_with_compare(self) -> None:
         with self.assertRaises(SystemExit):
             parse_args(["--session", "1", "c", "2", "--gemini-model", "g"])
