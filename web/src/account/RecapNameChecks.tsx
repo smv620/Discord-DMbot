@@ -25,6 +25,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [said, setSaid] = useState("");
   const looks = useRef(0);
+  const changing = useRef(new Set<string>()); // cards whose last answer was Change the words, for an unknown refusal
   const heading = useRef<HTMLHeadingElement>(null);
 
   const read = async (): Promise<NameCheckList | null> => {
@@ -109,6 +110,8 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   }
 
   async function send(name: NameCheck, answer: NameCheckAnswer) {
+    if (answer.action === "change_words") changing.current.add(name.id);
+    else changing.current.delete(name.id);
     setProblems((was) => ({ ...was, [name.id]: "" }));
     setBusy((was) => new Set(was).add(name.id));
     setSlow(false);
@@ -139,7 +142,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
             name={n}
             list={list}
             busy={busy.has(n.id) || n.answering}
-            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? words.failedHint : "")}
+            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? (changing.current.has(n.id) ? words.changeFailed : words.failedHint) : "")}
             onSend={(answer) => void send(n, answer)}
           />
         ))}

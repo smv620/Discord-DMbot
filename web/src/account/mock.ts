@@ -2156,7 +2156,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (answer.action === "respell" && answer.text.trim() === "") throw new ApiError("bad-text");
       if (answer.action === "change_words") {
         const w = answer.words.trim();
-        const error = w === "" ? "empty" : w.length > 100 ? "too_long" : w === "Veshla" ? "already_known" : w === "Zeta" ? "secret_clash" : "";
+        const error = w === "" ? "empty" : w.length > 100 ? "too_long" : w === "Veshla" ? "already_known" : w === "Zeta" ? "secret_clash" : w === "Odd" ? "odd_code" : "";
         nameChanges.set(`${ref}:${id}`, { words: w, error, looks: 0 });
         return;
       }

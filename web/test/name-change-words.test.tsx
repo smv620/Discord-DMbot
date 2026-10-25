@@ -121,4 +121,13 @@ describe("change the words", () => {
     const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
     expect(result.violations).toEqual([]);
   });
+
+  it("says the change-words fallback, not the general one, for a refusal it has no words for", { timeout: 20_000 }, async () => {
+    await open();
+    fireEvent.input(box("Brannoch"), { target: { value: "Odd" } });
+    fireEvent.click(within(row("Brannoch")).getByRole("button", { name: w.changeFor("Brannoch") }));
+    const alert = await screen.findByRole("alert", undefined, slow);
+    expect(alert.textContent).toBe("Couldn't change the words. Your answer is kept as it was.");
+    expect(alert.textContent).not.toBe(w.failedHint);
+  });
 });
