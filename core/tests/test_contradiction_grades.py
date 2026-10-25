@@ -128,10 +128,6 @@ class Storing(ConfirmedMemoryTest):
             await self.store.mark_said(GUILD_A, elsewhere, [self.key(self.candidate)]), 0
         )
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     async def test_the_reason_limit_is_the_columns_check(self) -> None:
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
@@ -141,3 +137,7 @@ if __name__ == "__main__":
             )
             (row,) = await cur.fetchall()
         self.assertIn(f"<= {cg.REASON_MAX})", row["d"])
+
+
+if __name__ == "__main__":
+    unittest.main()
