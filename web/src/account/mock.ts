@@ -776,6 +776,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // Recaps made or added on the past-sessions list, by the session's start time. The pretend sessions: 4 has
   // an approved recap, 3 has none, 2's recap failed, 1 has no transcript kept.
   const made = new Map<number, string>();
+  const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
@@ -962,6 +963,36 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (id === "c-gone" || (got.answers.has(id) && got.answers.get(id)?.action !== "remind")) throw new ApiError("gone");
       if (id === "d-mix" && action === "fix") throw new ApiError("cannot-write");
       got.answers.set(id, { action, at: 1791000500 });
+    },
+    // "Names fixed this session" (#2645), the shapes agreed on the issue. A recap whose address contains
+    // `.names-none` has nothing fixed; `.player` is refused. Undo marks the line undone (the line stays,
+    // as "Put back"); the id `nf-gone` was already changed since (`gone`) and `nf-busy` can't be written now.
+    async namesFixed(recapRef) {
+      calls.push(`namesFixed:${recapRef}`);
+      await reachable();
+      signedIn();
+      if (recapRef.includes(".player")) throw new ApiError("not-allowed");
+      const none = recapRef.includes(".names-none");
+      return {
+        fixed: none
+          ? []
+          : [
+              { id: "nf-kethrandil", name: "Kethrandil", times: 8, forms: [{ heard: "Keirandal", times: 5 }, { heard: "Kethrandel", times: 3 }], undone: namesUndone.has(`${recapRef}:nf-kethrandil`) },
+              { id: "nf-gone", name: "Oskar Vane", times: 2, forms: [{ heard: "Oscar Vain", times: 2 }], undone: false },
+              { id: "nf-busy", name: "Brindlemoor", times: 1, forms: [{ heard: "Brindle more", times: 1 }], undone: namesUndone.has(`${recapRef}:nf-busy`) },
+            ],
+        unsure: none ? 0 : 2,
+        new: none ? 0 : 1,
+      };
+    },
+    async undoNameFix(recapRef, id) {
+      calls.push(`undoNameFix:${recapRef}:${id}`);
+      await reachable();
+      signedIn();
+      if (id === "nf-gone") throw new ApiError("gone");
+      if (id === "nf-busy") throw new ApiError("cannot-write");
+      namesUndone.add(`${recapRef}:${id}`);
+      return { putBack: 8 };
     },
     async makeRecap(recapRef, replace) {
       calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
