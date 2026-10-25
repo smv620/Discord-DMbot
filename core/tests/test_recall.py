@@ -827,6 +827,14 @@ class Speed(MemoryTest):
         reports: list[str] = []
         bests: list[float] = []
         busy = speed.slowdown()  # how slow this machine is right now (#2490)
+
+        async def busy_db() -> float:
+            """How slow the database is right now: a recall is mostly queries, and other workers
+            can starve the database while this process looks idle to the CPU probe (#2694)."""
+            async with self.db.guild(GUILD_A) as conn:
+                return await speed.db_slowdown(conn)
+
+        busy = max(busy, await busy_db())
         for audience in (DM_SCREEN, PLAYERS):
             await once(audience)  # the first call warms the connection and the plans
             asked.clear()
@@ -837,6 +845,7 @@ class Speed(MemoryTest):
             tries: list[list[tuple[float, Recall]]] = []
             for _ in range(2):
                 tries.append([await once(audience) for _ in range(7)])
+                busy = max(busy, await busy_db())  # (it may have changed during the runs)
                 if min(ms for ms, _ in tries[-1]) < speed.allowed(CEILING_MS, busy):
                     break
             runs = min(tries, key=lambda t: min(ms for ms, _ in t))
@@ -873,6 +882,7 @@ class Speed(MemoryTest):
         # 50 ms goal stands, and dev1 measures it on the server itself.
         # The ceiling follows how busy the machine was (never below 100 ms, never above ten times
         # it): a loaded runner is not a slow recall, a slow query plan still is (#2490).
+        busy = max(busy, await busy_db())
         ceiling = speed.allowed(CEILING_MS, busy)
         self.assertLess(max(bests), ceiling, f"ceiling {ceiling:.0f} ms || " + " || ".join(reports))
 

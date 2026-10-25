@@ -125,7 +125,8 @@ describe("plain words on the website", () => {
           .map((word) => `${file}: "${word}" in "${text.slice(0, 80)}": say it in plain words (CLAUDE.md, Hard rules). Why: ${BANNED[word]}`),
       );
     expect(bad).toEqual([]);
-  });
+    // (it imports every content module; on a busy machine that can pass the default 5 seconds)
+  }, 30_000);
 
   it("keeps no stale allow-list entry", async () => {
     const hits = new Set((await everything()).flatMap(([f, t]) => findings(t).map((w) => `${f}|${w}`)));
@@ -133,13 +134,13 @@ describe("plain words on the website", () => {
       expect(hits.has(`${file}|${word}`), `${file} no longer has "${word}": remove the entry`).toBe(true);
       expect(why.length).toBeGreaterThan(0);
     }
-  });
+  }, 30_000);
 
   it("reads a real amount of text", async () => {
     const texts = (await everything()).map(([, t]) => t);
     expect(texts.length).toBeGreaterThan(300);
     expect(texts.some((t) => /DMbot/.test(t))).toBe(true);
-  });
+  }, 30_000);
 
   it("sees a banned word, whole words only, in any case", () => {
     expect(findings("Your API key")).toEqual(["api"]);
