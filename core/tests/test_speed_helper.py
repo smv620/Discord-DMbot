@@ -27,6 +27,28 @@ class Allowed(unittest.TestCase):
             self.assertEqual(speed.slowdown(), speed.MOST)  # a runaway still fails
 
 
+class DatabaseSlowdown(unittest.IsolatedAsyncioTestCase):
+    """A query-bound test measures the database, not only the CPU (#2694)."""
+
+    class Conn:
+        def __init__(self, took: float) -> None:
+            self.took = took
+
+        async def execute(self, sql: str) -> None:
+            await asyncio.sleep(self.took)
+
+    async def test_a_quiet_database_gets_no_extra_room(self) -> None:
+        self.assertEqual(await speed.db_slowdown(self.Conn(0.0)), 1.0)
+
+    async def test_a_starved_database_gets_room_by_how_slow_it_is(self) -> None:
+        got = await speed.db_slowdown(self.Conn(speed.QUIET_DB_S * 3))
+        self.assertGreater(got, 2.5)
+        self.assertLess(got, 5.0)
+
+    async def test_it_never_goes_past_the_backstop(self) -> None:
+        self.assertEqual(await speed.db_slowdown(self.Conn(speed.QUIET_DB_S * 50)), speed.MOST)
+
+
 class Fastest(unittest.IsolatedAsyncioTestCase):
     """One run stretched by a pause must not fail a test (#2671); slow code must still fail."""
 
