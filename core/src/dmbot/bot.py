@@ -10038,10 +10038,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         backstory's queue, and who may be recorded now (read when the answer is applied)."""
         if self.memory is None or self.backstory_links is None:
             return None
+        actions = self.name_actions
         return web_actions.Waiting(
             ClaimStore(self.memory),
             self.backstory_links,
             lambda: self.consent.consenting(guild_id),
+            (lambda cid, uid, answer: actions.kept_reading(guild_id, cid, uid, answer))
+            if actions is not None
+            else None,
+            (lambda cid, answer: actions.spent(guild_id, cid, answer))
+            if actions is not None
+            else None,
         )
 
     async def run_name_actions(self) -> None:
