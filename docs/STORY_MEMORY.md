@@ -715,6 +715,17 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
     in a session; the rest wait for the report.
   - **Minor:** go into the after-session report.
 - **The DM decides.** Nothing changes a belief or picks the true one automatically.
+- **Built (#2660 slice 1): the finder.** `memory/contradictions.py` finds the candidates among the
+  connections one point of view holds (The truth, the party, one character): the same rules as
+  `check_relation` (a clashing relationship between the same two names, too many of a kind, a
+  one-of-a-kind item held twice), only between beliefs of the SAME point of view that overlap in story
+  time (`same_time`) and in belief time. A belief asserts at 0.5 or more and is not a denial; a belief
+  is held from the session it was formed in until the next belief of that point of view in that
+  connection (the newest has no end); one replaced by a belief with no known session has no knowable end
+  and is left out. A candidate holds ids only, and `times_unknown` is set when either connection has no
+  game time ("The game times aren't known"; those sort last). It reads one campaign and writes nothing.
+  Still to build: the PlotBot grade (major or minor, with a reason), the cap of 3 said on the DM screen,
+  and the minor ones kept for the after-session report.
 
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;
