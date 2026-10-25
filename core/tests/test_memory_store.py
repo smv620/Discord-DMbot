@@ -159,14 +159,6 @@ class Isolation(MemoryTest):
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
-        # and PlotBot's grade of a clash one point of view holds (#2660)
-        from dmbot.memory.contradiction_grades import MAJOR, Graded, GradeStore
-        from dmbot.memory.contradictions import Contradictions
-
-        await self.relate(a, "ally_of", b, status="confirmed")
-        await self.relate(a, "enemy_of", b, status="confirmed")
-        clash = (await Contradictions(self.memory).find(GUILD_A, self.c))[0]
-        await GradeStore(self.db).save(GUILD_A, self.c, [Graded(clash, MAJOR, "Both at once.")])
         from dmbot.memory.claims import ClaimStore, Extracted
 
         await ClaimStore(self.memory).propose(

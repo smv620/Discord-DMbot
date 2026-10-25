@@ -30,7 +30,6 @@ READERS = {
     "party's belief at 1.0, which a guess never is",
     "memory/contradictions.py": DM_ONLY
     + ": kept connections and waiting guess connections, ids and numbers, no words",
-    "memory/contradiction_grades.py": "only checks that the two connections of a grade still exist",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
