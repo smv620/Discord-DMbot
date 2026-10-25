@@ -1115,6 +1115,7 @@ async def _forget_mentions(
     # and every evidence link to one of these lines keeps its kind and session and loses the line
     # (its reference names the speaker): "a line from session 12, no longer available" (#2662)
     await evidence.placeholder_lines(conn, guild_id, refs)
+    await evidence.scrub_claim_lines(conn, guild_id, refs=refs)  # and out of the claims' `lines`
 
 
 async def _forget_memory_traces(
@@ -1124,6 +1125,8 @@ async def _forget_memory_traces(
     `delete_person`), in the caller's transaction. Memory relations may still list a deleted
     mention's id; recall skips ids it can't find."""
     await _forget_mentions(conn, guild_id, refs)
+    # whatever else names them (a reference to a line that was not in the list): by speaker
+    await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
     await conn.execute(
         "DELETE FROM memory_heard WHERE guild_id = %s AND speaker_id = %s", (guild_id, user_id)
     )

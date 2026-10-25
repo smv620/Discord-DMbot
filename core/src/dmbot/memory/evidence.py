@@ -275,3 +275,34 @@ async def audit(conn: Conn, guild_id: int, campaign_id: str) -> Audit:
         foreign += int(row["foreign"])
         dangling += int(row["dangling"])
     return Audit(int(totals["links"]), int(totals["placeholders"]), dangling, foreign)
+
+
+async def scrub_claim_lines(
+    conn: Conn, guild_id: int, *, refs: Collection[str] = (), user_id: int | None = None
+) -> int:
+    """Take a removed person's line references out of every claim's `lines` (#2676), in every
+    campaign of the server: a claim the DM confirmed stays (it is the DM's fact) but no longer
+    names who said what. `refs`: these exact references; `user_id`: every reference that ends in
+    this speaker (a line reference is "session:started_ms:user"). Returns how many claims
+    changed."""
+    changed = 0
+    ordered = sorted(set(refs))
+    for i in range(0, len(ordered), 1000):
+        batch = ordered[i : i + 1000]
+        cur = await conn.execute(
+            "UPDATE memory_claims SET lines = ARRAY("
+            "  SELECT x FROM unnest(lines) AS x WHERE NOT (x = ANY(%s)))"
+            " WHERE guild_id = %s AND lines && %s",
+            (batch, guild_id, batch),
+        )
+        changed += cur.rowcount
+    if user_id is not None:
+        cur = await conn.execute(
+            "UPDATE memory_claims SET lines = ARRAY("
+            "  SELECT x FROM unnest(lines) AS x WHERE x !~ %s)"
+            " WHERE guild_id = %s AND EXISTS ("
+            "  SELECT 1 FROM unnest(lines) AS y WHERE y ~ %s)",
+            (f":{int(user_id)}$", guild_id, f":{int(user_id)}$"),
+        )
+        changed += cur.rowcount
+    return changed
