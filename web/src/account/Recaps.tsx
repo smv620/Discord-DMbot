@@ -48,8 +48,10 @@ import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
 import NamesFixed from "./NamesFixed";
+import PresentPerScene from "./PresentPerScene";
 import RecapReport from "./RecapReport";
 import { NAMES_FIXED_LIVE } from "../content/names-fixed-words";
+import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
 import { AFTER_SESSION_REPORT_LIVE } from "../content/report-words";
 import RecapPlayer from "./RecapPlayer";
 import CampaignNav from "./CampaignNav";
@@ -923,6 +925,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
+      {PRESENT_PER_SCENE_LIVE && !editing && <PresentPerScene key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
       {NAMES_FIXED_LIVE && !editing && recap.canEdit && <NamesFixed key={recap.ref} api={api} recapRef={recap.ref} />}
       {AFTER_SESSION_REPORT_LIVE && !editing && recap.campaign && recap.canEdit && (
         <RecapReport key={`${recap.campaign}.${recap.sessionAt}`} api={api} campaignRef={recap.campaign} sessionAt={recap.sessionAt} />
