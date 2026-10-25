@@ -92,3 +92,27 @@ describe("Names fixed this session", () => {
     expect(screen.queryByRole("heading")).toBeNull();
   });
 });
+
+// The door writes how many lines were put back as `put_back` (core PR 2709): the real client must read that word.
+describe("the real client reads the Undo's answer", () => {
+  it("takes put_back from the polled answer", async () => {
+    const { httpApi } = await import("../src/account/api");
+    const seen: string[] = [];
+    const fetchMock = async (url: string, init?: { method?: string }): Promise<Response> => {
+      seen.push(`${init?.method ?? "GET"} ${url}`);
+      const body = init?.method === "POST" ? { answer: "ans1" } : { state: "done", error: null, put_back: 7, waits: { stage: "done", waitedSeconds: 1, lastMovedAt: 1, stalled: false } };
+      return new Response(JSON.stringify(body), { status: init?.method === "POST" ? 202 : 200, headers: { "content-type": "application/json" } });
+    };
+    const original = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const api = httpApi("https://api.example.test");
+      const got = await api.undoNameFix!(REF, "12");
+      expect(got.putBack).toBe(7);
+      expect(seen[0]).toContain(`/me/recaps/${REF}/names-fixed/12/undo`);
+      expect(seen[1]).toContain("/me/campaigns/100.cmp1/web/answers/ans1");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

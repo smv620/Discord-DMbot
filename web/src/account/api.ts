@@ -1369,8 +1369,9 @@ interface WebAnswer {
   error?: string | null;
   edge?: WebEdge | null;
   removed?: boolean;
-  /** An Undo of a name fix: how many lines were put back (#2645). */
-  putBack?: number | null;
+  /** An Undo of a name fix: how many lines were put back (#2645). The door writes it in snake case
+   * (`put_back`, core PR 2709), unlike the other fields of an answer. */
+  put_back?: number | null;
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
   undoable?: boolean;
   waits?: ReadingWaits;
@@ -2321,7 +2322,7 @@ export function httpApi(
       // The bot's answer is polled under the campaign, as the report's are (the campaign is the recap's first two parts).
       const campaign = recapRef.split(".").slice(0, 2).join(".");
       const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaign)}/web/answers/${encodeURIComponent(queued.answer)}`);
-      return { putBack: got.putBack ?? 0 };
+      return { putBack: got.put_back ?? 0 };
     },
     makeRecap: async (recapRef, replace) =>
       recapFrom(await busyAsBusy(() => call("POST", `/me/recaps/${encodeURIComponent(recapRef)}/again`, { replace }))),
