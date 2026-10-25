@@ -59,7 +59,16 @@ export const handoverWords = {
     no_plan: "You need a paid plan with a free campaign slot to take a campaign.",
     no_slot: "Your plan has no free campaign slot. Hand over or remove one of your campaigns, or pick a bigger plan. Then open this offer again.",
     owner: "This is your own campaign, so there is nothing to accept.",
+    shares_rules: "This campaign can only be handed over on the server it runs on now. Ask the DM to invite you there, then open this link again.",
   } as Record<string, string>,
+  // Why the campaign can't move to one of the other servers, by the API's code (#2550).
+  serverWhy: {
+    shares_rules: "This campaign can't move to another server yet, but it can be handed over on this server.",
+  } as Record<string, string>,
+  cantMoveThere: "The campaign can't move to this server right now.",
+  moving: "Moving your campaign. This takes a minute.",
+  movingSlow: "This is taking longer than usual. If the campaign doesn't show up in My Account soon, open the link in the offer email again: if the move did not happen, the offer will be open again.",
+  onlyHere: "This campaign can only be handed over on the server it runs on now. Ask the DM to invite you there, then open this link again.", // (the same words as why.shares_rules, for a person whose servers are all greyed)
   cantNow: "You can't take this campaign right now. Nothing was changed.",
   seePlans: "See the plans",
   myAccount: "Go to My Account",
@@ -90,6 +99,7 @@ export const handoverWords = {
     "no-free-slot": "Your plan has no free campaign slot. Hand over or remove one of your campaigns, or pick a bigger plan. Then try again.",
     "owner-offer": "This is your own campaign, so there is nothing to accept.",
     "bad-server": "DMbot can't run it on that server. Pick another, or add DMbot to it first.",
+    "shares-rules": "This campaign can't move to another server yet, but it can be handed over on this server. Pick the server it runs on now.",
     network: "We couldn't reach DMbot, so nothing was changed. Try again in a moment.",
     server: "That didn't work, and nothing was changed. Try again in a moment.",
   } as Record<string, string>,
