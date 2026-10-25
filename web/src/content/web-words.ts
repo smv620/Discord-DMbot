@@ -47,7 +47,8 @@ export const webPage = {
   legendHeading: "What the shapes mean",
   // Kinds the API may send; any other key is shown as it comes.
   kinds: {
-    npc: "People",
+    npc: "NPCs",
+    player_character: "PCs",
     place: "Places",
     group: "Groups",
     item: "Items",
