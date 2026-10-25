@@ -86,6 +86,10 @@ class Settings:
     # lines. Off, and not shown to customers, until it passes its measurement (#1282); with it
     # off nothing calls the AI and the after-session step has nothing to ask.
     story_extractor_on: bool = False
+    # The second question of each batch (#2412): theories, reveals, frame-ups and divinations,
+    # kept as beliefs for the DM to place. Off until the extractor is; it only runs when the
+    # extractor does, inside the same call limits.
+    story_readings_on: bool = False
     # Images posted in the table chat are described once by the AI (#2450). Off until dev1 has run
     # a live check; with it off no image is fetched or sent anywhere. `table_images_per_day` is the
     # most images one campaign has described in a day (each counts toward its AI use); past it an
@@ -286,6 +290,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_EXTRACTOR must be 1 (on) or 0 (off), got "' + extractor_raw + '".'
         )
+    readings_raw = (get("DMBOT_STORY_READINGS") or "0").lower()
+    if readings_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_READINGS must be 1 (on) or 0 (off), got "' + readings_raw + '".'
+        )
     extractor_tier = (get("DMBOT_STORY_EXTRACTOR_TIER") or "fast").lower()
     if extractor_tier not in ("fast", "careful", "deep"):
         raise ConfigError(
@@ -422,6 +431,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         link_token_secret=link_secret.encode("utf-8"),
         sidebar_on=sidebar_raw in ("1", "true", "on"),
         story_extractor_on=extractor_raw in ("1", "true", "on"),
+        story_readings_on=readings_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
