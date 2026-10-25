@@ -4,9 +4,10 @@ plan, the feature switch, the call limits) and how many calls it may make; this 
 
 A candidate already graded `major` or `minor` is not asked about again (it would cost a call to say
 the same thing); one that is `not_graded` (a cut answer, a failure) is asked again. A candidate
-that no longer exists is not graded, and the grade of a clash that is no longer found (a connection
-ended or changed) is deleted in every pass (even one that asks nothing), so a stale one is never told.
-Nothing here changes a belief, and nothing is told to the DM (that is the next step, which reads the stored grades)."""
+that no longer exists is not graded, and the grade of a clash that is no longer found (a
+connection ended or changed) is deleted in every pass, even one that asks nothing, so a stale one
+is never told. Nothing here changes a belief, and nothing is told to the DM (that is the next step,
+which reads the stored grades)."""
 
 from __future__ import annotations
 
