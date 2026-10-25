@@ -1,7 +1,7 @@
 """What the party has wrong (#2661; docs/STORY_MEMORY.md 9a, "The after-session report"): where the
 party's or a player's character's belief differs from The truth, as candidates for PlotBot to
-sort into disguised, misunderstood and simply false. Finding is code; the sort is the AI's, and neither
-changes a belief (the DM decides).
+sort into disguised, misunderstood and simply false. Finding is code; the sort is the AI's, and
+neither changes a belief (the DM decides).
 
 A belief counts as a difference when the party or a player's character (never an NPC) holds it
 NOW (the newest belief, at 0.5 or more and not a denial) and The truth either
