@@ -613,6 +613,25 @@ and every status. A guess goes to one player character's point of view, and to t
 table agreed out loud. Anything about The truth is a proposal that waits for the DM. Storing them, the
 players' points of view and the running pass come in the next slices.
 
+**Built so far (#2412, slices 2a and 2b; decided with Supervisor, 2026-10-25).** A reading waits as a
+claim that carries its reading (migration 0236) and is never asked as a fact. The DM *places* it
+(`memory/placing.py`), one write with one Undo. A belief needs a connection to hang on, and a theory or
+an accusation is something nobody has kept, so placing makes a **proposed, secret connection** to hold
+it (the same `memory_relations` row the assertion already is), and no reader shows a proposed one to the
+players: every players' reader filters confirmed connections the party holds at 1.0, which a guess never
+is, and `tests/test_relation_readers.py` makes a new reader of the table choose. A connection that is
+already there is never changed: the belief is added to it, whatever its status, secret flag or words,
+and a connection the DM turned down is not brought back (a new proposed one is made). A reveal or a
+confession the players saw is kept, shown, with the reading's own status and the claim as evidence; a
+secret connection is never revealed this way. A frame-up gives the false public statement The truth's
+0.0 False Evidence and keeps the new plot as the DM's secret. A character gets a point of view the first
+time one is needed (a player's character as `pc`, any other as `npc`). Belief time is the session the claim
+was made in; a later belief for the same view replaces it from its own session. The DM's Keep on a
+waiting connection is today's confirm and takes the DM's secret flag with it; a No leaves the character's
+or the party's belief standing, because it is still what they believe. Facts are no longer judged against
+proposals (or the reverse), and merging two names carries what was believed of a folded connection to its
+twin. Not yet: the deception event (`manipulated_by`), the running pass and the review lists (slice 3).
+
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
 

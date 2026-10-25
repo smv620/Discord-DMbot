@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from dmbot.memory import kin
-from dmbot.memory.models import REJECTED, Relation
+from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
@@ -220,7 +220,13 @@ def check_relation(
         problems.append(Problem(WRONG_SUBJECT))
     if not onto.is_any(object_type, p.object_types):
         problems.append(Problem(WRONG_OBJECT))
-    live = [r for r in existing if r.status != REJECTED and r.id != new.id and same_time(r, new)]
+    # A proposal (a theory waiting for the DM, #2412) is judged against facts no more than a fact
+    # is judged against proposals; two proposals still meet each other.
+    kept = (PROPOSED,) if new.status == PROPOSED else (CONFIRMED,)
+    live = [
+        r for r in existing
+        if r.status in kept and r.id != new.id and same_time(r, new)
+    ]  # fmt: skip
     if p.max_per_subject is not None:
         # Two-way facts are stored smaller ID first, so count each side either way.
         ends = (new.subject_id, new.object_id) if p.symmetric else (new.subject_id,)

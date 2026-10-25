@@ -995,12 +995,14 @@ class ClaimStore:
 
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite
-        this person's words and were not turned into a fact (waiting, turned down or dropped).
-        What the DM confirmed is the DM's fact and stays. Returns how many went."""
+        this person's words and were not turned into a fact (waiting, turned down or dropped),
+        and the readings the DM placed: a guess is not a fact, so what the DM confirmed as a fact
+        stays but a theory this person voiced does not (its belief stays, its link now a
+        placeholder). Returns how many went."""
         async with self._store._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-                " AND status <> 'confirmed' RETURNING id",
+                " AND (status <> 'confirmed' OR reading IS NOT NULL) RETURNING id",
                 (guild_id, user_id),
             )
             gone = [str(r["id"]) for r in await cur.fetchall()]
@@ -1028,6 +1030,14 @@ class ClaimStore:
             await w.update(
                 CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None}
             )
+
+    async def place(
+        self, guild_id: int, campaign_id: str, claim_id: str, *, opted_in: Collection[int]
+    ) -> Any:
+        """The DM places a reading as a belief (`placing.place`); `confirm` refuses a reading."""
+        from dmbot.memory import placing  # (it builds on this module, so it is read late)
+
+        return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
 
     async def confirm(
         self,
