@@ -21,7 +21,12 @@ from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import WorkerHarness
 
-CLEAN = fx.SUMMARY.replace("to keep her hands from shaking", "as her hands shook")  # no purpose
+# No purpose stated, and each name said with who they are the first time (the away-reader check
+# of #2680 would otherwise ask the writer for a fix, a call these tests do not script).
+CLEAN = fx.SUMMARY.replace("to keep her hands from shaking", "as her hands shook").replace(
+    "as Mira and Oskar came to Greywater Keep,",
+    "as Mira, the scout, and Oskar, the priest, came to Greywater Keep, an empty old fortress,",
+)
 MOTIVE = "Mira wanted to avenge her brother, who had fallen in the keep long ago."
 WITH_MOTIVE = CLEAN.replace(
     "Mira drew her blade without a word,", f"{MOTIVE} Mira drew her blade without a word,", 1
@@ -118,6 +123,36 @@ class Criticising(WorkerHarness):
         self.assertEqual((job.state, loop.done, loop.round, loop.notes), ("ready", True, 1, ()))
         self.assertEqual(len(fast.motive_sent), 1)  # every sentence was asked about, once
         self.assertEqual(job.calls, 6)  # the five of before and the motive check
+
+    async def test_a_name_with_no_introduction_goes_to_the_writer_once_and_the_fix_is_read(
+        self,
+    ) -> None:
+        # (#2680) The plain fixture says Mira and Oskar with no word on who they are.
+        fast = self.fast_for(fx.SUMMARY, grades=2)
+        careful = fx.Canned(fx.prose_answer(CLEAN))  # the one revision
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("the scout", job.summary)
+        told = careful.sent[0]
+        self.assertIn("<previous_draft>", told)
+        self.assertIn("say in a few words who or what", told)
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.round, loop.notes), (True, 2, ()))
+
+    async def test_what_the_writer_leaves_unexplained_becomes_a_note_for_the_dm_never_a_round(
+        self,
+    ) -> None:
+        fast = self.fast_for(fx.SUMMARY, grades=2)
+        careful = fx.Canned(fx.prose_answer(fx.SUMMARY))  # a revision that fixes nothing
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.round), (True, 2))
+        self.assertTrue(loop.notes)
+        self.assertTrue(all(n.startswith("Check: ") for n in loop.notes))
+        self.assertEqual(len(careful.sent), 1)  # asked once, not again
 
     async def test_an_invented_motive_is_caught_and_fixed_in_the_second_round(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
