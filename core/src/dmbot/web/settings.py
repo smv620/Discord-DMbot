@@ -110,6 +110,8 @@ class WebSettings:
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
+    # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
+    handover_email_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -298,8 +300,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),

@@ -627,6 +627,25 @@ export interface RecapAudioState {
   /** The recap is already posted: a new narration is for this page, and the Discord message keeps
    * its old audio (#2183). Missing from an older API. */
   postedNote?: boolean;
+  /** What the last making did (#2630): `new`, `voice` (only the changed paragraphs were spoken again,
+   * the music kept), `all` (everything again; `why` says why) or `same`. Missing from an older API. */
+  how?: RemakeHow | "";
+  why?: RemakeWhy;
+  /** While the audio is made: the shared progress shape (stage audio_voice / audio_music / audio_mix,
+   * paragraphs spoken `done` of `total`). Missing from an older API, or when nothing is under way. */
+  progress?: JobProgress | null;
+}
+
+/** What "Make the audio again" would do for this recap now (#2630; CloudDev's
+ * `GET /me/recaps/{ref}/audio/remake`): only the voice, everything, nothing, or a first making. `why`
+ * is a fixed code and says why everything is made again; `changed` of `total` paragraphs differ. */
+export type RemakeHow = "voice" | "all" | "same" | "new";
+export type RemakeWhy = "" | "paragraphs" | "moods" | "size" | "no_parts";
+export interface RecapRemake {
+  how: RemakeHow;
+  why: RemakeWhy;
+  changed: number;
+  total: number;
 }
 
 /** The DM's three recap choices for a campaign (#1468), the same as the DM screen's 📜 Recaps panel.
@@ -1051,12 +1070,15 @@ export interface WebBelief {
 }
 
 /** One connection between two names, for the edge panel. `direction` says who does it to whom, from
- * the edge's `a` and `b`: "ab" (a does it to b), "ba", or "both". */
+ * the edge's `a` and `b`: "a-b" (a does it to b), "b-a", or "both". */
 export interface WebLink {
   id: string;
   words: string;
   secret: boolean;
-  direction: "ab" | "ba" | "both";
+  direction: "a-b" | "b-a" | "both";
+  /** How it reads from the second name when that differs ("has as a member"); null or missing
+   * when it reads the same either way or has no fixed reading back (#2666). */
+  back?: string | null;
   /** False: not revealed to the players yet (#2405). */
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
@@ -1264,6 +1286,57 @@ export interface MyNpcNote {
   listed: boolean;
 }
 
+/** What waits for the DM (#2635, #2652; core `GET /me/campaigns/{ref}/web/waiting`, DMs only). */
+export interface WaitingClaim {
+  id: string;
+  /** The claim as one plain line, "Mira Voss knows Far Hall". */
+  statement: string;
+  /** "True, but keep it secret" is not offered for a condition ("Roan is dead"). */
+  canSecret: boolean;
+  /** When the session it was said in began (Unix seconds). */
+  at?: number | null;
+}
+export interface WaitingBackstory {
+  id: string;
+  subject: string;
+  object: string;
+  /** The connection in words, "knows" or "grew up in". */
+  how: string;
+  quote?: string;
+  secret: boolean;
+  /** The label of the upload it came from; empty for one queued before labels. */
+  upload: string;
+  /** False while a name in it is not confirmed yet; `waitingOn` says which. */
+  ready: boolean;
+  waitingOn: string[];
+}
+export interface WaitingWhich {
+  id: string;
+  /** The written name, "Mara". */
+  word: string;
+  other: string;
+  otherIsSubject: boolean;
+  how: string;
+  quote?: string;
+  secret: boolean;
+  upload: string;
+  candidates: { id: string; name: string; limited: boolean }[];
+}
+export interface Waiting {
+  claims: WaitingClaim[];
+  backstory: WaitingBackstory[];
+  which: WaitingWhich[];
+  /** The true sizes (the lists are cut at their caps). */
+  counts: { claims: number; backstory: number; ready: number; which: number; all: number };
+}
+/** One answer to a waiting item; the API queues it for the bot and the page waits for it. */
+export type WaitingAnswer =
+  | { kind: "claim"; action: "confirm" | "reject"; id: string; secret?: boolean }
+  | { kind: "backstory"; action: "keep" | "skip"; id: string; secret?: boolean }
+  | { kind: "backstory"; action: "keep_all"; ids: string[] }
+  | { kind: "which"; action: "pick"; id: string; entity: string }
+  | { kind: "which"; action: "neither"; id: string };
+
 /** Sent on `window` whenever the real API answers "not signed in" (#2301). */
 export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
@@ -1281,6 +1354,8 @@ export type ApiErrorKind =
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "gone" // a waiting connection that is not waiting any more (#2635)
+  | "name-first" // a new name in it has to be answered first, in Check new names (#2635)
+  | "stopped-recording" // someone it cites is no longer recorded, so the fact was thrown away (#2635)
   | "cannot-write" // the rules refuse to write that fact now; it stays waiting (#2635)
   | "queue-full" // too many connections wait already: answer some first (#2652)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
@@ -1330,6 +1405,7 @@ export type ApiErrorKind =
   | "not-editable" // the recap was posted, dropped or is being made, so it can't change (#1386)
   | "bad-text" // the recap text is empty or too long (#1386)
   | "bad-cues" // the recap text has cues that are wrong; `cueProblems` says where (#2084)
+  | "fixed-lines" // the opening or closing line of a recap was edited; they are DMbot's (#2630)
   | "already-included" // the plan already has narrated recaps (#1390)
   | "already-subscribed" // the add-on is already bought (#1390)
   | "audio-off" // narration isn't switched on, so nothing would make it (#2183)
@@ -1498,6 +1574,10 @@ export interface AccountApi {
   /** The Story graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
    * older than that: then the page is the graph alone. */
   webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
+  /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
+   * connections a Keep all kept, when the API says. Missing from an API older than that. */
+  webWaiting?(ref: string): Promise<Waiting>;
+  answerWaiting?(ref: string, answer: WaitingAnswer): Promise<{ kept?: number }>;
     /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
   webPeek?(ref: string): Promise<void>;
   /** A DM shows a name or a connection to the players (#2405). */
@@ -1584,6 +1664,9 @@ export interface AccountApi {
   respellFromVoice?(campaignRef: string, nameId: string, clip: Blob): Promise<string>;
   /** "Make the audio again": the API allows it once in 10 minutes for a recap. */
   askRecapAudioAgain?(ref: string): Promise<Recap>;
+  /** What that would do (#2630): only the voice or the whole audio, and why. Missing from an API older
+   * than #2630; the page then offers "Make the audio again" as before. */
+  recapAudioRemake?(ref: string): Promise<RecapRemake>;
   /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
    * the DM kept. Missing from an API older than #2113. */
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
@@ -1678,6 +1761,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   confirm_again: "confirm-again",
   no_paid_plan: "no-paid-plan",
   offer_gone: "offer-gone",
+  name_first: "name-first",
+  stopped_recording: "stopped-recording",
   has_free_access: "free-access",
   slow_down: "slow-down",
   busy: "slow-down",
@@ -1728,6 +1813,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_big: "too-big",
   not_editable: "not-editable",
   bad_text: "bad-text",
+  fixed_lines: "fixed-lines",
   no_tries: "no-tries",
   sort_failed: "sort-failed",
   bad_type: "bad-type",
@@ -2202,6 +2288,11 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    recapAudioRemake: async (ref) =>
+      (await call(
+        "GET",
+        `/me/recaps/${encodeURIComponent(ref)}/audio/remake`,
+      )) as RecapRemake,
     sendFix: async (ref, text) =>
       (await call(
         "POST",
@@ -2347,6 +2438,21 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
       )) as WebOverview;
+    },
+    webWaiting: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
+    // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.
+    answerWaiting: async (ref, answer) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
+      const body =
+        answer.action === "keep_all"
+          ? { kind: answer.kind, action: answer.action, ids: answer.ids }
+          : answer;
+      const queued = (await call("POST", `${base}/waiting`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
+      const kept = (got as { kept?: unknown }).kept;
+      return typeof kept === "number" ? { kept } : {};
     },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
