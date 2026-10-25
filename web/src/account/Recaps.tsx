@@ -400,7 +400,7 @@ function AudioPanel({
     <section class="panel" aria-labelledby="recap-audio-panel">
       <h3 id="recap-audio-panel">{panelWords.heading}</h3>
       {playable && (links.voice || links.music) && (
-        <LazyPanel load={() => import("./RecapPlayer")} what="the player" props={{ voice: links.voice, music: links.music, onFail: failed }} />
+        <LazyPanel load={() => import("./RecapPlayer")} what="the audio player" props={{ voice: links.voice, music: links.music, onFail: failed }} />
       )}
       {playable && links.mix && (
         <div>
@@ -908,7 +908,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <LazyPanel
           key={`fix-${recap.ref}`}
           load={() => import("./RecapFix")}
-          what="the fix-a-word part"
+          what="the fix-a-word tool"
           props={{ api, recap, onRecap: setRecap, prefill: fixPrefill }}
         />
       )}
@@ -917,7 +917,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <LazyPanel
           key={`names-${recap.ref}`}
           load={() => import("./RecapNameChecks")}
-          what="Names to check"
+          what="the names to check"
           props={{ api, refId: recap.ref }}
         />
       )}
@@ -925,7 +925,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         <LazyPanel
           key={`plot-${recap.ref}`}
           load={() => import("./RecapPlotCheck")}
-          what="the Plot check"
+          what="the plot check"
           props={{
             api,
             refId: recap.ref,

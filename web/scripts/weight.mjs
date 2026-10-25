@@ -59,8 +59,9 @@ export function localReferences(text, kind) {
   return [...found];
 }
 
-/** The chunks a script loads only when asked, with `import("./x.js")` (#2690): the page does not fetch them
- * up front, so they are not part of what the page loads, but each is held to its own size limit. */
+/** The chunks a script loads only when asked, with `import("./x.js")` (#2690): they are not part of what the
+ * page loads first, but each, with everything it imports, is held to its own size limit. Known gap, as for
+ * `localReferences`: a specifier built at run time is not seen. */
 export function onDemandReferences(text) {
   const found = new Set();
   const path = String.raw`["']((?:\.{1,2}\/|\/)[^"']+)["']`;
@@ -112,6 +113,26 @@ export function weighPage(distDir, page) {
   }
   for (const f of alternatives) if (seen.has(f)) alternatives.delete(f);
   for (const f of onDemand.keys()) if (seen.has(f)) onDemand.delete(f); // (also loaded up front: counted there)
+  // A chunk loaded on demand brings what it imports with it (a shared library, another chunk): weigh the
+  // whole closure, minus what the page already loads, so a small entry file cannot hide a big import.
+  const onDemandTotals = new Map();
+  for (const entry of onDemand.keys()) {
+    const seenHere = new Set();
+    const todo = [entry];
+    while (todo.length > 0) {
+      const file = todo.pop();
+      if (seenHere.has(file) || seen.has(file)) continue;
+      seenHere.add(file);
+      if (!/\.m?js$/.test(file)) continue;
+      const code = readFileSync(join(dist, file), "utf8");
+      for (const ref of [...localReferences(code, "js"), ...onDemandReferences(code)]) {
+        const next = resolveInDist(dist, file, ref);
+        if (next !== undefined) todo.push(next);
+      }
+    }
+    onDemandTotals.set(entry, [...seenHere].reduce((sum, f) => sum + statSync(join(dist, f)).size, 0));
+  }
+  for (const [entry, bytes] of onDemandTotals) onDemand.set(entry, bytes);
   return { page, alternatives, onDemand, htmlBytes: statSync(join(dist, page)).size, files: seen, totalBytes: statSync(join(dist, page)).size + [...seen.values()].reduce((a, b) => a + b, 0) };
 }
 

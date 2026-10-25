@@ -36,6 +36,48 @@ describe("LazyPanel", () => {
     expect(screen.getByRole("status").textContent).toBe(w.slow("the player"));
   });
 
+  it("does not set state after it is gone, and fetches once per attempt", async () => {
+    let arrive: (m: { default: typeof Hello }) => void = () => {};
+    let calls = 0;
+    const load = () => new Promise<{ default: typeof Hello }>((r) => ((calls += 1), (arrive = r)));
+    const { rerender, unmount } = render(<LazyPanel load={load} what="the names to check" props={{ name: "a" }} />);
+    rerender(<LazyPanel load={load} what="the names to check" props={{ name: "b" }} />);
+    expect(calls).toBe(1);
+    unmount();
+    await act(async () => arrive({ default: Hello })); // (no warning, no update of a gone component)
+    expect(calls).toBe(1);
+  });
+
+  it("passes new props through when the page draws again", async () => {
+    const load = () => Promise.resolve({ default: Hello });
+    const { rerender } = render(<LazyPanel load={load} what="the names to check" props={{ name: "Mira" }} />);
+    await waitFor(() => expect(screen.getByText("Hello Mira")).toBeTruthy());
+    rerender(<LazyPanel load={load} what="the names to check" props={{ name: "Tavian" }} />);
+    expect(screen.getByText("Hello Tavian")).toBeTruthy();
+  });
+
+  it("offers Try again when it is stuck for a long time", async () => {
+    const load = () => new Promise<{ default: typeof Hello }>(() => {});
+    render(<LazyPanel load={load} what="the audio player" props={{ name: "x" }} />);
+    await act(async () => {
+      vi.advanceTimersByTime(20_000);
+    });
+    expect(screen.getByRole("status").textContent).toBe(w.stuck("the audio player"));
+    expect(screen.getByRole("button", { name: w.retry })).toBeTruthy();
+  });
+
+  it("every label in the page reads right inside each sentence", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const page = readFileSync(join(process.cwd(), "src/account/Recaps.tsx"), "utf8");
+    const labels = [...page.matchAll(/what="([^"]+)"/g)].map((m) => m[1] as string);
+    expect(labels.length).toBeGreaterThan(5);
+    for (const what of labels) {
+      expect(what, what).toMatch(/^[a-z]/); // lower case, so "Loading … " and "Couldn't load …" read right
+      expect(what, what).not.toMatch(/[.…!?]$/);
+    }
+  });
+
   it("says what to do when the code could not be fetched, and tries again", async () => {
     let tries = 0;
     const load = () => (++tries === 1 ? Promise.reject(new Error("offline")) : Promise.resolve({ default: Hello }));
