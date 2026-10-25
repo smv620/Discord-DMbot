@@ -14513,7 +14513,9 @@ CLAIM_READINGS = """
     "AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0",
     "AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0 AND k.reading IS NULL",
 )
-assert _WAITING_DOOR.count("AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0") == 2
+if _WAITING_DOOR.count("AND k.how <> 'plan' AND cardinality(k.speaker_ids) > 0") != 2:
+    # (an explicit raise: `python -O` drops an assert, and this door must not change silently)
+    raise RuntimeError("the waiting door no longer has the two filters 0236 widens")
 
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
