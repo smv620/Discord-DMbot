@@ -11,6 +11,8 @@ import { NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from 
 import { RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
 import { keepFocus } from "./focus";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 30; // about a minute: the bot normally answers within seconds
@@ -45,6 +47,8 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   }, [api, refId]);
 
   const waiting = (list?.names ?? []).some((n) => n.answering) || busy.size > 0;
+  // The wait shows how long it has run and when the list last changed (the page sees no stage from the bot).
+  const seen = useObservedWait(waiting, (list?.names ?? []).map((n) => `${n.id}:${n.answering ? 1 : 0}`).join(","));
   useEffect(() => {
     if (!waiting) {
       looks.current = 0;
@@ -130,9 +134,20 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
           />
         ))}
       </ul>
-      <p class="small muted" role="status">
-        {slow ? words.slow : waiting ? words.waiting : said}
-      </p>
+      {waiting && seen.startedAt !== null ? (
+        <WorkProgress
+          stage={words.waiting}
+          startedAt={seen.startedAt}
+          updatedAt={seen.movedAt}
+          serverNow={Math.floor(Date.now() / 1000)}
+          state={slow ? "stalled" : "running"}
+          whatToDo={words.slow}
+        />
+      ) : (
+        <p class="small muted" role="status">
+          {said}
+        </p>
+      )}
     </section>
   );
 }

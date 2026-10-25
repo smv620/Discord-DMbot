@@ -191,6 +191,18 @@ describe("the backup", () => {
     expect(calls(api, "deleteCampaign")).toHaveLength(0);
   });
 
+  it("shows the stage and how long it has run while the backup is made", async () => {
+    const api = await page();
+    const box = await open("The Brynwater Crossing");
+    let finish: (blob: Blob) => void = () => {};
+    api.campaignBackup = () => new Promise<Blob>((resolve) => (finish = resolve));
+    fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+    expect(await within(box).findByText(/Running for/)).toBeTruthy();
+    expect(within(box).getAllByText(w.backingUp).length).toBeGreaterThan(0);
+    finish(new Blob(["{}"]));
+    await waitFor(() => expect(within(box).queryByText(/Running for/)).toBeNull());
+  });
+
   it("says the transcripts aren't in it yet, while that is so", async () => {
     await page();
     const box = await open("The Brynwater Crossing");
