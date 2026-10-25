@@ -5,12 +5,14 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from dmbot.memory import web_actions as wa
+from dmbot.memory.store import MemoryStore
 from dmbot.transcript import name_pass as np
 from dmbot.transcript.models import Line
-from dmbot.transcript.name_pass_log import NamePassLog
+from dmbot.transcript.name_pass_log import NamePassLog, undo_fix
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import names_fixed as web
-from dmbot.web import sessions
+from dmbot.web import relationships, sessions
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
 from tests.test_web_api import ALICE, THURSDAY
@@ -115,3 +117,96 @@ class Fixed(Base):
             with self.subTest(table=table), self.assertRaises(errors.InsufficientPrivilege):
                 async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
                     await conn.execute(f"SELECT 1 FROM {table}")
+
+
+class Undoing(Fixed):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.memory = MemoryStore(self.db)
+        self.actions = wa.ActionStore(self.db)
+        self.cref = f"{GUILD}.{self.one.id}"
+
+    async def run_bot(self, dms: Any = None) -> list[wa.Outcome]:
+        async def undo(cid: str, batch: int) -> int:
+            return await undo_fix(self.transcripts, self.memory, GUILD, cid, batch, now=AT + 99)
+
+        waiting = wa.Waiting(cast(Any, None), cast(Any, None), cast(Any, None), name_pass_undo=undo)
+        done = []
+        while (action := await self.actions.claim_next(GUILD)) is not None:
+            out = await wa.apply(
+                self.memory, GUILD, {ALICE.id} if dms is None else dms, action, waiting
+            )
+            await self.actions.finish(
+                GUILD, action, error=out.error, result_id=out.result_id,
+                result_other=out.result_other,
+            )  # fmt: skip
+            done.append(out)
+        return done
+
+    async def poll(self, answer: str) -> dict[str, Any]:
+        return await relationships.read_answer(self.web, self.session, self.cref, answer)
+
+    async def texts(self, sid: str) -> list[str]:
+        return [x.text for x in await self.transcripts.lines(GUILD, sid)]
+
+    async def test_the_undo_is_queued_then_puts_the_lines_back_and_shows_in_the_read(self) -> None:
+        sid = await self.session_with_fixes()
+        fix = str(np.batch_of(sid, "e1"))
+        self.assertIn("Kethrandil", " ".join(await self.texts(sid)))
+        answer = await web.queue_undo(self.web, self.session, self.ref, fix)
+        early = await self.poll(answer)
+        self.assertEqual(
+            (early["state"], early["waits"]["stage"], early["put_back"]),
+            ("waiting", "queued", None),
+        )
+        (outcome,) = await self.run_bot()
+        self.assertEqual(outcome.error, "")
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"], done["put_back"]), ("done", "", 2))
+        self.assertEqual(
+            await self.texts(sid), ["Keirandal drew his bow.", "We followed Kethrandel."]
+        )
+        (shown,) = (await self.read())["fixed"]
+        self.assertEqual((shown["undone"], shown["forms"]), (True, []))
+
+    async def test_an_undo_already_made_ends_gone_and_changes_nothing(self) -> None:
+        sid = await self.session_with_fixes()
+        fix = str(np.batch_of(sid, "e1"))
+        await web.queue_undo(self.web, self.session, self.ref, fix)
+        await self.run_bot()
+        again = await web.queue_undo(self.web, self.session, self.ref, fix)
+        (outcome,) = await self.run_bot()
+        self.assertEqual(outcome.error, wa.GONE)
+        self.assertEqual((await self.poll(again))["error"], wa.GONE)
+
+    async def test_the_undo_keeps_the_old_spellings_as_heard(self) -> None:
+        sid = await self.session_with_fixes()
+        await web.queue_undo(self.web, self.session, self.ref, str(np.batch_of(sid, "e1")))
+        await self.run_bot()
+        kept = {
+            c.heard
+            for c in await self.memory.corrections(GUILD, self.one.id)  # type: ignore[attr-defined]
+        }
+        self.assertIn("Keirandal", kept)
+
+    async def test_a_player_or_a_stranger_fix_cannot_be_queued(self) -> None:
+        sid = await self.session_with_fixes()
+        fix = str(np.batch_of(sid, "e1"))
+        with self.assertRaises(RecapError):
+            await web.queue_undo(self.web, await self.bob(), self.ref, fix)
+        for bad in ("12", "abc", 5, None, "9" * 13):
+            with self.subTest(bad), self.assertRaises(RecapError):
+                await web.queue_undo(self.web, self.session, self.ref, bad)
+        self.assertEqual(await self.run_bot(), [])  # nothing was queued
+
+    async def test_another_campaigns_fix_cannot_be_undone_from_this_one(self) -> None:
+        sid = await self.session_with_fixes(campaign=self.two.id)
+        with self.assertRaises(RecapError):
+            await web.queue_undo(self.web, self.session, self.ref, str(np.batch_of(sid, "e1")))
+
+    async def test_a_sender_who_is_no_longer_a_dm_is_refused_by_the_bot(self) -> None:
+        sid = await self.session_with_fixes()
+        await web.queue_undo(self.web, self.session, self.ref, str(np.batch_of(sid, "e1")))
+        (outcome,) = await self.run_bot(dms={999})
+        self.assertEqual(outcome.error, wa.NOT_ALLOWED)
+        self.assertIn("Kethrandil", " ".join(await self.texts(sid)))  # still fixed

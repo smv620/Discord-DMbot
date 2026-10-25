@@ -40,3 +40,26 @@ async def read_names_fixed(db: Database, session: Session, ref: str) -> dict[str
         "new": int(got["new"]),
         "guarded": int(got["guarded"]),
     }
+
+
+async def queue_undo(db: Database, session: Session, ref: str, fix_id: object) -> str:
+    """Queue the Undo of one fix for the bot and return the answer's id (the page polls the usual
+    answers door). DM only: anyone else gets "not found" before anything is queued. The id is the
+    fix's Undo number; one that is not a fix of this campaign is "not found" too. The bot puts
+    the lines back through the very calls the DM screen's Undo makes, so an Undo already made, or
+    lines changed since, end as `gone` and nothing is changed."""
+    if not isinstance(fix_id, str) or not fix_id.isdecimal() or len(fix_id) > 12:
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        gid, cid, _at, _row = await recaps._one(conn, ref, session, marks=False)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (gid, cid, None, "names-fixed-undo", "", fix_id, "", False),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError("not_found" if got["status"] == "not_found" else str(got["status"]))
+    return str(got["id"])

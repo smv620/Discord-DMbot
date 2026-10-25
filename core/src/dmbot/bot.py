@@ -417,6 +417,7 @@ from dmbot.transcript.models import (
     line_ref,
 )
 from dmbot.transcript.name_pass_log import NamePassLog
+from dmbot.transcript.name_pass_log import undo_fix as name_pass_undo_fix
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -10054,6 +10055,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             (lambda cid, answer: actions.spent(guild_id, cid, answer))
             if actions is not None
             else None,
+            name_pass_undo=(
+                (
+                    lambda cid, batch: name_pass_undo_fix(
+                        self.transcripts, self.memory, guild_id, cid, batch, now=int(time.time())
+                    )
+                )
+                if self.transcripts is not None
+                else None
+            ),
         )
 
     async def run_name_actions(self) -> None:

@@ -1075,7 +1075,7 @@ class Refusals(Editing):
     def test_only_the_relationship_and_name_code_calls_the_door(self) -> None:
         self.assertEqual(
             callers("dmbot_web_name_action_add("),
-            {"schema.py", "web/all_names.py", "web/relationships.py"},
+            {"schema.py", "web/all_names.py", "web/names_fixed.py", "web/relationships.py"},
         )
 
 

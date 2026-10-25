@@ -89,6 +89,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import read_checks
 from dmbot.web.names import list_names, set_said_as
+from dmbot.web.names_fixed import queue_undo as queue_names_fixed_undo
 from dmbot.web.names_fixed import read_names_fixed
 from dmbot.web.payments import (
     NotResumable,
@@ -1057,6 +1058,17 @@ def create_app(
         session, _token = signed
         try:
             return await read_names_fixed(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/recaps/{ref}/names-fixed/{fix_id}/undo", status_code=202)
+    async def me_recap_names_fixed_undo(ref: str, fix_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if name_answer_limit.take(f"name-answer:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            return {"answer": await queue_names_fixed_undo(db, session, ref, fix_id)}
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

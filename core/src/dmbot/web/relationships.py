@@ -515,11 +515,22 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None or not str(got["action"]).startswith(
-        ("link-", "claim-", "backstory-", "reading-")
+        ("link-", "claim-", "backstory-", "reading-", "names-fixed-")
     ):
         raise RecapError("not_found")
     if str(got["action"]).startswith("reading-"):
         return _reading_answer(got)
+    if str(got["action"]).startswith("names-fixed-"):
+        # the recap page's Undo of a name-pass fix (#2684): how many lines went back, and the wait
+        waited = _reading_answer(got)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "put_back": int(got["resultOther"])
+            if got["state"] == "done" and str(got["resultOther"] or "").isdigit()
+            else None,
+            "waits": waited["waits"],
+        }
     edge = None
     if str(got["action"]).startswith(("claim-", "backstory-")):
         # a waiting connection answered: how it ended, and for Keep all how many were kept
