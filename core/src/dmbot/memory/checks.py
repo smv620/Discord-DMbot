@@ -2,6 +2,32 @@
 
 Pure functions, no database. A failed check never blocks or changes the fact: it
 becomes a flag for review, because only the DM decides what's true in their story.
+
+Every rule about the story's memory is one of two kinds, and a new rule says which (#2663;
+docs/STORY_MEMORY.md, "Hard rules and warnings"):
+
+**Structural: never broken, so the write is refused.** These protect the data's shape, not the
+story, so no reading of the story can excuse them:
+- a connection joins two different names (`MemoryStore.add_relation_in`);
+- every row, and both ends of every connection or belief, belong to the one campaign the write is
+  for: composite keys on `(guild_id, campaign_id, ...)` in the database, never a check in code;
+- a "led to" link joins confirmed names and never closes a loop (`threads.would_loop`);
+- a confidence is 0 to 1, a status is a known one, a span does not end before it starts, and a
+  campaign has one DM's view and one party view (checks and unique indexes in the database).
+
+**A warning: flagged for the DM, never refused.** The story may be right and the data odd: the
+`FLAG_KINDS` below. A one-of-a-kind item in two holders' hands may be a handoff, a theft or a
+mistaken belief; a dead name acting may be a flashback. The fact is stored as given, a flag asks
+the DM, and the DM decides.
+
+**Safe when two writes race.** A structural rule that reads before it writes (the loop check, the
+"already known" check) is only safe if no other write to the campaign slips in between. Every
+write goes through `MemoryStore._write`, which takes the campaign's row lock (`SELECT ... FOR NO
+KEY UPDATE` on `campaigns`) and holds it to the end of the transaction, so one campaign's writes
+run one at a time. A path that reads and writes memory outside `_write` takes
+`pg_advisory_xact_lock(hashtext(campaign_id))` first (as `backstory_links` does) or leans on a
+database constraint. Every check stays inside one campaign: no query here or in the store reads
+another campaign's items, so a same-named item elsewhere raises nothing.
 """
 
 from __future__ import annotations

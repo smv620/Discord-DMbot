@@ -713,6 +713,23 @@ processor before it is used.
 - Vectors are per campaign and never compared across campaigns or servers.
 - `pgvector` is a database image change, which only dev1 deploys.
 
+**Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
+rule says which in `memory/checks.py`'s docstring.
+- **Structural: never broken, so the write is refused.** The shape of the data, not the story:
+  a connection joins two different names; every row and both ends of a connection or belief are in
+  the one campaign (composite keys in the database, never a check in code); a "led to" link joins
+  confirmed names and never closes a loop; a confidence, a status and a span are valid; a campaign
+  has one DM's view and one party view.
+- **A warning: flagged for the DM, never refused.** A one-of-a-kind item in two holders' hands
+  (a handoff, a theft or a mistaken belief), a place inside itself, a dead name acting later, too many
+  of a kind, a clash between two facts. The fact is stored as given.
+- **Two writers can't both pass the same check.** A structural rule that reads before it writes runs
+  inside `MemoryStore._write`, which holds the campaign's row lock to the end of the transaction, so
+  one campaign's writes run one at a time. A path outside `_write` takes
+  `pg_advisory_xact_lock(hashtext(campaign_id))` first, or uses a constraint.
+- **Every check stays in one campaign.** Two campaigns' items are never compared, even when they share a
+  name.
+
 ## Build order (proposed)
 
 Each step is useful on its own and ships behind the existing phases.
