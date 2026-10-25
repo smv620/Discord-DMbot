@@ -30,7 +30,9 @@ class Accounts(DatabaseTest):
             settings(), self.db, self.discord, payments=self.provider, clock=lambda: self.now
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         await self.sign_in()
 
@@ -105,7 +107,7 @@ class Accounts(DatabaseTest):
         forged = tokens.make(SECRET, "install", f"424242-{QUILLON.id}", now=self.now, seconds=600)
         delete = tokens.make(SECRET, "delete", str(ALICE.id), now=self.now, seconds=600)
         for state in (forged, delete):
-            self.client.cookies.set("__Host-dmbot_install", state, domain="api.dmbot.example")
+            self.client.cookies.set("__Host-dmbot_install", state, domain="web-api.internal.test")
             done = await self.client.get(
                 "/install/callback", params={"state": state, "code": "install-code"}
             )
@@ -135,7 +137,7 @@ class Accounts(DatabaseTest):
         other = tokens.make(
             SECRET, "install", f"{ALICE.id}-{QUILLON.id}", now=self.now, seconds=600
         )
-        self.client.cookies.set("__Host-dmbot_install", other, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_install", other, domain="web-api.internal.test")
         self.discord.installed_guild = QUILLON.id
         done = await self.client.get(
             "/install/callback", params={"state": state, "code": "install-code"}

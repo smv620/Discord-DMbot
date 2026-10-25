@@ -33,7 +33,7 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, kin, merge_restore, notify, standing, states
+from dmbot.memory import beliefs, evidence, kin, merge_restore, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
@@ -995,6 +995,12 @@ class MemoryStore:
             raise RuntimeError("The health counts returned no row")
         return row
 
+    async def evidence_audit(self, guild_id: int, campaign_id: str) -> evidence.Audit:
+        """Counts of this campaign's evidence links: how many, how many are placeholders, how many
+        point at nothing and how many at another campaign's thing (#2662). Counts only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await evidence.audit(scope.conn, guild_id, campaign_id)
+
     async def chain(
         self, guild_id: int, campaign_id: str, entity_id: str
     ) -> tuple[list[Entity], list[Entity]]:
@@ -1890,10 +1896,22 @@ class MemoryStore:
             return Written(None, w.batch)
 
     async def rename_entity(
-        self, guild_id: int, campaign_id: str, entity_id: str, name: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        name: str,
+        *,
+        source: str,
+        keep_old: bool = True,
+        also_known_as: str = "",
     ) -> Written[Entity]:
         """Fix how a name is spelled (the DM's call): the entry's name and the name it's
-        listened for change together, in one change (one undo)."""
+        listened for change together, in one change (one undo). The old spelling stays as an "old
+        spelling" other name, unless `keep_old` is False: a name widened to include it ("Harrow"
+        to "Harrow's Keep", #2570) must not turn every "Harrow" said alone into the longer name.
+        `also_known_as`: how the new name was heard ("Harrow's car" for "Harrow's Caer"), kept in
+        the same change as an "old spelling" under the same guards."""
         if source != DM:
             raise MemoryRuleError("Only the DM can change a name.")
         name = clean_text(name)
@@ -1903,6 +1921,12 @@ class MemoryStore:
             if current["type"] != PERSON:
                 check_named(current["type"], name)
             old_key = lookup_key(current["name"])
+            if key != old_key:  # never the same key as another entry's secret name
+                taken = await w.select(
+                    ALIASES, " AND key = %s AND entity_id <> %s", [key, entity_id]
+                )
+                if any(t["secret"] for t in taken):
+                    raise MemoryRuleError("Pick another spelling.")
             own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
             clash = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
             if clash and clash[0]["secret"]:
@@ -1935,7 +1959,11 @@ class MemoryStore:
                 await w.insert(
                     ALIASES, _new_alias(w, entity_id, name, "full", CONFIRMED, False, None)
                 )
-            await self._keep_old_spelling(w, entity_id, str(current["name"]), old_key, key)
+            if keep_old:
+                await self._keep_old_spelling(w, entity_id, str(current["name"]), old_key, key)
+            heard = clean_text(also_known_as) if also_known_as else ""
+            if heard and lookup_key(heard) not in (key, old_key):
+                await self._keep_old_spelling(w, entity_id, heard, lookup_key(heard), key)
             return Written(_entity(row), w.batch)
 
     async def _keep_old_spelling(
@@ -3379,6 +3407,7 @@ class MemoryStore:
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
         }
+        found: list[dict[str, Any]] = []
         if mention_ids:
             found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
             if len(found) != len(set(mention_ids)):
@@ -3406,6 +3435,11 @@ class MemoryStore:
             row = await w.update(RELATIONS, same.id, upgrade)
             return _relation(row), []
         await w.insert(RELATIONS, _relation_row(new))
+        for mention in found:  # what it was said in: typed links (#2662), beside the old list
+            await evidence.add_in(
+                w, kind=evidence.LINE, target_id=str(mention["line_ref"]), relation_id=new.id,
+                session_started_at=mention["session_started_at"], trusted=True,
+            )  # fmt: skip
         flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
         return new, flags
 

@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -24,8 +24,18 @@ from dmbot.ai import AIError
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
-from dmbot.memory import lore_read
-from dmbot.memory.backstory_links import NewLink, Waiting
+from dmbot.memory import backstory_keep as keep
+from dmbot.memory import lore_context, lore_read, pronouns
+from dmbot.memory.backstory_links import (
+    DONE,
+    FULL,
+    UPLOAD_MAX,
+    NewLink,
+    NewWhich,
+    Waiting,
+    WhichWaiting,
+)
+from dmbot.memory.end_match import bare
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -64,8 +74,21 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
+
+# No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
+# take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
+STALL_AFTER_S = 240.0
+
+
+def message_is_gone(exc: BaseException) -> bool:
+    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
+    return isinstance(exc, discord.NotFound) or (
+        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
+    )
+
 
 NOT_A_BOOK = "your own notes or background, not a published book"
 ONLY_DMS = "Only a DM of this campaign can do that."
@@ -227,14 +250,27 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
-    await _send(interaction, offer_text(upload, False), BackgroundOffer(campaign.id, upload))
+    memory = _memory(interaction)
+    choices = (
+        await characters(memory, campaign)
+        if memory is not None and pronouns.says_i(upload.text)
+        else []
+    )
+    lone = memory is not None and not choices and pronouns.says_i(upload.text)
+    await _send(
+        interaction,
+        offer_text(upload, False, ask=bool(choices)) + (NO_CHARACTERS if lone else ""),
+        BackgroundOffer(campaign.id, upload, choices),
+    )
 
 
 TRUTH_OFF = "Lore: may change"
 TRUTH_ON = "Lore: 📌 100% truth"
 
 
-def offer_text(upload: Upload, truth: bool) -> str:
+def offer_text(
+    upload: Upload, truth: bool, *, ask: bool = False, speaker: str | None = None
+) -> str:
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
     a session goes against it."""
@@ -251,20 +287,97 @@ def offer_text(upload: Upload, truth: bool) -> str:
         "DMbot's AI suggests names and the connections your text states, each with its line. "
         "You check each one.\n\n"
         f"**Treat this lore as:** {how} Tap the lore button to switch.\n\n"
-        f"{rights_text()}"
+        + (whose_text(speaker) if ask else "")
+        + f"{rights_text()}"
     )
 
 
+NO_CHARACTERS = (
+    '\n\nIt says "I" or "my", but no character is confirmed yet. Confirm the character first, '
+    'or connections that say "I" are left out.'
+)
+NOT_ONE = "Not one character's"
+NOT_ONE_VALUE = "-"
+
+
+def whose_text(speaker: str | None) -> str:
+    """The question for a text that says "I" or "my" (#2650). Never guessed: until the DM picks,
+    a connection that needs "I" is left out and counted."""
+    if speaker:
+        return (
+            f'**Whose backstory is this?** {_md(speaker)}\'s. "I" and "my" mean them. '
+            "(Change it in the menu.)\n\n"
+        )
+    return (
+        '**Whose backstory is this?** It says "I" or "my". Pick the character in the menu below. '
+        'If you don\'t, connections that say "I" are left out.\n\n'
+    )
+
+
+async def characters(memory: MemoryStore, campaign: Campaign) -> list[tuple[str, str]]:
+    """The campaign's confirmed characters (id, name) the DM may pick from, by name, at most as
+    many as one menu holds. Players' own names (people) and every other kind are not offered."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    found = {
+        e.id: e.name
+        for e in lookup.entities.values()
+        if e.type in pronouns.CHARACTER_TYPES and e.status == CONFIRMED and not e.merged_into
+    }
+    ordered = sorted(found.items(), key=lambda item: item[1].casefold())
+    return ordered[: pronouns.MAX_CHOICES]
+
+
 class BackgroundOffer(_Menu):
-    def __init__(self, campaign_id: str, upload: Upload) -> None:
+    def __init__(
+        self, campaign_id: str, upload: Upload, choices: Sequence[tuple[str, str]] = ()
+    ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.upload = upload
+        self.choices = dict(choices)  # entity id -> name
+        self.speaker: str | None = None  # whose backstory it is, once the DM says (#2650)
+        if self.choices:
+            self.add_item(self._select())
         self.truth = False  # asked once per upload (#2447): "may change in play" by default
-        self.add_item(_Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary))
-        self.switch = _Button(self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary)
+        self.add_item(
+            _Button(self._read, label="🤖 Find names", style=discord.ButtonStyle.primary, row=1)
+        )
+        self.switch = _Button(
+            self._flip, label=TRUTH_OFF, style=discord.ButtonStyle.secondary, row=1
+        )
         self.add_item(self.switch)
-        self.add_item(_Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary))
+        self.add_item(
+            _Button(self._cancel, label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+        )
+
+    def _select(self) -> discord.ui.Select[Any]:
+        options = [discord.SelectOption(label=NOT_ONE, value=NOT_ONE_VALUE, default=True)] + [
+            discord.SelectOption(label=logic.shorten(name, 25), value=entity_id)
+            for entity_id, name in self.choices.items()
+        ]
+        select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="Whose backstory is this?", options=options, row=0
+        )
+        select.callback = self._whose  # type: ignore[method-assign]
+        self.whose = select
+        return select
+
+    async def _whose(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # on every press
+            await _tell(interaction, ONLY_DMS)
+            return
+        picked = self.whose.values[0]
+        self.speaker = self.choices.get(picked)
+        for option in self.whose.options:
+            option.default = option.value == picked
+        await interaction.response.edit_message(
+            content=offer_text(self.upload, self.truth, ask=True, speaker=self.speaker),
+            view=self,
+            allowed_mentions=NO_PINGS,
+        )
 
     async def _flip(self, interaction: discord.Interaction) -> None:
         """Asserted (a claim the story can still change) or 📌 100% truth (the DM's word that it
@@ -278,10 +391,15 @@ class BackgroundOffer(_Menu):
         self.truth = not self.truth
         self.switch.label = TRUTH_ON if self.truth else TRUTH_OFF
         await interaction.response.edit_message(
-            content=offer_text(self.upload, self.truth), view=self, allowed_mentions=NO_PINGS
+            content=offer_text(
+                self.upload, self.truth, ask=bool(self.choices), speaker=self.speaker
+            ),
+            view=self,
+            allowed_mentions=NO_PINGS,
         )
 
     async def _read(self, interaction: discord.Interaction) -> None:
+        clicked = time.monotonic()  # the elapsed time the DM sees starts here
         await interaction.response.defer()  # the checks below are database reads (#88, #351)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign is None:
@@ -290,6 +408,7 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, ONLY_DMS)
             return
         truth = self.truth  # as it was when Find names was pressed, not when the AI is done
+        speaker = self.speaker
         bot = _bot(interaction)
         ai = bot.background_ai
         memory = _memory(interaction)
@@ -314,6 +433,10 @@ class BackgroundOffer(_Menu):
             await _tell(interaction, "This server has used today's document reads. Try again "
                         "tomorrow.")  # fmt: skip
             return
+        reading_text = (
+            f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
+            "background."
+        )
         self.stop()
         _ai_busy.add(guild)
         for old in [k for k in _ai_reads if k[1] != day]:
@@ -321,8 +444,7 @@ class BackgroundOffer(_Menu):
         _ai_reads[(guild, day)] = _ai_reads.get((guild, day), 0) + 1
         try:
             await interaction.edit_original_response(
-                content=f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a "
-                "long background.",
+                content=reading_text,
                 view=None,
                 allowed_mentions=NO_PINGS,
             )
@@ -346,32 +468,86 @@ class BackgroundOffer(_Menu):
                 log.warning("No careful-model reader for lore: pass 1 uses the fast model")
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
-            read = await lore_read.read_lore(
-                read_ai,
-                ai,
-                self.upload.text,
-                own,
-                AI_AT_ONCE,
-                skip_name=lambda name: name_key(name) in known,
-                skip_pair=await connected_pairs(memory, campaign),
-            )
+            skip_pair = await connected_pairs(memory, campaign)
+
+            async def show(text: str) -> None:
+                await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
+
+            # The same message is kept current (#2559): the step, part n of m, then how long.
+            async with WaitingMessage(
+                show,
+                reading_text,
+                stall_after_s=STALL_AFTER_S,
+                stops_at_s=lore_read.LORE_TIME_LIMIT_S,
+                gone=message_is_gone,
+                started=clicked,
+            ) as waiting:
+
+                def on_step(stage: str, done: int, total: int) -> None:
+                    if stage == "reading":
+                        again = f", try {done}" if done > 1 else ""
+                        waiting.step(f"Step 1 of 2: reading it through{again}", keeps=False)
+                    else:
+                        waiting.step("Step 2 of 2: picking out names and links", done, total)
+
+                read = await lore_read.read_lore(
+                    read_ai,
+                    ai,
+                    self.upload.text,
+                    own,
+                    AI_AT_ONCE,
+                    skip_name=lambda name: name_key(name) in known,
+                    skip_pair=skip_pair,
+                    progress=on_step,
+                )
             found = bg.merge(
                 [read.names],
                 known,
                 rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
-            stored = await store(memory, campaign, found)
-            queued = await queue_links(
-                bot, memory, campaign, found, [read.links], set(own), truth=truth
+            stored = await store(
+                memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
             )
+            questions: list[str] = []
+            keys: set[tuple[str, str, str]] = set()
+            queued = await queue_links(
+                bot,
+                memory,
+                campaign,
+                found,
+                [read.links],
+                set(own),
+                truth=truth,
+                dropped=read.stats.dropped,
+                questions=questions,
+                keys=keys,
+                upload=upload_label(self.upload.label, time.time()),
+                speaker=speaker,
+            )
+            ready = await count_ready(bot, campaign, keys)
             cut = read.cut
             log.info(
-                "Background read: %d names and %d connections suggested%s",
+                "Background read: %d names and %d connections suggested%s; %d connection lines "
+                "found, dropped for: %s",
                 sum(map(len, stored.values())),
                 queued,
                 ", an answer cut off" if cut else "",
+                read.stats.links_listed,
+                ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
+            )  # (counts only: the questions are the DM's own words, shown only to them)
+            await summary(
+                interaction,
+                campaign,
+                self.upload.label,
+                stored,
+                queued,
+                cut=cut,
+                # (lines for connections that were already there are not "found" again)
+                links_found=read.stats.links_listed - read.stats.dropped["already_connected"],
+                ready=ready,
+                dropped=read.stats.dropped,
+                questions=questions,
             )
-            await summary(interaction, campaign, self.upload.label, stored, queued, cut=cut)
         except (AIError, CampaignError) as exc:  # CampaignError: the campaign is gone
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(content=str(exc))
@@ -393,12 +569,19 @@ class BackgroundOffer(_Menu):
 
 
 async def store(
-    memory: MemoryStore, campaign: Campaign, found: list[bg.Found]
+    memory: MemoryStore,
+    campaign: Campaign,
+    found: list[bg.Found],
+    held: lore_context.Held | None = None,
+    text: str = "",
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
-    one Undo. Returns the new suggestions' IDs for each kind."""
+    one Undo. Returns the new suggestions' IDs for each kind. What is stored stays the short quote
+    (the text is never kept, #2167); `held` gets the sentence around each name, cut from `text`
+    while it is still in memory, for the review card to show (#2561): memory only, never stored."""
     names: list[NewName] = []
+    items: list[bg.Found] = []
     for item in found:
         try:
             check_named(item.kind, item.name)  # one refused name must not stop the others
@@ -413,6 +596,7 @@ async def store(
                 item.name, item.kind, PROPOSED, others=item.also, secrets=item.secret, note=note
             )
         )
+        items.append(item)
     stored: dict[str, list[str]] = {}
     if not names:
         return stored
@@ -423,9 +607,15 @@ async def store(
     except MemoryRuleError as exc:
         log.info("Skipped the names from a background: %s", exc)
         return stored
-    for name, entity_id in zip(names, written.value, strict=False):
+    for name, item, entity_id in zip(names, items, written.value, strict=False):
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
+            if held is not None and text:
+                held.put(
+                    campaign.guild_id,
+                    entity_id,
+                    lore_context.around(text, item.quote, item.name),
+                )
     return stored
 
 
@@ -440,6 +630,60 @@ def _waiting_note(queued: int) -> str:
     return CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
 
 
+# What became of each connection line, for the summary (#2642). Every reason `keep_connections`,
+# `read_connections` and the lore read count falls in one of these three, and what is left over
+# (a slice cut at the time limit, a line the model did not shape) is "not read", so the parts
+# always add up to what was found.
+KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
+LEFT_OUT = (
+    "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
+)  # fmt: skip
+NOT_READ = ("cut_before_check", "over_cap")
+
+
+def _found_note(
+    found: int,
+    kept: int,
+    *,
+    ready: int | None = None,
+    dropped: Mapping[str, int] | None = None,
+    questions: Sequence[str] = (),
+) -> str:
+    """What became of the connection lines DMbot saw in the text (#2563, #2642), so a shorter
+    list is never a silent one: "Found 34 connections: 30 ready to check, 3 wait for names you
+    haven't confirmed, 2 already known, 1 left out (Which Mara?)". The parts add up to `found`.
+    A connection is kept only when its two ends are names and the words are really in your text;
+    DMbot never guesses one. Counts, and the DM's own words for a question, shown to them only."""
+    lost = dropped or {}
+    if found <= kept and not lost.get("which_waiting", 0):
+        return ""
+    known = sum(lost.get(k, 0) for k in KNOWN_ALREADY)
+    left = sum(lost.get(k, 0) for k in LEFT_OUT)
+    whose = lost.get("whose", 0)
+    picking = lost.get("which_waiting", 0)
+    unread = sum(lost.get(k, 0) for k in NOT_READ)
+    # whatever else is missing (cut at the time limit, not shaped) is "not read"
+    unread += max(0, found - kept - known - left - whose - picking - unread)
+    ready_n = kept if ready is None else min(ready, kept)
+    waits = kept - ready_n
+    asked = ", ".join(f"Which {_md(q)}?" for q in questions[:3])
+    parts = [
+        f"{ready_n} ready to check" if ready_n else "",
+        f"{waits} wait for names you haven't confirmed" if waits else "",
+        f"{known} already known" if known else "",
+        f"{left} left out" + (f" ({asked})" if asked else "") if left else "",
+        f'{whose} about "I" left out: upload again and say whose backstory it is' if whose else "",
+        f"{picking} need your pick: press 📜 Check the connections" if picking else "",
+        f"{unread} not read in time" if unread else "",
+    ]
+    return (
+        f"\n🔎 Found {found} connection{'' if found == 1 else 's'}: "
+        + ", ".join(x for x in parts if x)
+        + ". DMbot keeps one only when both ends are names and the words are really in your "
+        "text, so a few may be missing. You can add any you know from a name's card."
+    )
+
+
 async def summary(
     interaction: discord.Interaction,
     campaign: Campaign,
@@ -448,15 +692,20 @@ async def summary(
     queued: int = 0,
     *,
     cut: bool = False,
+    links_found: int = 0,
+    ready: int | None = None,
+    dropped: Mapping[str, int] | None = None,
+    questions: Sequence[str] = (),
 ) -> None:
     total = sum(map(len, stored.values()))
+    note = _found_note(links_found, queued, ready=ready, dropped=dropped, questions=questions)
     if not total:
         # Never "no names" after a cut-off: the reading did not finish, so nothing is known (#2454)
         await interaction.edit_original_response(
             content=(
                 CUT_NOTHING.format(label=_md(label))
                 if cut
-                else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added."
+                else f"🤖 DMbot found no new names in {_md(label)}. Nothing was added." + note
             ),
             allowed_mentions=NO_PINGS,
         )
@@ -466,7 +715,7 @@ async def summary(
     parts = ", ".join(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
     )
-    view = BulkConfirm(campaign.id, stored, queued)
+    view = BulkConfirm(campaign.id, stored, queued + (dropped or {}).get("which_waiting", 0))
     await interaction.edit_original_response(
         content=(
             f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
@@ -478,6 +727,7 @@ async def summary(
                 if queued
                 else ""
             )
+            + note
             + (CUT_NOTE if cut else "")
         ),
         view=view,
@@ -499,6 +749,14 @@ async def own_kinds(memory: MemoryStore, campaign: Campaign) -> dict[str, str]:
     return dict(sorted(own.items())[: bg.MAX_OWN_KINDS])
 
 
+def upload_label(label: str, now: float) -> str:
+    """The upload as the DM will see it on a card and in the DM-screen notice: its name and the
+    day, "Tavin's backstory, 24 Oct" (#2650). Cut to what the queue keeps."""
+    day = time.gmtime(now)
+    when = f", {day.tm_mday} {time.strftime('%b', day)}"
+    return logic.shorten(label, UPLOAD_MAX - len(when)) + when  # (the date is never cut off)
+
+
 async def queue_links(
     bot: Any,
     memory: MemoryStore,
@@ -508,10 +766,17 @@ async def queue_links(
     own: set[str],
     *,
     truth: bool = False,
+    dropped: bg.Dropped | None = None,
+    questions: list[str] | None = None,
+    keys: set[tuple[str, str, str]] | None = None,
+    upload: str = "",
+    speaker: str | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
-    already is left out before the cap. Returns how many wait."""
+    already is left out before the cap. Returns how many wait. `questions` collects the ends that
+    fit two names ("Which Mara?", #2642); `keys` collects the (subject, how, object) of each one
+    queued, so the summary can say how many are ready."""
     store = getattr(bot, "backstory_links", None)
     if store is None or not any(answers):
         return 0
@@ -538,13 +803,81 @@ async def queue_links(
             return True  # an end that is no entry of the campaign (a name that was refused)
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
-    kept = bg.keep_connections(answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known)
+    picks: list[bg.Pick] = []
+    kept = bg.keep_connections(
+        answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
+        questions=questions, speaker=speaker, picks=picks,
+    )  # fmt: skip
+    await _queue_picks(store, campaign, picks, entry, truth, upload, dropped)
     rows = [
-        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth)
+        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
-    return int(await store.add(campaign.guild_id, campaign.id, rows)) if rows else 0
+    if not rows:
+        return 0
+    # A connection already waiting from an earlier reading is not new: it is counted as such (and
+    # not as ready or waiting again), so the summary's parts add up (#2642 review).
+    waiting_now = {
+        (w.subject_id, w.predicate, w.object_id)
+        for w in await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
+    }
+    fresh = [r for r in rows if (r.subject_id, r.predicate, r.object_id) not in waiting_now]
+    if dropped is not None:
+        dropped["already_waiting"] += len(rows) - len(fresh)
+    if keys is not None:
+        keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh)
+    return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
+
+
+async def _queue_picks(
+    store: Any,
+    campaign: Campaign,
+    picks: list[bg.Pick],
+    entry: Callable[[str], str | None],
+    truth: bool,
+    upload: str,
+    dropped: bg.Dropped | None,
+) -> int:
+    """Queue the "Which Mara?" questions (#2650). One whose names are not entries of the campaign
+    after all is counted as not found, so the summary's parts still add up."""
+    rows: list[NewWhich] = []
+    for p in picks:
+        fixed = entry(p.fixed)
+        ids = tuple(dict.fromkeys(i for n in p.candidates if (i := entry(n)) is not None))
+        if fixed is None or len(ids) < 2:
+            if dropped is not None:
+                dropped["which_waiting"] -= 1
+                dropped["name_not_found"] += 1
+            continue
+        rows.append(
+            NewWhich(
+                fixed, p.fixed_is_a, p.how, p.word, ids, p.quote, p.secret, p.words, truth, upload
+            )
+        )
+    added = int(await store.add_which(campaign.guild_id, campaign.id, rows)) if rows else 0
+    if dropped is not None and added < len(rows):  # already waiting, or past the most
+        dropped["which_waiting"] -= len(rows) - added
+        dropped["over_cap"] += len(rows) - added  # (or already waiting: either way not new)
+    return added
+
+
+async def count_ready(bot: Any, campaign: Campaign, keys: set[tuple[str, str, str]]) -> int | None:
+    """Of the connections this reading queued (`keys`), how many are ready to check now: both
+    names are confirmed. None when the queue can't be read (the summary then says less). Those
+    are marked told here (#2651): the summary of this very upload says they are ready, so the DM
+    screen does not say it again a few seconds later."""
+    store = getattr(bot, "backstory_links", None)
+    if store is None or not keys:
+        return None
+    try:
+        waiting = await store.waiting(campaign.guild_id, campaign.id)
+        ready = [w for w in waiting if w.ready and (w.subject_id, w.predicate, w.object_id) in keys]
+        await store.mark_told(campaign.guild_id, campaign.id, [w.id for w in ready if w.id])
+    except Exception:
+        log.exception("Couldn't count the ready connections")
+        return None
+    return len(ready)
 
 
 async def connected_pairs(memory: MemoryStore, campaign: Campaign) -> Callable[[str, str], bool]:
@@ -574,17 +907,189 @@ async def symmetric_kinds(memory: MemoryStore, campaign: Campaign) -> set[str]:
 
 
 async def ask_connections(interaction: discord.Interaction, campaign_id: str) -> None:
-    """The 📜 button (on the names summary and on the 📇 Names card): the connections that are
-    ready, or why none is."""
+    """The 📜 button (on the names summary, the 📇 Names card and the DM-screen notice): the "Which
+    one?" questions, then the connections that are ready, or why none is."""
     if not interaction.response.is_done():
         await interaction.response.defer(ephemeral=True)
-    if not await offer_ready(interaction, campaign_id):
+    asked = await offer_which(interaction, campaign_id)
+    if not await offer_ready(interaction, campaign_id) and not asked:
         await _tell(
             interaction,
             "None to check yet. Each connection waits until both its names are answered. "
             "Answer more names (✅ Add all, or 📝 Check new names), then press 📜 Check the "
             "connections again.",
         )
+
+
+async def offer_which(interaction: discord.Interaction, campaign_id: str) -> bool:
+    """The "Which Mara?" questions, one at a time in a private message (#2650). Returns whether
+    there was anything to ask."""
+    try:
+        view = WhichOffer(campaign_id)
+        if not await view.load(interaction):
+            return False
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.followup.send(
+                view.text(), view=view, ephemeral=True, allowed_mentions=NO_PINGS
+            )
+        return True
+    except Exception:
+        log.exception("Couldn't offer the which-one questions from a background")
+        return False
+
+
+class WhichOffer(_Menu):
+    """A backstory connection with one end that fits two or more names ("Brannoc's sister Mara":
+    Mara Ashgrove or Mara Voss) waits for the DM to say which, never guessed (#2650). One card at
+    a time with a button for each name, ❌ Neither, and ⏭️ Not now (the rest wait). A pick makes
+    the connection an ordinary waiting one: ready to check when both its names are answered."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.current: WhichWaiting | None = None
+        self.picked = 0
+        self.dropped = 0
+        self.left = 0
+        self.total = 0
+        self.busy = asyncio.Lock()
+        self.words: dict[str, str] = {}
+
+    async def _waiting(
+        self, interaction: discord.Interaction, campaign: Campaign
+    ) -> list[WhichWaiting]:
+        memory = _memory(interaction)
+        store = getattr(_bot(interaction), "backstory_links", None)
+        if memory is None or store is None:
+            return []
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        self.words = {k: p.label for k, p in onto.predicates.items() if not p.core}
+        return list(await store.which_waiting(campaign.guild_id, campaign.id))
+
+    def _set(self, waiting: list[WhichWaiting]) -> None:
+        self.left = len(waiting)
+        self.total = max(self.total, self.picked + self.dropped + self.left)
+        self.current = waiting[0] if waiting else None
+        self.clear_items()
+        if self.current is None:
+            return
+        grey = discord.ButtonStyle.secondary
+        for index, (_, name) in enumerate(self.current.candidates[:3]):
+            self.add_item(
+                _Button(
+                    partial(self._pick, index),
+                    label=logic.shorten(name, 25),
+                    style=discord.ButtonStyle.primary,
+                )
+            )
+        self.add_item(_Button(self._neither, label="❌ Neither", style=grey, row=1))
+        self.add_item(_Button(self._not_now, label="⏭️ Not now", style=grey, row=1))
+
+    async def load(self, interaction: discord.Interaction) -> bool:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None or interaction.user.id not in campaign.dm_user_ids:
+            return False
+        self._set(await self._waiting(interaction, campaign))
+        return self.current is not None
+
+    def text(self) -> str:
+        c = self.current
+        if c is None:
+            if not self.picked:
+                return "🔎 Done. Nothing to check."
+            return (
+                f"🔎 Done. You picked {self.picked}, left out {self.dropped}. Picks are ready to "
+                "check once their names are confirmed (press 📜 Check the connections)."
+            )
+        how = link_words(c.predicate, c.detail)
+        if how == c.predicate.replace("_", " "):
+            how = self.words.get(c.predicate, how)
+        asked = _md(bare(c.word))  # (the end as written stays in the quote line)
+        pair = (
+            f"**{_md(c.other)}** {how} **{asked}**"
+            if c.other_is_subject
+            else f"**{asked}** {how} **{_md(c.other)}**"
+        )
+        names = ", ".join(_md(name) for _, name in c.candidates[:3])
+        place = f" ({self.picked + self.dropped + 1} of {self.total})" if self.total > 1 else ""
+        return (
+            f"🔎 **Which {asked} is this?**{place}\n"
+            f"{pair}\n"
+            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            f"It could be {names}. Tap the right one. Neither leaves this connection out."
+        )
+
+    async def _show(self, interaction: discord.Interaction, waiting: list[WhichWaiting]) -> None:
+        self._set(waiting)
+        if self.current is None:
+            self.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=self.text(),
+                view=self if self.current else None,
+                allowed_mentions=NO_PINGS,
+            )
+
+    async def _answer(self, interaction: discord.Interaction, index: int | None) -> None:
+        """Pick candidate `index`, or None for Neither. The card is read again first: a question
+        that went away or changed meanwhile moves on to the next one."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await _campaign_for(interaction, self.campaign_id)
+            if campaign is None:
+                return
+            if interaction.user.id not in campaign.dm_user_ids:  # on every press
+                await _tell(interaction, ONLY_DMS)
+                return
+            store = getattr(_bot(interaction), "backstory_links", None)
+            shown = self.current
+            if store is None or shown is None:
+                return
+            now = await self._waiting(interaction, campaign)
+            same = next((w for w in now if w.id == shown.id), None)
+            if same is None or (
+                index is not None
+                and (index >= len(same.candidates) or same.candidates != shown.candidates)
+            ):
+                await self._show(interaction, now)  # it changed: carry on with what is there
+                return
+            chosen = None if index is None else same.candidates[index][0]
+            result = await store.pick_which(campaign.guild_id, campaign.id, same.id, chosen)
+            if result == FULL:
+                await _tell(
+                    interaction,
+                    "Too many connections are waiting. Keep or skip some with 📜 Check the "
+                    "connections first, then answer this one.",
+                )
+                return
+            if result == DONE:
+                if chosen is None:
+                    self.dropped += 1
+                else:
+                    self.picked += 1
+            changed(interaction, campaign)
+            await self._show(interaction, await self._waiting(interaction, campaign))
+        if self.current is None and self.picked:  # their connections may be ready now
+            await offer_ready(interaction, self.campaign_id)
+
+    async def _pick(self, index: int, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, index)
+
+    async def _neither(self, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, None)
+
+    async def _not_now(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        self.stop()
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=(
+                    f"⏭️ Saved for later. {self.left} still waiting: press 📜 Check the "
+                    "connections when you are ready."
+                ),
+                view=None,
+                allowed_mentions=NO_PINGS,
+            )
 
 
 async def offer_ready(interaction: discord.Interaction, campaign_id: str) -> bool:
@@ -633,6 +1138,10 @@ class ConnectionOffer(_Menu):
         self.add_item(_Button(partial(self._answer, True), label="🤫 Keep as secret", style=grey))
         self.add_item(_Button(self._no, label="❌ No", style=grey))
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=1))
+        self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=1)
+        self.add_item(self.all_button)
+        self.all_done: keep.KeptAll | None = None  # what Keep all kept, for Undo
+        self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=1)
 
     async def _ready(self, interaction: discord.Interaction, campaign: Campaign) -> list[Waiting]:
         """The connections to ask now, oldest first (the queue read and cleaned again)."""
@@ -646,7 +1155,17 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         return [w for w in waiting if w.ready]
 
+    @staticmethod
+    def _this_upload(ready: list[Waiting]) -> list[Waiting]:
+        """What Keep all keeps (#2650): the ready connections from the same upload as the first
+        card, an old one (queued before uploads had names, upload "") counting as an upload of
+        its own, so a labelled backstory is never kept unseen and neither is an old one."""
+        return [w for w in ready if w.upload == ready[0].upload] if ready else []
+
     def _set(self, ready: list[Waiting]) -> None:
+        mine = self._this_upload(ready)
+        self.all_button.label = f"✅ Keep all {len(mine)}" if len(mine) > 1 else "✅ Keep all"
+        self.all_button.disabled = len(mine) < 2
         self.shown = list(ready)
         self.left = len(ready)
         self.total = max(self.total, self.kept + self.left_out + self.left)
@@ -677,7 +1196,16 @@ class ConnectionOffer(_Menu):
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n{note}"
+            + self._scope(c)
         )
+
+    def _scope(self, c: Waiting) -> str:
+        """Which connections ✅ Keep all keeps, when the card is from a named upload (#2650)."""
+        mine = [w for w in self.shown if w.upload == c.upload] if c.upload else []
+        if len(mine) < 2:
+            return ""
+        keeps = f"{len(mine)} from {_md(c.upload)}"
+        return f"\n✅ Keep all keeps the {keeps}, and none from other uploads."
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
         self._set(ready)
@@ -772,6 +1300,70 @@ class ConnectionOffer(_Menu):
             await store.remove(campaign.guild_id, campaign.id, c)
             self.left_out += 1
             await self._show(interaction, await self._ready(interaction, campaign))
+
+    async def _keep_all(self, interaction: discord.Interaction) -> None:
+        """Keep every connection that is ready, in one press (#2642): the text is the DM's own.
+        Secret ones are kept as secret, never made public. Undo takes them all back."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            memory = _memory(interaction)
+            store = getattr(_bot(interaction), "backstory_links", None)
+            if campaign is None or memory is None or store is None:
+                return
+            ready = await self._ready(interaction, campaign)
+            seen = {(w.subject_id, w.predicate, w.object_id) for w in self.shown}
+            # only what this message has listed: one that turned ready meanwhile is still unseen
+            todo = [w for w in ready if (w.subject_id, w.predicate, w.object_id) in seen]
+            if self.current is None:
+                return
+            todo = [w for w in todo if w.upload == self.current.upload]  # (this backstory only)
+            self.all_done = await keep.keep_all(memory, store, campaign.guild_id, campaign.id, todo)
+            changed(interaction, campaign)
+            self.kept += len(self.all_done.kept)
+            self.left_out += self.all_done.refused
+            self.current = None
+            self.clear_items()
+            self.add_item(self.undo_button)
+            refused = (
+                f" {self.all_done.refused} could not be kept: check them one by one."
+                if self.all_done.refused
+                else ""
+            )
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=(
+                        f"📜 Kept {len(self.all_done.kept)} connection"
+                        f"{'' if len(self.all_done.kept) == 1 else 's'}.{refused} "
+                        "Press ↩️ Undo to take them all back."
+                    ),
+                    view=self,
+                    allowed_mentions=NO_PINGS,
+                )
+
+    async def _undo_all(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            memory = _memory(interaction)
+            store = getattr(_bot(interaction), "backstory_links", None)
+            done = self.all_done
+            if campaign is None or memory is None or store is None or done is None:
+                return
+            back = await keep.undo_all(memory, store, campaign.guild_id, campaign.id, done)
+            changed(interaction, campaign)
+            self.all_done = None
+            self.kept -= back
+            self.stop()
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=(
+                        f"↩️ Took back {back} connection{'' if back == 1 else 's'}. They wait "
+                        "again: press 📜 Check the connections to go through them."
+                    ),
+                    view=None,
+                    allowed_mentions=NO_PINGS,
+                )
 
     async def _skip(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()

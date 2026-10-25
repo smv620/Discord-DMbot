@@ -43,7 +43,7 @@ describe("finding names", () => {
     const kind = screen.getByLabelText(w.kindLabel) as HTMLSelectElement;
     const labels = [...kind.options].map((o) => o.textContent);
     expect(labels[0]).toMatch(/^Everything \(\d+\)$/);
-    expect(labels).toContain("People (16)");
+    expect(labels).toContain("NPCs (16)");
     expect(labels).toContain("Places (9)");
   });
 
@@ -109,7 +109,7 @@ describe("finding names", () => {
     open();
     await ready();
     const aldric = rowOf("Captain Brask");
-    expect(within(aldric).getByText("People")).toBeTruthy();
+    expect(within(aldric).getByText("NPCs")).toBeTruthy();
     expect(within(aldric).getByText(/Also called: Captain, Captain Brask the Elder/)).toBeTruthy();
     const link = within(aldric).getByRole("link", { name: w.npcLinkFor("Captain Brask") });
     expect(link.getAttribute("href")).toBe("/account/npc/100.cmp1/n4");

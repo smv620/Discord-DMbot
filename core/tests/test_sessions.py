@@ -2513,8 +2513,13 @@ class SaveAndResume(SessionTests):
         table = await self.filtered("1 other")
         table.topics.window_lines, table.topics.window_s = 6, 0.01
         self.said(table, "my boss called again")
-        await asyncio.sleep(0.05)
-        await self.settle()
+        # wait for the window to close rather than a fixed 50 ms: on a loaded runner the 10 ms
+        # timer can fire late, and the question is then asked a moment after the sleep ended
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            await self.settle()
+            if self.ai_calls:
+                break
         self.assertEqual(len(self.ai_calls), 1)
         self.assertEqual(table.heard, [])
 

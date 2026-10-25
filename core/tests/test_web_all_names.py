@@ -23,7 +23,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests import speed
 from tests.test_recap_web import BOB, NOW, Base, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 MEMBER = DiscordGuild(id=THURSDAY.id, name=THURSDAY.name, manage=False)
 
@@ -91,7 +91,7 @@ class TheDmsList(Listing):
             got["kinds"],
             [
                 {"key": "item", "label": "Items", "count": 1},
-                {"key": "npc", "label": "People", "count": 1},
+                {"key": "npc", "label": "NPCs", "count": 1},
                 {"key": "place", "label": "Places", "count": 1},
             ],
         )
@@ -109,10 +109,17 @@ class TheDmsList(Listing):
         self,
     ) -> None:
         await self.add("Rook", "character", role="player_character")
-        await self.add("Ilmara", "character", role="god")
+        await self.add("Ilmara", "character", role="npc")
         await self.add("Wanderer", "character")
         keys = {k["key"] for k in (await self.page())["kinds"]}
-        self.assertTrue({"player_character", "deity", "character"} <= keys)
+        self.assertTrue({"player_character", "npc", "character"} <= keys)
+
+    def test_character_kinds_are_called_npcs_and_pcs(self) -> None:
+        """#2618: the site says NPCs and PCs, never "People" or "Player characters"."""
+        from dmbot.web.all_names import kinds_from
+
+        labels = {k["key"]: k["label"] for k in kinds_from({"npc": 3, "player_character": 2})}
+        self.assertEqual(labels, {"npc": "NPCs", "player_character": "PCs"})
 
     async def test_search_finds_a_name_or_any_other_name_and_ignores_case(self) -> None:
         for typed, expected in (
@@ -531,9 +538,11 @@ class TheRoute(Listing):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(self.client.aclose)
 
     async def test_the_list_over_http(self) -> None:
@@ -554,7 +563,9 @@ class TheRoute(Listing):
         other = await self.client.get(f"/me/campaigns/{self.g}.{'0' * 32}/all-names")
         self.assertEqual((other.status_code, other.json()), (404, {"error": "not_found"}))
         anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.get(url)).status_code, 401)

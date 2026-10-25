@@ -258,7 +258,7 @@ class Render(unittest.TestCase):
         self.assertIn(
             "(Mia) {table_talk}: is it my turn?", cleaned
         )  # table talk stays, tagged (#53)
-        self.assertIn("Chat clearly not about the game is left out", cleaned)
+        self.assertIn("chat clearly not about the game is left out", cleaned)
         heard = export.render("X", session(), lines, names)
         self.assertIn("my boss called", heard)
         self.assertIn("he wants me Monday", heard)

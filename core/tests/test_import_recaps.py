@@ -147,10 +147,12 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         recap_holds=None,
         post=AsyncMock(return_value=True),
         _import_names={},
+        _import_reports={},
         _import_unhonoured={},
         _import_queued={},
         _import_unchecked={},
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
+        repair_names=AsyncMock(return_value=0),  # PlotBot's name pass (#2628): its own tests
         _hold_or_queue=AsyncMock(return_value="held"),
     )
     for name in (

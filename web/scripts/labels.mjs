@@ -129,13 +129,21 @@ export const siteButtons = [
   "Session transcripts",
   "Forgot your password",
   "Merge selected", // the All names page (#2427), on the website, not in Discord
+  "Change", // the recap page (#2577): changes who was in a scene, on the website, not in Discord
+  "Save list", // the same panel: saves the scene's list (#2577)
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note
   // The recap page's share controls (#2119), on the website, not in Discord.
+  // The recap maker for past sessions (#2610), on the website, not in Discord.
+  "Make the recap",
+  "Add a recap someone wrote",
   "Make a link",
   "Turn the link off",
   "Make a new link",
+  "Remake the voice", // the recap page's audio part (#2630), on the website, not in Discord
+  "Remake voice and music",
+  "Replace everywhere", // "Fix a name everywhere" in the recap editor (#2630)
   "Save how to say it", // the Names page row editor (#2317), on the website, not in Discord
 ];
 

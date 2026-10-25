@@ -18,7 +18,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, notify, sheets
+from dmbot.memory import beliefs, evidence, notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
@@ -26,6 +26,7 @@ from dmbot.memory._changes import (
     CLAIMS,
     CORRECTIONS,
     ENTITIES,
+    EVIDENCE,
     FLAGS,
     IMPRESSIONS,
     PERSPECTIVES,
@@ -77,6 +78,7 @@ from dmbot.memory.ontology import (
     PredicateTerm,
     TypeTerm,
     conditions_for,
+    god_is_an_npc,
 )
 from dmbot.memory.sounds import sound_codes
 
@@ -95,6 +97,7 @@ _TAGS: dict[str, Table] = {
     "relation": RELATIONS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "belief": BELIEFS,
+    "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
     "impression": IMPRESSIONS,
     "attitude": ATTITUDES,
     "correction": CORRECTIONS,
@@ -313,6 +316,20 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
             row = row_of(raw, table)
             if table is RELATIONS:
                 row["mention_ids"] = []  # mentions aren't backed up
+            if table is CLAIMS:
+                # a claim's line references name their speakers (#2676); a restored campaign has
+                # none of those lines, and a backup is read by the whole server
+                row["lines"] = []
+            if table is BELIEFS:
+                # the old list can hold a line's reference, which names its speaker; the typed
+                # links (a line's as a placeholder) carry the evidence now, and a backup is read
+                # by the whole server
+                row["evidence_ids"] = []
+            if table is EVIDENCE and row["kind"] == evidence.LINE:
+                # A line of this server's transcripts: its reference names the speaker, and a
+                # restored campaign has none of these lines, so the link goes as a placeholder
+                # (it keeps the kind and the session). A backup is read by the whole server.
+                row["target_id"] = None
             out.append({"table": tag, **row})
     return out
 
@@ -321,7 +338,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
-    rows = _with_definition_fields(_from_before_kinds(rows))
+    rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(rows)))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
             raise CampaignError(DAMAGED)
@@ -332,7 +349,10 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
-        elif not all(_valid(c, raw[c]) for c in table.columns):
+        elif table is EVIDENCE:
+            _check_evidence(raw)
+        elif not all(_valid(c, raw[c]) for c in table.columns if c != "reading"):
+            # (a claim's reading has its own check, `_check_claim`)
             raise CampaignError(DAMAGED)
         if table is CLAIMS:
             _check_claim(raw)
@@ -352,6 +372,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
+    _tidy_evidence(by_tag)
     _check_terms(by_tag)
     # A sheet belongs to the player playing the character, as everywhere else (#723).
     # One left from another player, or on an entry with no player (an undone merge), is
@@ -414,6 +435,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
             raw = {"pinned": False, **raw}  # from before the pin (#2447)
+        elif isinstance(raw, dict) and raw.get("table") == "claim":
+            raw = {"reading": None, **raw}  # from before readings (#2412)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
@@ -435,6 +458,21 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             raw = {"unrevealed": False, "directional": False, **raw, "definition_version": version}
         out.append(raw)
     return out
+
+
+def _gods_are_npcs(rows: list[Any]) -> list[Any]:
+    """A backup made while a god was a role (#2562) reads as the migration moved it: an NPC,
+    with "god" kept in its description. Any other backup passes through as it is."""
+    return [
+        {
+            **r,
+            "role": "npc",
+            "description": god_is_an_npc(str(r.get("description") or "")),
+        }
+        if isinstance(r, dict) and r.get("table") == "entity" and r.get("role") == "god"
+        else r
+        for r in rows
+    ]
 
 
 def _from_before_kinds(rows: list[Any]) -> list[Any]:
@@ -520,7 +558,7 @@ def _other_version(snapshot: Any) -> bool:
 
 
 def _db_value(column: str, value: Any) -> Any:
-    return Jsonb(value) if column == "sheet" and value is not None else value
+    return Jsonb(value) if column in ("sheet", "reading") and value is not None else value
 
 
 def _type_term(r: dict[str, Any]) -> TypeTerm:
@@ -608,6 +646,10 @@ def _check_claim(row: Mapping[str, Any]) -> None:
     never a plan that someone says is waiting for the DM (a plan is never asked)."""
     if row["status"] not in CLAIM_STATUSES:
         raise CampaignError(DAMAGED)
+    if not _reading_ok(row["reading"]):
+        raise CampaignError(DAMAGED)
+    if row["reading"] is not None and row["status"] == "confirmed":
+        raise CampaignError(DAMAGED)  # a reading is placed as a belief, never kept as a fact
     if row["fact_id"] is not None and row["status"] != "confirmed":
         raise CampaignError(DAMAGED)
     if row["status"] == "proposed" and row["how"] == "plan":
@@ -661,3 +703,76 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         if allowed is None or r["condition"] not in allowed or r["entity_id"] in open_for:
             raise CampaignError(DAMAGED)
         open_for.add(r["entity_id"])
+
+
+def _check_evidence(raw: dict[str, Any]) -> None:
+    """A link row from a file: one owner (a connection or a belief), a known kind, a short target
+    or none (a placeholder), and the session and time as whole numbers. Untrusted."""
+    owner_ok = (raw["relation_id"] is None) != (raw["belief_id"] is None)
+    ids_ok = all(raw[c] is None or is_id(raw[c]) for c in ("relation_id", "belief_id")) and is_id(
+        raw["id"]
+    )
+    target = raw["target_id"]
+    target_ok = target is None or (
+        isinstance(target, str) and 1 <= len(target) <= evidence.TARGET_MAX
+    )
+    ints_ok = (
+        all(
+            raw[c] is None
+            or (isinstance(raw[c], int) and not isinstance(raw[c], bool) and raw[c] >= 0)
+            for c in ("session_started_at", "added_at")
+        )
+        and raw["added_at"] is not None
+    )
+    if not (owner_ok and ids_ok and target_ok and ints_ok and raw["kind"] in evidence.KINDS):
+        raise CampaignError(DAMAGED)
+
+
+def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """What a file's links may point at, whatever the file says (it is untrusted): a line is never
+    brought back (its reference names a speaker, and a restored campaign has none of those
+    lines), and a claim, clue or event must be a row of this same file, else the link is a
+    placeholder. A belief's old list and a claim's `lines` are not read from a file for the same
+    reason (they hold line references, which name speakers)."""
+    for row in by_tag["belief"]:
+        row["evidence_ids"] = []
+    for row in by_tag["claim"]:  # an older file's references are not brought back (#2676)
+        row["lines"] = []
+    claims = {r["id"] for r in by_tag["claim"]}
+    entity_kind = {r["id"]: r["type"] for r in by_tag["entity"]}
+    for row in by_tag["evidence"]:
+        kind, target = row["kind"], row["target_id"]
+        if (
+            kind == evidence.LINE
+            or (kind == evidence.CLAIM and target not in claims)
+            or (kind in (evidence.CLUE, evidence.EVENT) and entity_kind.get(target) != kind)
+        ):
+            row["target_id"] = None
+
+
+_READING_KEYS: dict[str, type | tuple[type, ...]] = {
+    "view": str, "confidence": (int, float), "status": str, "because": str, "manipulated_by": str,
+    "new_assertion": bool, "dm_confirms": bool,
+}  # fmt: skip
+
+
+def _reading_ok(reading: object) -> bool:
+    """A claim's reading from a file: none, or exactly the keys a reading has, each the right kind
+    of value, a known status, a confidence from 0 to 1, a view that is the party, the truth or a
+    character's, and short words. Untrusted."""
+    if reading is None:
+        return True
+    if not isinstance(reading, dict) or set(reading) != set(_READING_KEYS):
+        return False
+    for key, kind in _READING_KEYS.items():
+        value = reading[key]
+        if not isinstance(value, kind) or (kind is not bool and isinstance(value, bool)):
+            return False
+        if isinstance(value, str) and len(value) > NAME_MAX + 3:
+            return False
+    view = reading["view"]
+    return (
+        reading["status"] in BELIEF_STATUSES
+        and 0 <= reading["confidence"] <= 1
+        and (view in ("party", "truth") or (view.startswith("pc:") and len(view) > 3))
+    )

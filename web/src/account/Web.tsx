@@ -19,11 +19,16 @@ import {
   type WebGraph,
   type WebLinkChange,
   type WebNode,
+  type WebOverview,
   type WebRevealTarget,
   type WebView,
 } from "./api";
 import WebMap from "./WebMap";
-import { clampHops, isTheory } from "./webLayout";
+import WebOverviewPanel from "./WebOverview";
+import WebWaiting from "./WebWaiting";
+import { WEB_WAITING_LIVE } from "../content/web-waiting";
+import { clampHops } from "./webLayout";
+import { listLines, type WebLine } from "./webLines";
 import CampaignNav from "./CampaignNav";
 
 /** The campaign's address, read from `/account/web/<server>.<campaign>`. */
@@ -70,6 +75,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [isDm, setIsDm] = useState(false);
   const [meta, setMeta] = useState<{ visibility?: WebGraph["visibility"] | undefined; canPeek?: boolean | undefined }>({});
   const [asking, setAsking] = useState(false);
+  // The overview (#2632): every name, those with no connection yet and the groups. Missing from an older API
+  // or while it loads: then the page is the map alone, as before.
+  const [overview, setOverview] = useState<WebOverview | null>(null);
+  const [alone, setAlone] = useState<string | null>(null);
+  const overviewLatest = useRef(0);
   const peekSwitch = useRef<HTMLInputElement>(null);
 
   /** Reads the web around `at`. A big one waits for a yes unless `sure`. */
@@ -106,6 +116,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       if (kind === "peek-off") {
         // The DM turned peeking off while it was on: back to the normal view, with the reason.
         switchTo(undefined);
+        setOverview(null);
+        void loadOverview();
         setMeta((now) => ({ ...now, visibility: "private", canPeek: false }));
         setNews({ ok: false, text: words.errors["peek-off"]!, n: ++sayings.current });
         await load(at, steps, true);
@@ -125,7 +137,10 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   function chooseView(next: WebView | undefined): void {
     switchTo(next);
     setLine(null);
+    setAlone(null);
+    setOverview(null); // never leave the other view's names on screen while this one loads
     void load(center, hops, true);
+    void loadOverview();
   }
 
   /** A player agreed to the warning: tell the API they peek, then read the full web. */
@@ -174,11 +189,28 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     }
     setNews({ ok: true, text: words.revealed, n: ++sayings.current });
     await load(center, hops, true);
+    void loadOverview(); // (a new connection or a changed name moves names in and out of the tray)
     return null;
   }
 
+  /** Reads the overview in the view being asked for; a failure leaves the page as the map alone. */
+  async function loadOverview(): Promise<void> {
+    if (!ref || !api.webOverview) return;
+    const mine = ++overviewLatest.current;
+    const view = askedNow.current;
+    try {
+      const got = await api.webOverview(ref, view ? { view } : {});
+      if (mine === overviewLatest.current) setOverview(got);
+    } catch {
+      if (mine === overviewLatest.current) setOverview(null);
+    }
+  }
+
   useEffect(() => {
+    setOverview(null); // (another campaign's names are never shown under this one)
+    setAlone(null);
     void load(null, DEFAULT_HOPS);
+    void loadOverview();
     // Only the campaign restarts the first read; later reads are the person's choices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref]);
@@ -203,6 +235,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     }
     setNews({ ok: true, text: ok, n: ++sayings.current });
     await load(center, hops, true);
+    void loadOverview(); // (a new connection or a changed name moves names in and out of the tray)
     return null;
   }
 
@@ -221,6 +254,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     }
     setNews({ ok: true, text: ok, n: ++sayings.current });
     await load(center, hops, true);
+    void loadOverview(); // (a new connection or a changed name moves names in and out of the tray)
     return null;
   }
 
@@ -305,6 +339,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     })
     .filter((e) => e.links.length > 0);
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
+  const { own, further } = listLines(edges, center, nameOf);
   const maxHops = graph.maxHops;
   const chosen = line ? (edges.find((e) => e.a === line.a && e.b === line.b || e.a === line.b && e.b === line.a) ?? null) : null;
 
@@ -392,6 +427,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
+      {overview && (
+        <WebOverviewPanel
+          overview={overview}
+          center={center}
+          alone={alone}
+          onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
+          onAlone={setAlone}
+        />
+      )}
+
+      {WEB_WAITING_LIVE && overview?.canEdit && asked !== "players" && (
+        <WebWaiting key={ref} api={api} campaignRef={ref} onChanged={() => void load(center, hops, true)} />
+      )}
+
       {nodes.length <= 1 && edges.length === 0 ? (
         <p class="muted">{words.empty}</p>
       ) : (
@@ -478,24 +527,47 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
           ))}
         </ul>
         <h3 class="small">{words.linesHeading}</h3>
-        <ul class="web-lines">
-          {edges.map((e) => (
-            <li key={`${e.a}|${e.b}`} class="name-row">
-              {isTheory(e) && <span aria-hidden="true">{words.theoryMark} </span>}
-              {words.lineText(nameOf(e.a), nameOf(e.b), e.label, e.more)}{" "}
-              <button
-                type="button"
-                class="button secondary"
-                onClick={() => setLine({ a: e.a, b: e.b })}
-                aria-label={words.seeLine(nameOf(e.a), nameOf(e.b))}
-              >
-                {words.seeLineShort}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <WebLines lines={own} onOpen={(a, b) => setLine({ a, b })} />
+        {further.length > 0 && (
+          <>
+            <h3 class="small">{words.furtherOut}</h3>
+            <p class="small muted">{words.furtherOutHint(center ? nameOf(center) : "")}</p>
+            <WebLines lines={further} onOpen={(a, b) => setLine({ a, b })} />
+          </>
+        )}
       </section>
     </div>
+  );
+}
+
+/** Connections, one line each, read subject, what it does, object (#2666). The arrows are for the
+ * eye; a screen reader gets the plain sentence. */
+function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: string) => void }) {
+  return (
+    <ul class="web-lines">
+      {lines.map((l) => (
+        <li key={l.key} class="name-row">
+          {l.link.secret && <span aria-hidden="true">{words.secretMark} </span>}
+          {l.link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
+          <span aria-hidden="true">
+            {l.from} → {l.words} → {l.to}
+          </span>
+          <span class="visually-hidden">
+            {words.lineText(l.from, l.words, l.to)}
+            {l.link.secret ? ` (${words.secretWords})` : ""}
+            {l.link.belief ? ` (${words.theoryWords})` : ""}
+          </span>{" "}
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => onOpen(l.edge.a, l.edge.b)}
+            aria-label={words.seeLine(l.from, l.to)}
+          >
+            {words.seeLineShort}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

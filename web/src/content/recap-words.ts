@@ -9,16 +9,18 @@
 // session recaps" link and the recap list's lead and email promise (#1401).
 //
 // RECAP_AUDIO_LIVE is the narrated version (#1383): when a recap can have a narrator and music, and
-// ElevenLabs gets its script. Turning it on also needs: the owner's go-ahead on naming ElevenLabs,
-// ElevenLabs in the "Companies that help us" list and its country in the sentence under it (not
-// known today, so not guessed here), and a What's new entry. It can only be true with RECAPS_LIVE.
+// ElevenLabs gets its script. It is on since #2617: the bot has made narrated recaps since 2026-10-20,
+// and with the switch off the page hid the audio choice and the player while still saying "your audio
+// is ready". It needs ElevenLabs in the privacy page's "Companies that help us" list with its country
+// (the United States, from its own privacy policy), and the narration What's new entries out of
+// `held`. It can only be true with RECAPS_LIVE.
 //
 // RECAP_NAMES_LIVE is the names-to-check part of a recap (#2027, #2030, #2031): held until dev1
 // deploys #2030, because until then no recap has the "Facts to be confirmed" list or the private
 // message. It moves with the What's new entry "New names from your recap" and can only be true with
 // RECAPS_LIVE.
 export const RECAPS_LIVE = true;
-export const RECAP_AUDIO_LIVE = false;
+export const RECAP_AUDIO_LIVE = true;
 export const RECAP_NAMES_LIVE = false;
 // RECAP_FIX_LIVE is "Tell DMbot what to fix" on the recap page (#2113, #2114): a typed note, sorted by
 // the bot and polled by the page, then a rewrite with the points the DM kept. It needs the web API's
@@ -45,6 +47,14 @@ export const PLOT_CHECK_LIVE = false;
 // entry for the link, and can only be true with RECAPS_LIVE. Until then the privacy page says nothing
 // of it, so it never describes a link nobody can make.
 export const RECAP_SHARE_LIVE = false;
+
+// RECAP_REMAKE_LIVE is "Remake the voice" after editing a recap's words (#2630): the page asks the API
+// what making the audio again would do, says whether only the voice or everything is made again and
+// why, shows how far the voice has got, and offers "Fix a name everywhere" in the editor. It needs the
+// API of #2644 deployed and dev1 to have seen one word changed and only the voice made again. It moves
+// with the What's new entry "Fix a word, remake only the voice" and can only be true with
+// RECAP_AUDIO_LIVE.
+export const RECAP_REMAKE_LIVE = false;
 
 export const recapsHeading = "Recaps";
 
@@ -139,10 +149,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
   ...(RECAP_AUDIO_LIVE
     ? [
         {
-          text: "A recap can also come with a narrator's voice and music, as two audio files you play together.",
-        },
-        {
-          text: "DMbot makes no audio by itself. Read the recap, then press Approve the text, on the DM screen or on your recap page, and pick voice-over, background music, both, or text only (no audio). You only see what your plan includes. If you change the text later, you approve it again. If a mood or pause mark in the text is wrong, DMbot shows what to fix, and nothing is approved until you fix it.",
+          text: "A recap can also come with a narrator's voice and music, as two audio files you play together. DMbot makes none by itself: read the recap, press Approve the text (on the DM screen or your recap page), then pick voice-over, background music, both, or text only. Change the text later and you approve it again; if DMbot spots something in the text it cannot turn into sound, it shows you first so you can fix it.",
         },
       ]
     : []),

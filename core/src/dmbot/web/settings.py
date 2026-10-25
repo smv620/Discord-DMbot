@@ -110,6 +110,8 @@ class WebSettings:
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
+    # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
+    handover_email_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -120,6 +122,13 @@ class WebSettings:
     # same rule as `Settings.recap_audio_on`). The web container is never given the speech key, so
     # compose passes only whether each is set ("1" or empty), never the key itself (#2419).
     recap_audio_on: bool = False
+    # PlotBot's check of each recap (#2122): the same DMBOT_PLOT_CHECK as the bot's, and only with
+    # recaps on. Off, the plot routes say "unavailable" and Approve waits for nothing.
+    plot_check_on: bool = False
+    # The bot's DMBOT_RECAP_VOICE_TAGS, to work out which paragraphs a change to the words would
+    # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
+    # bot does.
+    recap_voice_tags: bool = True
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
@@ -291,14 +300,23 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
     if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
+        plot_check_on=recaps_raw in ("1", "true", "on")
+        and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
         recap_audio_on=(
             recaps_raw in ("1", "true", "on")
             and get("RECAP_AUDIO_KEY_SET") == "1"
             and get("RECAP_AUDIO_VOICE_SET") == "1"
         ),
+        recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,

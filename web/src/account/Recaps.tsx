@@ -18,8 +18,10 @@ import {
 } from "../content/recaps";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { campaignPage as campaignWords } from "../content/campaign-page";
-import { panelWords } from "../content/recap-panel";
-import { PLOT_CHECK_LIVE, RECAP_AUDIO_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { panelWords, remakeSentence, remakeWords } from "../content/recap-panel";
+import { stageWords } from "../content/work-progress";
+import { PLOT_CHECK_LIVE, RECAP_AUDIO_LIVE, RECAP_NAME_CHECKS_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { RECAP_MAKE_LIVE, makeWords } from "../content/recap-make";
 import {
   ApiError,
   type AccountApi,
@@ -28,20 +30,31 @@ import {
   type RecapAction,
   type RecapMonth,
   type RecapAudioLinks,
+  type RecapRemake,
 } from "./api";
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
+import RecapMake from "./RecapMake";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
 import RecapNameChecks from "./RecapNameChecks";
 import RecapPlotCheck from "./RecapPlotCheck";
+import RecapFixName from "./RecapFixName";
+import { audioIsStale, useRemake } from "./useRemake";
+import WorkProgress from "./WorkProgress";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
 import RecapNames from "./RecapNames";
+import NamesFixed from "./NamesFixed";
+import PresentPerScene from "./PresentPerScene";
+import RecapReport from "./RecapReport";
+import { NAMES_FIXED_LIVE } from "../content/names-fixed-words";
+import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
+import { AFTER_SESSION_REPORT_LIVE } from "../content/report-words";
 import RecapPlayer from "./RecapPlayer";
 import CampaignNav from "./CampaignNav";
 
@@ -198,6 +211,8 @@ function List({ api, campaign }: { api: AccountApi; campaign: string | null }) {
           ))}
         </ul>
       )}
+      {/* Recaps for past sessions (#2610): one campaign's DMs only, and only behind its own switch. */}
+      {RECAP_MAKE_LIVE && RECAPS_LIVE && campaign && <RecapMake api={api} campaignRef={campaign} />}
       {/* Behind the same switch as the list's other promises (#1423): nothing while recaps are off. */}
       {RECAPS_LIVE &&
         allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map((line) => (
@@ -270,10 +285,13 @@ function AudioPanel({
   api,
   recap,
   onRecap,
+  remake,
 }: {
   api: AccountApi;
   recap: Recap;
   onRecap: (next: Recap) => void;
+  /** What making it again would do (#2630); null when not asked or not known. */
+  remake: RecapRemake | null;
 }) {
   const audio = recap.audio;
   const [links, setLinks] = useState<RecapAudioLinks>({});
@@ -287,6 +305,8 @@ function AudioPanel({
     null,
   );
   const playable = audio?.state === "ready" && audio.current;
+
+  const remakeOn = RECAP_REMAKE_LIVE && RECAP_AUDIO_LIVE;
 
   // The links last 15 minutes; one fresh read when a player cannot load its file.
   const load = async (): Promise<void> => {
@@ -339,7 +359,7 @@ function AudioPanel({
     setNote(null);
     try {
       onRecap(await api.askRecapAudioAgain(recap.ref));
-      setNote({ ok: true, message: panelWords.asked });
+      setNote({ ok: true, message: remakeOn ? remakeWords.asked : panelWords.asked });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setNote({
@@ -360,6 +380,16 @@ function AudioPanel({
     }
   };
 
+  // (an edited draft's line is beside Approve's audio choice instead, so it is said once)
+  const remakeLine = recap.status === "draft" && audioIsStale(recap) ? null : remakeSentence(remake);
+  const lastLine =
+    !remakeOn || audio.state !== "ready" || !audio.current
+      ? null
+      : audio.how === "voice"
+        ? remakeWords.lastVoice
+        : audio.how === "all"
+          ? remakeWords.lastAll
+          : null;
   const line =
     audio.state === "queued"
       ? panelWords.queued
@@ -397,6 +427,25 @@ function AudioPanel({
         </p>
       )}
       {line && <p role="status">{line}</p>}
+      {remakeOn && audio.state === "queued" && audio.progress && (
+        <WorkProgress
+          stage={stageWords(remakeWords.stage, audio.progress.stage)}
+          done={audio.progress.done}
+          total={audio.progress.total}
+          unit={
+            audio.progress.unit && Object.hasOwn(remakeWords.unit, audio.progress.unit)
+              ? remakeWords.unit[audio.progress.unit]
+              : undefined
+          }
+          startedAt={audio.progress.startedAt}
+          updatedAt={audio.progress.updatedAt}
+          serverNow={audio.progress.serverNow}
+          state={audio.progress.state}
+          reason={audio.progress.reason}
+        />
+      )}
+      {lastLine && <p class="muted small">{lastLine}</p>}
+      {remakeLine && audio.canAskAgain && <p role="status">{remakeLine}</p>}
       {audio.canAskAgain && (
         <button
           type="button"
@@ -405,7 +454,13 @@ function AudioPanel({
           disabled={busy}
           onClick={() => void ask()}
         >
-          {busy ? text.busy : panelWords.again}
+          {busy
+            ? text.busy
+            : remake?.how === "voice"
+              ? remakeWords.voiceButton
+              : remake?.how === "all"
+                ? remakeWords.allButton
+                : panelWords.again}
         </button>
       )}
       {note && (
@@ -654,6 +709,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
     }
   };
 
+  const remake = useRemake(api, recap);
   const heading = recap.title || text.untitled;
   const decided = recap.status !== "draft";
   return (
@@ -676,6 +732,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       <p class="small">
         {sessionLine(recap, [recap.serverName])}
       </p>
+      {RECAP_MAKE_LIVE && recap.writtenBy && (
+        <p class="small">{makeWords.uploaded(recap.writtenBy, recap.uploadedAt ? sessionDay(recap.uploadedAt) : null)}</p>
+      )}
       {recap.transcriptsDeletedAt && (
         <p class="small">
           {text.transcriptDeleted(sessionDay(recap.transcriptsDeletedAt), recap.keepDays)}
@@ -774,6 +833,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
               open={cueProblems.some((p) => p.kind === "unknown")}
             />
           )}
+          {RECAP_REMAKE_LIVE && RECAP_AUDIO_LIVE && (
+            <RecapFixName text={summary} onText={setSummary} />
+          )}
           <label for="recap-housekeeping">{text.housekeepingLabel}</label>
           <textarea
             id="recap-housekeeping"
@@ -870,6 +932,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           pageFocus={() => headingRef.current}
           blockedBy={plotWhy}
           onPlotOpen={() => setPlotNonce((n) => n + 1)}
+          remake={remake}
         />}
       {!editing && (
         <RecapShareControls
@@ -879,10 +942,15 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           onShare={(share) => setRecap({ ...recap, share, shared: share.on })}
         />
       )}
-      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
       {!editing && <RecapNames api={api} recapRef={recap.ref} />}
+      {PRESENT_PER_SCENE_LIVE && !editing && <PresentPerScene key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
+      {NAMES_FIXED_LIVE && !editing && recap.canEdit && <NamesFixed key={recap.ref} api={api} recapRef={recap.ref} />}
+      {AFTER_SESSION_REPORT_LIVE && !editing && recap.campaign && recap.canEdit && (
+        <RecapReport key={`${recap.campaign}.${recap.sessionAt}`} api={api} campaignRef={recap.campaign} sessionAt={recap.sessionAt} />
+      )}
       {!editing &&
         !recap.working &&
         (recap.canEdit || recap.canTryAgain || !decided) && (

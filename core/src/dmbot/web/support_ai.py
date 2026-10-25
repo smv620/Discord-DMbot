@@ -36,6 +36,7 @@ from dmbot.web import support
 from dmbot.web.support import Open
 from dmbot.web.support import Reply as ThreadReply
 from dmbot.web.support_mail import reply_address
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ MAX_AI_ANSWERS = 5  # one ticket's answers from the AI; the next time it goes to
 RETRY_S = 3600  # a failed AI call is tried again after an hour
 GIVE_UP_S = 86400  # ...and after a day without an answer the ticket goes to a person
 TICKETS_PER_PASS = 5
-MAX_ANSWER = 3000
+REPLY_STORED_MAX = 8000  # characters the thread keeps (support_replies.text): a storage limit
 MAX_PROMPT = 24_000  # characters of thread sent: the newest messages win
 MAX_TOKENS = 900
 # The word is real: asks_for_a_person() below hands the ticket over on it (or "human") without an
@@ -216,7 +217,7 @@ def read_verdict(raw: str) -> Verdict | None:
     if not isinstance(answer, str) or not answer.strip():
         return None
     verdict = data.get("verdict")
-    return Verdict(answer.strip()[:MAX_ANSWER], verdict == "unhappy")
+    return Verdict(at_word_end(answer.strip(), REPLY_STORED_MAX), verdict == "unhappy")
 
 
 def with_ending(answer: str) -> str:

@@ -605,6 +605,14 @@ what players see.
   Magic). When the target resisted or was protected, The truth stays as it is, and the protection is linked
   to the event as `MANIPULATED_BY`.
 
+**Built so far (#2412, slice 1):** `memory/readings.py` holds the prompt for these four rules (its own
+text; the claims prompt and its measured version are untouched), reads the model's answer and turns
+each reading into belief proposals. The model says words only; code sets every number (a guess 0.5,
+"surely" 0.75, "unlikely" 0.25, a reveal 1.0, a dodge under a spell 0.7, a false public statement 0.0)
+and every status. A guess goes to one player character's point of view, and to the party's only when the
+table agreed out loud. Anything about The truth is a proposal that waits for the DM. Storing them, the
+players' points of view and the running pass come in the next slices.
+
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
 
@@ -624,6 +632,120 @@ connected an entity is in The truth, counting hidden connections too. Lucian, me
 the inn, is important when the truth ties him to many others. The recap picks the session's beats by the
 importance of the entities in them, so Lucian is included. It **writes only what The party believes**:
 it mentions Lucian as the patron the party met, and never a hidden connection.
+
+### 9a. The contract for points of view, time, contradictions and evidence (owner, 2026-10-24)
+
+Written after the owner's architecture review (#2643) and the owner's notes there. This is the rule
+the code follows; a change to it is a change to this section first. Section 9 still describes the
+tables; this says what they mean.
+
+**Points of view** (`memory_perspectives`). Their names, in words and in code:
+- **The DM's view** (code: `truth`): what the DM asserted or kept. Only the DM writes it or pins
+  in it (📌 100% truth). An extracted claim never writes or pins it.
+- **The party** (code: `party`): what the players as a group have been shown.
+- **Each player character**: what that character knows or believes. A PC can know what the party
+  doesn't, because PCs keep secrets from each other. A character's private talk reaches DMbot when
+  the DM uploads it as campaign lore, which asks "Whose is this?" (#2650).
+- **An NPC whose beliefs matter**, when the DM or the story needs one.
+
+"The same point of view" means exactly the same one: the party and one of its members are two.
+
+**Two clocks.** Every belief has both, and "at time T" always says which.
+1. **Story time:** when the asserted thing is true in the story. Session span (`from_session_at` /
+   `to_session_at`), and game time once TimeBot records it.
+2. **Belief time:** when that point of view held the belief, from the session it was formed to the
+   session it was replaced. A new belief adds a row; nothing is overwritten.
+
+`recorded_at` is when DMbot learned it. A correction made later (backdated) keeps an earlier story
+time and a later `recorded_at`, so "what did the party believe in session 5" and "what did DMbot know
+then" have separate answers. Tests cover backdated changes, corrections and rebuilding the history.
+
+**One timeline.** Each campaign has one history. Dreams, visions, illusions and other planes are points
+of view or places, never timelines. A timeline identity is added only when a campaign really uses
+time travel or alternate realities, and that decision is recorded in docs/PLAN.md when it is made.
+
+**Contradictions.**
+- **A candidate** is two assertions that conflict under the ontology, held by the **same** point of
+  view, whose **story times** overlap and whose **belief times** overlap. Rules find candidates; the
+  check is deterministic (`memory/checks.py`, `memory/continuity.py`).
+- **Different points of view disagreeing is not a contradiction.** The party believing what the DM's
+  view denies is story (a theory, a lie, a disguise). It goes into the after-session report below,
+  never into a contradiction warning.
+- **Missing game time counts as overlapping** (the cautious rule, as `same_time` does), and the
+  warning says so: "These may clash. The game times aren't known." Those warnings sort lower.
+- **PlotBot grades each candidate major or minor, with a one-line reason.**
+  - **Major:** said at once, privately, on the DM screen during play, short and on topic. At most 3
+    in a session; the rest wait for the report.
+  - **Minor:** go into the after-session report.
+- **The DM decides.** Nothing changes a belief or picks the true one automatically.
+
+**The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
+- the minor contradictions;
+- **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
+  sorted into disguised, misunderstood and simply false, so the DM can close plot holes before they
+  grow.
+
+Everything after a session is built on the **website first**. A Discord version is added only when
+the owner chooses it, one at a time.
+
+**Authority and lineage.**
+- Confirming, rejecting, correcting or undoing a claim never erases who made it or the evidence it
+  came from: the claim, its speaker and its evidence stay linked to the belief (`fact_id`).
+- Consent and privacy rules apply whenever source lines are read or shown.
+
+**Evidence links.**
+- Evidence is a typed, campaign-scoped link (a claim, a transcript line, a clue, an event), not an
+  untyped list of ids. The database keeps it inside the campaign, and a dangling link is found and
+  reported.
+- **When a line's words are removed** (Stop recording me, Delete my transcripts, account deletion,
+  the retention setting), its link becomes a placeholder: "a line from session 12, no longer
+  available". It keeps the session and the kind of evidence, and never the words or who said them.
+- A belief the DM confirmed stands on its own, because it is the DM's word.
+- A link never gives anyone access to what it points at.
+- **Built (#2662):** the table is `memory_evidence` (a link's owner is a connection or a belief; kind
+  `claim`, `line`, `clue` or `event`; the target; the session; when it was added). A new connection
+  or belief writes its links there beside the old lists (`mention_ids`, `evidence_ids`), which a
+  later migration drops once nothing reads them; a reader takes the table. A removed line or claim
+  clears its link's target in every place that removes one. A backup carries a line's link as a
+  placeholder (a restored campaign has none of those lines). The health report counts links,
+  placeholders, dangling and foreign links.
+
+**Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
+`rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a
+processor before it is used.
+- **What is embedded:** text that belongs to the campaign:
+  - assertions in DMbot's own words;
+  - PlotBot's note on why an event matters;
+  - DM notes;
+  - lore the DM shared under the IP rule.
+
+  Those vectors stay with the campaign, like the rest of its generated content.
+- **A person's words** (transcript lines) may be embedded while the line exists, for search, and the
+  vector is deleted with the line. **No vector of a person's words is ever kept after the words are
+  deleted**: a text embedding can be turned back into much of the sentence, and the deletion promise
+  (PLAN, "Data, ownership and deletion") covers what was learned from a person, too.
+- Each vector stores the model name and version, so a change of model re-embeds everything.
+- Vectors are per campaign and never compared across campaigns or servers.
+- `pgvector` is a database image change, which only dev1 deploys.
+
+**Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
+rule says which in `memory/checks.py`'s docstring.
+- **Structural: never broken, so the write is refused.** The shape of the data, not the story:
+  a connection joins two different names; every row and both ends of a connection or belief are in
+  the one campaign (composite keys in the database, never a check in code); a "led to" link joins
+  confirmed names and does not close a loop when it is made; a confidence, a status and a span are
+  valid; a campaign has one "truth" view (the DM's) and one party view.
+- **A warning: flagged for the DM, never refused.** A one-of-a-kind item in two holders' hands
+  (a handoff, a theft or a mistaken belief), a place inside itself, a dead name acting later, too many
+  of a kind, a clash between two facts. The fact is stored as given.
+- **Two writers can't both pass the same check.** A structural rule that reads before it writes runs
+  inside `MemoryStore._write`, which holds the campaign's row lock to the end of the transaction, so
+  one campaign's writes run one at a time. A path outside `_write` locks the same campaign row (an
+  advisory lock would not keep `_write` out) or uses a constraint.
+- **Every check stays in one campaign.** Two campaigns' items are never compared, even when they share a
+  name.
+- **Known gap (follow-up):** the loop check runs when a "led to" link is made; confirming a rejected
+  one, merging two names and restoring a backup skip it.
 
 ## Build order (proposed)
 

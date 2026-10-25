@@ -159,7 +159,7 @@ describe("merging the ticked names", () => {
   it("warns when the kinds differ, and not when they don't", async () => {
     await ask("Mira Voss", "Brynwater Crossing");
     const note = screen.getByRole("note");
-    expect(note.textContent).toBe(w.mergeManyKinds("People and Places", "People"));
+    expect(note.textContent).toBe(w.mergeManyKinds("NPCs and Places", "NPCs"));
     cleanup();
     await ask("Mira Voss", "Brother Anselm");
     expect(screen.queryByRole("note")).toBeNull();

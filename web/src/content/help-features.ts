@@ -29,6 +29,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "account",
+    whatsNew: "Delete a campaign from the website",
+    text: "On My Account, open the campaign's card and press Delete this campaign. Only the person whose plan the campaign uses sees it. It says what goes and that it can't be undone. To keep a copy, download a backup first. Then type the campaign's name and press Delete it. You can't delete while a session is running. A campaign on a server DMbot can't reach any more still shows in your list; you can back it up or delete it there, and its Discord channels stay until a server admin removes them.",
+  },
+  {
+    audience: "account",
     whatsNew: "Receive a campaign by email",
     text: "When someone hands a campaign over to you, you get an email with a link that works for 7 days. Open it and sign in. You see which campaign it is and who offered it. Pick the server it should run on (if you play on a server where DMbot already runs this campaign, your Discord account simply becomes its DM there), then take the campaign, or say no thanks. If you take it, it moves to your account, its play time comes out of your hours, and the DM who offered it stays on as a co-DM. You need a paid plan with a free campaign slot, and Try It can't receive a campaign. If the link has ended, ask the DM to hand the campaign over again.",
   },
@@ -41,6 +46,41 @@ export const featureSteps: FeatureStep[] = [
     audience: "gameMaster",
     whatsNew: "Your campaign has its own home",
     text: "Each campaign has its own page on the website, in four parts: Story, At the table, Rules and Settings. Settings is only for game masters. A trail at the top shows where you are, and four tabs let you jump to another part.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "The website can show what is waiting for you, and answer \"Which Mara?\"",
+    text: "Under the count line, Waiting for you lists what DMbot needs your answer on. Facts heard at the table: Yes, that's true, True, but keep it secret, or Not right. Connections found in a backstory are grouped by the upload they came from: Keep or Skip each one, or Keep all, which keeps the ready ones shown, up to 50 at a time. Skip is the same as No on Discord. A connection with a new name in it waits until you answer that name in Check new names. Same name, which one? has a button for each match and Neither. DMbot never decides these. Players never see this list.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Fix a word, remake only the voice",
+    text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words and save. Before you approve the new text, a line beside the audio choice says what the new audio will be. After a small change: only the paragraphs you changed are spoken again, and the music stays. After a bigger change, or if the old parts weren't kept: the voice and the music are both made again, and the line says why. Choose your audio when you approve and it starts. On a recap that is already posted, the same line sits under the player, with a Remake the voice or Remake voice and music button. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are fixed, so they can't be edited. DMbot never changes your text on its own. In the editor, Fix a name everywhere replaces every use of a spelling in the box, apart from those two lines. Nothing is kept until you press Save.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Make a recap for a past session",
+    text: "On a campaign's recaps page, Recaps for past sessions lists every session with its recap. Choose Make the recap for a session that has none, or Make it again for one that failed, was held back or that you want fresh. If the recap is already approved, DMbot asks once before replacing it. To add a recap someone else wrote, choose Add a recap someone wrote, paste it, pick a text file or give a Google Doc link, and say who wrote it. The first time, you say you have the right to use it; DMbot doesn't check. While a recap is made, the page shows which part it is on and how long it has run. Nothing goes to your players until you post it.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "After the session: things to check",
+    text: "Under a session's recap, After the session: things to check lists what DMbot noticed. First, things it holds that may not fit together, with both sides and where each came from; if the words behind a line are gone, it says a line from that session is no longer available. Then what the party has wrong, in three groups: disguised on purpose, misunderstood, and simply false. Each one has four answers: That's intended (kept, and not raised again), Fix the DM's view (opens the Story graph), Not a problem, and Remind me next session. Undo takes an answer back. Only the DM sees this list, never a player. DMbot only lists; you decide.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Names fixed this session, with Undo",
+    text: "Below a session's recap text, Names fixed this session shows the names DMbot fixed in the cleaned transcript. Each name says how many times it was fixed and how it was written before. Press Undo to put a name back as it was heard. DMbot then leaves that spelling alone. Only you, the DM, see this list.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Who was in each scene",
+    text: "Under a recap, Who was in each scene shows the characters DMbot guesses were in each scene. If it is wrong, press Change on that scene, tick the right characters and press Save list. Your list is final: DMbot never changes it. Do it before you approve the recap. Only you, the DM, see this.",
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Every name on the Story graph",
+    text: "At the top of the Story graph, a line counts every name and every connection in the campaign, not only the ones drawn. Not connected yet lists the names that have no connection, by kind. Tap one to check: it says it has no connections yet. If the names form more than one group, Other groups of linked names has a button for each. Tap one to put that group in the middle of the map. Players see only what they are allowed to see.",
   },
   {
     audience: "gameMaster",
