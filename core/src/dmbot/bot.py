@@ -416,6 +416,8 @@ from dmbot.transcript.models import (
     TranscriptSession,
     line_ref,
 )
+from dmbot.transcript.name_pass_log import NamePassLog
+from dmbot.transcript.name_pass_log import undo_for_web as name_pass_undo_for_web
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -9501,6 +9503,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._name_pass_asks[session_id] = [
                 (c.heard, c.times) for c in (*report.unsure, *report.new)
             ]
+        try:  # kept for the website's recap page (#2684); never stops the repair
+            await NamePassLog.of(self.transcripts).record(gid, cid, session_id, report, now=now)
+        except Exception:
+            log.exception("The name pass report couldn't be kept")
         if hold is not None:
             if not report.quiet:
                 hold.append(report)
@@ -10039,6 +10045,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.memory is None or self.backstory_links is None:
             return None
         actions = self.name_actions
+        transcripts = self.transcripts  # (bound here so the lambda below keeps the narrowed type)
         return web_actions.Waiting(
             ClaimStore(self.memory),
             self.backstory_links,
@@ -10049,6 +10056,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             (lambda cid, answer: actions.spent(guild_id, cid, answer))
             if actions is not None
             else None,
+            name_pass_undo=(
+                (
+                    lambda cid, batch: name_pass_undo_for_web(
+                        transcripts, self.memory, guild_id, cid, batch, now=int(time.time())
+                    )
+                )
+                if transcripts is not None
+                else None
+            ),
         )
 
     async def run_name_actions(self) -> None:

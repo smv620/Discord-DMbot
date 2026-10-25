@@ -192,6 +192,65 @@ def candidates(
     return sorted(out, key=lambda c: (c.times_unknown, c.kind, c.first_relation_id))
 
 
+@dataclass(frozen=True, slots=True)
+class Loaded:
+    """What one campaign's beliefs look like, read once in one snapshot, for the finders (this one
+    and `differences`): every belief with the span it was current, the entries' kinds, the items of
+    which only one exists and the places inside places. Ids, numbers and a status; no words."""
+
+    onto: Ontology
+    held: list[Held]
+    types: dict[str, str]
+    unique: frozenset[str]
+    nesting: Nesting
+
+
+async def load(store: MemoryStore, guild_id: int, campaign_id: str) -> Loaded:
+    from dmbot.memory.beliefs import belief_of
+    from dmbot.memory.states import place_nesting
+    from dmbot.memory.store import _load_ontology, _relation
+
+    async with store._read(guild_id, campaign_id, snapshot=True) as scope:
+        onto = await _load_ontology(scope)
+        # Kept connections, and the waiting guess connections a reading placed (a secret
+        # proposal made by the extractor): a character's guesses can clash too.
+        relations = {
+            r["id"]: r
+            for r in await scope.select(
+                RELATIONS,
+                " AND (status = %s OR (status = 'proposed' AND secret AND source = 'extractor'))",
+                [CONFIRMED],
+            )
+        }
+        rows = await scope.select(BELIEFS, "")
+        kept = {p["id"]: str(p["kind"]) for p in await scope.select(PERSPECTIVES, "")}
+        nesting = await place_nesting(scope, onto)
+        entities = await scope.select(ENTITIES, " AND status = %s", [CONFIRMED])
+    types = {e["id"]: str(e["type"]) for e in entities}
+    unique = frozenset(
+        str(e["id"]) for e in entities if onto.is_a(str(e["type"]), "item") and _is_unique(e)
+    )
+    histories: dict[tuple[str, str], list[Belief]] = {}
+    for row in rows:
+        if row["perspective_id"] in kept and row["relation_id"] in relations:
+            key = (row["perspective_id"], row["relation_id"])
+            histories.setdefault(key, []).append(belief_of(row))
+    held = [
+        Held(
+            belief,
+            _read_as_kept(relations[relation_id]),
+            start,
+            end,
+            kept[perspective_id],
+            waiting_guess(_relation(relations[relation_id])),
+        )
+        for (perspective_id, relation_id), history in histories.items()
+        for belief, start, end in spans(history)
+    ]
+    # Every belief in the history is offered: the spans decide which ones overlap in time.
+    return Loaded(onto, held, types, unique, nesting)
+
+
 class Contradictions:
     """Reads one campaign's beliefs and finds the candidates (no writing)."""
 
@@ -199,51 +258,8 @@ class Contradictions:
         self._store = store
 
     async def find(self, guild_id: int, campaign_id: str) -> list[Candidate]:
-        from dmbot.memory.beliefs import belief_of
-        from dmbot.memory.states import place_nesting
-        from dmbot.memory.store import _load_ontology, _relation
-
-        async with self._store._read(guild_id, campaign_id, snapshot=True) as scope:
-            onto = await _load_ontology(scope)
-            # Kept connections, and the waiting guess connections a reading placed (a secret
-            # proposal made by the extractor): a character's guesses can clash too.
-            relations = {
-                r["id"]: r
-                for r in await scope.select(
-                    RELATIONS,
-                    " AND (status = %s OR (status = 'proposed' AND secret"
-                    " AND source = 'extractor'))",
-                    [CONFIRMED],
-                )
-            }
-            # Beliefs hold no word of anyone's: ids, numbers and a status, read as the store does.
-            rows = await scope.select(BELIEFS, "")
-            kept = {p["id"]: str(p["kind"]) for p in await scope.select(PERSPECTIVES, "")}
-            nesting = await place_nesting(scope, onto)
-            entities = await scope.select(ENTITIES, " AND status = %s", [CONFIRMED])
-        types = {e["id"]: str(e["type"]) for e in entities}
-        unique = frozenset(
-            str(e["id"]) for e in entities if onto.is_a(str(e["type"]), "item") and _is_unique(e)
-        )
-        histories: dict[tuple[str, str], list[Belief]] = {}
-        for row in rows:
-            if row["perspective_id"] in kept and row["relation_id"] in relations:
-                key = (row["perspective_id"], row["relation_id"])
-                histories.setdefault(key, []).append(belief_of(row))
-        held = [
-            Held(
-                belief,
-                _read_as_kept(relations[relation_id]),
-                start,
-                end,
-                kept[perspective_id],
-                waiting_guess(_relation(relations[relation_id])),
-            )
-            for (perspective_id, relation_id), history in histories.items()
-            for belief, start, end in spans(history)
-        ]
-        # Every belief in the history is offered: the spans decide which ones overlap in time.
-        return candidates(onto, held, types, unique, nesting)
+        got = await load(self._store, guild_id, campaign_id)
+        return candidates(got.onto, got.held, got.types, got.unique, got.nesting)
 
 
 def _read_as_kept(row: Mapping[str, object]) -> Relation:
