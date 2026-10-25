@@ -131,6 +131,8 @@ export const siteButtons = [
   "Merge selected", // the All names page (#2427), on the website, not in Discord
   "Change", // the recap page (#2577): changes who was in a scene, on the website, not in Discord
   "Save list", // the same panel: saves the scene's list (#2577)
+  "Keep as a belief", // the Story graph's What people believe (#2412): keeps a reading as a belief, on the website, not in Discord
+  "Drop it", // the same panel: says a reading is not wanted
   "Rewrite with these", // the recap page (#2114), on the website, not in Discord
   "Speak instead", // the recap page (#2114), on the website, not in Discord
   "Send", // the same page: sends the typed or spoken note

@@ -119,6 +119,35 @@ async def move_sheets(conn: Conn, ids: tuple[int, str], keep_id: str, gone_id: s
     )
 
 
+async def move_links(
+    conn: Conn, ids: tuple[int, str], keep_id: str, gone_id: str, keep_type: str
+) -> None:
+    """What a connection or a belief rests on, a clue or an event (#2412, memory_evidence), follows
+    a merge: a link to the merged name now points at the kept one. A link the kept name has
+    already (the same owner, the same kind) is dropped as the twin it is; one the kept name's kind
+    cannot be (a clue merged into a character) is dropped, since it would point at the wrong
+    kind of thing. Not in the change log, so `snapshot` keeps which links moved."""
+    await conn.execute(
+        "DELETE FROM memory_evidence g USING memory_evidence k"
+        " WHERE g.guild_id = %s AND g.campaign_id = %s AND g.kind IN ('clue', 'event')"
+        " AND g.target_id = %s AND k.guild_id = g.guild_id AND k.campaign_id = g.campaign_id"
+        " AND k.kind = g.kind AND k.target_id = %s"
+        " AND k.relation_id IS NOT DISTINCT FROM g.relation_id"
+        " AND k.belief_id IS NOT DISTINCT FROM g.belief_id",
+        (*ids, gone_id, keep_id),
+    )
+    await conn.execute(
+        "DELETE FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s"
+        " AND kind IN ('clue', 'event') AND target_id = %s AND kind <> %s",
+        (*ids, gone_id, keep_type),
+    )
+    await conn.execute(
+        "UPDATE memory_evidence SET target_id = %s WHERE guild_id = %s AND campaign_id = %s"
+        " AND kind IN ('clue', 'event') AND target_id = %s",
+        (keep_id, *ids, gone_id),
+    )
+
+
 # ---- what to remember, and putting it back -------------------------------------------------
 
 
@@ -157,7 +186,13 @@ async def snapshot(
     )
     sheets = {r["entity_id"]: dict(r) for r in await cur.fetchall()}
     gone_sheet, keep_sheet = sheets.get(gone_id), sheets.get(keep_id)
+    cur = await conn.execute(
+        "SELECT id FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s"
+        " AND kind IN ('clue', 'event') AND target_id = %s ORDER BY id",
+        (*ids, gone_id),
+    )
     return {
+        "links": [r["id"] for r in await cur.fetchall()],  # ids only (no words in a link)
         "notes": notes,
         "gone_sheet": _mark(gone_sheet),
         "keep_sheet": _mark(keep_sheet),
@@ -182,7 +217,10 @@ async def save(
     """Remember a merge under its batch (`before`: its snapshot), when there was anything to
     remember. A `redo` row has none: the moves are simply made again."""
     if before is not None and not (
-        before["notes"] or before["gone_sheet"] is not None or before["keep_sheet"] is not None
+        before["notes"]
+        or before.get("links")
+        or before["gone_sheet"] is not None
+        or before["keep_sheet"] is not None
     ):
         return
     await conn.execute(
@@ -207,6 +245,7 @@ async def restore(conn: Conn, ids: Ids, batch: int, undo_batch: int | None) -> N
         before = row["before"]
         await _restore_notes(conn, ids, row["keep_id"], row["gone_id"], before["notes"])
         await _restore_sheets(conn, ids, row["keep_id"], row["gone_id"], before)
+        await _restore_links(conn, ids, row["keep_id"], row["gone_id"], before.get("links", []))
         if undo_batch is not None:
             await save(conn, ids, undo_batch, row["keep_id"], row["gone_id"], None, REDO)
     if found:
@@ -229,7 +268,7 @@ async def redo(conn: Conn, ids: Ids, batch: int, new_batch: int | None) -> None:
     for row in found:
         keep_id, gone_id = row["keep_id"], row["gone_id"]
         cur = await conn.execute(
-            "SELECT played_by FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+            "SELECT played_by, type FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
             " AND id = %s",
             (*ids, keep_id),
         )
@@ -237,6 +276,7 @@ async def redo(conn: Conn, ids: Ids, batch: int, new_batch: int | None) -> None:
         before = await snapshot(conn, ids, keep_id, gone_id, kept["played_by"] if kept else None)
         await move_sheets(conn, ids, keep_id, gone_id)
         await move_notes(conn, ids, keep_id, gone_id)
+        await move_links(conn, ids, keep_id, gone_id, kept["type"] if kept else "")
         if new_batch is not None:
             await save(conn, ids, new_batch, keep_id, gone_id, before)
     if found:
@@ -244,6 +284,19 @@ async def redo(conn: Conn, ids: Ids, batch: int, new_batch: int | None) -> None:
             "DELETE FROM merge_restores WHERE guild_id = %s AND campaign_id = %s"
             " AND batch = %s AND kind = %s",
             (*ids, batch, REDO),
+        )
+
+
+async def _restore_links(
+    conn: Conn, ids: Ids, keep_id: str, gone_id: str, links: list[str]
+) -> None:
+    """The links that moved over go back to the name that is back, wherever they still point at
+    the kept one. A twin the merge dropped is not brought back (it said the same)."""
+    if links:
+        await conn.execute(
+            "UPDATE memory_evidence SET target_id = %s WHERE guild_id = %s AND campaign_id = %s"
+            " AND id = ANY(%s) AND target_id = %s",
+            (gone_id, *ids, links, keep_id),
         )
 
 

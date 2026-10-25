@@ -1362,6 +1362,7 @@ interface NameAnswer {
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
+const READING_POLLS = 150;
 /** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
 interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
@@ -1370,6 +1371,9 @@ interface WebAnswer {
   removed?: boolean;
   /** An Undo of a name fix: how many lines were put back (#2645). */
   putBack?: number | null;
+  /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
+  undoable?: boolean;
+  waits?: ReadingWaits;
 }
 
 /** The changed row, or `{ removed: true }` after a removal. */
@@ -1447,6 +1451,42 @@ export interface Waiting {
   /** The true sizes (the lists are cut at their caps). */
   counts: { claims: number; backstory: number; ready: number; which: number; all: number };
 }
+/** What people believe (#2412 slice 3b; core PR 2693): readings DMbot found that the DM may keep as a belief.
+ * DMbot's own words only: names, a relationship, whose view and how sure; never a line or a speaker. */
+export type ReadingRule = "theory" | "accusation" | "reveal" | "confession" | "evasion" | "false_clue" | "plot";
+export interface Reading {
+  id: string;
+  rule: ReadingRule;
+  /** Whose belief: "the party", "the DM's view" or a character's name. */
+  who: string;
+  statement: string;
+  /** In words: "fairly sure", "doubtful", "a guess", "seen", "dodged", "false", "secret plot". */
+  sureness: string;
+  /** The session's day (Unix seconds). */
+  sessionAt: number;
+  /** False while a new name in it has to be answered first, in Check new names. */
+  canPlace: boolean;
+  why: string | null;
+  waitingOn: string[];
+}
+export interface Readings {
+  readings: Reading[];
+  counts: { readings: number };
+  /** The list is cut at a cap: `counts.readings` is the true size. */
+  capped: boolean;
+}
+/** Where an answer's wait stands: counts and stages only. */
+export interface ReadingWaits {
+  stage: string;
+  waitedSeconds: number;
+  lastMovedAt: number;
+  stalled: boolean;
+}
+export type ReadingAnswer = { action: "place" | "no"; id: string } | { action: "undo"; id: string };
+/** What the page hears while an answer about a reading waits (once a second). */
+export interface ReadingLook {
+  waits: ReadingWaits | null;
+}
 /** One answer to a waiting item; the API queues it for the bot and the page waits for it. */
 export type WaitingAnswer =
   | { kind: "claim"; action: "confirm" | "reject"; id: string; secret?: boolean }
@@ -1476,6 +1516,11 @@ export type ApiErrorKind =
   | "stopped-recording" // someone it cites is no longer recorded, so the fact was thrown away (#2635)
   | "cannot-write" // the rules refuse to write that fact now; it stays waiting (#2635)
   | "queue-full" // too many connections wait already: answer some first (#2652)
+  | "bad-reading" // the reading is not one DMbot can keep (#2412)
+  | "unknown-character" // a character in it is not in this campaign (#2412)
+  | "waiting-already" // the belief is already waiting to be kept (#2412)
+  | "plot-is-known" // the secret plot is already known (#2412)
+  | "already-known" // the belief is already kept (#2412)
   | "stale" // the recap changed since the page read it, so its scenes were read again (#2577)
   | "bad-present" // a name that isn't one of the campaign's characters (#2577)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
@@ -1715,6 +1760,15 @@ export interface AccountApi {
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
   answerWaiting?(ref: string, answer: WaitingAnswer): Promise<{ kept?: number }>;
+  /** What people believe, waiting for the DM, and one answer to it (#2412; DM only: anyone else gets
+   * `not-found`). `answerReading` queues the answer for the bot and waits for it, telling `onLook` how the
+   * wait stands each time it looks; it resolves with the answer's id and whether it can be undone. */
+  webReadings?(ref: string): Promise<Readings>;
+  answerReading?(
+    ref: string,
+    answer: ReadingAnswer,
+    onLook?: (look: ReadingLook) => void,
+  ): Promise<{ answerId: string; undoable: boolean }>;
     /** A player who agreed to the warning peeks behind the DM screen; the DM is told once (#2405). */
   webPeek?(ref: string): Promise<void>;
   /** A DM shows a name or a connection to the players (#2405). */
@@ -1894,6 +1948,11 @@ const errorKinds: Record<string, ApiErrorKind> = {
   cannot_write: "cannot-write",
   queue_full: "queue-full",
   stale: "stale",
+  bad_reading: "bad-reading",
+  unknown_character: "unknown-character",
+  waiting_already: "waiting-already",
+  plot_is_known: "plot-is-known",
+  already_known: "already-known",
   bad_present: "bad-present",
   no_lines: "no-lines",
   needs_rights: "needs-rights",
@@ -2099,17 +2158,18 @@ export function httpApi(
   /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
    * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
    * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
-  async function waitForAnswer(path: string): Promise<WebAnswer> {
-    for (let i = 0; i < NAME_POLLS; i++) {
+  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void, polls = NAME_POLLS): Promise<WebAnswer> {
+    for (let i = 0; i < polls; i++) {
       let got: WebAnswer | null = null;
       try {
         got = (await call("GET", path)) as WebAnswer;
+        onLook?.(got);
       } catch (error) {
         if (error instanceof ApiError && error.kind === "signed-out") throw error;
       }
       if (got?.state === "done") return got;
       if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
-      if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      if (i < polls - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
     }
     throw new ApiError("still-waiting");
   }
@@ -2657,6 +2717,21 @@ export function httpApi(
       const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`);
       const kept = (got as { kept?: unknown }).kept;
       return typeof kept === "number" ? { kept } : {};
+    },
+    webReadings: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/readings`)) as Readings,
+    answerReading: async (ref, answer, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
+      const queued = (await call("POST", `${base}/readings`, answer)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      // Looks for 150 seconds, longer than the 120 the bot is given before an answer it picked up is taken
+      // again, so a wait that has stalled is shown as stalled before the page stops looking.
+      const got = await waitForAnswer(
+        `${base}/answers/${encodeURIComponent(queued.answer)}`,
+        (look) => onLook?.({ waits: look.waits ?? null }),
+        READING_POLLS,
+      );
+      return { answerId: queued.answer, undoable: got.undoable === true };
     },
     webPeek: async (ref) => {
       await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/web/peek`, {});
