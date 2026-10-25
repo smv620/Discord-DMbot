@@ -156,13 +156,13 @@ class Undoing(Fixed):
         answer = await web.queue_undo(self.web, self.session, self.ref, fix)
         early = await self.poll(answer)
         self.assertEqual(
-            (early["state"], early["waits"]["stage"], early["put_back"]),
+            (early["state"], early["waits"]["stage"], early["putBack"]),
             ("waiting", "queued", None),
         )
         (outcome,) = await self.run_bot()
         self.assertEqual(outcome.error, "")
         done = await self.poll(answer)
-        self.assertEqual((done["state"], done["error"], done["put_back"]), ("done", "", 2))
+        self.assertEqual((done["state"], done["error"], done["putBack"]), ("done", "", 2))
         self.assertEqual(
             await self.texts(sid), ["Keirandal drew his bow.", "We followed Kethrandel."]
         )

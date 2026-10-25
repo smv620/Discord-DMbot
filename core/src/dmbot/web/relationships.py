@@ -526,7 +526,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         return {
             "state": got["state"],
             "error": got["error"],
-            "put_back": int(got["resultOther"])
+            "putBack": int(got["resultOther"])
             if got["state"] == "done" and str(got["resultOther"] or "").isdigit()
             else None,
             "waits": waited["waits"],
