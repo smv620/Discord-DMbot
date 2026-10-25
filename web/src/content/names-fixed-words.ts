@@ -1,6 +1,6 @@
 // The words for "Names fixed this session" (#2645): what the name pass wrote into a session's cleaned
 // text, for the campaign's DM only, with an Undo for each name. Switched off until CloudDev's routes
-// (#2684) are deployed and seen working. Plain words; the pass fixes only what PlotBot was sure of, and the
+// (#2684) are deployed. Plain words; the pass fixes only what PlotBot was sure of, and the
 // DM can take any of it back. The "heard as" spellings are transcript words, shown to the DM only.
 export const NAMES_FIXED_LIVE = false; // moves with the What's new entry "Names fixed this session, with Undo"
 
