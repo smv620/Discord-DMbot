@@ -21,6 +21,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
+from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -604,8 +605,10 @@ async def read_readings(db: Database, session: Session, ref: str) -> dict[str, A
             "statement": _claim_statement(r),
             "sureness": _sureness(str(r["status"]), r["confidence"]),
             "sessionAt": r["at"],
-            "canPlace": True,  # (a new name in it is told at the answer: `name_first`)
-            "why": None,
+            # a new name in it has to be answered first (in Check new names)
+            "canPlace": not r["waitingOn"],
+            "why": "name_first" if r["waitingOn"] else None,
+            "waitingOn": r["waitingOn"],
         }
         for r in got["readings"]
     ]
@@ -652,6 +655,9 @@ def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
             "stage": stage,
             "waitedSeconds": max(0, now - created) if created else 0,
             "lastMovedAt": claimed or created,
+            # nothing has moved for longer than a stalled worker is given before it is retaken
+            "stalled": state in ("waiting", "working")
+            and now - (claimed or created) > RETAKE_AFTER_S,
         },
     }
 

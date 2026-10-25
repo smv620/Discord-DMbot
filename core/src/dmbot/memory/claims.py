@@ -18,7 +18,7 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dmbot.memory import evidence, forget_readings, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
@@ -62,6 +62,9 @@ from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
 from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
+
+if TYPE_CHECKING:  # (placing builds on this module, so it is only named for the checker)
+    from dmbot.memory.placing import Recorded
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -1038,7 +1041,7 @@ class ClaimStore:
         campaign_id: str,
         claim_id: str,
         *,
-        opted_in: Any,
+        opted_in: Recorded,
     ) -> Any:
         """The DM places a reading as a belief (`placing.place`); `confirm` refuses a reading."""
         from dmbot.memory import placing  # (it builds on this module, so it is read late)

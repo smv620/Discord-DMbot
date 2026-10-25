@@ -1293,6 +1293,97 @@ class WhatPeopleBelieve(Editing):
         done = await self.poll(stopped)
         self.assertEqual((done["state"], done["error"]), ("failed", "stopped_recording"))
 
+    async def test_nobody_else_can_undo_a_keep_and_another_campaign_cannot_either(self) -> None:
+        ident = await self.reading()
+        kept = await self.answer("place", ident)
+        await self.run_bot()
+        with self.assertRaises(RecapError):  # not a DM of the campaign
+            await self.answer("undo", kept, self.player)
+        # and the bot's own look-up is the caller's and this campaign's
+        self.assertIsNotNone(await self.actions.kept_reading(self.g, self.one.id, ALICE.id, kept))
+        self.assertIsNone(await self.actions.kept_reading(self.g, self.one.id, ALICE.id + 1, kept))
+        self.assertIsNone(await self.actions.kept_reading(self.g, "0" * 32, ALICE.id, kept))
+
+    async def test_an_undo_after_the_belief_changed_again_is_refused_and_changes_nothing(
+        self,
+    ) -> None:
+        ident = await self.reading()
+        kept = await self.answer("place", ident)
+        await self.run_bot()
+        claim = await self.claims.get(self.g, self.one.id, ident)
+        assert claim is not None and claim.fact_id
+        others = await self.memory.perspectives(self.g, self.one.id)
+        mine = next(p for p in others if p.kind == "npc")  # Rook's point of view
+        await self.memory.believe(
+            self.g, self.one.id, mine.id, claim.fact_id, 0.25, "theory", source="dm"
+        )  # something else wrote to the same connection since
+        undo = await self.answer("undo", kept)
+        await self.run_bot()
+        done = await self.poll(undo)
+        self.assertEqual((done["state"], done["error"]), ("failed", "gone"))
+        again = await self.claims.get(self.g, self.one.id, ident)
+        assert again is not None
+        self.assertEqual(again.status, "confirmed")  # not put back, nothing half-done
+
+    async def test_an_undo_already_done_from_discord_is_done_here_too(self) -> None:
+        ident = await self.reading()
+        kept = await self.answer("place", ident)
+        await self.run_bot()
+        action = await self.actions.kept_reading(self.g, self.one.id, ALICE.id, kept)
+        assert action is not None
+        await self.memory.undo(
+            self.g, self.one.id, action[1], after=lambda w: ClaimStore.reopen_in(w, ident)
+        )
+        undo = await self.answer("undo", kept)
+        await self.run_bot()
+        self.assertEqual((await self.poll(undo))["state"], "done")
+        self.assertFalse((await self.poll(kept))["undoable"])  # and the offer is spent
+
+    async def test_an_undo_does_not_bring_back_what_a_stopped_speaker_said(self) -> None:
+        ident = await self.reading()
+        kept = await self.answer("place", ident)
+        await self.run_bot()
+        self.recorded = set()  # the speaker stopped being recorded after the keep
+        undo = await self.answer("undo", kept)
+        await self.run_bot()
+        self.assertEqual((await self.poll(undo))["state"], "done")
+        self.assertIsNone(await self.claims.get(self.g, self.one.id, ident))  # gone, not waiting
+        self.assertEqual((await self.listed())["readings"], [])
+
+    async def test_a_reading_with_a_new_name_cannot_be_placed_yet_and_says_so(self) -> None:
+        from dmbot.memory import readings
+
+        stranger = readings.BeliefProposal(
+            "pc:Rook", "Zed", "knows", "Far Hall", 0.5, "theory", ("1",)
+        )
+        await self.claims.propose(
+            self.g, self.one.id, [readings.as_claim(stranger, "player_said")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        (item,) = (await self.listed())["readings"]
+        self.assertEqual(
+            (item["canPlace"], item["why"], item["waitingOn"]), (False, "name_first", ["Zed"])
+        )
+
+    def test_the_wait_says_when_it_has_stopped_moving(self) -> None:
+        base = {"state": "working", "error": "", "action": "reading-place", "resultOther": ""}
+        slow = {**base, "createdAt": 1000, "claimedAt": 1_000_000, "now": 1000 + 600}
+        quick = {**base, "createdAt": 1000, "claimedAt": 1_000_000, "now": 1000 + 20}
+        self.assertTrue(relationships._reading_answer(slow)["waits"]["stalled"])
+        self.assertFalse(relationships._reading_answer(quick)["waits"]["stalled"])
+
+    def test_the_door_and_the_bot_agree_on_the_actions_and_every_refusal_has_a_word(self) -> None:
+        from dmbot.memory import beliefs, placing
+        from dmbot.schema import READING_ACTIONS
+
+        self.assertEqual(wa.READING_ACTIONS, READING_ACTIONS)
+        words = {wa.reading_error(why) for why in (
+            placing.WAITING_ALREADY, placing.PLOT_IS_KNOWN, placing.UNKNOWN_CHARACTER,
+            placing.A_STATE, placing.NOT_A_READING, beliefs.BAD_READING, beliefs.ALREADY_KNOWN,
+        )}  # fmt: skip
+        self.assertNotIn(wa.CANNOT_WRITE, words)  # each has a word of its own
+        self.assertEqual(wa.reading_error(beliefs.SECRET_FIRST), wa.CANNOT_WRITE)  # the rest: plain
+
     async def test_the_door_refuses_bad_shapes(self) -> None:
         for body in ({}, {"action": "keep", "id": "a" * 32}, {"action": "place", "id": "nope"}):
             with self.subTest(body), self.assertRaises(RecapError):

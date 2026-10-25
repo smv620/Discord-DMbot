@@ -14645,10 +14645,15 @@ WEB_READINGS = (
             'readings', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'id', m.id, 'subject', m.subject, 'relationship', m.relationship,
-                    'object', m.object, 'details', m.details, 'how', m.how,
+                    'object', m.object, 'details', m.details,
                     'at', m.session_started_at,
                     'view', m.reading->>'view', 'status', m.reading->>'status',
-                    'confidence', m.reading->'confidence')
+                    'confidence', m.reading->'confidence',
+                    'waitingOn', to_jsonb(ARRAY(
+                        SELECT e.name FROM memory_entities e
+                        WHERE e.guild_id = g AND e.campaign_id = c AND e.status = 'proposed'
+                          AND e.type <> 'person'
+                          AND lower(e.name) IN (lower(m.subject), lower(m.object)))))
                     ORDER BY m.session_started_at NULLS LAST, m.created_at, m.id)
                 FROM (SELECT * FROM memory_claims k
                       WHERE k.guild_id = g AND k.campaign_id = c AND k.status = 'proposed'

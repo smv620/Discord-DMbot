@@ -20,8 +20,9 @@ from dataclasses import dataclass, replace
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, link_edits, placing
+from dmbot.memory import beliefs, evidence, link_edits, placing
 from dmbot.memory import claims as claims_mod
+from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.link_words import predicate_for_either
@@ -517,13 +518,21 @@ async def _answer_waiting(
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 
 
+def reading_error(why: str) -> str:
+    """The word the page gets for a reading that could not be kept: `placing`'s and the claims'
+    own refusals have words; any other the rules give is "cannot write"."""
+    return CLAIM_REFUSALS.get(why) or READING_REFUSALS.get(why) or CANNOT_WRITE
+
+
 async def _answer_reading(
     memory: MemoryStore, guild_id: int, cid: str, a: Action, w: Waiting
 ) -> Outcome:
     """What people believe, from the website (#2412 slice 3b): the calls the DM screen would make.
     `reading-place` keeps the reading as a belief (never a fact; `ClaimStore.place`, which asks who
     is recorded again inside its write), `reading-no` turns it down, `reading-undo` puts a keep
-    back through the store's Undo. A retried job finds the answer already given: done."""
+    back through the store's Undo (a retry finds it already undone, which is done too). A retried
+    `reading-place` finds the claim kept already and answers done, without the batch: its Undo is
+    then only on Discord."""
     if a.action == "reading-undo":
         if w.kept_reading is None or w.spent is None:
             return _failed(FAILED)
@@ -531,12 +540,26 @@ async def _answer_reading(
         if kept is None:
             return _failed(GONE)
         claim_id, batch = kept
+        recorded = set(await w.opted_in())
+
+        async def reopen(c: Changes) -> None:
+            """The question comes back, unless someone whose words it holds has stopped being
+            recorded since: then it goes, as `place` would have deleted it."""
+            row = await c.get(CLAIMS, claim_id)
+            if row is None:
+                return
+            if not row["speaker_ids"] or not set(row["speaker_ids"]) <= recorded:
+                await c.delete(CLAIMS, claim_id)
+                await evidence.placeholder_claims(c.conn, guild_id, [claim_id])
+                return
+            await ClaimStore.reopen_in(c, claim_id)
+
         try:
-            await memory.undo(
-                guild_id, cid, batch, after=lambda c: ClaimStore.reopen_in(c, claim_id)
-            )
-        except MemoryRuleError:
-            return _failed(GONE)  # something changed the same connection since: not undone
+            await memory.undo(guild_id, cid, batch, after=reopen)
+        except MemoryRuleError as exc:
+            if str(exc) != ALREADY_UNDONE:
+                return _failed(GONE)  # something changed the same connection since: not undone
+            # it was undone already (a retry after a crash, or from Discord): the wish is met
         await w.spent(cid, a.target_id)
         return Outcome(result_id=claim_id)
     claim = await w.claims.get(guild_id, cid, a.target_id)
@@ -551,8 +574,7 @@ async def _answer_reading(
     try:
         placed = await w.claims.place(guild_id, cid, a.target_id, opted_in=w.opted_in)
     except MemoryRuleError as exc:
-        why = str(exc)
-        return _failed(CLAIM_REFUSALS.get(why) or READING_REFUSALS.get(why) or CANNOT_WRITE)
+        return _failed(reading_error(str(exc)))
     return Outcome(
         result_id=placed.relation_id, result_other=str(placed.batch) if placed.batch else ""
     )
