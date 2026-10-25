@@ -483,7 +483,7 @@ class ContinuityStore:
             nesting = await place_nesting(scope, onto)
             state_rows = await scope.select(STATES, " AND closed_at IS NULL")
             claim_rows = await scope.select(
-                CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL"
+                CLAIMS, " AND status = 'confirmed' AND fact_id IS NOT NULL AND reading IS NULL"
             )
             # Who the DM listed for each clue only some people know (#1649). Read apart from
             # the facts above: a listed fact the DM marked secret still counts as listed.

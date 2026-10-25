@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from dmbot.memory import evidence, link
+from dmbot.memory import evidence, forget_readings, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -996,8 +996,11 @@ class ClaimStore:
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite
         this person's words and were not turned into a fact (waiting, turned down or dropped).
-        What the DM confirmed is the DM's fact and stays. Returns how many went."""
+        What the DM confirmed is the DM's fact and stays. A reading the DM placed is held to the
+        same line (`forget_readings`): what the DM kept stays, a guess that only this person's
+        words produced goes with what it made. Returns how many claims went."""
         async with self._store._db.guild(guild_id) as conn:
+            readings = await forget_readings.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
                 " AND status <> 'confirmed' RETURNING id",
@@ -1007,7 +1010,7 @@ class ClaimStore:
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
             # and what the DM confirmed stays, without this person's line references (#2676)
             await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
-            return len(gone)
+            return len(gone) + readings
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""
@@ -1028,6 +1031,19 @@ class ClaimStore:
             await w.update(
                 CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None}
             )
+
+    async def place(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        claim_id: str,
+        *,
+        opted_in: Collection[int] | Callable[[], Collection[int]],
+    ) -> Any:
+        """The DM places a reading as a belief (`placing.place`); `confirm` refuses a reading."""
+        from dmbot.memory import placing  # (it builds on this module, so it is read late)
+
+        return await placing.place(self, guild_id, campaign_id, claim_id, opted_in=opted_in)
 
     async def confirm(
         self,

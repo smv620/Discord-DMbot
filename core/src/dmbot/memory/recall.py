@@ -641,7 +641,7 @@ class RecallService:
             )
         cur = await scope.conn.execute(
             "SELECT fact_id, lines, speaker_ids, session_started_at FROM memory_claims"
-            " WHERE guild_id = %s AND campaign_id = %s AND fact_id = ANY(%s)"
+            " WHERE guild_id = %s AND campaign_id = %s AND fact_id = ANY(%s) AND reading IS NULL"
             " AND status = 'confirmed'",
             (*scope.ids, [f.id for f in facts]),
         )

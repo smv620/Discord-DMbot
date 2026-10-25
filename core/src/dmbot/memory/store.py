@@ -58,7 +58,14 @@ from dmbot.memory._changes import (
     Scope,
     undo_batch,
 )
-from dmbot.memory.checks import HELD_TWICE, Ended, check_relation, duplicate_of, ordered
+from dmbot.memory.checks import (
+    HELD_TWICE,
+    Ended,
+    check_relation,
+    duplicate_of,
+    ordered,
+    waiting_guess,
+)
 from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY_CLUES
 from dmbot.memory.lookalikes import Name as LookAlikeName
 from dmbot.memory.lookalikes import find as find_look_alikes
@@ -560,7 +567,9 @@ class MemoryStore:
             rows = await scope.select(
                 RELATIONS,
                 " AND status = ANY(%s) AND (%s::text IS NULL OR %s IN (subject_id, object_id))"
-                " AND (%s OR (NOT secret AND NOT unrevealed)) ORDER BY created_at, id",
+                " AND (%s OR (NOT secret AND NOT unrevealed))"
+                " AND NOT (status = 'proposed' AND secret AND source = 'extractor')"  # (#2412)
+                " ORDER BY created_at, id",
                 [statuses, entity_id, entity_id, include_secret],
             )
             ends = {r[end] for r in rows for end in ("subject_id", "object_id")}
@@ -3364,11 +3373,18 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        fresh: bool = False,
+        leave: bool = False,
+        made_by: str | None = None,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
-        campaign."""
-        source = w.source
+        campaign. `fresh`: a twin the DM rejected is not brought back by this (#2412: a theory
+        about a rejected fact is a new proposal, not a revival). `leave`: a twin that is there
+        is returned as it is, never upgraded (a belief is hung on it, the fact is not restated).
+        `made_by`: the source to record when it is not the write's own (a guess a player voiced is
+        the extractor's, whoever pressed the button)."""
+        source = made_by or w.source
         if unrevealed and source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         _check_choice(status, LIVE, "relation status")
@@ -3423,7 +3439,11 @@ class MemoryStore:
             pred.version, unrevealed, directional,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
-        same = duplicate_of(new, existing)
+        same = duplicate_of(
+            new, [r for r in existing if r.status != REJECTED] if fresh else existing
+        )
+        if same is not None and leave:
+            return same, []
         if same is not None:
             upgrade = _upgrade(_relation_row(same), status, secret, source)
             if new.directional and not same.directional:  # the DM's word on the direction wins
@@ -3491,6 +3511,8 @@ class MemoryStore:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
             row = await w.update(RELATIONS, relation_id, changes)
+            if waiting_guess(_relation(current)) and row["status"] == CONFIRMED:
+                await flag_kept(w, relation_id)  # (only a guess host was never judged as a fact)
             return Written(_relation(row), w.batch)
 
     # ---- beliefs: who believes a connection (#2409; docs/STORY_MEMORY.md, section 9) -----------
@@ -4457,11 +4479,17 @@ async def _forget_quotes(w: Changes, entity_ids: Sequence[str]) -> None:
     )
 
 
-def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dict[str, Any]:
+def _upgrade(
+    old: dict[str, Any], status: str, secret: bool, source: str, said_by: str | None = None
+) -> dict[str, Any]:
     """What saying something already known again changes: a stronger status (only the
     DM confirms or un-rejects) and secret=True. Never weakens anything."""
     changes: dict[str, Any] = {}
-    if secret and not old["secret"]:
+    # A guess connection's secret flag only keeps it from the players; it is not a secret the DM
+    # keeps, so one restated or merged into a known fact (`said_by`: whose connection it was, when
+    # that is not `source`) never hides that fact. Any other proposal escalates as before.
+    guess = status == PROPOSED and "predicate" in old and (said_by or source) == "extractor"
+    if secret and not old["secret"] and not guess:
         changes["secret"] = True
         if "said_as" in old:  # a name (relations are upgraded here too)
             changes["said_as"] = None  # a secret name is never sent to the narrator (#1419)
@@ -4470,6 +4498,17 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
             changes["status"] = status
     elif _stronger(old["status"], status) != old["status"]:
         changes["status"] = status
+        if (
+            source == DM
+            and old.get("source") == "extractor"
+            and "predicate" in old
+            and old["status"] == PROPOSED
+            and old["secret"]
+            and not secret
+        ):
+            # A theory waits as a secret proposal (#2412); the DM keeping it says what they
+            # say, so their "not secret" is not lost to the flag the proposal was made with.
+            changes["secret"] = False
     return changes
 
 
@@ -4795,6 +4834,25 @@ async def _flag_problems(
     return flags
 
 
+async def flag_kept(w: Changes, relation_id: str) -> list[Flag]:
+    """A proposal the DM keeps is judged now, as a fact is when it is written (#2412): while it
+    waits it is judged against nothing, so a theory kept later is checked against the facts at
+    the moment it becomes one."""
+    row = await w.get(RELATIONS, relation_id)
+    if row is None or row["status"] != CONFIRMED:
+        return []
+    onto = await _load_ontology(w)
+    ends = {r["id"]: r for r in await w.select(
+        ENTITIES, " AND id = ANY(%s)", [[row["subject_id"], row["object_id"]]]
+    )}  # fmt: skip
+    subject, obj = ends.get(row["subject_id"]), ends.get(row["object_id"])
+    if subject is None or obj is None or row["predicate"] not in onto.predicates:
+        return []
+    fact = _relation(row)
+    existing = await _relations_touching(w, fact.subject_id, fact.object_id)
+    return await _flag_problems(w, onto, fact, subject["type"], obj["type"], existing)
+
+
 async def _delete_relation(w: Changes, relation_id: str) -> None:
     for flag in await w.select(
         FLAGS, " AND (relation_id = %s OR other_id = %s)", [relation_id, relation_id]
@@ -4864,6 +4922,7 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
     entities = {e["id"]: e for e in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(ends)])}
     moves: dict[str, dict[str, Any]] = {}
     gone_rows: list[str] = []  # removed: said nothing, or the same as another fact
+    folded: dict[str, str] = {}  # a removed fact's id → the twin that stands for it
     upgrades: list[tuple[str, dict[str, Any]]] = []
     to_check: list[tuple[Relation, list[Relation]]] = []
     for row in rows:
@@ -4888,13 +4947,14 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         others = [state[fact_id] for fact_id in sorted(near, key=order.__getitem__)]
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
-            upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
+            upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM, moved.source)
             if moved.directional and not twin.directional:  # the one with a direction wins (#2457)
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": moved.subject_id,
                     "object_id": moved.object_id,
                 }  # fmt: skip
             gone_rows.append(moved.id)
+            folded[moved.id] = twin.id
             forget(moved)
             del state[moved.id]
             if upgrade:
@@ -4912,10 +4972,13 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         if subject is None or obj is None or {subject["status"], obj["status"]} - set(LIVE):
             raise MemoryRuleError(NOT_FOUND)  # the far end was rejected or merged away
         await _flag_problems(w, onto, moved, subject["type"], obj["type"], others, extra)
-    for relation_id in gone_rows:
-        await _delete_relation(w, relation_id)
     for twin_id, upgrade in upgrades:
         await w.update(RELATIONS, twin_id, upgrade)
+    by_id = {r["id"]: r for r in rows}
+    for relation_id in gone_rows:
+        if relation_id in folded:  # what was believed of the folded fact is believed of its twin
+            await beliefs.carry(w, by_id[relation_id], folded[relation_id])
+        await _delete_relation(w, relation_id)
 
 
 async def _check_growth(w: Changes, session_started_at: int | None) -> None:

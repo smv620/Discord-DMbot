@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from dmbot.memory import kin
-from dmbot.memory.models import REJECTED, Relation
+from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
@@ -121,6 +121,12 @@ def _same_order(old: Relation, new: Relation) -> bool:
     if new.predicate == "kin_of" and not (old.directional and new.directional):
         return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
     return False
+
+
+def waiting_guess(r: Relation) -> bool:
+    """A connection made only to hold what someone believes (`placing.py`): proposed, secret and
+    the extractor's. No other proposal is one (the speaker scan's are not secret)."""
+    return r.status == PROPOSED and r.secret and r.source == "extractor"
 
 
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:
@@ -220,7 +226,14 @@ def check_relation(
         problems.append(Problem(WRONG_SUBJECT))
     if not onto.is_any(object_type, p.object_types):
         problems.append(Problem(WRONG_OBJECT))
-    live = [r for r in existing if r.status != REJECTED and r.id != new.id and same_time(r, new)]
+    # A secret proposal is a place to hang a guess (#2412), not a claim about the story: it is
+    # neither judged against facts nor are facts judged against it. Every other proposal is.
+    if waiting_guess(new):
+        return problems
+    live = [
+        r for r in existing
+        if r.status != REJECTED and not waiting_guess(r) and r.id != new.id and same_time(r, new)
+    ]  # fmt: skip
     if p.max_per_subject is not None:
         # Two-way facts are stored smaller ID first, so count each side either way.
         ends = (new.subject_id, new.object_id) if p.symmetric else (new.subject_id,)

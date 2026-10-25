@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.memory import evidence
+from dmbot.memory import evidence, forget_readings
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
@@ -1124,6 +1124,8 @@ async def _forget_memory_traces(
     """The story-memory rows that exist only because of this person's lines (see
     `delete_person`), in the caller's transaction. Memory relations may still list a deleted
     mention's id; recall skips ids it can't find."""
+    # What the DM placed of their guesses goes first, under each campaign's lock (#2412).
+    await forget_readings.forget(conn, guild_id, user_id)
     # A claim that cites this person goes even if it cites others too: it is only a waiting
     # proposal, and keeping it would keep their words in its details. First of all: the clean-ups
     # below take the person's id out of the claims that stay, and this finds them by it.
