@@ -453,6 +453,7 @@ export function mockRecaps(): Recap[] {
       ],
       uncheckedSentences: [2],
       canApproveUnchecked: true,
+      textHash: "hash-of-the-draft",
     },
   ];
 }
@@ -1085,10 +1086,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       Object.assign(r, { summary, text: summary, housekeeping });
       return { ...r };
     },
-    async approveUnchecked(ref) {
-      calls.push(`approveUnchecked:${ref}`);
+    async approveUnchecked(ref, textHash) {
+      calls.push(`approveUnchecked:${ref}:${textHash}`);
       const r = await find(ref);
       if (!r.canApproveUnchecked) throw new ApiError("not-allowed");
+      if (textHash !== r.textHash) throw new ApiError("changed"); // revised since the page showed it
       // As the bot would: the draft is finished as it stands, to edit and approve as usual.
       const text = (r.uncheckedDraft ?? []).join(" ");
       Object.assign(r, {

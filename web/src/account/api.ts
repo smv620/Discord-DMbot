@@ -380,6 +380,9 @@ export interface Recap {
   uncheckedDraft?: string[];
   /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
   canApproveUnchecked?: boolean;
+  /** A fingerprint of the words this view shows, sent back with "approve it as it is" so that only the
+   * words the DM read are approved (#2305). Missing from an older API. */
+  textHash?: string;
   /** While it is being made: how far along (#2564, #2608). Missing from an API older than that. */
   progress?: JobProgress;
   /** Start the recap over is possible now (#2608): not while it is written or sent. */
@@ -1544,6 +1547,9 @@ export type ApiErrorKind =
   | "bad-value" // a choice Discord does not offer for it (#2484)
   | "bad-answer" // the Plot check's answer was not one it takes (#2122)
   | "plot-open" // Approve waits for the Plot check's open questions (#2122)
+  | "not-yet" // a draft is opened as it is only after 3 days of waiting (#2305)
+  | "changed" // the draft was revised since the page showed it (#2305)
+  | "bad-hash" // the page sent no fingerprint of the words (#2305)
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
@@ -1671,7 +1677,7 @@ export interface AccountApi {
   approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
   /** "Use this draft as it is" for a recap unchecked for 3 days (#2297, #2305): it then goes on as
    * a finished draft for the DM to edit and approve as usual. Missing from an older API. */
-  approveUnchecked?(ref: string): Promise<Recap>;
+  approveUnchecked?(ref: string, textHash: string): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1919,6 +1925,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   too_soon: "too-soon",
   bad_answer: "bad-answer",
   plot_open: "plot-open",
+  not_yet: "not-yet",
+  changed: "changed",
+  bad_hash: "bad-hash",
   ended: "ended",
   owner: "owner-offer",
   bad_server: "bad-server",
@@ -2426,8 +2435,8 @@ export function httpApi(
           ...(options?.post ? { post: true } : {}),
         }),
       ),
-    approveUnchecked: async (ref) =>
-      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, {})),
+    approveUnchecked: async (ref, textHash) =>
+      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, { textHash })),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
