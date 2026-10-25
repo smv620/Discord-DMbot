@@ -40,6 +40,7 @@ import type {
   CampaignSettingName,
   Timeline,
   WebRevealTarget,
+  Waiting,
   MyNpcNote,
   NpcPage,
 } from "./api";
@@ -459,7 +460,8 @@ function recapFacts(ref: string): { recapsPossible: boolean; recapsWhy?: "off" |
  * `.names-manager` is a server manager who isn't a DM of it (no secret names, nothing to change), and
  * `.names-none` is someone who may not see the list (not found). Any other address is a DM. */
 const NAME_KINDS: { key: string; label: string }[] = [
-  { key: "npc", label: "People" },
+  { key: "npc", label: "NPCs" },
+  { key: "player_character", label: "PCs" },
   { key: "place", label: "Places" },
   { key: "group", label: "Groups" },
   { key: "item", label: "Items" },
@@ -593,9 +595,39 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
 }
 
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
+/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
+function pretendWaiting(): Waiting {
+  return {
+    claims: [
+      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
+      { id: "c2", statement: "Roan is dead", canSecret: false },
+    ],
+    backstory: [
+      { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
+      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [] },
+      { id: "b3", subject: "Rook", object: "Newcomer", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: false, waitingOn: ["Newcomer"] },
+      { id: "b4", subject: "Mira Voss", object: "Harrow's Keep", how: "grew up in", secret: false, upload: "", ready: true, waitingOn: [] },
+    ],
+    which: [
+      {
+        id: "w1", word: "Mara", other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct",
+        candidates: [
+          { id: "e1", name: "Mara Ashgrove", limited: false },
+          { id: "e2", name: "Mara Vell", limited: true },
+        ],
+        quote: "Rook knows Sister Mara",
+      },
+    ],
+    counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
+  };
+}
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
+  const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
+  let failedMove = false; // the move asked for failed: the offer is open again with the reason
+  let moveState: "none" | "moving" | "failing" = "none"; // a campaign the bot is moving: `look` says ended meanwhile (#2550)
+  let movedIn = 0; // looks at /me before a campaign the bot is moving shows up (#2550)
   let putBackNow = false; // session 2's left-out stretch has been put back by a DM (#2568)
   const myEmail: MyEmail = {
     address: "dm@example.com",
@@ -1123,6 +1155,45 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return { names: webGraphOf(ref, query).nodes.length };
     },
     // A player who agreed to the warning peeks (#2405); the DM would be told once on the DM screen.
+    // What waits for the DM (#2635, #2652): a fact, a condition (no "keep it secret"), connections from two
+    // uploads (one waiting on a name) and a "Which Mara?" question. Answers remove what they answer.
+    async webWaiting(ref) {
+      calls.push(`webWaiting:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const waiting = (waitingState[ref] ??= pretendWaiting());
+      return structuredClone({
+        ...waiting,
+        counts: {
+          claims: waiting.claims.length,
+          backstory: waiting.backstory.length,
+          ready: waiting.backstory.filter((b) => b.ready).length,
+          which: waiting.which.length,
+          all: waiting.claims.length + waiting.backstory.length + waiting.which.length,
+        },
+      });
+    },
+    async answerWaiting(ref, answer) {
+      calls.push(
+        `answerWaiting:${ref}:${answer.kind}:${answer.action}:${"ids" in answer ? answer.ids.join(",") : answer.id}${"entity" in answer ? `:${answer.entity}` : ""}${"secret" in answer && answer.secret ? ":secret" : ""}`,
+      );
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const ids = "ids" in answer ? answer.ids : [answer.id];
+      if (answer.kind === "which" && answer.action === "pick") {
+        const q = waiting.which.find((x) => x.id === answer.id);
+        if (!q?.candidates.some((c) => c.id === answer.entity)) throw new ApiError("gone");
+      }
+      const before = waiting.claims.length + waiting.backstory.length + waiting.which.length;
+      waiting.claims = waiting.claims.filter((c) => !ids.includes(c.id));
+      waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
+      waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
+      if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
+      return answer.action === "keep_all" ? { kept: ids.length } : {};
+    },
     async webPeek(ref) {
       calls.push(`webPeek:${ref}`);
       await reachable();
@@ -1787,6 +1858,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     async me() {
       calls.push("me");
       await reachable();
+      if (movedIn > 0) {
+        movedIn -= 1;
+        if (movedIn === 0 && me) {
+          me = { ...me, campaigns: [...me.campaigns, { id: "cmp-silver", ref: "s2.cmp9", name: "The Silver Hall", serverName: "Sunday Table", lastPlayedAt: null, status: "active", role: "owner" }] };
+        }
+      }
       return me;
     },
     signInUrl: () => "#demo-sign-in",
@@ -1853,7 +1930,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       if (token === "late" || !/^[\w-]{1,200}$/.test(token)) return { status: "ended" };
+      if (moveState === "moving") return { status: "ended" };
+      if (moveState === "failing") {
+        // The first look after accepting still says ended; the next shows the move did not happen.
+        moveState = "none";
+        failedMove = true;
+        return { status: "ended" };
+      }
       const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
+      // `shares` can't move to another server; `failed` has a move that did not happen last time (#2550).
       return {
         status: "open",
         campaign: { name: "The Silver Hall" },
@@ -1861,11 +1946,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         server: { id: "s1", name: "Friday Night Dice" },
         canAccept: why === null,
         why,
-        servers: [
-          { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
-          { id: "s2", name: "Sunday Table", current: false, botIn: true },
-          { id: "s3", name: "New Server", current: false, botIn: false },
-        ],
+        servers:
+          token === "greyonly"
+            ? // not in the server it runs on, and every other one is out too
+              [{ id: "s2", name: "Sunday Table", current: false, botIn: true, why: "shares_rules" }]
+            : [
+                { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+                { id: "s2", name: "Sunday Table", current: false, botIn: true, why: token === "shares" ? "shares_rules" : null },
+                { id: "s3", name: "New Server", current: false, botIn: false },
+              ],
+        moveFailed: token === "failed" || failedMove ? "A session is running. Try again after it ends." : null,
       };
     },
     async handoverAccept(token, serverId) {
@@ -1874,6 +1964,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       signedIn();
       if (token === "gone-after") throw new ApiError("ended");
       if (serverId === "s3") throw new ApiError("bad-server");
+      if (token === "shares" && serverId !== "s1") throw new ApiError("shares-rules");
+      // Another server than where it runs: the bot moves it, and it appears under the person's campaigns.
+      if (serverId !== "s1") {
+        if (token === "movefail") moveState = "failing";
+        else {
+          moveState = "moving";
+          movedIn = 2; // it shows up on the second look
+        }
+        return { moving: true };
+      }
       return { campaignRef: "s1.cmp1" };
     },
     async handoverDecline(token) {

@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { HANDOVER_LIVE, handoverWords as words } from "../content/handover-words";
 import { campaignHref } from "./campaignLinks";
-import { ApiError, type AccountApi, type HandoverLook } from "./api";
+import { ApiError, type AccountApi, type HandoverLook, type HandoverServer } from "./api";
 import { keepFocus } from "./focus";
 
 const KEY = "dmbot:handover";
@@ -51,7 +51,16 @@ type View =
   | { kind: "ended" }
   | { kind: "open"; look: Extract<HandoverLook, { status: "open" }> }
   | { kind: "accepted"; ref: string }
+  // Accepted onto another server: the bot moves the campaign, then it shows up under the person's campaigns.
+  | { kind: "moving"; name: string; before: string[]; slow: boolean }
   | { kind: "declined" };
+
+/** The server to start on: where it runs now if the person can use it, else any other they can; never one the
+ * campaign can't move to (`why`), which only leads to a refusal. */
+function pickServer(servers: HandoverServer[]): string | null {
+  const usable = servers.filter((s) => s.botIn && !s.why);
+  return (usable.find((s) => s.current) ?? usable[0])?.id ?? null;
+}
 
 export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: string }) {
   const [view, setView] = useState<View>({ kind: "loading" });
@@ -61,6 +70,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
   const token = useRef<string | null>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
   const inFlight = useRef(false);
+  const polls = useRef(0); // looks made while a campaign moves
   const [tryNo, setTry] = useState(0); // "Try again" after a failed look
 
   useEffect(() => {
@@ -92,7 +102,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
         }
         // Your own campaign: nothing to accept, so the kept code is forgotten (My Account stops waiting).
         if (look.why === "owner") forgetHandoverToken();
-        setServer(look.servers.find((s) => s.current && s.botIn)?.id ?? look.servers.find((s) => s.botIn)?.id ?? null);
+        setServer(pickServer(look.servers));
         setView({ kind: "open", look });
       } catch (error) {
         setView(error instanceof ApiError && error.kind === "signed-out" ? { kind: "signed-out" } : { kind: "down" });
@@ -102,6 +112,43 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
     // the other values it uses are refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, tryNo]);
+
+  // While the bot moves the campaign, look every 3 seconds (up to 3 minutes) for it among the person's own.
+  const moving = view.kind === "moving" && !view.slow;
+  const [tickMove, setTickMove] = useState(0);
+  const misses = useRef(0); // looks in a row that failed: each waits twice as long (3 s, 6, 12, up to 30)
+  useEffect(() => {
+    if (!moving || view.kind !== "moving") return;
+    const wait = Math.min(3000 * 2 ** misses.current, 30000);
+    const timer = setTimeout(async () => {
+      polls.current += wait;
+      try {
+        // The offer first: while the bot moves it, `look` says ended; if the move failed the offer is open
+        // again with the reason, and the person goes back to it (the code is kept in memory for this).
+        const look = await api.handoverLook!(token.current ?? "");
+        if (look.status === "open") {
+          keepHandoverToken(token.current ?? "");
+          setServer(pickServer(look.servers));
+          setView({ kind: "open", look });
+          keepFocus(() => headRef.current);
+          return;
+        }
+        const found = ((await api.me())?.campaigns ?? []).find((c) => c.role === "owner" && c.name === view.name && !view.before.includes(c.ref ?? c.id));
+        misses.current = 0;
+        if (found?.ref) {
+          setView({ kind: "accepted", ref: found.ref });
+          keepFocus(() => headRef.current);
+          return;
+        }
+      } catch {
+        misses.current += 1; // a dropped look is tried again, a little later
+      }
+      if (polls.current >= 180000) setView({ ...view, slow: true });
+      else setTickMove((n) => n + 1);
+    }, wait);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moving, tickMove]);
 
   if (!HANDOVER_LIVE || !api.handoverLook || !api.handoverAccept || !api.handoverDecline) {
     return <p role="status">{words.notOpen}</p>;
@@ -129,9 +176,17 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
     setBusy("accept");
     setProblem(null);
     try {
+      // The campaigns the person has now, to tell the moved one from them when it appears.
+      const before = await api.me().then((m) => (m?.campaigns ?? []).map((c) => c.ref ?? c.id), () => [] as string[]);
       const done = await api.handoverAccept!(token.current, server);
       forgetHandoverToken();
-      setView({ kind: "accepted", ref: done.campaignRef });
+      if ("moving" in done) {
+        polls.current = 0;
+        misses.current = 0;
+        setView({ kind: "moving", name: view.kind === "open" ? view.look.campaign.name : "", before, slow: false });
+      } else {
+        setView({ kind: "accepted", ref: done.campaignRef });
+      }
       keepFocus(() => headRef.current);
     } catch (error) {
       fail(error);
@@ -218,6 +273,22 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
           </p>
         </section>
       );
+    case "moving":
+      return (
+        <section class="panel stack" aria-labelledby="handover-heading">
+          <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
+            {words.heading}
+          </h2>
+          <p role="status">{view.slow ? words.movingSlow : words.moving}</p>
+          {view.slow && (
+            <p>
+              <a class="button" href="/account">
+                {words.myAccount}
+              </a>
+            </p>
+          )}
+        </section>
+      );
     case "declined":
       return (
         <section class="panel stack" aria-labelledby="handover-heading">
@@ -230,7 +301,8 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
     case "open": {
       const { look } = view;
       const reason = look.why ? (words.why[look.why] ?? words.cantNow) : words.cantNow;
-      const anyServer = look.servers.some((s) => s.botIn);
+      const anyServer = look.servers.some((s) => s.botIn && !s.why);
+      const onlyGreyed = !anyServer && look.servers.some((s) => s.botIn && s.why);
       return (
         <section class="panel stack" aria-labelledby="handover-heading">
           <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
@@ -279,13 +351,14 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                         name="handover-server"
                         value={s.id}
                         checked={server === s.id}
-                        disabled={!s.botIn}
+                        disabled={!s.botIn || !!s.why}
                         onChange={() => setServer(s.id)}
                       />{" "}
                       {s.name} {s.current && <span class="muted small">{words.current}</span>}
-                      {!s.botIn && <span class="muted small"> {words.needsBot}</span>}
+                      {!s.botIn && !s.why && <span class="muted small"> {words.needsBot}</span>}
+                      {s.why && <span class="muted small"> {words.serverWhy[s.why] ?? words.cantMoveThere}</span>}
                     </label>
-                    {!s.botIn && (
+                    {!s.botIn && !s.why && (
                       <>
                         {" "}
                         <a href={api.installUrl(s.id)}>{words.addBotFor(s.name)}</a>
@@ -293,10 +366,16 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                     )}
                   </div>
                 ))}
-                {!anyServer && <p>{words.noServers}</p>}
+                {!anyServer && !onlyGreyed && <p>{words.noServers}</p>}
+                {onlyGreyed && <p role="status">{words.onlyHere}</p>}
                 {look.servers.some((s) => !s.botIn) && <p class="muted small">{words.comeBack}</p>}
               </fieldset>
               <p>{words.acceptNote}</p>
+              {look.moveFailed && (
+                <p class="note" role="status">
+                  {look.moveFailed}
+                </p>
+              )}
               {problem && (
                 <p class="note bad" role="alert">
                   {problem}
@@ -304,15 +383,17 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
               )}
               {anyServer && !server && <p class="muted small">{words.pickFirst}</p>}
               <div class="row">
-                <button
-                  type="button"
-                  class="button"
-                  disabled={busy !== null || !server || !anyServer}
-                  aria-busy={busy === "accept"}
-                  onClick={() => void accept()}
-                >
-                  {busy === "accept" ? words.accepting : words.accept}
-                </button>
+                {!onlyGreyed && (
+                  <button
+                    type="button"
+                    class="button"
+                    disabled={busy !== null || !server || !anyServer}
+                    aria-busy={busy === "accept"}
+                    onClick={() => void accept()}
+                  >
+                    {busy === "accept" ? words.accepting : words.accept}
+                  </button>
+                )}
                 <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void decline()}>
                   {busy === "decline" ? words.declining : words.decline}
                 </button>

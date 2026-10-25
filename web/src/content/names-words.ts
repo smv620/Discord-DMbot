@@ -1,6 +1,6 @@
 // The words of the Names page (#2295; docs/PLAN.md, "All names on the website"): every name DMbot
 // remembers in a campaign, searched, filtered and, for the campaign's DMs, fixed. Plain words: a
-// name's "kind" is what it is (a person, a place, a group, an item, an event), and nothing here
+// name's "kind" is what it is (an NPC, a PC, a place, a group, an item, an event), and nothing here
 // says DMbot decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
 // The kinds' own words come from the API, so a new kind needs no change here.
 // The longest a name may be: core's `NAME_MAX` (memory/models.py) and the Discord card's
@@ -9,7 +9,7 @@ export const NAME_LIMIT = 100;
 
 export const namesPage = {
   heading: "Names",
-  lead: "Everything DMbot remembers by name in this campaign: people, places, groups and more. Search them, filter by kind, and (if you are the DM) fix them here.",
+  lead: "Everything DMbot remembers by name in this campaign: NPCs, PCs, places, groups and more. Search them, filter by kind, and (if you are the DM) fix them here.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
   signIn: "Sign in with Discord",

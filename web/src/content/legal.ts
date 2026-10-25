@@ -32,6 +32,25 @@ export const paymentProvider = "Stripe";
  */
 export const aiTrainingSentence = "That text isn't used to train Anthropic's AI.";
 
+/**
+ * Google (Gemini) as the recap writer, only if whoever runs DMbot switches it on (#2575, code #2582; the owner's
+ * sign-off is on #2574). The page cannot tell whether it is on, so it says "only if switched on". Owner decision,
+ * 2026-10-23 (#2590, PLAN "Two models"): the Gemini writer reads the session's whole cleaned transcript (what was
+ * said by people who agreed to be recorded, off-topic chat left out) with PlotBot's guide to what matters, so the
+ * line says that, plus the list of what happened, the names, the last recap, the DM's style notes and fixes. It
+ * never gets sound, the as-heard (raw) transcript or anything from the DM screen. Only the recap-writing step
+ * moves to Gemini (Feature.RECAP_WRITE on the CREATIVE tier, #2582); the beats and every check stay with Anthropic.
+ * "Not used to train" is true under Google's paid terms only, so the line says so and links them.
+ */
+export const geminiPrivacy = {
+  name: "Google (Gemini)",
+  lead: "only if switched on.",
+  body: "DMbot can have a recap written by Google's AI instead of Anthropic's. It is off unless DMbot LLC turns it on. If it is on, Google gets the session's cleaned transcript (what was said at the table by people who agreed to be recorded, with the off-topic chat left out), a short list of what happened (and who and where), the names DMbot knows, the last recap, the DM's notes on how recaps should sound, and any fixes the DM asked for. It never gets sound, the as-heard transcript, or anything from the DM screen. Google's paid terms say it doesn't use that text to train its AI.",
+  country: "Google is a company in the United States.",
+  termsText: "Google's terms for paid use",
+  termsUrl: "https://ai.google.dev/gemini-api/terms",
+};
+
 /** The day the owner signed the legal pages off (2026-10-09); shown on all three. */
 export const effectiveDate = "9 October 2026";
 

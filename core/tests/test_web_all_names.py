@@ -114,6 +114,13 @@ class TheDmsList(Listing):
         keys = {k["key"] for k in (await self.page())["kinds"]}
         self.assertTrue({"player_character", "npc", "character"} <= keys)
 
+    def test_character_kinds_are_called_npcs_and_pcs(self) -> None:
+        """#2618: the site says NPCs and PCs, never "People" or "Player characters"."""
+        from dmbot.web.all_names import kinds_from
+
+        labels = {k["key"]: k["label"] for k in kinds_from({"npc": 3, "player_character": 2})}
+        self.assertEqual(labels, {"npc": "NPCs", "player_character": "PCs"})
+
     async def test_search_finds_a_name_or_any_other_name_and_ignores_case(self) -> None:
         for typed, expected in (
             ("GREY", ["Greywater Keep", "Mira Voss"]),  # the keep's name and Mira's secret name

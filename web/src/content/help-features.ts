@@ -49,6 +49,11 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
+    whatsNew: "The website can show what is waiting for you, and answer \"Which Mara?\"",
+    text: "Under the count line, Waiting for you lists what DMbot needs your answer on. Facts heard at the table: Yes, that's true, True, but keep it secret, or Not right. Connections found in a backstory are grouped by the upload they came from: Keep or Skip each one, or Keep all, which keeps the ready ones shown, up to 50 at a time. Skip is the same as No on Discord. A connection with a new name in it waits until you answer that name in Check new names. Same name, which one? has a button for each match and Neither. DMbot never decides these. Players never see this list.",
+  },
+  {
+    audience: "gameMaster",
     whatsNew: "Fix a word, remake only the voice",
     text: "Heard a word said wrong in a narrated recap? On the recap page press Edit, change the words and save. Before you approve the new text, a line beside the audio choice says what the new audio will be. After a small change: only the paragraphs you changed are spoken again, and the music stays. After a bigger change, or if the old parts weren't kept: the voice and the music are both made again, and the line says why. Choose your audio when you approve and it starts. On a recap that is already posted, the same line sits under the player, with a Remake the voice or Remake voice and music button. While it works you see the step, how many paragraphs are done, and when it last moved. The first and last lines of a recap are fixed, so they can't be edited. DMbot never changes your text on its own. In the editor, Fix a name everywhere replaces every use of a spelling in the box, apart from those two lines. Nothing is kept until you press Save.",
   },
