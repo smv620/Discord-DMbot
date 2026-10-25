@@ -199,7 +199,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_email_is_skipped_when_off_and_sent_when_on(self) -> None:
         job = SimpleNamespace(state="ready", session_at=100, title="T", to_confirm=())
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
             await fake_bot(campaign(recaps_email=False)).recap_told(GUILD, "c" * 32, job)
             sent.assert_not_awaited()
             await fake_bot(campaign()).recap_told(GUILD, "c" * 32, job)
@@ -211,7 +211,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             ready = SimpleNamespace(
                 state="ready", session_at=100, title="The Silver Lock", to_confirm=()
             )
-            with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+            with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
                 await bot.recap_told(GUILD, "c" * 32, ready)
             self.assertEqual(sent.await_count, 1 if email else 0)
             (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
@@ -244,7 +244,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
             ready = SimpleNamespace(
                 state="ready", session_at=100, title="The Silver Lock", to_confirm=()
             )
-            with patch("dmbot.bot.tell_the_dm", AsyncMock()):
+            with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
                 await bot.recap_told(GUILD, "c" * 32, ready)
             (_channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
             children = kwargs["view"].children
@@ -261,14 +261,17 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         ready = SimpleNamespace(
             state="ready", session_at=100, title="The Silver Lock", to_confirm=()
         )
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()), self.assertLogs("dmbot.bot", "ERROR"):
+        with (
+            patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
             await bot.recap_told(GUILD, "c" * 32, ready)
         self.assertTrue(bot.post.await_args.kwargs["view"].children[1].item.disabled)
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
-        failed = SimpleNamespace(state="failed", session_at=100, title="")
+        failed = SimpleNamespace(state="failed", session_at=100, title="", keeps_previous=False)
         off = fake_bot(campaign(recaps_email=False))
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
             await off.recap_told(GUILD, "c" * 32, failed)
         sent.assert_not_awaited()
         channel, line = off.post.await_args.args
@@ -276,7 +279,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't write this session", line)
         self.assertIn("https://site.example.com", line)
         on = fake_bot(campaign())
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()):
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
             await on.recap_told(GUILD, "c" * 32, failed)
         on.post.assert_not_awaited()  # the email says it
 

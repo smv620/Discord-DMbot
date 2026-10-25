@@ -20,7 +20,7 @@ from dmbot.web import sessions
 from dmbot.web.recaps import RecapError, read_recap
 from tests import recap_fixtures as fx
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
-from tests.test_web_api import API, SITE, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import SITE, THURSDAY, FakeDiscord, settings
 
 POINTS = Sorted(
     style=("Shorter, please.",),
@@ -421,9 +421,11 @@ class TheRoutes(WithRequests):
             self.web, cast(Any, fx_alice()), [THURSDAY], now=NOW, days=30
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, headers=HEADERS
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +25,29 @@ class Allowed(unittest.TestCase):
         self.assertLessEqual(speed.slowdown(), speed.MOST)
         with patch.object(speed, "_work", return_value=100.0):
             self.assertEqual(speed.slowdown(), speed.MOST)  # a runaway still fails
+
+
+class Fastest(unittest.IsolatedAsyncioTestCase):
+    """One run stretched by a pause must not fail a test (#2671); slow code must still fail."""
+
+    def test_the_best_of_several_runs_is_taken_so_one_pause_does_not_count(self) -> None:
+        pauses = iter([0.2, 0.0, 0.0, 0.0, 0.0])
+
+        def work() -> None:
+            time.sleep(next(pauses))
+
+        self.assertLess(speed.fastest(work), 0.05)
+
+    def test_code_that_is_slow_in_every_run_is_still_slow(self) -> None:
+        self.assertGreater(speed.fastest(lambda: time.sleep(0.05), runs=3), 0.04)
+
+    async def test_the_awaited_form_takes_the_best_too(self) -> None:
+        pauses = iter([0.2, 0.0, 0.0])
+
+        async def work() -> None:
+            await asyncio.sleep(next(pauses))
+
+        self.assertLess(await speed.fastest_async(work, runs=3), 0.05)
 
 
 if __name__ == "__main__":

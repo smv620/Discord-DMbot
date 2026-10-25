@@ -28,12 +28,13 @@ import asyncio
 import logging
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.ai import AIError, Reply, max_output
+from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import request_text
@@ -45,8 +46,10 @@ log = logging.getLogger(__name__)
 # `ai.SLOW_TIER_TIMEOUT_S` seconds, and a model writes 60 to 80 tokens a second, so 8,000 tokens
 # finish in about two minutes. A list that needs more than one answer is continued, not asked for
 # in one.
-ROOM_CAP = 8_000
-ROOM_MIN = 3000
+# Pass 1's room starts at the floor every background call is sent with (#2596), so that the retry
+# with twice the room is really more room, and the cap leaves the long documents plenty.
+ROOM_CAP = 32_000
+ROOM_MIN = OUTPUT_FLOOR
 CONTINUE_ROUNDS = 3  # follow-up calls for a list still cut off at the room cap
 # Pass 1 starts no further call after this many seconds (the whole read has `LORE_TIME_LIMIT_S`):
 # what it has is shaped and shown with the cut-off note, never thrown away by a timeout.
@@ -95,8 +98,19 @@ NAMES
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
+def _speaking() -> str:
+    """The sentence about "I" and "my" (#2650). Always the word as written: the code, not the
+    model, turns it into the character the DM chose (a name the text never says would fail the
+    check that every end is really in the text), and without a choice nobody is guessed."""
+    return (
+        " (when the text says 'I', 'my' or 'me', write that word as the end, for example 'I': "
+        "never write a name for it, and never guess who is speaking)."
+    )
+
+
 def read_instructions(own: Mapping[str, str] | None = None) -> str:
-    """Pass 1: what the careful model is asked to do. The text follows as data."""
+    """Pass 1: what the careful model is asked to do. The text follows as data. "I" and "my"
+    stay as written (#2650): who is speaking is the DM's to say, and code maps the word."""
     kinds = ", ".join(bg.KINDS)
     theirs = "".join(f'; "{label}" ({key})' for key, label in (own or {}).items())
     return (
@@ -117,8 +131,12 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "general (elves, goblins).\n"
         "- RELATIONSHIPS: only what the text says plainly between two of those names, in plain "
         "words (leads, is a member of, is in, is a friend of, is an enemy of, owns, works for, "
-        f"knows, is family of, pays{theirs}). 'quote:' is {bg.QUOTE_WORDS} words at most, copied "
-        "exactly from the text, and holds both names (one that does not is dropped).\n"
+        f"knows, is family of, pays{theirs}). Write each relationship's two ends as the full "
+        "names you listed under NAMES, never as 'my brother', 'the twins' or a title"
+        + _speaking()
+        + " "
+        f"'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text, and holds "
+        "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "
         "NOT INCLUDED with the reason.\n"
         "- Keep the three headings, and write nothing else.\n\n" + EXAMPLES
@@ -261,6 +279,8 @@ class Stats:
     shape_cut: int = 0
     names_kept: int = 0
     links_kept: int = 0
+    # Why connection lines were dropped, by reason (#2563): counts only.
+    dropped: Counter[str] = field(default_factory=Counter)
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +311,7 @@ async def read_list(
     own: Mapping[str, str],
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
+    tick: Callable[[int], None] | None = None,
 ) -> tuple[PlainList, bool]:
     """Pass 1: the whole text in one call, retried once with twice the room, then continued from
     the list so far while it is still cut off at the cap. Returns the list and whether it is
@@ -300,6 +321,8 @@ async def read_list(
     room = read_room(text, model)
     cap = min(ROOM_CAP, max_output(model) if model else ROOM_CAP)
     started = time.monotonic()
+    if tick is not None:
+        tick(1)
     reply = await _call(gate, ai, system, read_request(text), room)  # (a failure here is the DM's)
     stats.read_calls += 1
     found = parse_plain(reply.text, complete=not reply.cut)
@@ -308,6 +331,8 @@ async def read_list(
             stats.read_cut += 1
             room = min(room * 2, cap)
             if time.monotonic() - started < PASS1_BUDGET_S:
+                if tick is not None:
+                    tick(stats.read_calls + 1)
                 again = await _call(gate, ai, system, read_request(text), room)
                 stats.read_calls += 1
                 reply, found = again, parse_plain(again.text, complete=not again.cut)
@@ -318,6 +343,8 @@ async def read_list(
             stats.read_cut += 1
             rounds += 1
             stats.continued += 1
+            if tick is not None:
+                tick(stats.read_calls + 1)
             reply = await _call(gate, ai, system, continue_request(text, plain_text(found)), cap)
             stats.read_calls += 1
             parse_plain(reply.text, complete=not reply.cut, into=found)
@@ -347,25 +374,46 @@ async def _shape(
     halved and shaped again (a few times); a one-line slice still cut is reported as cut."""
     model = str(getattr(ai, "model", ""))
     room = min(SHAPE_ROOM, max_output(model) if model else SHAPE_ROOM)
+    lines = len(names) + len(links)
     try:
         reply = await _call(
             gate, ai, shape_instructions(own), shape_request(names, links), room, bg.schema(own)
         )
-    except AIError:  # this slice is lost, not the read: the rest is shaped and shown, as cut
+    except AIError as exc:
+        # A slice that failed is tried again in halves before anything is lost (#2642, as #2596
+        # does for a cut answer): only a one-line slice, or one already halved too far, is lost.
         stats.shape_cut += 1
-        log.info("Lore read: pass 2 failed for a slice of %d line(s)", len(names) + len(links))
-        return [], [], True
+        log.info("Lore read: pass 2 failed for a slice of %d line(s)", lines)
+        if lines <= 1 or depth >= SPLIT_DEPTH or isinstance(exc, AIOutOfFunds):
+            # (no credit is no reason to ask again in halves: that only fans the failure out)
+            stats.dropped["cut_before_check"] += len(links)
+            return [], [], True
+        return await _halves(ai, text, names, links, own, gate, stats, depth)
     stats.shape_calls += 1
     if not reply.cut:
         return (
             bg.read_answer(reply.text, text),
-            bg.read_connections(reply.text, text, set(own)),
+            bg.read_connections(reply.text, text, set(own), stats.dropped),
             False,
         )
     stats.shape_cut += 1
-    lines = len(names) + len(links)
     if lines <= 1 or depth >= SPLIT_DEPTH:
+        stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
         return [], [], True
+    return await _halves(ai, text, names, links, own, gate, stats, depth)
+
+
+async def _halves(
+    ai: Any,
+    text: str,
+    names: list[str],
+    links: list[str],
+    own: Mapping[str, str],
+    gate: AbstractAsyncContextManager[Any],
+    stats: Stats,
+    depth: int,
+) -> tuple[list[bg.Found], list[bg.Connection], bool]:
+    """A slice the model could not shape whole, shaped again in two halves."""
     if len(names) >= len(links):
         half = max(1, len(names) // 2)
         slices = [(names[:half], links), (names[half:], [])]
@@ -408,22 +456,37 @@ async def read_lore(
     *,
     skip_name: Callable[[str], bool] | None = None,
     skip_pair: Callable[[str, str], bool] | None = None,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
 
     `skip_name` and `skip_pair` say what the campaign already has (a name's spelling; two names
     that are already connected): those lines are dropped before pass 2, so a second run of a
-    long background shapes only the rest instead of the same first slices again."""
+    long background shapes only the rest instead of the same first slices again.
+
+    `progress(stage, done, total)` is told where the read is, with counts only (never text):
+    "reading" (with the number of the pass-1 call it is on) while pass 1 runs, then "shaping" with
+    the slices finished of all of them."""
     stats = Stats()
     started = time.monotonic()
-    listed, cut = await read_list(read_ai, text, own, gate, stats)
+    tick: Callable[[int], None] | None = None
+    if progress is not None:
+        # Each pass-1 call is movement ("try 2"), so a working pass is not called stalled.
+        def _tick(call: int) -> None:
+            progress("reading", call, 0)
+
+        tick = _tick
+
+    listed, cut = await read_list(read_ai, text, own, gate, stats, tick)
     if skip_name is not None:
         listed.names = [n for n in listed.names if not skip_name(line_name(n))]
     if skip_pair is not None:
+        before = len(listed.links)
         listed.links = [
             x for x in listed.links if not ((e := line_ends(x)) is not None and skip_pair(*e))
         ]
+        stats.dropped["already_connected"] += before - len(listed.links)
     names: list[bg.Found] = []
     links: list[bg.Connection] = []
     by = SHAPE_LINES
@@ -437,6 +500,18 @@ async def read_lore(
     tasks = [
         asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats)) for a, b in slices
     ]
+    if progress is not None:
+        progress("shaping", 0, len(tasks))
+        finished = [0]
+
+        def _one_done(task: asyncio.Future[Any]) -> None:
+            if task.cancelled():  # cut at the time limit: not a finished slice
+                return
+            finished[0] += 1
+            progress("shaping", finished[0], len(tasks))
+
+        for task in tasks:
+            task.add_done_callback(_one_done)
     left = max(0.0, LORE_TIME_LIMIT_S - (time.monotonic() - started))
     pending: set[asyncio.Future[Any]] = set()
     try:
