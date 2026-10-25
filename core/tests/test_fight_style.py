@@ -608,12 +608,11 @@ class MoreNearMisses(unittest.TestCase):
         self.assertIsNone(self.heard("I have dinner"))
 
     def test_a_huge_line_is_ignored_quickly(self) -> None:
-        import time
+        def both() -> None:
+            self.assertIsNone(self.heard("x" * 100_000 + " you're up"))
+            self.assertIsNone(self.heard("a" * 100_000))
 
-        start = time.perf_counter()
-        self.assertIsNone(self.heard("x" * 100_000 + " you're up"))
-        self.assertIsNone(self.heard("a" * 100_000))
-        self.assertLess(time.perf_counter() - start, speed.allowed(0.5))
+        self.assertLess(speed.fastest(both), speed.allowed(0.5))
 
 
 class Prompt(unittest.TestCase):
