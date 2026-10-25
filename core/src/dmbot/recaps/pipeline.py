@@ -27,11 +27,11 @@ from typing import Any, Protocol
 
 from dmbot.ai import AIOutOfFunds, Reply, max_input
 from dmbot.memory.extractor import Said, readable
+from dmbot.recaps import away, fixed_lines
 from dmbot.recaps import beats as bt
 from dmbot.recaps import calls as cl
 from dmbot.recaps import critics as cr
 from dmbot.recaps import draft as rd
-from dmbot.recaps import fixed_lines
 from dmbot.recaps import motives as mo
 from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
@@ -1505,7 +1505,13 @@ class RecapWorker:
             unchecked = (
                 () if job.grade else (cr.STYLE_UNCHECKED,)
             )  # (the grader failed on this one)
-            return await self._save_loop(gid, cid, job, replace(loop, done=True, notes=unchecked))
+            # What a reader who was away could still not follow, after the writer's one fix: a
+            # note for the DM, never another round (#2680).
+            sentences_now, left = self._away(job.summary, sheet, inputs)
+            return await self._save_loop(
+                gid, cid, job,
+                replace(loop, done=True, notes=unchecked + away.notes(left, sentences_now)),
+            )  # fmt: skip
         room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
         # (a revision that waits for its try is off the job's calls, so the room is not looked at)
         if loop.round >= cr.MAX_ROUNDS or (job.calls > room and loop.waits == 0):
@@ -1513,6 +1519,30 @@ class RecapWorker:
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
         )
+
+    def _away_notes(
+        self, summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
+    ) -> tuple[str, ...]:
+        """The DM's notes for what a reader who was away could not follow in this draft."""
+        sentences, found = self._away(summary, sheet, inputs)
+        return away.notes(found, sentences)
+
+    @staticmethod
+    def _away(
+        summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
+    ) -> tuple[list[str], list[away.Finding]]:
+        """A draft's sentences and what a reader who was away could not follow in it (#2680).
+        Pure and free: no call, so it never touches the job's ceiling or the day's tally."""
+        sentences = rd.sentences_of(summary)
+        present = sorted({n for b in sheet for n in b.present})
+        found = away.findings(
+            sentences,
+            names=inputs.allowed_names,
+            aliases=inputs.aliases,
+            previous=inputs.previous,
+            present=present,
+        )
+        return sentences, found
 
     async def _save_loop(self, gid: int, cid: str, job: Job, loop: cr.Loop) -> Job | None:
         # (errors back to none: a step of the loop got through)
@@ -1630,7 +1660,17 @@ class RecapWorker:
                 )
                 self._annotate(gid, cid, job, "plotbot", checks=lambda: cl.kinds(cut))
         style = cr.style_changes(rd.weak(job.grade)) if job.grade else []
-        changes = [*(loop.motives or ()), *plot, *style]
+        # A reader who was away (#2680): the writer is asked once, on the first reading; whatever
+        # is left after its fix is a note for the DM (`_away` again at the end), not another round.
+        asked_away: list[cr.Change] = []
+        if loop.round == 0:
+            sentences_now, found_away = self._away(job.summary, sheet, inputs)
+            asked_away = away.changes(found_away, sentences_now)
+            log.info(
+                "Recap: the away-reader check found %d: %s",
+                len(found_away), sorted({f.kind for f in found_away}),
+            )  # fmt: skip
+        changes = [*(loop.motives or ()), *plot, *style, *asked_away]
         hard, soft = cr.count(changes)
         log.info("Recap: critics reading %d: %d hard, %d soft", loop.round + 1, hard, soft)
         best = cr.best_from(job.summary, job.music, job.grade, changes)
@@ -1923,7 +1963,13 @@ class RecapWorker:
                 waits=0,
                 since=0,
                 told=False,
-                notes=best.notes + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
+                notes=best.notes
+                + tuple(
+                    n
+                    for n in self._away_notes(best.summary, sheet, inputs)
+                    if n not in best.notes
+                )
+                + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
                 cut=cut,
             ).to_json(),
         )  # fmt: skip
