@@ -51,3 +51,19 @@ describe("useObservedWait", () => {
     expect(screen.getByText(/^61$/)).toBeTruthy();
   });
 });
+
+describe("WorkProgress options for waits the page can only time", () => {
+  it("leaves the 'last moved' line out when progress is unknown, and stops the clock when frozen", async () => {
+    const { default: WorkProgress } = await import("../src/account/WorkProgress");
+    const { workWords } = await import("../src/content/work-progress");
+    const now = Math.floor(Date.now() / 1000);
+    const { rerender } = render(<WorkProgress stage="Working" startedAt={now - 30} state="running" progressUnknown />);
+    expect(screen.getByText(/Running for/)).toBeTruthy();
+    expect(screen.queryByText(workWords.noChangeYet)).toBeNull();
+    expect(screen.queryByText(/Last change|Last progress/)).toBeNull();
+    rerender(<WorkProgress stage="Working" startedAt={now - 30} state="stalled" frozen />);
+    expect(screen.getByText(workWords.stoppedLooking)).toBeTruthy();
+    expect(screen.queryByText(/Running for/)).toBeNull();
+    expect(screen.queryByText(/Quiet for/)).toBeNull();
+  });
+});

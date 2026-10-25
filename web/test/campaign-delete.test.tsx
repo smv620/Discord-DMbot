@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import Account from "../src/account/Account";
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
+import { workWords } from "../src/content/work-progress";
 import { campaignDeleteWords as w } from "../src/content/campaign-delete";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -198,6 +199,7 @@ describe("the backup", () => {
     api.campaignBackup = () => new Promise<Blob>((resolve) => (finish = resolve));
     fireEvent.click(within(box).getByRole("button", { name: w.backup }));
     expect(await within(box).findByText(/Running for/)).toBeTruthy();
+    expect(within(box).queryByText(workWords.noChangeYet)).toBeNull(); // a download has no "last progress" to claim
     expect(within(box).getAllByText(w.backingUp).length).toBeGreaterThan(0);
     finish(new Blob(["{}"]));
     await waitFor(() => expect(within(box).queryByText(/Running for/)).toBeNull());

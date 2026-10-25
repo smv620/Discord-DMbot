@@ -193,7 +193,7 @@ export default function RecapPlotCheck({
           updatedAt={seen.movedAt}
           state={gaveUp || seen.quiet ? "stalled" : "running"}
           frozen={gaveUp}
-          {...(gaveUp ? { whatToDo: words.gaveUp } : {})}
+          whatToDo={gaveUp ? words.gaveUp : words.checkQuiet}
         />
       ) : (
         <p class="small" aria-hidden="true">
@@ -515,7 +515,8 @@ function Issue({
               startedAt={chatSeen.startedAt}
               updatedAt={chatSeen.movedAt}
               state={chatSlow || chatSeen.quiet ? "stalled" : "running"}
-              {...(chatSlow ? { whatToDo: words.chatSlow } : {})}
+              frozen={chatSlow}
+              whatToDo={chatSlow ? words.chatSlow : words.chatQuiet}
             />
           )}
           <label class="field">

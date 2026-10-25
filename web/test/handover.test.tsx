@@ -3,6 +3,7 @@
 // The hand-over accept page (#2534; core #2532): the emailed link's token is read from the hash, the
 // offer is looked at, and the person accepts onto a server or says no thanks. The API decides who may
 // accept; the page says what it is told. Shown only while HANDOVER_LIVE is true (false today).
+import { workWords } from "../src/content/work-progress";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -561,6 +562,10 @@ describe("moving to another server (#2550)", () => {
       await vi.advanceTimersByTimeAsync(200_000);
       expect(screen.getByText(w.movingSlow)).toBeTruthy();
       expect(w.movingSlow).toContain("open the link in the offer email again");
+      // The page has stopped looking: no clock keeps running, and it never claimed a "last change" it did not see.
+      expect(screen.getByText(workWords.stoppedLooking)).toBeTruthy();
+      expect(screen.queryByText(/Running for/)).toBeNull();
+      expect(screen.queryByText(workWords.noChangeYet)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -287,7 +287,8 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
             <WorkProgress
               stage={words.moving}
               startedAt={movingSeen.startedAt}
-              updatedAt={null}
+              progressUnknown
+              frozen={view.slow}
               state={view.slow ? "stalled" : "running"}
               {...(view.slow ? { whatToDo: words.movingSlow } : {})}
             />

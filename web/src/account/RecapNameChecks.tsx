@@ -144,7 +144,8 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
           startedAt={seen.startedAt}
           updatedAt={seen.movedAt}
           state={slow || seen.quiet ? "stalled" : "running"}
-          {...(slow ? { whatToDo: words.slow } : {})}
+          frozen={slow}
+          whatToDo={words.slow}
         />
       ) : (
         <p class="small muted" aria-hidden="true">
