@@ -46,6 +46,8 @@ from dmbot.web import (
     email_signin,
     entitlements_writer,
     feedback,
+    handover_accept,
+    handover_offer,
     imports,
     npc_pages,
     offers,
@@ -606,6 +608,11 @@ def create_app(
         )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
+    handover_limit = RateLimit(  # offers by email, a minute's worth, by account
+        60, count=6, clock=lambda: float(clock())
+    )
+
+    handover_open_limit = RateLimit(60, count=30, clock=lambda: float(clock()))  # by account
 
     async def mail_change_link(user_id: int, new: str, token: str) -> bool:
         """Mail the confirm link to the NEW address. False if it could not be sent."""
@@ -687,11 +694,109 @@ def create_app(
         log.info("An email change was confirmed by user %s", session.user_id)
         return {"address": new}
 
+    @app.post("/me/handover/look")
+    async def me_handover_look(signed: Signed, request: Request) -> dict[str, Any]:
+        """What a hand-over link offers (#2532): `{"token"}`. Changes nothing; every link that
+        opens nothing now answers `{"status": "ended"}`."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        return await handover_accept.look(
+            db, session, (await small_json(request)).get("token"), now=int(clock())
+        )
+
+    @app.post("/me/handover/accept")
+    async def me_handover_accept(signed: Signed, request: Request) -> dict[str, str]:
+        """Accept: `{"token", "serverId"}`. Ownership moves to the signed-in DMbot account."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        body = await small_json(request)
+        outcome, ref = await handover_accept.accept(
+            db,
+            session,
+            body.get("token"),
+            body.get("serverId"),
+            now=int(clock()),
+        )
+        if outcome == "accepted" and ref is not None:
+            return {"status": "accepted", "campaignRef": ref}
+        if outcome == "moving":  # asked for another server; the bot moves it (#2532, slice C)
+            return JSONResponse({"status": "moving"}, status_code=202)  # type: ignore[return-value]
+        refusals = {
+            "ended": (409, "ended"),
+            "no_plan": (402, "not_on_a_paid_plan"),
+            "try_it": (402, "not_on_a_paid_plan"),
+            "no_slot": (402, "no_free_slot"),
+            "owner": (403, "owner"),
+            "bad_server": (422, "bad_server"),
+            "shares_rules": (409, "shares_rules"),
+        }
+        status, code = refusals.get(outcome, (409, "ended"))
+        raise HTTPException(status_code=status, detail=code)
+
+    @app.post("/me/handover/decline")
+    async def me_handover_decline(signed: Signed, request: Request) -> dict[str, str]:
+        """No thanks: `{"token"}`."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the whole hand-over is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        if handover_open_limit.take(str(session.user_id)) != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        outcome = await handover_accept.decline(
+            db,
+            session,
+            (await small_json(request)).get("token"),
+        )
+        if outcome != "declined":
+            raise HTTPException(status_code=409, detail="ended")
+        return {"status": "declined"}
+
     @app.delete("/me/email/pending", status_code=204)
     async def cancel_me_email(signed: Signed) -> Response:
         session, _token = signed
         await email_change.cancel(db, session.user_id)
         return Response(status_code=204)
+
+    @app.post("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover(ref: str, signed: Signed, request: Request) -> dict[str, str]:
+        """The owner offers the campaign to an email address (#2532): `{"email"}`. The answer is
+        "emailed" whatever the address is; it never says whether it has an account or a plan."""
+        session, _token = signed
+        if not settings.handover_email_on:  # off until the accept page is live (#2532)
+            raise HTTPException(status_code=404, detail="not_found")
+        taken = handover_limit.take(str(session.user_id))
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        outcome = await handover_offer.offer(
+            db,
+            session,
+            mailer,
+            ref,
+            (await small_json(request)).get("email"),
+            site_url=settings.site_url,
+            now=int(clock()),
+        )
+        if outcome is None:
+            raise HTTPException(status_code=404, detail="not_found")
+        if outcome != "emailed":
+            status = {"bad_email": 422, "too_soon": 429, "not_allowed": 409, "email_failed": 502}
+            raise HTTPException(status_code=status[outcome], detail=outcome)
+        return {"status": "emailed"}
+
+    @app.delete("/me/campaigns/{ref}/handover")
+    async def me_campaign_handover_withdraw(ref: str, signed: Signed) -> dict[str, str]:
+        """The owner takes back the campaign's open offer (#2532)."""
+        session, _token = signed
+        if not settings.handover_email_on or not await handover_offer.withdraw(
+            db, session, ref, now=int(clock())
+        ):
+            raise HTTPException(status_code=404, detail="not_found")
+        return {"status": "withdrawn"}
 
     @app.get("/me/improvement")
     async def me_improvement(signed: Signed) -> dict[str, Any]:

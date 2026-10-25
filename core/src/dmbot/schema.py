@@ -1353,17 +1353,27 @@ WEB_ROLE_RECAP_POLICY = """
 # Applied only once the offers table has all four bot-only columns (an older schema, as in a test
 # of a backfill, doesn't, and a rule can't name a column that isn't there).
 WEB_ROLE_OFFER_POLICY = """
-    -- Creating an offer (#728, #690 follow-up). The website's role has no INSERT on offers
-    -- today (#625 only answers them). Whoever adds a route that creates offers must grant
-    -- exactly OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
-    -- from the website is the signed-in person's own, still open, and not marked as sent,
-    -- claimed or announced. Otherwise the site could save an offer as already delivered and the
-    -- bot's check that the person is still in the server would be skipped.
+    -- Creating an offer (#728, #690 follow-up; #2532). The website's role may INSERT only the
+    -- columns in OFFER_INSERT_COLUMNS, never the whole table, and this rule stays on top: an offer
+    -- from the website is the signed-in owner's own, by email, still open, and not claimed or
+    -- announced. Otherwise the site could write itself an offer on someone else's campaign.
     DROP POLICY IF EXISTS web_new_offer ON campaign_handover_offers;
     CREATE POLICY web_new_offer ON campaign_handover_offers AS RESTRICTIVE FOR INSERT TO dmbot_web
-        WITH CHECK (delivered_at IS NULL AND claimed_at IS NULL AND message_id IS NULL
+        WITH CHECK (via_email AND token_hash IS NOT NULL AND to_user_id = 0
+                    -- an offer from the website is only ever by email (#2532): a Discord offer
+                    -- would be sent to a person as buttons, which PLAN retires; it is born
+                    -- delivered, because the bot has no Discord message to send for it
+                    AND delivered_at = created_at
+                    AND created_at BETWEEN dmbot_now() - 300 AND dmbot_now() + 300
+                    AND claimed_at IS NULL AND message_id IS NULL
                     AND end_told_at IS NULL AND status = 'open' AND decided_at IS NULL
-                    AND from_user_id = dmbot_current_user());
+                    AND from_user_id = dmbot_current_user()
+                    -- only the campaign's own owner can offer it: without this, anyone in the
+                    -- server could write themselves an offer and then accept it
+                    AND EXISTS (SELECT 1 FROM campaigns c
+                                WHERE c.guild_id = campaign_handover_offers.guild_id
+                                  AND c.id = campaign_handover_offers.campaign_id
+                                  AND c.owner_user_id = campaign_handover_offers.from_user_id));
 """
 
 ACCESS_GRANTS = (
@@ -3462,6 +3472,17 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
         "dmbot_recap_approve_unchecked",
         "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)",
     ),
+    # How many hand-over emails a person sent today, for the limit of five (#2532).
+    ("dmbot_handover_emails_since", "dmbot_handover_emails_since(BIGINT, BIGINT)"),
+    ("dmbot_handover_open", "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"),  # #2532
+    ("dmbot_handover_release", "dmbot_handover_release(BIGINT, BIGINT, TEXT)"),  # #2532
+    (
+        "dmbot_handover_request_move",
+        "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)",
+    ),  # #2532, slice C (granted now that the bot's move exists)
+    ("dmbot_handover_decline", "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"),  # #2532
+    ("dmbot_handover_shares_rules", "dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)"),  # #2532
+    ("dmbot_handover_move_failed", "dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)"),  # #2532
     # The owner's own campaigns in any server, and deleting one from the website (#2554).
     ("dmbot_web_owned_campaigns", "dmbot_web_owned_campaigns()"),
     ("dmbot_web_delete_campaign", "dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)"),
@@ -3592,6 +3613,11 @@ OFFER_INSERT_COLUMNS: tuple[str, ...] = (
     "created_at",
     "from_name",
     "to_name",
+    # By email (#2532): the link's hash, the mark that says so, and delivered_at, set at once
+    # because the bot has no Discord message to send for it (the policy allows that only here).
+    "via_email",
+    "token_hash",
+    "delivered_at",
 )
 WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT", ("schema_migrations",)),
@@ -3614,6 +3640,7 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SELECT, UPDATE (owner_user_id)", ("campaigns",)),
     ("SELECT, INSERT", ("campaign_dms",)),
     ("SELECT, UPDATE (status, decided_at)", ("campaign_handover_offers",)),
+    (f"INSERT ({', '.join(OFFER_INSERT_COLUMNS)})", ("campaign_handover_offers",)),  # #2532
     ("SELECT, INSERT, UPDATE", ("installs", "entitlements")),
     ("SELECT, INSERT", ("payment_events", "try_it_used")),
     # The unsubscribe link (#1229) may be written, never read: the list stays the bot's. The
@@ -12352,6 +12379,260 @@ MAP_NOTES = """
     CREATE INDEX map_notes_message ON map_notes (guild_id, message_id) WHERE message_id <> 0;
     """ + _isolate("map_notes")
 
+HANDOVER_EMAIL = """
+    -- Hand-over by email (#2532, docs/PLAN.md, "Hand-over by email"): an offer is no longer made to
+    -- a Discord account but sent to an email address, and the person who opens its one-use link
+    -- on the website and accepts becomes the new owner. The address is never stored here (it goes
+    -- in the email and nowhere else): the offer holds only a SHA-256 of the link's token. Until
+    -- the link is used `to_user_id` is 0, which matches nobody; the website's claim sets it to
+    -- the signed-in person, and the rest is the offer machinery of 0021 (one open offer per
+    -- campaign, seven days, the owner told when it ends). A new column on an existing table: no
+    -- rows change, so there is no backfill policy.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN via_email  BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN token_hash TEXT CHECK (token_hash IS NULL OR char_length(token_hash) = 64);
+    CREATE UNIQUE INDEX campaign_handover_offers_token
+        ON campaign_handover_offers (token_hash) WHERE token_hash IS NOT NULL;
+
+    -- How many offers by email this person has sent in the last day, for the limit of five a
+    -- day, counted over all their campaigns and servers (the offers table is scoped to one
+    -- server at a time, so the count reads the mail log, which is everyone's). The caller must
+    -- be that person, or a job with no person set.
+    CREATE FUNCTION dmbot_handover_emails_since(p_user BIGINT, p_since BIGINT) RETURNS INTEGER
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_user() IS NOT NULL AND dmbot_current_user() <> p_user THEN
+            RETURN 0;
+        END IF;
+        RETURN (SELECT count(*)::INTEGER FROM sent_emails e
+                WHERE e.user_id = p_user AND e.kind LIKE 'handover:%' AND e.sent_at >= p_since);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_emails_since(BIGINT, BIGINT) FROM PUBLIC;
+"""
+
+HANDOVER_CLAIM = """
+    -- Opening a hand-over link on the website (#2532, slice B). The link names the server and the
+    -- offer and carries a secret whose SHA-256 the offer holds, so the door can read the one offer
+    -- in the one server (every server table is scoped by server) and nothing else. It answers only
+    -- for a signed-in person, and only for an offer that is still open, by email, unexpired, not
+    -- yet claimed by someone else, and whose campaign still belongs to the person who offered it.
+    -- Anything else is NULL, the same whatever the reason, so a link says nothing about why it
+    -- ended. With p_claim the offer becomes this person's (their id and name are written once; the
+    -- link then works for no one else), unless they are the owner. The rest of the answer (plan,
+    -- slot, ownership) is the campaign store's own accept, with the person's session as always.
+    -- The caller connects scoped to the server `g` (the door refuses any other).
+    CREATE FUNCTION dmbot_handover_open(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_claim BOOLEAN) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        r RECORD;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        IF p_claim THEN  -- two claims at once: one waits for the other, then sees it taken
+            PERFORM 1 FROM campaign_handover_offers WHERE guild_id = g AND id = o FOR UPDATE;
+        END IF;
+        SELECT f.campaign_id, f.from_user_id, f.from_name, f.to_user_id, f.created_at,
+               c.name AS campaign_name
+            INTO r
+            FROM campaign_handover_offers f
+            JOIN campaigns c ON c.guild_id = f.guild_id AND c.id = f.campaign_id
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me)
+              AND c.owner_user_id = f.from_user_id;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF p_claim AND r.from_user_id <> me AND r.to_user_id = 0 THEN
+            UPDATE campaign_handover_offers
+                SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80)
+                WHERE guild_id = g AND id = o;
+        END IF;
+        RETURN jsonb_build_object(
+            'campaign_id', r.campaign_id, 'campaign_name', r.campaign_name,
+            'from_user_id', r.from_user_id, 'from_name', r.from_name,
+            'expires_at', r.created_at + 604800);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+
+    -- Gives a claim back (#2532): an accept that fails after the link was claimed (no room any
+    -- more, the campaign changed hands) must not leave the link dead for the person it was for.
+    -- Only the person who holds the claim, only on an offer still open and still unanswered.
+    CREATE FUNCTION dmbot_handover_release(g BIGINT, o BIGINT, p_hash TEXT) RETURNS VOID
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN;
+        END IF;
+        UPDATE campaign_handover_offers SET to_user_id = 0, to_name = ''
+            WHERE guild_id = g AND id = o AND via_email AND token_hash = p_hash
+              AND status = 'open' AND to_user_id = me;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_release(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- "No thanks" from whoever holds the link, wherever they are (#2532): the website's role can
+    -- write an answer only in the servers of its session, and the person who was emailed is often
+    -- not in the campaign's server. Same checks as dmbot_handover_open; the offer is declined
+    -- under their id and name, and the bot is told (as for every answer made on the website) so
+    -- the owner hears. NULL, the same as any ended link; the owner cannot decline their own.
+    CREATE FUNCTION dmbot_handover_decline(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;
+        END IF;
+        UPDATE campaign_handover_offers f
+            SET status = 'declined', decided_at = dmbot_now(), to_user_id = me,
+                to_name = left(coalesce(p_name, ''), 80)
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN
+            PERFORM pg_notify('dmbot_handover_decided', g::text || ':' || o::text);
+        END IF;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+
+HANDOVER_MOVE = """
+    -- A campaign handed over by email to a person who wants it in another server (#2532, slice C;
+    -- docs/PLAN.md, "Hand-over by email", point 7). The website cannot copy a campaign between
+    -- servers (it must never read or write another server's tables), so it only records the wish
+    -- here: `move_to_guild_id`. DMbot's bot then moves the campaign: one update of its row, which
+    -- migration 0215 lets every table follow. (`moved_campaign_id` was for an earlier design that
+    -- copied the campaign; nothing writes it.) While a move is asked for, the offer stays 'open'
+    -- but cannot be answered, taken back or run out. Two new columns on an existing table: no
+    -- rows change.
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN move_to_guild_id BIGINT
+            CHECK (move_to_guild_id IS NULL OR move_to_guild_id > 0),
+        ADD COLUMN moved_campaign_id TEXT;
+
+    -- Claims the link for this person and asks for the move, in one step (#2532). Same rules as
+    -- dmbot_handover_open with a claim, and the target must be one of the session's own servers
+    -- with DMbot installed. NULL, whatever the reason, the same as any ended link.
+    CREATE FUNCTION dmbot_handover_request_move(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_target BIGINT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ready BOOLEAN;
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
+            RETURN false;
+        END IF;
+        IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', p_target::text, true);
+        SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
+            INTO ready;
+        IF NOT ready THEN
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers f
+            SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80),
+                move_to_guild_id = p_target
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND f.move_to_guild_id IS NULL
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)
+        FROM PUBLIC;
+"""
+
+
+# A pending move makes the doors of 0213 look away (#2532, slice C): the claimant's look says the
+# link has ended, a release leaves the claim alone, and nobody can decline underneath the move.
+# Built from 0213's own text, so the two cannot drift: the same doors, the same grants and pinned
+# search_path, with one more condition each.
+_MOVE_BLIND = (
+    HANDOVER_CLAIM.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+    .replace(
+        "AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()",
+        "AND f.status = 'open' AND f.move_to_guild_id IS NULL"
+        " AND f.created_at + 604800 > dmbot_now()",
+    )
+    .replace(
+        "AND status = 'open' AND to_user_id = me;",
+        "AND status = 'open' AND move_to_guild_id IS NULL AND to_user_id = me;",
+    )
+)
+assert _MOVE_BLIND.count("move_to_guild_id IS NULL") == 3, "0214 must change all three doors"
+HANDOVER_MOVE += _MOVE_BLIND
+
+
 RECAP_STORY_ROOM = """
     -- The recap story's column limit goes from 6,000 to 30,000 characters (#2601): a length is a
     -- target in the writer's instructions and never a reason to cut what it wrote, so the column is
@@ -12721,6 +13002,202 @@ IMPORT_STEPS = """
     $do$;
 """
 
+
+# A campaign moves to another server by changing `guild_id` on its `campaigns` row (#2532, slice
+# C2); every foreign key that carries `guild_id` must follow it, or the move would be refused for
+# the first child row or leave rows behind. Rebuilt from the catalog so no table is forgotten
+# (tests/test_campaign_move_cascade.py checks it still holds). Dropping a key takes an exclusive
+# lock on its table, and the migration is one transaction, so those locks last until it ends: deploy
+# it with the bot stopped (docs/testing-status.log). Each key is added NOT VALID and then validated.
+# Every foreign key that carries `guild_id` becomes ON UPDATE CASCADE (found from the catalog, so
+# no table is forgotten). Run by 0215 and again by 0234: a table made between them (0225's
+# `recap_upload_rights`) was missed the first time. Already-cascading keys are left alone.
+_CASCADE_ALL_KEYS = """
+    DO $$
+    DECLARE r record;
+    BEGIN
+        FOR r IN
+            -- ON UPDATE has to come before DEFERRABLE, so it is put in ahead of it.
+            SELECT c.conrelid::regclass AS tbl, c.conname,
+                   regexp_replace(pg_get_constraintdef(c.oid),
+                                  '( (NOT )?DEFERRABLE.*)?$', ' ON UPDATE CASCADE\\1') AS def
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 AND a.attname = 'guild_id'
+            WHERE c.contype = 'f' AND n.nspname = current_schema() AND c.confupdtype = 'a'
+        LOOP
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.tbl, r.conname);
+            EXECUTE format(
+                'ALTER TABLE %s ADD CONSTRAINT %I %s NOT VALID',
+                r.tbl, r.conname, r.def);
+            EXECUTE format('ALTER TABLE %s VALIDATE CONSTRAINT %I', r.tbl, r.conname);
+        END LOOP;
+    END $$;
+"""
+
+# The same catalog loop again, for the tables made after 0215 (0225's `recap_upload_rights`); a
+# table made later than this declares ON UPDATE CASCADE itself (CLAUDE.md, #2550).
+MOVE_CASCADE_LATE = _CASCADE_ALL_KEYS
+
+CAMPAIGN_MOVE_CASCADE = (
+    _CASCADE_ALL_KEYS
+    + """
+
+    -- The bot's lease on a move that is under way, and the door that asks for a move, made again
+    -- (0214 is the same as it was when it first shipped): it now also checks that the caller is
+    -- scoped to the campaign's server, goes back to that scope when the target has no DMbot,
+    -- and wakes the bot. A new column and a function: no rows change.
+    ALTER TABLE campaign_handover_offers ADD COLUMN move_claimed_at BIGINT;
+    CREATE OR REPLACE FUNCTION dmbot_handover_request_move(
+        g BIGINT, o BIGINT, p_hash TEXT, p_name TEXT, p_target BIGINT) RETURNS BOOLEAN
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        ready BOOLEAN;
+        changed INTEGER;
+    BEGIN
+        IF me IS NULL OR g IS NULL OR o IS NULL OR p_target IS NULL OR p_target = g
+           OR p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$'
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN false;  -- (the caller connects scoped to the campaign's server, like every door)
+        END IF;
+        IF NOT (p_target = ANY ((SELECT dmbot_web_managed_guilds())::BIGINT[])) THEN
+            RETURN false;
+        END IF;
+        -- Whether DMbot is installed in the target is a fact of the TARGET server, whose rows are
+        -- visible only when scoped to it: so the door looks there for this one read and comes
+        -- straight back. It reads nothing else there.
+        PERFORM set_config('dmbot.guild_id', p_target::text, true);
+        SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = p_target AND left_at IS NULL)
+            INTO ready;
+        IF NOT ready THEN
+            PERFORM set_config('dmbot.guild_id', g::text, true);  -- back where the caller was
+            RETURN false;
+        END IF;
+        PERFORM set_config('dmbot.guild_id', g::text, true);
+        UPDATE campaign_handover_offers f
+            SET to_user_id = me, to_name = left(coalesce(p_name, ''), 80),
+                move_to_guild_id = p_target
+            FROM campaigns c
+            WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+              AND f.status = 'open' AND f.created_at + 604800 > dmbot_now()
+              AND (f.to_user_id = 0 OR f.to_user_id = me) AND f.from_user_id <> me
+              AND f.move_to_guild_id IS NULL
+              AND c.guild_id = f.guild_id AND c.id = f.campaign_id
+              AND c.owner_user_id = f.from_user_id;
+        GET DIAGNOSTICS changed = ROW_COUNT;
+        IF changed = 1 THEN  -- wakes the bot, which does the move (a sweep catches a missed one)
+            PERFORM pg_notify('dmbot_handover_move', g::text || ':' || o::text);
+        END IF;
+        RETURN changed = 1;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+
+    -- The one write that may take a campaign out of the server in scope: the move sets both
+    -- settings in its own transaction (campaigns/moves.py), and the policy then lets that one
+    -- campaign be seen and written in the server it goes to. (It is for all commands because an
+    -- update's new row must also be readable, which a policy for updates alone does not give.)
+    -- Policies add up, so with the settings unset every other write stays as it was.
+    -- Only for the role the bot connects as (the one that ran this migration), as `move_all` is:
+    -- the website's role never gets it.
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'CREATE POLICY campaign_move ON campaigns TO %I'
+            ' USING ((guild_id = dmbot_current_guild()'
+            '         OR guild_id = NULLIF(current_setting(''dmbot.moving_to'', true),'
+            ' '''')::BIGINT)'
+            '        AND id = NULLIF(current_setting(''dmbot.moving_campaign'', true), ''''))'
+            ' WITH CHECK (guild_id = NULLIF(current_setting(''dmbot.moving_to'', true),'
+            ' '''')::BIGINT'
+            '             AND id = NULLIF(current_setting(''dmbot.moving_campaign'', true), ''''))',
+            current_user);
+    END
+    $do$;
+
+    -- Whether the campaign an emailed link is for shares a rule set: such a campaign cannot move to
+    -- another server yet (#2551), and the page says so before anyone accepts or buys a plan. Only
+    -- the link's own secret opens the question.
+    CREATE FUNCTION dmbot_handover_shares_rules(g BIGINT, o BIGINT, p_hash TEXT) RETURNS BOOLEAN
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT g IS NOT NULL AND o IS NOT NULL AND p_hash ~ '^[0-9a-f]{64}$'
+            AND current_setting('dmbot.guild_id', true) IS NOT DISTINCT FROM g::text
+            AND EXISTS (
+                SELECT 1 FROM campaign_handover_offers f
+                JOIN rule_sets s ON s.guild_id = f.guild_id AND s.campaign_id = f.campaign_id
+                WHERE f.guild_id = g AND f.id = o AND f.via_email AND f.token_hash = p_hash
+                  AND f.status = 'open' AND s.status = 'shared')
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- Three more facts about a hand-over that moves: when the move was asked for (an offer whose
+    -- move never ran is opened again after an hour), and, when a move did not happen, who had
+    -- accepted and the plain reason, which only that person is shown (the owner is told only that
+    -- it did not happen, because the reason can be about the other person's plan).
+    ALTER TABLE campaign_handover_offers
+        ADD COLUMN move_asked_at BIGINT,
+        ADD COLUMN move_failed_for BIGINT,
+        ADD COLUMN move_failed_reason TEXT;
+    CREATE FUNCTION dmbot_note_move_asked() RETURNS trigger
+        LANGUAGE plpgsql
+        AS $fn$
+    BEGIN
+        IF NEW.move_to_guild_id IS NOT NULL AND OLD.move_to_guild_id IS NULL THEN
+            NEW.move_asked_at := dmbot_now();
+            NEW.move_failed_for := NULL;
+            NEW.move_failed_reason := NULL;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER campaign_handover_offers_move_asked
+        BEFORE UPDATE OF move_to_guild_id ON campaign_handover_offers
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_move_asked();
+
+    -- The plain reason a move did not happen, for the person who had accepted and nobody else
+    -- (the owner is told only that it did not happen). Shown on that person's page.
+    CREATE FUNCTION dmbot_handover_move_failed(g BIGINT, o BIGINT, p_hash TEXT) RETURNS TEXT
+    LANGUAGE sql STABLE SECURITY DEFINER AS $fn$
+        SELECT f.move_failed_reason FROM campaign_handover_offers f
+        WHERE dmbot_current_user() IS NOT NULL AND f.guild_id = g AND f.id = o AND f.via_email
+          AND f.token_hash = p_hash AND f.status = 'open'
+          AND f.move_failed_for = dmbot_current_user()
+          AND current_setting('dmbot.guild_id', true) IS NOT DISTINCT FROM g::text
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_handover_move_failed(BIGINT, BIGINT, TEXT) FROM PUBLIC;
+
+    -- The server it arrives in is one that holds campaigns now (the retention job's routing list).
+    CREATE TRIGGER campaign_guilds_note_move
+        AFTER UPDATE OF guild_id ON campaigns
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_campaign_guild();
+"""
+)
 
 WEB_BACKUPS = (
     """
@@ -14156,6 +14633,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0209_recap_accepted", RECAP_ACCEPTED),  # each approved version of a recap (#2122)
     ("0210_plot_issues", PLOT_ISSUES),  # PlotBot's check of a recap and its issues (#2122)
     ("0211_plot_chat", PLOT_CHAT),  # the DM's talk with PlotBot about an issue (#2123)
+    ("0212_handover_email_offers", HANDOVER_EMAIL),  # offers sent by email (#2532)
+    ("0213_handover_claim", HANDOVER_CLAIM),  # opening a hand-over link on the website (#2532)
+    ("0214_handover_move", HANDOVER_MOVE),  # a hand-over to another server is asked for (#2532)
+    ("0215_campaign_move_cascade", CAMPAIGN_MOVE_CASCADE),  # a campaign can change server (#2532)
     ("0216_web_owned_campaigns", WEB_OWNED_CAMPAIGNS),  # the owner's campaigns, any server (#2554)
     ("0217_import_progress", IMPORT_STEPS),  # step counts and last-moved time per import (#2564)
     ("0218_web_delete_notices", WEB_DELETE_NOTICES),  # the bot finishes a website delete (#2554)
@@ -14177,6 +14658,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0231_link_upload", BACKSTORY_LINK_UPLOAD),  # where a waiting connection came from (#2650)
     ("0232_link_which", BACKSTORY_WHICH),  # "Which Mara?" waits for the DM's pick (#2650)
     ("0233_web_waiting", WEB_WAITING),  # the website reads and answers what waits (#2652)
+    (
+        "0234_move_cascade_late",
+        MOVE_CASCADE_LATE,
+    ),  # keys of tables made after 0215 cascade too (#2550)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
