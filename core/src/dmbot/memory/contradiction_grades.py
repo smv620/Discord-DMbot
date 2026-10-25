@@ -84,10 +84,18 @@ class GradeStore:
                     " AND (SELECT count(*) FROM memory_relations WHERE guild_id = %s"
                     "  AND campaign_id = %s AND id IN (%s, %s)) = 2"
                     " ON CONFLICT (guild_id, campaign_id, perspective_id, kind, first_relation_id,"
-                    "  second_relation_id) DO UPDATE SET grade = EXCLUDED.grade,"
-                    "  reason = EXCLUDED.reason, times_unknown = EXCLUDED.times_unknown,"
-                    "  involves_guess = EXCLUDED.involves_guess,"
-                    "  session_started_at = EXCLUDED.session_started_at",
+                    "  second_relation_id) DO UPDATE SET"
+                    # a grade that could not be made (cut, unreadable, refused) never replaces
+                    # one that was: the old answer still stands until a real one arrives
+                    "  grade = CASE WHEN EXCLUDED.grade = 'not_graded' THEN"
+                    "   memory_contradictions.grade ELSE EXCLUDED.grade END,"
+                    "  reason = CASE WHEN EXCLUDED.grade = 'not_graded' THEN"
+                    "   memory_contradictions.reason ELSE EXCLUDED.reason END,"
+                    "  session_started_at = CASE WHEN EXCLUDED.grade = 'not_graded' THEN"
+                    "   memory_contradictions.session_started_at"
+                    "   ELSE EXCLUDED.session_started_at END,"
+                    "  times_unknown = EXCLUDED.times_unknown,"
+                    "  involves_guess = EXCLUDED.involves_guess",
                     (
                         guild_id, campaign_id, c.perspective_id, c.kind, c.first_relation_id,
                         c.second_relation_id, grade, one_line(g.reason), c.times_unknown,
