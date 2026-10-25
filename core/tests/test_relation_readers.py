@@ -31,6 +31,8 @@ READERS = {
     "memory/contradictions.py": DM_ONLY
     + ": kept connections and waiting guess connections, ids and numbers, no words",
     "memory/contradiction_grades.py": "only checks that the two connections of a grade still exist",
+    "memory/contradiction_grader.py": DM_ONLY + ": reads kept and guess connections to put a clash "
+    "into the campaign's words for PlotBot; ids and names, no transcript",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
