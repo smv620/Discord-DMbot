@@ -8663,7 +8663,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         for the DM. It reads no transcript line: the AI is shown only the campaign's own names and
         relationship words. Inside the extractor's plan check and call limits (its calls are
         counted there), and at most `CONTRADICTION_CALLS` a session. Nothing here changes a belief
-        or tells the DM; the log gets counts only."""
+        or tells the DM; the log gets counts only.
+
+        No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
+        DM-confirmed names and relationships the campaign already stores, so there is no
+        speaker's consent for a step to depend on."""
         if (
             not self.settings.story_contradictions_on
             or not self.settings.story_extractor_on
