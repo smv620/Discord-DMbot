@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from dmbot.memory import link
+from dmbot.memory import evidence, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -975,10 +975,12 @@ class ClaimStore:
         async with self._store._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-                " AND status <> 'confirmed'",
+                " AND status <> 'confirmed' RETURNING id",
                 (guild_id, user_id),
             )
-            return int(cur.rowcount)
+            gone = [str(r["id"]) for r in await cur.fetchall()]
+            await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
+            return len(gone)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""
@@ -1037,6 +1039,7 @@ class ClaimStore:
         if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
             async with self._store._write(guild_id, campaign_id, DM) as w:
                 await w.delete(CLAIMS, claim_id)
+                await evidence.placeholder_claims(w.conn, guild_id, [claim_id])  # (#2662)
             raise MemoryRuleError(STOPPED_NOW)
         async with self._store._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)

@@ -16,6 +16,7 @@ from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
+from dmbot.memory import evidence
 from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
@@ -135,7 +136,12 @@ class Isolation(MemoryTest):
         )
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
-        await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        clue = await self.add("A map", type="clue")
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
+            await evidence.add_in(
+                w, kind=evidence.CLUE, target_id=clue, relation_id=known.value[0].id
+            )
         await self.memory.add_mention(
             GUILD_A,
             self.c,

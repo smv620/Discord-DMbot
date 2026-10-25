@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
+from dmbot.memory import evidence
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
 from dmbot.transcript.models import Line, Lineage, TranscriptSession, line_ref
 from dmbot.transcript.respell import put_back, respell
@@ -1111,6 +1112,9 @@ async def _forget_mentions(
         for mention in await cur.fetchall():
             mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
     await _drop_log_rows(conn, guild_id, "memory_mentions", mentions)
+    # and every evidence link to one of these lines keeps its kind and session and loses the line
+    # (its reference names the speaker): "a line from session 12, no longer available" (#2662)
+    await evidence.placeholder_lines(conn, guild_id, refs)
 
 
 async def _forget_memory_traces(
@@ -1134,6 +1138,7 @@ async def _forget_memory_traces(
     for claim in await cur.fetchall():
         claims.setdefault(str(claim["campaign_id"]), []).append(str(claim["id"]))
     await _drop_log_rows(conn, guild_id, "memory_claims", claims)
+    await evidence.placeholder_claims(conn, guild_id, [i for ids in claims.values() for i in ids])
 
 
 async def _drop_log_rows(

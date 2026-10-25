@@ -125,6 +125,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " WHERE p.guild_id = %s AND p.campaign_id = %s",
                 (g, c, REL, g, c),
             ),
+            "memory_evidence": (
+                "INSERT INTO memory_evidence (guild_id, campaign_id, id, relation_id, kind,"
+                " target_id, session_started_at, added_at) VALUES (%s, %s, %s, %s, 'clue', %s, 1, 1)",
+                (g, c, new_id(), REL, A),
+            ),
             "memory_states": (
                 "INSERT INTO memory_states (guild_id, campaign_id, id, entity_id, condition, source,"
                 " created_at) VALUES (%s, %s, %s, %s, 'dead', 'dm', 1)",
