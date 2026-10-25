@@ -4473,7 +4473,7 @@ def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dic
     changes: dict[str, Any] = {}
     # (a proposal's secret flag only keeps it from the players; it is not a secret the DM
     # keeps, so a waiting theory restated or merged into a known fact never hides that fact)
-    if secret and not old["secret"] and status != PROPOSED:
+    if secret and not old["secret"] and not (status == PROPOSED and "predicate" in old):
         changes["secret"] = True
         if "said_as" in old:  # a name (relations are upgraded here too)
             changes["said_as"] = None  # a secret name is never sent to the narrator (#1419)

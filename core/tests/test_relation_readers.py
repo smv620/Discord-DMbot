@@ -21,7 +21,8 @@ READERS = {
     "memory/continuity.py": CONFIRMED_ONLY + ": the counts and the story's world",
     "memory/backstory_links.py": CONFIRMED_ONLY + ": pairs already known",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
-    "memory/states.py": "live located_in facts, confirmed only since #2412",
+    "memory/states.py": "live located_in facts, without secret proposals that only hold guesses",
+    "memory/claims.py": "Stop recording me removes a connection made only to hold a guess",
     "memory/beliefs.py": "beliefs hang on any connection; every players' reader filters on the "
     "party's belief at 1.0, which a guess never is",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",

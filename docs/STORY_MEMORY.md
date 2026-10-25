@@ -628,8 +628,10 @@ secret connection is never revealed this way. A frame-up gives the false public 
 time one is needed (a player's character as `pc`, any other as `npc`). Belief time is the session the claim
 was made in; a later belief for the same view replaces it from its own session. The DM's Keep on a
 waiting connection is today's confirm and takes the DM's secret flag with it; a No leaves the character's
-or the party's belief standing, because it is still what they believe. Facts are no longer judged against
-proposals (or the reverse), and merging two names carries what was believed of a folded connection to its
+or the party's belief standing, because it is still what they believe. The checks skip these
+secret proposals (they are not judged against facts, nor facts against them; other proposals are judged
+as before), a guess about a connection the players already know is refused so it can never hide it, a
+proposal the DM keeps is checked as a fact at that moment, and merging two names carries what was believed of a folded connection to its
 twin. **Stop recording me and readings** (Supervisor, 2026-10-25): the same line as for claims. What the DM kept stays
 (a reveal or a confession shown to the players, a false clue, a plot), its link to the person's words turned
 into a placeholder. What only that person's words produced goes: a guess, an accusation or a dodge the DM
