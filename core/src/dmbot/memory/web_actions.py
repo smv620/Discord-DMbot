@@ -575,10 +575,10 @@ async def _answer_reading(
             return _failed(GONE)
         # A retried Place finds the keep made: it hands back that keep's batch so the page still
         # has its Undo (none when it was undone or kept from Discord).
-        batch = await w.claims.placed_batch(guild_id, cid, a.target_id)
+        earlier = await w.claims.placed_batch(guild_id, cid, a.target_id)
         return Outcome(
             result_id=claim.fact_id or "",
-            result_other=str(batch) if batch and a.action == "reading-place" else "",
+            result_other=str(earlier) if earlier and a.action == "reading-place" else "",
         )
     if a.action == "reading-no":
         await w.claims.reject(guild_id, cid, a.target_id)
