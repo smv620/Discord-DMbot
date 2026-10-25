@@ -316,6 +316,10 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
             row = row_of(raw, table)
             if table is RELATIONS:
                 row["mention_ids"] = []  # mentions aren't backed up
+            if table is CLAIMS:
+                # a claim's line references name their speakers (#2676); a restored campaign has
+                # none of those lines, and a backup is read by the whole server
+                row["lines"] = []
             if table is BELIEFS:
                 # the old list can hold a line's reference, which names its speaker; the typed
                 # links (a line's as a placeholder) carry the evidence now, and a backup is read
@@ -721,9 +725,12 @@ def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     """What a file's links may point at, whatever the file says (it is untrusted): a line is never
     brought back (its reference names a speaker, and a restored campaign has none of those
     lines), and a claim, clue or event must be a row of this same file, else the link is a
-    placeholder. A belief's old list is not read from a file for the same reason."""
+    placeholder. A belief's old list and a claim's `lines` are not read from a file for the same
+    reason (they hold line references, which name speakers)."""
     for row in by_tag["belief"]:
         row["evidence_ids"] = []
+    for row in by_tag["claim"]:  # an older file's references are not brought back (#2676)
+        row["lines"] = []
     claims = {r["id"] for r in by_tag["claim"]}
     entity_kind = {r["id"]: r["type"] for r in by_tag["entity"]}
     for row in by_tag["evidence"]:

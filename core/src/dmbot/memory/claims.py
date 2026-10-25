@@ -980,6 +980,8 @@ class ClaimStore:
             )
             gone = [str(r["id"]) for r in await cur.fetchall()]
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
+            # and what the DM confirmed stays, without this person's line references (#2676)
+            await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
             return len(gone)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:

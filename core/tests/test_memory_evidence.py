@@ -213,7 +213,7 @@ class Links(MemoryTest):
         self.assertEqual(await self.rows(), [])
 
 
-class WhenWordsAreRemoved(DatabaseTest):
+class WordsBase(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
@@ -258,6 +258,8 @@ class WhenWordsAreRemoved(DatabaseTest):
             )
             return [dict(r) for r in await cur.fetchall()]
 
+
+class WhenWordsAreRemoved(WordsBase):
     async def test_deleting_my_lines_turns_my_links_into_placeholders(self) -> None:
         await self.store.delete_person(GUILD, ME)
         self.assertEqual(
@@ -514,3 +516,76 @@ class Untrusted(MemoryTest):
             )
             owners = {(r["relation_id"] is not None) for r in await cur.fetchall()}
         self.assertIn(True, owners)
+
+
+class ClaimLinesLeave(WordsBase):
+    """A claim keeps `lines`, references ending in their speaker (#2676): they go with the words."""
+
+    async def claim(
+        self, claim_id: str, status: str, lines: list[str], speakers: list[int]
+    ) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, how, lines, speaker_ids, source, prompt_version, model, status,"
+                " created_at) VALUES (%s, %s, %s, 'Mira', 'knows', 'Rook', 'player_said', %s, %s,"
+                " 'extractor', 'v1', 'm', %s, 1)",
+                (GUILD, self.campaign.id, claim_id, lines, speakers, status),
+            )
+
+    async def lines_of(self, claim_id: str) -> list[str] | None:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT lines FROM memory_claims WHERE id = %s", (claim_id,))
+            row = await cur.fetchone()
+        return None if row is None else list(row["lines"])
+
+    async def test_a_confirmed_claim_loses_only_the_removed_persons_reference(self) -> None:
+        await self.claim("a" * 32, "confirmed", [self.mine, self.friends], [ME, FRIEND])
+        await self.store.delete_person(GUILD, ME)
+        self.assertEqual(await self.lines_of("a" * 32), [self.friends])
+
+    async def test_a_waiting_claim_that_cites_them_goes_whole(self) -> None:
+        await self.claim("b" * 32, "proposed", [self.mine, self.friends], [ME, FRIEND])
+        await self.store.delete_person(GUILD, ME)
+        self.assertIsNone(await self.lines_of("b" * 32))
+
+    async def test_a_reference_not_in_the_list_still_goes_by_its_speaker(self) -> None:
+        stray = f"{self.first}:99999:{ME}"  # a line of theirs the list of lines does not hold
+        await self.claim("c" * 32, "confirmed", [stray, self.friends], [FRIEND])
+        await self.store.delete_person(GUILD, ME)
+        self.assertEqual(await self.lines_of("c" * 32), [self.friends])
+
+    async def test_an_old_sessions_retention_takes_its_lines_out_of_claims(self) -> None:
+        await self.claim("d" * 32, "confirmed", [self.mine, self.friends, "other:1:2"], [ME])
+        await self.store.end_session(GUILD, self.first, START + 100)
+        await self.store.delete_session_transcript(
+            GUILD, self.campaign.id, self.first, START + 10**8, START + 10**8
+        )
+        self.assertEqual(await self.lines_of("d" * 32), ["other:1:2"])
+
+    async def test_stop_recording_me_takes_my_references_out_of_confirmed_claims(self) -> None:
+        from dmbot.memory.claims import ClaimStore
+
+        await self.claim("e" * 32, "confirmed", [self.mine, self.friends], [ME, FRIEND])
+        await ClaimStore(self.memory).forget_speaker(GUILD, ME)
+        self.assertEqual(await self.lines_of("e" * 32), [self.friends])
+
+    async def test_a_backup_carries_no_line_reference_and_an_old_file_still_loads(self) -> None:
+        import json
+
+        await self.claim("f" * 32, "confirmed", [self.mine, self.friends], [ME, FRIEND])
+        section = MemorySection()
+        async with self.db.guild(GUILD) as conn:
+            rows = await section.dump(conn, GUILD, self.campaign.id)
+        self.assertNotIn(f':{ME}"', json.dumps(rows))
+        self.assertNotIn(self.first, json.dumps(rows))  # not even the session part of one
+        old = [
+            {**r, "lines": [self.mine, self.friends]} if r["table"] == "claim" else r for r in rows
+        ]  # a file from before this: it has them
+        copy = (await self.campaigns.create(GUILD, "Copy", DM)).id
+        async with self.db.guild(GUILD) as conn:
+            await section.load(conn, GUILD, copy, old)
+            cur = await conn.execute(
+                "SELECT lines FROM memory_claims WHERE campaign_id = %s", (copy,)
+            )
+            self.assertEqual([r["lines"] for r in await cur.fetchall()], [[]])
