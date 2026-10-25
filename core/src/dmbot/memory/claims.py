@@ -18,7 +18,7 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dmbot.memory import evidence, forget_readings, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
@@ -62,6 +62,9 @@ from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
 from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
+
+if TYPE_CHECKING:  # (placing builds on this module, so it is only named for the checker)
+    from dmbot.memory.placing import Recorded
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -956,6 +959,29 @@ class ClaimStore:
             row = await scope.get(CLAIMS, claim_id, lock=False)
         return None if row is None else claim_of(row)
 
+    async def placed_batch(self, guild_id: int, campaign_id: str, claim_id: str) -> int | None:
+        """The change batch in which this reading was kept as a belief, if that keep has not been
+        undone: found from the change log itself (claims are not logged, but the belief a keep
+        writes is, and it carries the claim as its evidence, so another keep on the same
+        connection is never mistaken for this one), so it holds when the answer that made the keep
+        never got to record it (a retaken worker, #2412). None when it was never kept or was
+        undone."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            claim = await scope.get(CLAIMS, claim_id, lock=False)
+            if claim is None or claim["status"] != CLAIM_CONFIRMED:
+                return None
+            cur = await scope.conn.execute(
+                "SELECT c.batch FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+                " AND c.table_name = 'memory_beliefs' AND c.op = 'insert' AND c.source = 'dm'"
+                " AND c.undoes IS NULL AND c.after->'evidence_ids' @> to_jsonb(%s::text)"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+                " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)"
+                " ORDER BY c.version DESC LIMIT 1",
+                (guild_id, campaign_id, claim_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["batch"])
+
     async def counts(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
     ) -> dict[str, int]:
@@ -1044,7 +1070,7 @@ class ClaimStore:
         campaign_id: str,
         claim_id: str,
         *,
-        opted_in: Collection[int] | Callable[[], Collection[int]],
+        opted_in: Recorded,
     ) -> Any:
         """The DM places a reading as a belief (`placing.place`); `confirm` refuses a reading."""
         from dmbot.memory import placing  # (it builds on this module, so it is read late)

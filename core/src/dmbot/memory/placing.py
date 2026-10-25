@@ -24,7 +24,7 @@ one write with one Undo, and the claim keeps which connection it became (`fact_i
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -114,6 +114,10 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
     return {"view": view, "status": status, "confidence": c}
 
 
+# Who is recorded now: a snapshot, or a function (plain or awaited) that asks again.
+Recorded = Collection[int] | Callable[[], Collection[int] | Awaitable[Collection[int]]]
+
+
 @dataclass(frozen=True, slots=True)
 class Placed:
     claim: Claim
@@ -129,7 +133,7 @@ async def place(
     campaign_id: str,
     claim_id: str,
     *,
-    opted_in: Collection[int] | Callable[[], Collection[int]],
+    opted_in: Recorded,
 ) -> Placed:
     """The DM places a reading (see the module's note). The same early exits as `confirm` (the
     question is gone, a plan, an instruction, someone stopped being recorded), the names asked
@@ -151,7 +155,7 @@ async def place(
         async with store._write(guild_id, campaign_id, "extractor") as w:
             await w.update(CLAIMS, claim_id, {"status": CLAIM_DROPPED, "reason": INJECTION_REASON})
         raise MemoryRuleError(ODD_NOW)
-    if not _recorded(claim, opted_in):
+    if not await _recorded(claim, opted_in):
         await _stopped(store, guild_id, campaign_id, claim_id)
     reading = _checked(claim.reading)
     async with store._read(guild_id, campaign_id) as scope:
@@ -187,7 +191,7 @@ async def place(
             raise MemoryRuleError(GONE)
         # Asked again under the lock, after every await above: a caller that can say who is
         # recorded *now* passes a function (a snapshot taken earlier is all a collection is).
-        if _recorded(claim, opted_in):
+        if await _recorded(claim, opted_in):
             relation_id, belief, flags = await _place_in(
                 store, w, claim, reading, subject_id, term.key, object_id,
                 label, holder, names.roles,
@@ -205,9 +209,13 @@ async def place(
     return Placed(claim_of(row), relation_id, belief, tuple(flags), batch)
 
 
-def _recorded(claim: Claim, opted_in: Collection[int] | Callable[[], Collection[int]]) -> bool:
+async def _recorded(claim: Claim, opted_in: Recorded) -> bool:
     """Is everyone whose words the claim holds recorded now?"""
-    now = opted_in() if callable(opted_in) else opted_in
+    if callable(opted_in):
+        found = opted_in()
+        now = await found if isinstance(found, Awaitable) else found
+    else:
+        now = opted_in
     return bool(claim.speaker_ids) and all(s in now for s in claim.speaker_ids)
 
 

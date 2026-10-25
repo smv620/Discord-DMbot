@@ -648,7 +648,14 @@ call like any other: counted before it is made and held to the same session and 
 its limit sooner and the limit does not grow. Its answers are stored as claims that carry a reading (prompt version
 `readings-1`), never as facts and never making a new name. A failed reading call never stops the claims; running out
 of money stops the run. The log gets counts only.
-Not yet: the deception event (`manipulated_by`) and the review lists (slice 3b).
+**The website's list (slice 3b, migration 0237).** "What people believe" (DM only): `GET .../web/readings` lists the
+readings that wait (the claim's own words, who believes it, how sure; never a transcript line); `POST` queues
+`place` (keep as a belief), `no` or `undo` through the website's action queue, and the bot makes the calls the DM
+screen would (`ClaimStore.place`, `reject`, the store's Undo). `place` asks who is recorded again inside its write
+(the bot passes a function, not a snapshot). The answer is polled like the others and also says its wait (stage,
+how long, when it last moved: counts and stages only) and whether it can still be undone. A Discord version waits
+until the owner asks for one.
+Not yet: the deception event (`manipulated_by`) and the clue as typed links.
 
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
