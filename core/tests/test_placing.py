@@ -46,7 +46,7 @@ class Placing(ConfirmedMemoryTest):
 
     async def rows(self, table: str) -> list[dict[str, Any]]:
         async with self.db.guild(GUILD_A) as conn:
-            cur = await conn.execute(f"SELECT * FROM {table} ORDER BY created_at, id")
+            cur = await conn.execute(f"SELECT * FROM {table} ORDER BY id")
             return [dict(r) for r in await cur.fetchall()]
 
     async def connections(self) -> list[dict[str, Any]]:
@@ -276,15 +276,48 @@ class ReadersAndWriters(Placing):
         self.assertEqual((one["status"], one["secret"]), ("confirmed", False))
         self.assertIsNotNone(known)
 
-    async def test_stop_recording_me_takes_a_placed_theory_with_it(self) -> None:
+    async def test_stop_recording_me_takes_an_unkept_theory_and_what_only_it_made(self) -> None:
         claim_id = await self.waiting_reading(belief("pc:Mira", "accusation", 0.75), "player_said")
         placed = await self.place(claim_id)
         self.assertEqual(await self.claims.forget_speaker(GUILD_A, DM), 1)
         self.assertEqual(await self.rows("memory_claims"), [])  # their words are gone
-        (host,) = await self.connections()
-        self.assertEqual(host["detail"], "")  # and no wording of theirs sits on the connection
-        (mine,) = [b for b in await self.beliefs_of(placed.relation_id) if b["kind"] == "pc"]
-        self.assertEqual(mine["status"], "accusation")  # what the character believed stays
+        self.assertEqual(await self.connections(), [])  # the place made only to hold the guess
+        self.assertEqual(await self.beliefs_of(placed.relation_id), [])  # and the guess itself
+
+    async def test_stop_recording_me_leaves_what_the_dm_kept_with_a_placeholder(self) -> None:
+        claim_id = await self.waiting_reading(belief("party", "revealed_fact", 1.0), "dm_said")
+        placed = await self.place(claim_id)
+        await self.claims.forget_speaker(GUILD_A, DM)
+        (kept,) = await self.connections()
+        self.assertEqual((kept["id"], kept["status"]), (placed.relation_id, "confirmed"))
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(latest["status"], "revealed_fact")
+        links = [e for e in await self.rows("memory_evidence") if e["belief_id"] == latest["id"]]
+        self.assertEqual([e["target_id"] for e in links], [None])  # a placeholder, no words
+        self.assertEqual(len(await self.rows("memory_claims")), 1)  # as a confirmed fact's stays
+
+    async def test_a_guess_with_other_evidence_stays_and_loses_only_the_link(self) -> None:
+        from psycopg.types.json import Jsonb  # noqa: F401
+
+        mine = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        placed = await self.place(mine)
+        elsewhere = readings.BeliefProposal(
+            "pc:Mira", "Bram", "owns", "Heartseeker", 0.25, "theory", ("1",)
+        )
+        other = await self.waiting_reading(elsewhere, "player_said")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_claims SET speaker_ids = ARRAY[%s] WHERE id = %s", (999, other)
+            )
+            await conn.execute(
+                "UPDATE memory_beliefs SET evidence_ids = ARRAY[%s, %s] WHERE relation_id = %s"
+                " AND confidence = 0.5",
+                (mine, other, placed.relation_id),
+            )
+        await self.claims.forget_speaker(GUILD_A, DM)
+        (kept,) = [b for b in await self.beliefs_of(placed.relation_id) if b["kind"] == "pc"]
+        self.assertEqual(kept["evidence_ids"], [other])  # another speaker's claim still stands
+        self.assertEqual(len(await self.connections()), 1)
 
     async def test_a_reading_from_a_hostile_file_is_refused_not_a_crash(self) -> None:
         from psycopg.types.json import Jsonb

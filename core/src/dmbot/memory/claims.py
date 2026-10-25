@@ -995,18 +995,62 @@ class ClaimStore:
 
     async def forget_speaker(self, guild_id: int, user_id: int) -> int:
         """Stop recording me: in every campaign of the server, delete the claims that cite
-        this person's words and were not turned into a fact (waiting, turned down or dropped),
-        and the readings the DM placed: a guess is not a fact, so what the DM confirmed as a fact
-        stays but a theory this person voiced does not (its belief stays, its link now a
-        placeholder). Returns how many went."""
+        this person's words and were not turned into a fact (waiting, turned down or dropped).
+        What the DM confirmed is the DM's fact and stays.
+
+        A reading the DM placed (#2412) is held to the same line: what the DM kept stays (a
+        reveal or a confession shown to the players, a false clue, a plot), with its link turned
+        into a placeholder; what only this person's words produced goes. That is a guess, an
+        accusation or a dodge under a spell: its claim, the belief it created (unless the belief
+        also stands on other evidence, when it only loses the link) and the waiting connection
+        made just to hold it, if nothing else is believed of that. Returns how many claims went."""
         async with self._store._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-                " AND (status <> 'confirmed' OR reading IS NOT NULL) RETURNING id",
+                "SELECT id FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+                " AND status = 'confirmed' AND reading IS NOT NULL"
+                " AND reading->>'status' IN ('theory', 'accusation', 'evasion_under_magic')",
                 (guild_id, user_id),
             )
-            gone = [str(r["id"]) for r in await cur.fetchall()]
+            guesses = [str(r["id"]) for r in await cur.fetchall()]
+            if guesses:
+                cur = await conn.execute(
+                    "DELETE FROM memory_beliefs WHERE guild_id = %s"
+                    " AND status IN ('theory', 'accusation', 'evasion_under_magic')"
+                    " AND cardinality(evidence_ids) > 0 AND evidence_ids <@ %s::text[]"
+                    " RETURNING relation_id",
+                    (guild_id, guesses),
+                )
+                touched = sorted({str(r["relation_id"]) for r in await cur.fetchall()})
+                if touched:  # a connection that was only a place to hang a guess goes with it
+                    await conn.execute(
+                        "DELETE FROM memory_relations r WHERE r.guild_id = %s"
+                        " AND r.id = ANY(%s) AND r.status = 'proposed'"
+                        " AND NOT EXISTS (SELECT 1 FROM memory_beliefs b"
+                        "   WHERE b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id"
+                        "   AND b.relation_id = r.id)",
+                        (guild_id, touched),
+                    )
+                await conn.execute(
+                    "DELETE FROM memory_claims WHERE guild_id = %s AND id = ANY(%s)",
+                    (guild_id, guesses),
+                )
+            cur = await conn.execute(
+                "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+                " AND status <> 'confirmed' RETURNING id",
+                (guild_id, user_id),
+            )
+            gone = [str(r["id"]) for r in await cur.fetchall()] + guesses
             await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
+            cur = (
+                await conn.execute(  # what the DM kept of a reading stands, its link a placeholder
+                    "SELECT id FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+                    " AND status = 'confirmed' AND reading IS NOT NULL",
+                    (guild_id, user_id),
+                )
+            )
+            await evidence.placeholder_claims(
+                conn, guild_id, [str(r["id"]) for r in await cur.fetchall()]
+            )
             # and what the DM confirmed stays, without this person's line references (#2676)
             await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
             return len(gone)

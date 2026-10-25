@@ -630,7 +630,12 @@ was made in; a later belief for the same view replaces it from its own session. 
 waiting connection is today's confirm and takes the DM's secret flag with it; a No leaves the character's
 or the party's belief standing, because it is still what they believe. Facts are no longer judged against
 proposals (or the reverse), and merging two names carries what was believed of a folded connection to its
-twin. Not yet: the deception event (`manipulated_by`), the running pass and the review lists (slice 3).
+twin. **Stop recording me and readings** (Supervisor, 2026-10-25): the same line as for claims. What the DM kept stays
+(a reveal or a confession shown to the players, a false clue, a plot), its link to the person's words turned
+into a placeholder. What only that person's words produced goes: a guess, an accusation or a dodge the DM
+placed, its claim, the belief it created (a belief that also stands on other evidence stays and loses only the
+link) and the waiting connection made just to hold it, if nothing else is believed of it.
+Not yet: the deception event (`manipulated_by`), the running pass and the review lists (slice 3).
 
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.
