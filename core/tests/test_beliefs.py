@@ -121,6 +121,17 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
 
 
 class Beliefs(MemoryTest):
+    REF = "s1:1000:7"  # a line of a session of this campaign (made in asyncSetUp)
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s1', %s, %s, 1)",
+                (GUILD_A, self.c),
+            )
+
     async def pair(self) -> tuple[str, str]:
         return await self.add("Mira"), await self.add("Rook")
 
@@ -222,10 +233,10 @@ class Beliefs(MemoryTest):
         truth = (await self.kinds())["truth"]
         doubt = await self.memory.believe(
             GUILD_A, self.c, truth, rel, 0.5, "theory", source="dm",
-            evidence=["line:s1:1000:7"], session_at=1_000,
+            evidence=[self.REF], session_at=1_000,
         )  # fmt: skip
         self.assertEqual((doubt.value.confidence, doubt.value.status), (0.5, "theory"))
-        self.assertEqual(doubt.value.evidence_ids, ("line:s1:1000:7",))
+        self.assertEqual(doubt.value.evidence_ids, (self.REF,))
         self.assertEqual(await self.party(), {})  # nothing here reveals anything to the players
         self.assertEqual((await self.truth())[rel], (0.5, "theory"))
         await self.memory.undo(GUILD_A, self.c, doubt.batch, source="dm")  # type: ignore[arg-type]
@@ -265,7 +276,7 @@ class Beliefs(MemoryTest):
         truth = (await self.kinds())["truth"]
         await self.memory.believe(
             GUILD_A, self.c, truth, rel, 0.6, "theory", source="dm",
-            evidence=["line:s1:1000:7"], session_at=1_000,
+            evidence=[self.REF], session_at=1_000,
         )  # fmt: skip
         await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", to_session_at=None)
         async with self.db.guild(GUILD_A) as conn:
@@ -288,7 +299,7 @@ class Beliefs(MemoryTest):
             )
             row = await cur.fetchone()
         assert row is not None
-        self.assertEqual((row["evidence_ids"], row["session_at"]), (["line:s1:1000:7"], 1_000))
+        self.assertEqual((row["evidence_ids"], row["session_at"]), ([self.REF], 1_000))
 
     async def test_words_that_match_a_proposed_duplicate_still_carry_the_dms_belief(self) -> None:
         a, b = await self.pair()
@@ -296,7 +307,7 @@ class Beliefs(MemoryTest):
         truth = (await self.kinds())["truth"]
         await self.memory.believe(
             GUILD_A, self.c, truth, rel, 0.6, "theory", source="dm",
-            evidence=["line:s1:1000:7"], session_at=1_000,
+            evidence=[self.REF], session_at=1_000,
         )  # fmt: skip
         proposed = await self.relate(a, "ally_of", b, status=PROPOSED)
         dup = str(proposed.value[0].id)
@@ -314,7 +325,7 @@ class Beliefs(MemoryTest):
             )
             row = await cur.fetchone()
         assert row is not None
-        self.assertEqual((row["evidence_ids"], row["session_at"]), (["line:s1:1000:7"], 1_000))
+        self.assertEqual((row["evidence_ids"], row["session_at"]), ([self.REF], 1_000))
 
     async def test_undo_of_the_new_words_takes_the_carried_beliefs_with_them(self) -> None:
         a, b = await self.pair()
@@ -575,14 +586,27 @@ class Beliefs(MemoryTest):
         a, b = await self.pair()
         rel = await self.link(a, b, secret=True)
         truth = (await self.kinds())["truth"]
+        claim = "c" * 32
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                " object, how, lines, source, prompt_version, model, status, created_at)"
+                " VALUES (%s, %s, %s, 'Mira', 'knows', 'Rook', 'dm_said', %s, 'extractor', 'v1',"
+                " 'm', 'confirmed', 1)",
+                (GUILD_A, self.c, claim, [self.REF]),
+            )
         await self.memory.believe(
-            GUILD_A, self.c, truth, rel, 0.5, "theory", source="dm", evidence=["claim:abc"]
+            GUILD_A, self.c, truth, rel, 0.5, "theory", source="dm", evidence=[claim]
         )
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
         original, copy = await self.snapshot(), await self.snapshot(GUILD_B, restored.id)
         for table in ("memory_mentions",):
             original.pop(table), copy.pop(table)
+        for row in original["memory_beliefs"]:  # the typed links carry evidence now (#2662)
+            row["evidence_ids"] = []
+        for row in original["memory_claims"]:  # line references are not in a backup (#2676)
+            row["lines"] = []
         self.assertEqual(copy, original)
         self.assertEqual(len(copy["memory_perspectives"]), 2)
         self.assertTrue(copy["memory_beliefs"])
@@ -605,6 +629,50 @@ class Beliefs(MemoryTest):
                      "confidence": 1.0, "seq": 99})  # fmt: skip
         with self.assertRaises(CampaignError):
             await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(backup)), DM)
+
+    async def test_a_family_roles_direction_survives_a_backup_and_an_old_backup_has_none(
+        self,
+    ) -> None:
+        """#2457: `directional` is carried; a backup from before it reads as false."""
+        a, b = await self.pair()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, a, "kin_of", b, source="dm", confidence=1.0, status=CONFIRMED,
+            detail="niece", directional=True,
+        )  # fmt: skip
+        self.assertTrue(made.value[0].directional)
+        backup = await self.campaigns.export(GUILD_A, self.c)
+        kept = [r for r in self.memory_rows(backup) if r["table"] == "relation"]
+        self.assertEqual([r["directional"] for r in kept], [True])
+        restored = await self.campaigns.import_backup(
+            GUILD_B, decode_backup(encode_backup(backup)), DM
+        )
+        [copy] = [r for r in await self.memory.relations(GUILD_B, restored.id)]
+        self.assertTrue(copy.directional)
+        for r in kept:  # an older file has no such field
+            del r["directional"]
+        older = await self.campaigns.import_backup(
+            GUILD_B, decode_backup(encode_backup(backup)), DM
+        )
+        [old_copy] = [r for r in await self.memory.relations(GUILD_B, older.id)]
+        self.assertFalse(old_copy.directional)
+
+    async def test_when_two_merged_family_rows_say_the_same_the_directional_one_wins(self) -> None:
+        a, b = await self.pair()
+        twin = await self.add("Aldrick", status=CONFIRMED)
+        plain = (await self.memory.add_relation(
+            GUILD_A, self.c, a, "kin_of", twin, source="dm", confidence=1.0,
+            status=CONFIRMED, detail="niece",
+        )).value[0]  # fmt: skip
+        sure = (await self.memory.add_relation(
+            GUILD_A, self.c, a, "kin_of", b, source="dm", confidence=1.0,
+            status=CONFIRMED, detail="niece", directional=True,
+        )).value[0]  # fmt: skip
+        await self.memory.merge(GUILD_A, self.c, b, twin, source="dm", dm_said_same=True)
+        left = [r for r in await self.memory.relations(GUILD_A, self.c) if r.predicate == "kin_of"]
+        self.assertEqual(len(left), 1)
+        self.assertTrue(left[0].directional)
+        self.assertEqual((left[0].subject_id, left[0].object_id), (a, b))
+        self.assertIn(left[0].id, (plain.id, sure.id))
 
     # ---- the DM's 📌 100% truth (#2447) ----
 

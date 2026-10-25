@@ -85,6 +85,50 @@ class TheJob(DatabaseTest):
         self.assertEqual([line.topic for line in lines], ["game", "off_topic"])
         self.assertEqual(lines[1].heard, "Anyone seen the pizza?")  # what was heard never changes
 
+    async def test_a_short_stretch_between_the_dms_game_lines_is_kept_in_an_import(self) -> None:
+        """#2567: the filter leans to keeping for an upload as it does for a live session."""
+        from dmbot.transcript.models import Line
+
+        other = await self.transcripts.open_session(GUILD, self.campaign.id, 1_700_100_000)
+        base = 1_700_100_000_000
+        await self.transcripts.add_lines(
+            GUILD,
+            other,
+            [
+                Line(base, DM, "The pass is closed.", "The pass is closed.", 4000),
+                Line(base + 5_000, DM, "Hang on, my dog.", "Hang on, my dog.", 3000),
+                Line(base + 9_000, DM, "The dwarves wait.", "The dwarves wait.", 4000),
+            ],
+        )
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at) VALUES (%s, %s, %s, %s, 'b.txt', %s, 1)",
+                (GUILD, self.campaign.id, other, "b" * 32, DM),
+            )
+            await conn.execute(
+                "UPDATE session_imports SET state = 'done' WHERE session_id = %s", (self.session,)
+            )
+        await ConsentStore(self.db).grant(GUILD, DM)
+        await self.job(FakeAI("1. game\n2. other\n3. game")).run_round(GUILD)
+        lines = await self.transcripts.lines(GUILD, other)
+        self.assertEqual([line.topic for line in lines], ["game", "game", "game"])
+
+    async def test_cleaning_counts_its_lines_and_stamps_each_step(self) -> None:
+        """#2564: the page's "n of m" and its last-moved time come from the job's own steps."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("UPDATE session_imports SET updated_at = 5")
+        await self.job(None).run_round(GUILD)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT step_done, step_total, updated_at FROM session_imports"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["step_done"], row["step_total"])
+        self.assertGreater(row["step_total"], 0)
+        self.assertGreater(row["updated_at"], 5)  # moved forward by the steps and the finish
+
     async def test_a_misheard_name_is_fixed_in_the_cleaned_text_only(self) -> None:
         await self.job(None).run_round(GUILD)
         first = (await self.transcripts.lines(GUILD, self.session))[0]

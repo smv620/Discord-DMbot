@@ -47,10 +47,11 @@ HOWS = (HOW_DM, HOW_PLAYER, HOW_PLAN)
 
 # What a character is in the story, one at a time (#1034, owner decision 2026-10-10). A role
 # is never a kind of entry: the kind says what a thing fundamentally is ("character"), and
-# whether it is a player's character, the DM's NPC or a god is said here.
-PLAYER_CHARACTER, NPC, GOD = "player_character", "npc", "god"
-ROLES = (PLAYER_CHARACTER, NPC, GOD)
-ROLE_LABELS = {PLAYER_CHARACTER: "player character", NPC: "NPC", GOD: "god"}
+# whether it is a player's character or the DM's NPC is said here. Every character is one or the
+# other (owner, 2026-10-23, #2562): a god or a named creature is an NPC, "god" going in its words.
+PLAYER_CHARACTER, NPC = "player_character", "npc"
+ROLES = (PLAYER_CHARACTER, NPC)
+ROLE_LABELS = {PLAYER_CHARACTER: "PC", NPC: "NPC"}
 
 # What a character links to in the rules (by source and name), never kinds of their own:
 # "race" is shown only as the 2014 name, `[Legacy 2014]`. One species and one creature type
@@ -294,10 +295,10 @@ class Entity:
 
     @property
     def kind_key(self) -> str:
-        """The key the lists and the kind menus use: `npc`, `player_character` or `deity`
-        for a character with that role, else the kind itself."""
+        """The key the lists and the kind menus use: `npc` or `player_character` for a character
+        with that role, else the kind itself."""
         if self.type == "character":
-            return {PLAYER_CHARACTER: "player_character", NPC: "npc", GOD: "deity"}.get(
+            return {PLAYER_CHARACTER: "player_character", NPC: "npc"}.get(
                 self.role or "", "character"
             )
         return self.type
@@ -389,6 +390,8 @@ class Relation:
     definition_version: int = 1
     # Kept from the players until the table has said it (#2404); a backstory connection starts so.
     unrevealed: bool = False
+    # A family connection whose detail is a role that reads one way, written by a DM (#2457).
+    directional: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,14 +17,18 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.pronouns import speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
+from dmbot.word_end import at_word_end
 
 MAX_NAMES = 200  # suggestions from one document
 NAME_WORDS = 8
@@ -33,19 +37,18 @@ QUOTE_WORDS = 20
 MAX_ALSO = 4
 # What the AI calls a kind, and the kind DMbot keeps it as (the same words Add many reads).
 KINDS = {
-    "person": "npc",  # a named monster is a person here
+    "person": "npc",  # (the AI's word for any named character; a named monster is one too)
     "place": "place",
     "group": "faction",
-    "god": "deity",
+    "god": "npc",  # a god is an NPC (#2562)
     "item": "item",
     "event": "event",
     "idea": "concept",
 }
 LABELS = {  # for "Yes to all 14 places"
-    "npc": ("person", "people"),
+    "npc": ("NPC", "NPCs"),
     "place": ("place", "places"),
     "faction": ("group", "groups"),
-    "deity": ("god", "gods"),
     "item": ("item", "items"),
     "event": ("event", "events"),
     "concept": ("idea", "ideas"),
@@ -133,6 +136,26 @@ class Connection:
     words: str = ""  # the label of the catch-all (`how` is then FALLBACK_PREDICATE), else ""
 
 
+@dataclass(frozen=True, slots=True)
+class Pick:
+    """A connection with one end that fits two or more names equally ("Mara"): it waits for the
+    DM to pick (#2650). `fixed` is the end that is a name, `fixed_is_a` whether it is the first
+    end; `word` is the other end as written and `candidates` the names it may be."""
+
+    fixed: str
+    fixed_is_a: bool
+    word: str
+    candidates: tuple[str, ...]
+    how: str
+    quote: str
+    secret: bool = False
+    words: str = ""
+
+
+MAX_PICK_CHOICES = 3  # the card has a button for each; more is left out as `which_one`
+MAX_PICKS = 50  # "Which Mara?" questions from one reading
+
+
 def cost_text(cents: int) -> str:
     """ "about 3 cents", "about $4.01": dollars once it is a dollar or more."""
     if cents >= 100:
@@ -182,6 +205,18 @@ def _has(haystack: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
 
 
+def _in_quote(quote: str, end: str) -> bool:
+    """Whether the quote holds this end: the name whole, or (the quote says "my brother Ulric" and
+    the end is the listed "Ulric Stonehand", #2642) a word of it that is a name's own, not a title
+    or a short word. The name itself must stand in the text (checked by the caller)."""
+    if _has(quote, end):
+        return True
+    return any(
+        len(word) >= SHORTEST and word not in FILLER and _has(quote, word)
+        for word in name_key(end).split()
+    )
+
+
 def _spellings(
     raw: object, name: str, haystack: str, *, skip: set[str], cued: frozenset[str]
 ) -> list[str]:
@@ -194,7 +229,7 @@ def _spellings(
         key = name_key(other)
         if (
             other
-            and len(other) <= NAME_CHARS
+            and len(other) <= NAME_CHARS  # (a name is never shortened: a cut one is another name)
             and "|" not in other
             and key != name_key(name)
             and key not in skip
@@ -223,6 +258,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         kind = KINDS.get(str(item.get("kind", "")).strip().lower())
         if not isinstance(name, str) or kind is None:
             continue
+        # A name is never shortened (#2607): over the limits it is a sentence, not a name.
         name = " ".join(name.split())
         if (
             not name
@@ -240,8 +276,8 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         quote = item.get("quote")
         kept = ""
         if isinstance(quote, str):
-            words = quote.split()
-            if words and len(words) <= QUOTE_WORDS and _has(haystack, quote):
+            words = quote.split()[:QUOTE_WORDS]  # the front of a verbatim quote is still verbatim
+            if words and _has(haystack, " ".join(words)):
                 kept = " ".join(words)
         out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept))
     return out
@@ -398,10 +434,37 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
     return out
 
 
-def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[Connection]:
+# Why a connection line was dropped, as counts for the log (#2563): never a name or a word of the
+# text. `unreadable`: not a connection object; `word_not_allowed`: a relationship word that is
+# neither a built-in, a campaign one nor a catch-all with the quote's own words; `bad_names`: an
+# empty, too long or doubled name, or a quote of no words or too many; `not_in_text`: a name or
+# the quote is not in the text, or the quote does not hold both names; `name_not_found`: an end is
+# not a name DMbot will have; `same_pair`: the pair was already offered; `already_have`: the
+# campaign has it; `over_cap`: past the most one reading offers.
+Dropped = Counter[str]
+
+
+def _quote_window(words: list[str], a: str, b: str) -> list[str]:
+    """A quote of more than `QUOTE_WORDS` words cut to that many (#2601): the front, or the back
+    when the front loses one of the two names. Words of a verbatim quote stay verbatim; the check
+    that the text holds the quote and both names still follows, so this only shortens."""
+    if len(words) <= QUOTE_WORDS:
+        return words
+    for window in (words[:QUOTE_WORDS], words[-QUOTE_WORDS:]):
+        said = _squash(" ".join(window))
+        if _has(said, a) and _has(said, b):
+            return window
+    return words[:QUOTE_WORDS]
+
+
+def read_connections(
+    reply: str, piece: str, own: Collection[str] = (), dropped: Dropped | None = None
+) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
-    names are checked against the merged list later (`keep_connections`)."""
+    names are checked against the merged list later (`keep_connections`). `dropped` counts why
+    each line that failed did."""
+    lost = dropped if dropped is not None else Counter()
     data = _json(reply)
     items = data.get("connections") if isinstance(data, dict) else None
     if not isinstance(items, list):
@@ -410,25 +473,33 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
     out: list[Connection] = []
     for item in items:
         if not isinstance(item, dict):
+            lost["unreadable"] += 1
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
         how = CONNECTIONS.get(word) or next((k for k in own if k.lower() == word), None)
         label = ""
         if word == OTHER:  # the catch-all, kept with the words the text used
-            label = " ".join(str(item.get("words") or "").split())
-            if not label or len(label) > WORDS_CHARS or "|" in label:
+            label = at_word_end(" ".join(str(item.get("words") or "").split()), WORDS_CHARS)
+            if not label or "|" in label:
+                lost["word_not_allowed"] += 1
                 continue
             # The label is the one free text of a connection: its words must be the quote's own,
             # so nothing carried in from the document or the list can ride in as a label.
             quoted = set(re.findall(r"\w+", _squash(str(quote))))
             if not set(re.findall(r"\w+", _squash(label))) <= quoted:
+                lost["word_not_allowed"] += 1
                 continue
             how = FALLBACK_PREDICATE
-        if how is None or not all(isinstance(x, str) for x in (a, b, quote)):
+        if how is None:
+            lost["word_not_allowed"] += 1
             continue
+        if not all(isinstance(x, str) for x in (a, b, quote)):
+            lost["unreadable"] += 1
+            continue
+        # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
-        words = str(quote).split()
+        words = _quote_window(str(quote).split(), a, b)
         if (
             not a
             or not b
@@ -436,18 +507,20 @@ def read_connections(reply: str, piece: str, own: Collection[str] = ()) -> list[
             or len(b) > NAME_CHARS
             or name_key(a) == name_key(b)
             or not words
-            or len(words) > QUOTE_WORDS
         ):
+            lost["bad_names"] += 1
             continue
         said = " ".join(words)
         if (
             _has(haystack, a)
             and _has(haystack, b)
-            and _has(_squash(said), a)
-            and _has(_squash(said), b)
+            and _in_quote(_squash(said), a)
+            and _in_quote(_squash(said), b)
             and _has(haystack, said)
         ):
             out.append(Connection(a, how, b, said, words=label))
+        else:
+            lost["not_in_text"] += 1
     return out
 
 
@@ -458,12 +531,29 @@ def keep_connections(
     *,
     cap: int = MAX_CONNECTIONS,
     skip: Callable[[Connection], bool] | None = None,
+    dropped: Dropped | None = None,
+    questions: list[str] | None = None,
+    speaker: str | None = None,
+    picks: list[Pick] | None = None,
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
     of the campaign's own mapped to its name). Each end becomes the name it stands for. The same
     pair is offered once, whichever way round or how it was said (one fact per pair and kind;
-    friends and family read the same both ways). At most `cap`."""
+    friends and family read the same both ways). At most `cap`. `dropped` counts why each one that
+    was not kept was not (`name_not_found`, `which_one`, `same_pair`, `already_have`,
+    `over_cap`).
+
+    An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
+    title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
+    `which_one` and its words are added to `questions` ("Which Mara?"), never guessed. With
+    `picks` given, a connection whose other end is a name waits for the DM's pick instead
+    (`which_waiting`, #2650): it is added there, with its candidates, and is not left out.
+
+    `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
+    are that character, and so are a bare "his" or "her"; with no speaker, a connection that
+    needs "I" is left out as `whose` (counted, never guessed)."""
+    lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
     for f in names:  # every public name first: another name's spelling never takes it over
@@ -478,20 +568,64 @@ def keep_connections(
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
     both_ways = {"kin_of", "ally_of", "enemy_of"}
+    reader = Ends(ends, {*ends.values()})
     seen: set[tuple[str, str, str]] = set()
+    seen_picks: set[tuple[str, str, str, bool]] = set()
     out: list[Connection] = []
+    answers = [list(piece) for piece in answers]
+    total = sum(len(piece) for piece in answers)
+    looked = 0
     for piece in answers:
         for c in piece:
-            a, b = ends.get(name_key(c.a)), ends.get(name_key(c.b))
+            looked += 1
+            end_a, no_a = speaker_end(c.a, speaker)
+            end_b, no_b = speaker_end(c.b, speaker)
+            if no_a or no_b:
+                lost["whose"] += 1
+                continue
+            first, second = reader.match(end_a), reader.match(end_b)
+            if (
+                picks is not None
+                and len(picks) < MAX_PICKS
+                and first.ambiguous != second.ambiguous  # exactly one end is the question
+                and max(len(first.ambiguous), len(second.ambiguous)) <= MAX_PICK_CHOICES
+                and (second.name if first.ambiguous else first.name) is not None
+            ):
+                fixed, other = (first, second) if second.ambiguous else (second, first)
+                # (a pick is secret as a connection would be, so its card is kept so too)
+                secret = bool({name_key(c.a), name_key(c.b), fixed.key} & hidden)
+                word = c.b if second.ambiguous else c.a
+                again = (name_key(fixed.name or ""), c.how, name_key(word), bool(second.ambiguous))
+                if again in seen_picks:
+                    lost["same_pair"] += 1
+                    continue
+                seen_picks.add(again)
+                picks.append(
+                    Pick(fixed.name or "", bool(second.ambiguous), word, other.ambiguous
+                         or (), c.how, c.quote, secret, c.words)
+                )  # fmt: skip
+                lost["which_waiting"] += 1
+                continue
+            if first.ambiguous or second.ambiguous:
+                lost["which_one"] += 1
+                if questions is not None:
+                    for end, got in ((c.a, first), (c.b, second)):
+                        if got.ambiguous and end not in questions:
+                            questions.append(end)
+                continue
+            a, b = first.name, second.name
             if a is None or b is None or name_key(a) == name_key(b):
+                lost["name_not_found"] += 1
                 continue
             ka, kb = name_key(a), name_key(b)
             if c.how in both_ways and kb < ka:
                 ka, kb = kb, ka
             if (ka, c.how, kb) in seen:  # (one catch-all for a pair, whatever its words)
+                lost["same_pair"] += 1
                 continue
             seen.add((ka, c.how, kb))
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
+                lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
             out.append(
                 Connection(
@@ -499,10 +633,13 @@ def keep_connections(
                     c.how,
                     b,
                     c.quote,
-                    name_key(c.a) in hidden or name_key(c.b) in hidden,
+                    # secret when the end was written under a secret spelling, with a title in
+                    # front of it too ("Lady Nightshade", #2591): the matched key counts
+                    bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
                     c.words,
                 )
             )
             if len(out) >= cap:
+                lost["over_cap"] += total - looked  # the rest are not looked at: all counted
                 return out
     return out

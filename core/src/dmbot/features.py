@@ -28,6 +28,14 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "handover by email",
+        "Hand over by email",
+        "A campaign is handed over by a link sent to an email address.",
+        lambda s: s.handover_email_on,
+        ("handover_email_on",),
+        for_dms=False,  # for whoever runs DMbot: on only when the whole hand-over is live (#2532)
+    ),
+    Feature(
         "time suggestions",
         "Clock suggestions",
         "DMbot offers to move the game clock when time passes. You choose.",
@@ -40,6 +48,15 @@ FEATURES: tuple[Feature, ...] = (
         "DMbot writes a recap of each session for you to read first.",
         lambda s: s.recaps_on,
         ("recaps_on",),
+    ),
+    Feature(
+        "plot checks",
+        "Story checks on recaps",
+        "PlotBot compares each recap with the earlier ones and asks you about anything that "
+        "does not fit. You decide.",
+        lambda s: s.plot_check_on,
+        ("recaps_on", "plot_check_on"),
+        for_dms=False,
     ),
     Feature(
         "recap audio",
@@ -167,6 +184,9 @@ NOT_A_SWITCH: dict[str, str] = {
     "data_dir": "a folder",
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",
+    "gemini_key": "a secret, used only when Gemini is chosen for the recap",
+    "recap_writer_reads": "which text the recap writer reads, a choice (off by default)",
+    "ai_provider_creative": "which company's AI writes the recap, a choice (off by default)",
     "log_format": "how logs look",
     "cleaner_rank_max": "a number: the most ranking calls a session makes (0 is off)",
     "log_level": "how much is logged",

@@ -150,7 +150,13 @@ class Kept(DatabaseTest):
     async def test_a_backup_carries_no_message_id(self) -> None:
         await self.store.add(GUILD_A, self.one.id, ME, a_map(), message_id=777)
         backup = await self.campaigns.export(GUILD_A, self.one.id)
-        self.assertNotIn("777", str(backup.get("sections", backup)).replace("map_notes", ""))
+        # (look at the entries themselves: a substring search would trip over a timestamp that
+        # happens to contain the digits)
+        entries = backup["sections"]["map_notes"]
+        self.assertEqual(len(entries), 1)
+        self.assertNotIn("message_id", entries[0])
+        self.assertNotIn(777, entries[0].values())
+        self.assertNotIn("777", entries[0].values())
         restored = await self.campaigns.import_backup(GUILD_B, backup, DM)
         self.assertEqual(await self.store.forget_message(GUILD_B, 777), 0)  # nothing to match
         self.assertEqual(len(await self.store.notes(GUILD_B, restored.id)), 1)

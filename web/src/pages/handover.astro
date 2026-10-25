@@ -1,0 +1,23 @@
+---
+// The hand-over accept page (#2534): opened from the link in the offer's email, `/handover#<token>`.
+// The token is in the hash, so it never reaches a server log; the island reads it in the browser.
+import HandoverIsland from "../account/HandoverIsland";
+import { handoverWords } from "../content/handover-words";
+import Base from "../layouts/Base.astro";
+import "../styles/account.css";
+---
+
+<Base
+  title="A campaign for you"
+  description="Accept or turn down a campaign someone wants to hand over to you."
+  noindex
+  plain
+>
+  <div class="account">
+    <h1>{handoverWords.heading}</h1>
+    <HandoverIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript. Turn it on, then open the link in your email again.</p>
+    </noscript>
+  </div>
+</Base>

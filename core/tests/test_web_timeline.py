@@ -313,6 +313,17 @@ class TheReveals(TimelineBase):
 
 
 class TheDoor(Base):
+    async def test_the_door_is_stable_because_it_only_reads(self) -> None:
+        # provolatile 's' is STABLE (0206): the door reads and never writes.
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT provolatile FROM pg_proc WHERE proname = 'dmbot_web_story_timeline'"
+            )
+            rows = await cur.fetchall()
+        self.assertGreaterEqual(len(rows), 1)
+        for row in rows:
+            self.assertEqual(row["provolatile"], "s")
+
     async def test_the_door_has_one_caller(self) -> None:
         self.assertEqual(callers("dmbot_web_story_timeline("), {"schema.py", "web/timeline.py"})
 

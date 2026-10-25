@@ -4,7 +4,6 @@ heard, and the list of everyday words checked against the index."""
 
 from __future__ import annotations
 
-import time
 import unittest
 
 from dmbot.rules import index
@@ -188,12 +187,12 @@ class Edges(unittest.TestCase):
 
     def test_a_long_line_with_many_repeats_stays_quick(self) -> None:
         sp = spotter()
-        started = time.perf_counter()
-        sp.find("goblin " * 500)
-        sp.find("word " * 500)
-        self.assertLess(
-            time.perf_counter() - started, 2.0
-        )  # ~40 ms in practice; room for parallel tests
+
+        def both() -> None:
+            sp.find("goblin " * 500)
+            sp.find("word " * 500)
+
+        self.assertLess(speed.fastest(both), 2.0)  # ~40 ms in practice; room for parallel tests
 
 
 class Speed(unittest.TestCase):
@@ -202,11 +201,13 @@ class Speed(unittest.TestCase):
         line = (
             "so then the goblin is grappled and I cast Fireball at the dragon while it flies away"
         )
-        started = time.perf_counter()
-        for _ in range(200):
-            sp.find(line)
+
+        def two_hundred() -> None:
+            for _ in range(200):
+                sp.find(line)
+
         self.assertLess(
-            (time.perf_counter() - started) / 200, speed.allowed(0.05)
+            speed.fastest(two_hundred) / 200, speed.allowed(0.05)
         )  # far above ~0.3 ms: CI can be slow
         self.assertLess(len(sp.by_first), 5000)
 

@@ -17,10 +17,10 @@ import json
 import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from dmbot.memory import link
+from dmbot.memory import evidence, link
 from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, Changes
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
@@ -59,7 +59,9 @@ from dmbot.memory.ontology import (
     resolve_kind,
 )
 from dmbot.memory.store import MemoryStore, _load_ontology, _new_alias
+from dmbot.memory.voice import EFFECT, EFFECT_NOTE, OWN, PARTY, PARTY_REASON, voice
 from dmbot.names import not_names
+from dmbot.word_end import at_word_end
 
 EXTRACTOR = "extractor"  # the memory source of everything this module writes on its own
 MAX_CLAIMS = 60  # for one call: the same cap as the draft extractor's answer check
@@ -71,6 +73,7 @@ PAGE = 5
 
 NOT_THE_DM = "Only the DM can answer that."
 GONE = "DMbot doesn't have that question any more."
+A_READING = "That is a belief to place, not a fact to keep."
 
 # Why a claim was dropped, in words the numbers (and a curious DM) can read.
 PLAN_REASON = "a plan, not something that happened"
@@ -117,6 +120,9 @@ class Extracted:
     details: str
     lines: tuple[str, ...]
     how: str
+    # A belief for the DM to place (#2412, `memory.readings`), as plain words and numbers, or None
+    # for a claim that is just something said.
+    reading: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +146,7 @@ class Claim:
     created_at: int
     decided_at: int | None
     fact_id: str | None
+    reading: Mapping[str, Any] | None = None
 
 
 def claim_of(r: Mapping[str, Any]) -> Claim:
@@ -148,7 +155,7 @@ def claim_of(r: Mapping[str, Any]) -> Claim:
         r["id"], r["subject"], r["relationship"], r["object"], r["details"], r["how"],
         tuple(r["lines"]), tuple(r["speaker_ids"]), r["source"], r["prompt_version"], r["model"],
         r["status"], r["reason"], r["session_started_at"], r["created_at"], r["decided_at"],
-        r["fact_id"],
+        r["fact_id"], r.get("reading"),
     )  # fmt: skip
 
 
@@ -175,13 +182,15 @@ class Confirmed:
     batch: int | None = None  # the change-log batch, for the ↩️ Undo of a fact (#2410)
 
 
-def _field(value: object) -> str | None:
+def _field(value: object, *, name: bool = False) -> str | None:
     """A short piece of the extractor's answer: one line of text within the limit, or None
     when it is not text or is empty."""
     if not isinstance(value, str):
         return None
     text = " ".join(value.split())
-    return text[:FIELD_MAX] if text else None
+    if name:  # a name is never shortened (#2607): a cut one is another name
+        return text if 0 < len(text) <= FIELD_MAX else None
+    return at_word_end(text, FIELD_MAX) if text else None
 
 
 _LIST_START = re.compile(r'\{\s*"claims"\s*:\s*\[')
@@ -233,10 +242,11 @@ def parse_answer(text: str, refs: Collection[str]) -> tuple[list[Extracted], int
         if not isinstance(item, dict):
             bad += 1
             continue
-        subject, relationship = _field(item.get("subject")), _field(item.get("relationship"))
-        obj = _field(item.get("object")) or ""
+        subject = _field(item.get("subject"), name=True)
+        relationship = _field(item.get("relationship"))
+        obj = _field(item.get("object"), name=True) or ""
         said = item.get("details")  # words only: a list or a number is no detail
-        details = " ".join(said.split())[:DETAIL_MAX] if isinstance(said, str) else ""
+        details = at_word_end(" ".join(said.split()), DETAIL_MAX) if isinstance(said, str) else ""
         how = item.get("how")
         if isinstance(how, str):  # "Heard", " heard " and "heard." all mean the same word
             how = how.strip().rstrip(".").lower()
@@ -345,6 +355,8 @@ class Names:
 
     by_key: Mapping[str, tuple[tuple[str, str], ...]]
     secret: frozenset[str] = frozenset()  # keys that only a secret name has
+    # Each character's (role, its player) by entry id, for who speaks for it (#2562)
+    roles: Mapping[str, tuple[str | None, int | None]] = field(default_factory=dict)
 
     def one(self, name: str) -> tuple[str, str] | str:
         """The entry (id, kind), or the reason there isn't exactly one."""
@@ -372,7 +384,12 @@ def names_of(entities: Sequence[Mapping[str, Any]], aliases: Sequence[Mapping[st
         for a in aliases
         if a.get("secret") and str(a["entity_id"]) in kinds and str(a["key"]) not in open_keys
     )
-    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden)
+    roles = {
+        str(e["id"]): (e.get("role"), e.get("played_by"))
+        for e in entities
+        if str(e["type"]) == "character"
+    }
+    return Names({k: tuple(v.items()) for k, v in seen.items()}, hidden, roles)
 
 
 def judge(
@@ -419,13 +436,64 @@ def judge(
         return f"{term.label} doesn't fit those two"
     if term.object_types and not onto.is_any(o_kind, term.object_types):
         return f"{term.label} doesn't fit those two"
+    # Who speaks for a character (#2562): a PC's own choice and feeling come from its player, an
+    # NPC's from the DM. A player's word about someone else's character is what they believe, never
+    # the character's own, so it is not offered to the DM as a truth.
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) == PARTY:
+        return PARTY_REASON
     return ""
 
 
-def _repeat_key(subject: str, relationship: str, obj: str, how: str) -> tuple[Any, ...]:
+def _voice_of(
+    names: Names,
+    who: tuple[str, str],
+    other: tuple[str, str],
+    said_from_object: bool,
+    term: PredicateTerm,
+    claim: Extracted,
+    speakers: Sequence[int | None],
+    dms: Collection[int],
+) -> str:
+    """`own`, `effect` or `party` (`memory.voice`) for a claim about the character it is about."""
+    holder = other if said_from_object else who
+    if holder[1] != "character":
+        return OWN  # (a group's attitude stays the DM's)
+    role, plays = names.roles.get(holder[0], (None, None))
+    return voice(role, term.key, claim.how, speakers, plays, dms)
+
+
+def effect_note(
+    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence[int | None],
+    dms: Collection[int],
+) -> str:  # fmt: skip
+    """The words to add to a claim's details when the DM said it of a player character: it is
+    something that happened to them, told by the DM, not their own choice (#2562). "" otherwise."""
+    who = names.one(claim.subject)
+    other = names.one(claim.object)
+    if isinstance(who, str) or isinstance(other, str):
+        return ""
+    term, said_from_object, _ = place_relationship(onto, claim.relationship, who[1], other[1])
+    if _voice_of(names, who, other, said_from_object, term, claim, speakers, dms) != EFFECT:
+        return ""
+    holder = other if said_from_object else who
+    return (
+        EFFECT_NOTE.format(name=claim.object if said_from_object else claim.subject)
+        if holder
+        else ""
+    )
+
+
+def _repeat_key(
+    subject: str, relationship: str, obj: str, how: str, reading: Mapping[str, Any] | None = None
+) -> tuple[Any, ...]:
     """What makes two questions the same: the words, not who said them. A plan is its own
-    question (it is never asked, so it must not hide the fact it resembles)."""
-    return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN
+    question (it is never asked, so it must not hide the fact it resembles). A reading is its own
+    question too: the same words as a theory, a reveal and a plain claim are three things to place
+    (point of view and status tell them apart)."""
+    # (Only the point of view and the status: two readings of the same words that differ only in
+    # the clue they name are one question. Slice 2b may need the clue here.)
+    held = None if reading is None else (reading.get("view"), reading.get("status"))
+    return name_key(subject), _phrase(relationship), name_key(obj), how == HOW_PLAN, held
 
 
 async def _turned_down(scope: Any) -> set[str]:
@@ -522,7 +590,9 @@ class ClaimStore:
             asked: set[tuple[Any, ...]] = set()  # what the DM has seen or is waiting on
             refused: set[tuple[Any, ...]] = set()  # what was dropped before, and why
             for r in await w.select(CLAIMS, ""):
-                key = _repeat_key(r["subject"], r["relationship"], r["object"], r["how"])
+                key = _repeat_key(
+                    r["subject"], r["relationship"], r["object"], r["how"], r.get("reading")
+                )
                 if r["status"] == CLAIM_DROPPED:
                     refused.add((*key, r["reason"]))
                 else:
@@ -561,7 +631,7 @@ class ClaimStore:
             for r in leftovers:
                 kept = Extracted(
                     r["subject"], r["relationship"], r["object"], r["details"],
-                    tuple(r["lines"]), r["how"],
+                    tuple(r["lines"]), r["how"], r.get("reading"),
                 )  # fmt: skip
                 if not r["speaker_ids"] or any(x not in opted_in for x in r["speaker_ids"]):
                     continue  # its speaker stopped: `purge_stopped` wipes it when it is read
@@ -608,7 +678,11 @@ class ClaimStore:
                         # Past the limit: kept waiting for its name, which is proposed in a later
                         # session (most-said first, before that session's own).
                         key = _repeat_key(
-                            claim.subject, claim.relationship, claim.object, claim.how
+                            claim.subject,
+                            claim.relationship,
+                            claim.object,
+                            claim.how,
+                            claim.reading,
                         )
                         if key in asked:
                             repeated += 1
@@ -626,7 +700,9 @@ class ClaimStore:
                             ))  # fmt: skip
                         continue
                     reason = judged(claim)
-                key = _repeat_key(claim.subject, claim.relationship, claim.object, claim.how)
+                key = _repeat_key(
+                    claim.subject, claim.relationship, claim.object, claim.how, claim.reading
+                )
                 cited = [speakers.get(ref) for ref in claim.lines]
                 if reason in (STOPPED_REASON, NO_SPEAKER_REASON):
                     dropped += 1  # counted, never kept
@@ -642,6 +718,8 @@ class ClaimStore:
                 else:
                     waiting += 1
                     asked.add(key)
+                if not reason and (note := effect_note(claim, onto, names, cited, dms)):
+                    claim = replace(claim, details=f"{claim.details} {note}".strip())
                 rows.append(
                     self._row(
                         claim, cited, prompt_version, model, session_started_at, w.now,
@@ -677,6 +755,7 @@ class ClaimStore:
             "created_at": now,
             "decided_at": None,
             "fact_id": None,
+            "reading": dict(claim.reading) if claim.reading is not None else None,
         }
 
     async def _link(
@@ -786,6 +865,7 @@ class ClaimStore:
                         "details": "",
                         "lines": [],
                         "speaker_ids": [],
+                        "reading": None,  # the clue, the act and the character it named go too
                     },
                 )
             return len(stale)
@@ -812,7 +892,9 @@ class ClaimStore:
         has not said yet what it is waits. One whose name is no longer anyone's (the DM said it
         isn't a name, or it was taken away) is dropped here for good, so it is never asked."""
         async with self._store._read(guild_id, campaign_id) as scope:
-            sql = " AND status = 'proposed' ORDER BY created_at, id"
+            # (A reading is a belief to place, not a fact to say yes to: it is not asked here until
+            # the DM can place it, #2412.)
+            sql = " AND status = 'proposed' AND reading IS NULL ORDER BY created_at, id"
             rows = await scope.select(CLAIMS, sql)
             if not rows:
                 return [], []
@@ -834,6 +916,7 @@ class ClaimStore:
                 claim.details,
                 claim.lines,
                 claim.how,
+                claim.reading,
             )
             said = (
                 [claim.subject]
@@ -904,7 +987,7 @@ class ClaimStore:
             cur = await scope.conn.execute(
                 "SELECT count(*) AS n FROM memory_claims WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'proposed' AND reason <> %s AND cardinality(speaker_ids) > 0"
-                " AND speaker_ids <@ %s::bigint[]",
+                " AND speaker_ids <@ %s::bigint[] AND reading IS NULL",
                 (*scope.ids, WAITING_NAME_REASON, list(opted_in)),
             )
             row = await cur.fetchone()
@@ -917,10 +1000,14 @@ class ClaimStore:
         async with self._store._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
-                " AND status <> 'confirmed'",
+                " AND status <> 'confirmed' RETURNING id",
                 (guild_id, user_id),
             )
-            return int(cur.rowcount)
+            gone = [str(r["id"]) for r in await cur.fetchall()]
+            await evidence.placeholder_claims(conn, guild_id, gone)  # their links keep no target
+            # and what the DM confirmed stays, without this person's line references (#2676)
+            await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id)
+            return len(gone)
 
     async def reject(self, guild_id: int, campaign_id: str, claim_id: str) -> Claim:
         """The DM says no: it is not asked again, and nothing is written to memory."""
@@ -965,6 +1052,10 @@ class ClaimStore:
         claim = await self.get(guild_id, campaign_id, claim_id)
         if claim is None or claim.status != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
+        if claim.reading is not None:
+            # A theory said "yes" to as a fact would be a lie in the DM's own voice: a reading is
+            # placed as a belief, which is its own step (#2412).
+            raise MemoryRuleError(A_READING)
         wording = Extracted(
             claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
         )
@@ -979,6 +1070,7 @@ class ClaimStore:
         if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
             async with self._store._write(guild_id, campaign_id, DM) as w:
                 await w.delete(CLAIMS, claim_id)
+                await evidence.placeholder_claims(w.conn, guild_id, [claim_id])  # (#2662)
             raise MemoryRuleError(STOPPED_NOW)
         async with self._store._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)

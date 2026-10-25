@@ -104,7 +104,9 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         )
         self.app = app
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
 
     async def asyncTearDown(self) -> None:
@@ -330,7 +332,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             FakeDiscord(),
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             answer = await client.post(
                 "/admin/auth/password",
@@ -440,7 +442,9 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
         nonce = self.google.nonce
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as flood:
             # The start keeps nothing on the server, so any number does the same; the
             # table this once filled held 10,000.
@@ -468,7 +472,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         async def callback(cookies: dict[str, str], state: str) -> httpx.Response:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=self.app),
-                base_url=API,
+                base_url="https://web-api.internal.test",
                 cookies=cookies,
                 follow_redirects=False,
             ) as one:
@@ -483,7 +487,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
         self.google.fail = False
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app),
-            base_url=API,
+            base_url="https://web-api.internal.test",
             headers={"CF-Connecting-IP": "198.51.100.20"},
             follow_redirects=False,
         ) as owner:
@@ -535,7 +539,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             google=None,
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             only = await client.get("/admin/auth/ways")
         self.assertEqual(only.json(), {"google": False, "password": True})
@@ -574,7 +578,9 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
             settings(admin_emails=(ADMIN,)), cast(Database, None), FakeDiscord(), google=None
         )
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         ) as client:
             answer = await client.get("/admin/auth/google/start")
         self.assertEqual(answer.headers["location"], f"{SITE}/admin?signin=off")
@@ -628,7 +634,7 @@ class AdminTest(unittest.IsolatedAsyncioTestCase):
     async def test_with_no_admin_emails_the_routes_are_not_there(self) -> None:
         app = create_app(settings(), cast(Database, None), FakeDiscord())
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             for path in ("/admin/me", "/admin/auth/ways", "/admin/auth/google/start"):
                 self.assertEqual((await client.get(path)).status_code, 404, path)

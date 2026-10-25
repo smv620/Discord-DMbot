@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -20,7 +21,12 @@ from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import WorkerHarness
 
-CLEAN = fx.SUMMARY.replace("to keep her hands from shaking", "as her hands shook")  # no purpose
+# No purpose stated, and each name said with who they are the first time (the away-reader check
+# of #2680 would otherwise ask the writer for a fix, a call these tests do not script).
+CLEAN = fx.SUMMARY.replace("to keep her hands from shaking", "as her hands shook").replace(
+    "as Mira and Oskar came to Greywater Keep,",
+    "as Mira, the scout, and Oskar, the priest, came to Greywater Keep, an empty old fortress,",
+)
 MOTIVE = "Mira wanted to avenge her brother, who had fallen in the keep long ago."
 WITH_MOTIVE = CLEAN.replace(
     "Mira drew her blade without a word,", f"{MOTIVE} Mira drew her blade without a word,", 1
@@ -76,6 +82,18 @@ class Smart(fx.Canned):
         return Reply(json.dumps({"checks": checks}), False, 10, 10, "m")
 
 
+def ending_fails_after_the_draft(real: Any) -> Any:
+    """A `check_prose` that finds the draft clean (the closure `checked`) and every later check
+    failing on the ending: the check that fails only once the critics have had their say."""
+
+    def check(*a: Any, **k: Any) -> list[str]:
+        if sys._getframe(1).f_code.co_name == "checked":
+            return list(real(*a, **k))
+        return ["the recap must end exactly where the session stopped"]
+
+    return check
+
+
 class Criticising(WorkerHarness):
     def fast_for(self, summary: str = CLEAN, *, grades: int = 1) -> Smart:
         prose = fx.prose_answer(summary)
@@ -105,6 +123,36 @@ class Criticising(WorkerHarness):
         self.assertEqual((job.state, loop.done, loop.round, loop.notes), ("ready", True, 1, ()))
         self.assertEqual(len(fast.motive_sent), 1)  # every sentence was asked about, once
         self.assertEqual(job.calls, 6)  # the five of before and the motive check
+
+    async def test_a_name_with_no_introduction_goes_to_the_writer_once_and_the_fix_is_read(
+        self,
+    ) -> None:
+        # (#2680) The plain fixture says Mira and Oskar with no word on who they are.
+        fast = self.fast_for(fx.SUMMARY, grades=2)
+        careful = fx.Canned(fx.prose_answer(CLEAN))  # the one revision
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertIn("the scout", job.summary)
+        told = careful.sent[0]
+        self.assertIn("<previous_draft>", told)
+        self.assertIn("say in a few words who or what", told)
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.round, loop.notes), (True, 2, ()))
+
+    async def test_what_the_writer_leaves_unexplained_becomes_a_note_for_the_dm_never_a_round(
+        self,
+    ) -> None:
+        fast = self.fast_for(fx.SUMMARY, grades=2)
+        careful = fx.Canned(fx.prose_answer(fx.SUMMARY))  # a revision that fixes nothing
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((loop.done, loop.round), (True, 2))
+        self.assertTrue(loop.notes)
+        self.assertTrue(all(n.startswith("Check: ") for n in loop.notes))
+        self.assertEqual(len(careful.sent), 1)  # asked once, not again
 
     async def test_an_invented_motive_is_caught_and_fixed_in_the_second_round(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
@@ -260,17 +308,12 @@ class Criticising(WorkerHarness):
     async def test_critics_stopped_by_unreadable_answers_do_not_fail_a_draft_with_a_failed_check(
         self,
     ) -> None:
+        real = rd.check_prose
         fast = self.fast_for(WITH_MOTIVE)
         careful = fx.Canned(NO_NOTES, "not json", "not json")
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
-        real = rd.check_prose
 
-        def ending_fails(*a: Any, **k: Any) -> list[str]:
-            return (
-                ["the recap must end exactly where the session stopped"]
-                if k.get("last")
-                else real(*a, **k)
-            )
+        ending_fails = ending_fails_after_the_draft(real)
 
         with (
             patch.object(rd, "check_prose", ending_fails),
@@ -283,17 +326,12 @@ class Criticising(WorkerHarness):
         self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
 
     async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
+        real = rd.check_prose
         fast = self.fast_for(WITH_MOTIVE)
         careful = fx.Canned(NO_NOTES, *(["not json"] * 90))
         await self.setUpWorker(fast, careful, critics=True, story=self.story_of(MEMORY))
-        real = rd.check_prose
 
-        def ending_fails(*a: Any, **k: Any) -> list[str]:
-            return (
-                ["the recap must end exactly where the session stopped"]
-                if k.get("last")
-                else real(*a, **k)
-            )
+        ending_fails = ending_fails_after_the_draft(real)
 
         told = AsyncMock()
         self.worker._unchecked = told
@@ -571,22 +609,14 @@ class Criticising(WorkerHarness):
     async def test_no_agreement_fails_on_our_side_with_the_rule_named_and_gives_the_try_back(
         self,
     ) -> None:
-        real = rd.check_prose
-        ending = ["the recap must end exactly where the session stopped"]
-        with patch.object(
-            rd, "check_prose", lambda *a, **k: ending if k.get("last") else real(*a, **k)
-        ):
+        with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped("no agreement", tries=1)
         self.assertEqual(job.state, "failed")
         self.assertIn("(check: ending)", job.last_error)
         self.assertEqual(job.tries, 0)  # given back
 
     async def test_the_job_ceiling_with_a_failed_check_fails_and_keeps_the_try(self) -> None:
-        real = rd.check_prose
-        ending = ["the recap must end exactly where the session stopped"]
-        with patch.object(
-            rd, "check_prose", lambda *a, **k: ending if k.get("last") else real(*a, **k)
-        ):
+        with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped(pl.STOP_CEILING, tries=1)
         self.assertEqual((job.state, job.tries), ("failed", 1))
         self.assertIn("(check: ending)", job.last_error)
@@ -808,6 +838,90 @@ class Criticising(WorkerHarness):
             job = await self.worker.run(1, self.one.id, 100) or job
         return job
 
+    async def test_a_draft_the_dm_approved_unchecked_is_finished_while_the_service_is_down(
+        self,
+    ) -> None:
+        """#2305: the website's door marks the loop done and approved; the worker then runs the
+        title step and the recap is ready, with the DM recorded and the service still down."""
+        fast = self.fast_for(WITH_MOTIVE)
+        fast.down = True
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        job = await self.drive(await self.go(), 6)
+        self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))
+        loop = cr.loop_from_json(job.critics)
+        fast.down = False  # (the title step is a different call; the critics are never reached)
+        await self.store.update(
+            1, self.one.id, 100,
+            critics=replace(
+                loop, done=True, approved_by=7, approved_at=int(self.clock.now)
+            ).to_json(),
+            last_error="", next_at=0,
+        )  # fmt: skip
+        # the day's tally is at its cap (the waiting tries count in it): only the title step is
+        # left, and that must not fail the recap the DM approved
+        with patch.object(self.store, "calls_since", AsyncMock(return_value=pl.DAILY_CALLS)):
+            job = await self.drive(job, 3)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        done = cr.loop_from_json(job.critics)
+        self.assertEqual((done.done, done.approved_by), (True, 7))  # the DM stays recorded
+        self.assertIn("avenge", job.summary)  # the draft is what the DM approved: nothing was cut
+
+    async def approved_waiting(self) -> tuple[Job, Job]:
+        """A recap waiting for its check, and the same one after the DM approved it: the first is
+        what a step already running at that moment would still be holding."""
+        fast = self.fast_for(WITH_MOTIVE)
+        fast.down = True
+        await self.setUpWorker(fast, fx.Canned(fx.prose_answer(CLEAN)), critics=True)
+        before = await self.drive(await self.go(), 6)
+        loop = cr.loop_from_json(before.critics)
+        await self.store.update(
+            1, self.one.id, 100,
+            critics=replace(
+                loop, done=True, approved_by=7, approved_at=int(self.clock.now)
+            ).to_json(),
+            last_error="", next_at=0,
+        )  # fmt: skip
+        after = await self.store.get(1, self.one.id, 100)
+        assert after is not None
+        return before, after
+
+    async def test_a_step_that_began_before_the_approval_cannot_fail_the_draft(self) -> None:
+        before, after = await self.approved_waiting()
+        await self.worker._fail(1, self.one.id, before, "no agreement")  # (the stale step)
+        now = await self.store.get(1, self.one.id, 100)
+        assert now is not None
+        self.assertEqual((now.state, now.last_error, now.next_at), (after.state, "", 0))
+        # a failure of a step that began after the approval is a real one
+        await self.worker._fail(1, self.one.id, after, "the title could not be made")
+        failed = await self.store.get(1, self.one.id, 100)
+        assert failed is not None
+        self.assertEqual(failed.state, "failed")
+
+    async def test_a_critics_call_that_failed_after_the_approval_waits_for_nothing(self) -> None:
+        before, after = await self.approved_waiting()
+        await self.worker._soft_wait(1, self.one.id, before, before.calls, before.spent, "late")
+        await self.worker._soft_wait(1, self.one.id, after, after.calls, after.spent, "later")
+        now = await self.store.get(1, self.one.id, 100)
+        assert now is not None
+        self.assertEqual((now.last_error, now.next_at, now.errors), ("", 0, after.errors))
+
+    async def test_the_title_step_of_an_approved_draft_adds_at_most_a_few_calls_to_the_day(
+        self,
+    ) -> None:
+        _before, after = await self.approved_waiting()
+        spent = after.spent
+        with patch.object(self.store, "calls_since", AsyncMock(return_value=pl.DAILY_CALLS)):
+            job = await self.drive(after, 3)
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertLessEqual(job.spent - spent, pl.APPROVED_TITLE_CALLS)  # counted in the tally
+
+    async def test_past_that_allowance_the_day_is_over_for_an_approved_draft_too(self) -> None:
+        _before, after = await self.approved_waiting()
+        over = AsyncMock(return_value=pl.DAILY_CALLS + pl.APPROVED_TITLE_CALLS)
+        with patch.object(self.store, "calls_since", over):
+            job = await self.drive(after, 1)
+        self.assertEqual((job.state, job.last_error), ("failed", pl.DAILY))
+
     async def test_an_outage_waits_without_failing_or_spending_the_jobs_calls(self) -> None:
         fast = self.fast_for(WITH_MOTIVE, grades=2)
         fast.down = True
@@ -820,9 +934,19 @@ class Criticising(WorkerHarness):
         first = cr.loop_from_json(job.critics)
         spent_then = job.spent
         # not told before three days: drive until just short of them
+        most = 0
         while self.clock.now - started < 2.5 * 86400:
+            before = job.spent
             job = await self.drive(job, 1)
+            most = max(most, job.spent - before)
         told.assert_not_awaited()
+        # one waiting try never spends more than `cr.wait_budget` allows (a bound the loop is built
+        # to meet: a reading's batches and PlotBot's two calls, or a revision's calls; #2308)
+        self.assertLessEqual(most, cr.wait_budget(len(mo.batches(mo.candidates(["x"] * 8)))))
+        # the day's tally counts the last 24 hours of calls, not the recap's lifetime (#2308)
+        last_day = await self.store.calls_since(1, self.one.id, int(self.clock.now) - 86400)
+        self.assertLess(last_day, job.spent)
+        self.assertLessEqual(last_day, cr.WAIT_CALLS * (86400 // 3600 + 2))
         self.assertEqual((job.state, job.last_error), ("prose", pl.CHECK_WAIT))  # still waiting
         self.assertEqual(job.calls, calls_at_first_hold)  # not the job's own calls: no CAP
         loop = cr.loop_from_json(job.critics)
@@ -837,8 +961,11 @@ class Criticising(WorkerHarness):
         job = await self.drive(job, 6)
         told.assert_awaited_once()
         self.assertTrue(cr.loop_from_json(job.critics).told)
-        self.assertIn("3 days", cr.UNCHECKED_TOLD)
-        self.assertIn("you'll be told when it's ready", cr.UNCHECKED_TOLD)
+        self.assertEqual(
+            cr.UNCHECKED_TOLD,
+            "📜 Your recap is written but DMbot couldn't finish checking it. You can read it and "
+            "approve it yourself on the recap page.",
+        )
         # the service answers: the check reads the draft, the invented motive is fixed, and the
         # waiting state is cleared
         fast.down = False
