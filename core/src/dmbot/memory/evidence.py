@@ -280,29 +280,44 @@ async def audit(conn: Conn, guild_id: int, campaign_id: str) -> Audit:
 async def scrub_claim_lines(
     conn: Conn, guild_id: int, *, refs: Collection[str] = (), user_id: int | None = None
 ) -> int:
-    """Take a removed person's line references out of every claim's `lines` (#2676), in every
-    campaign of the server: a claim the DM confirmed stays (it is the DM's fact) but no longer
-    names who said what. `refs`: these exact references; `user_id`: every reference that ends in
-    this speaker (a line reference is "session:started_ms:user"). Returns how many claims
-    changed."""
+    """Take a removed person out of every claim, in every campaign of the server (#2676, #2679): a
+    claim the DM confirmed stays (it is the DM's fact) but no longer names who said what. Their
+    line references leave `lines` and their id leaves `speaker_ids`.
+    `refs`: these exact references (a line reference is "session:started_ms:user"). The speaker
+    they name leaves `speaker_ids` too, unless the claim still cites another line of theirs.
+    `user_id`: every reference that ends in this speaker, and the id itself. Returns how many
+    claims changed."""
     changed = 0
     ordered = sorted(set(refs))
+    affected: set[str] = set()
     for i in range(0, len(ordered), 1000):
         batch = ordered[i : i + 1000]
         cur = await conn.execute(
             "UPDATE memory_claims SET lines = ARRAY("
             "  SELECT x FROM unnest(lines) AS x WHERE NOT (x = ANY(%s)))"
-            " WHERE guild_id = %s AND lines && %s",
+            " WHERE guild_id = %s AND lines && %s RETURNING id",
             (batch, guild_id, batch),
         )
-        changed += cur.rowcount
+        hit = await cur.fetchall()
+        changed += len(hit)
+        affected.update(str(r["id"]) for r in hit)
+    speakers = {int(r.rsplit(":", 1)[1]) for r in ordered if r.rsplit(":", 1)[-1].isdigit()}
+    if affected:
+        for speaker in sorted(speakers):
+            await conn.execute(
+                "UPDATE memory_claims SET speaker_ids = array_remove(speaker_ids, %s)"
+                " WHERE guild_id = %s AND id = ANY(%s) AND %s = ANY(speaker_ids)"
+                " AND NOT EXISTS (SELECT 1 FROM unnest(lines) AS y WHERE y ~ %s)",
+                (speaker, guild_id, sorted(affected), speaker, f":{speaker}$"),
+            )
     if user_id is not None:
         cur = await conn.execute(
             "UPDATE memory_claims SET lines = ARRAY("
-            "  SELECT x FROM unnest(lines) AS x WHERE x !~ %s)"
-            " WHERE guild_id = %s AND EXISTS ("
-            "  SELECT 1 FROM unnest(lines) AS y WHERE y ~ %s)",
-            (f":{int(user_id)}$", guild_id, f":{int(user_id)}$"),
+            "  SELECT x FROM unnest(lines) AS x WHERE x !~ %s),"
+            " speaker_ids = array_remove(speaker_ids, %s)"
+            " WHERE guild_id = %s AND (%s = ANY(speaker_ids) OR EXISTS ("
+            "  SELECT 1 FROM unnest(lines) AS y WHERE y ~ %s))",
+            (f":{int(user_id)}$", int(user_id), guild_id, int(user_id), f":{int(user_id)}$"),
         )
         changed += cur.rowcount
     return changed
