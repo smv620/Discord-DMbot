@@ -23,7 +23,16 @@ export const presentWords = {
   // The save is one quick call, not a queued job: it says it is saving, then what it did. It does not say
   // the recap text was rewritten, because it is not (CloudDev may change that; see docs/GO_LIVE.md).
   saved: (n: number): string => `Saved. Your list for scene ${n} is kept. The recap text above stays as it is.`,
+  // Supervisor (#2577): the saved list is kept for the next rewrite; a DM who wants it now uses the same
+  // "Make it again" as the recap maker (recap-make.ts), after one question because it replaces the text.
+  againHint: "Want your lists used now?",
+  again: "Make it again",
+  againSure: "This writes the whole recap again from your lists and replaces the text above, including any edits you made.",
+  againYes: "Yes, make it again",
+  againNo: "Keep the text as it is",
+  againStarted: "DMbot is writing the recap again. This page shows how far it has got.",
   errors: {
+    again: "The recap couldn't be started again. Nothing was changed. Try again in a minute, or use Make it again on the recaps page.",
     stale: "The recap changed while you were editing, so your change was not saved. The scenes below are the latest. Check them and try again.",
     "bad-present": "One name isn't a character in this campaign, so nothing was saved. Pick only from the ticked list and save again.",
     reread: "Your change was not saved, and the scenes couldn't be read again. Reload the page to see the latest.",

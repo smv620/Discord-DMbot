@@ -399,6 +399,7 @@ export function mockRecaps(): Recap[] {
         { n: 3, present: ["Brannoch"] },
       ],
       characters: ["Mira", "Tavian", "Brannoch"],
+      canMakeAgain: true,
       canEdit: true,
       canPost: true,
       canTryAgain: true,

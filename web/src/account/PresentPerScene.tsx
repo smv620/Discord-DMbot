@@ -22,6 +22,9 @@ export default function PresentPerScene({ api, recap, onRecap }: { api: AccountA
   const [problem, setProblem] = useState("");
   const [said, setSaid] = useState("");
   const [updating, setUpdating] = useState(false); // the recap is being read again after a refusal
+  const [kept, setKept] = useState(false); // a list was just saved: "Make it again" is offered beside the message
+  const [asking, setAsking] = useState(false); // "Make it again" waits for the DM's yes
+  const [making, setMaking] = useState(false);
   const [slow, setSlow] = useState(false); // the save has taken longer than a few seconds
   const inFlight = useRef(false);
   const box = useRef<HTMLElement>(null);
@@ -40,6 +43,26 @@ export default function PresentPerScene({ api, recap, onRecap }: { api: AccountA
   if (beats.length === 0) return null;
   const canChange = recap.canEdit && characters.length > 0 && !!api.setBeatPresent;
 
+  // Make the whole recap again so the lists are used now (otherwise they wait for the next rewrite). It
+  // replaces the text, so it asks once first. The recap that comes back is the one being written.
+  const again = async (): Promise<void> => {
+    if (!api.makeRecap || inFlight.current) return;
+    inFlight.current = true;
+    setMaking(true);
+    setProblem("");
+    try {
+      onRecap(await api.makeRecap(recap.ref, true));
+      setAsking(false);
+      setKept(false);
+      setSaid(w.againStarted);
+    } catch {
+      setProblem(w.errors["again"] as string);
+    } finally {
+      inFlight.current = false;
+      setMaking(false);
+    }
+  };
+
   const open = (b: RecapBeat): void => {
     setEditing(b.n);
     // Names DMbot listed that are no longer among the campaign's characters stay in the list (ticked), so
@@ -47,6 +70,7 @@ export default function PresentPerScene({ api, recap, onRecap }: { api: AccountA
     setDraft([...b.present]);
     setProblem("");
     setSaid("");
+    setKept(false);
     setTimeout(() => box.current?.querySelector<HTMLElement>(`[data-edit="${b.n}"] input`)?.focus(), 0);
   };
   const optionsFor = (b: RecapBeat): string[] => [...characters, ...b.present.filter((name) => !characters.includes(name))];
@@ -71,6 +95,8 @@ export default function PresentPerScene({ api, recap, onRecap }: { api: AccountA
       const now = latest.current;
       onRecap({ ...now, beats: (now.beats ?? []).map((b) => (b.n === n ? { n, present: got.present } : b)) });
       setSaid(w.saved(n));
+      setKept(true);
+      setAsking(false);
       back(n);
     } catch (error) {
       setProblem(say(error));
@@ -106,6 +132,30 @@ export default function PresentPerScene({ api, recap, onRecap }: { api: AccountA
         <p class="error" role="alert">
           {problem}
         </p>
+      )}
+      {kept && canChange && recap.canMakeAgain && api.makeRecap && (
+        <div class="stack">
+          {asking ? (
+            <>
+              <p class="small">{w.againSure}</p>
+              <div class="row">
+                <button type="button" class="button" disabled={making} onClick={() => void again()}>
+                  {w.againYes}
+                </button>
+                <button type="button" class="button secondary" disabled={making} onClick={() => setAsking(false)}>
+                  {w.againNo}
+                </button>
+              </div>
+            </>
+          ) : (
+            <p class="small">
+              {w.againHint}{" "}
+              <button type="button" class="button secondary" onClick={() => setAsking(true)}>
+                {w.again}
+              </button>
+            </p>
+          )}
+        </div>
       )}
       <ul class="stack">
         {beats.map((b) => (
