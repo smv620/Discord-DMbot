@@ -20,12 +20,15 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.contradictions import Candidate
 from dmbot.memory.store import MemoryStore
 
 MAJOR, MINOR, NOT_GRADED = "major", "minor", "not_graded"
 GRADES = (MAJOR, MINOR, NOT_GRADED)
-REASON_MAX = 2000  # the column's own limit (a storage limit, not a rule about the answer)
+# A reason is told to the DM in one message at most, so the column's limit is the message limit
+# (the CHECK in migration 0238 says 2000; a test keeps the two in step). Not a rule on the answer.
+REASON_MAX = MESSAGE_MAX
 
 
 @dataclass(frozen=True, slots=True)
