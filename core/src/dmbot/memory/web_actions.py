@@ -244,7 +244,7 @@ class Waiting:
     spent: Callable[[str, str], Awaitable[None]] | None = None
     # Put a name-pass fix back (campaign, Undo number): how many lines went back, 0 when nothing
     # could (#2684). The Discord Undo makes the same calls.
-    name_pass_undo: Callable[[str, int], Awaitable[int]] | None = None
+    name_pass_undo: Callable[[str, int], Awaitable[int | None]] | None = None
 
 
 async def apply(
@@ -494,14 +494,15 @@ async def _answer_waiting(
     if a.action in READING_ACTIONS:
         return await _answer_reading(memory, guild_id, cid, a, w)
     if a.action in NAMES_FIXED_ACTIONS:
-        # The recap page's Undo of a name-pass fix: `gone` when nothing could be put back (the
-        # lines changed since, or it was undone already) and nothing was changed.
+        # The recap page's Undo of a name-pass fix: done with how many lines went back (0 when the
+        # fix was undone already, which meets the wish); `gone` when nothing could be put back
+        # and the fix is not recorded as undone (nothing was changed).
         if w.name_pass_undo is None:
             return _failed(FAILED)
         if not (a.target_id.isascii() and a.target_id.isdecimal()) or len(a.target_id) > 12:
             return _failed(NOT_FOUND)
         lines = await w.name_pass_undo(cid, int(a.target_id))
-        return Outcome(result_other=str(lines)) if lines else _failed(GONE)
+        return _failed(GONE) if lines is None else Outcome(result_other=str(lines))
     if a.action in ("backstory-which-pick", "backstory-which-neither"):
         # "Which Mara?" (#2652): the call the Discord card makes. `text` is the entry picked (one
         # of the question's candidates, which `pick_which` checks again); Neither drops it.

@@ -89,7 +89,7 @@ from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import read_checks
 from dmbot.web.names import list_names, set_said_as
-from dmbot.web.names_fixed import queue_undo as queue_names_fixed_undo
+from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
 from dmbot.web.names_fixed import read_names_fixed
 from dmbot.web.payments import (
     NotResumable,
@@ -1068,7 +1068,8 @@ def create_app(
         if name_answer_limit.take(f"name-answer:{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         try:
-            return {"answer": await queue_names_fixed_undo(db, session, ref, fix_id)}
+            answer, poll = await queue_names_fixed_undo_polled(db, session, ref, fix_id)
+            return {"answer": answer, "poll": poll}
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

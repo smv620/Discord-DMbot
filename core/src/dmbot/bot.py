@@ -417,7 +417,7 @@ from dmbot.transcript.models import (
     line_ref,
 )
 from dmbot.transcript.name_pass_log import NamePassLog
-from dmbot.transcript.name_pass_log import undo_fix as name_pass_undo_fix
+from dmbot.transcript.name_pass_log import undo_for_web as name_pass_undo_for_web
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -10045,6 +10045,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.memory is None or self.backstory_links is None:
             return None
         actions = self.name_actions
+        transcripts = self.transcripts  # (bound here so the lambda below keeps the narrowed type)
         return web_actions.Waiting(
             ClaimStore(self.memory),
             self.backstory_links,
@@ -10057,11 +10058,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             else None,
             name_pass_undo=(
                 (
-                    lambda cid, batch: name_pass_undo_fix(
-                        self.transcripts, self.memory, guild_id, cid, batch, now=int(time.time())
+                    lambda cid, batch: name_pass_undo_for_web(
+                        transcripts, self.memory, guild_id, cid, batch, now=int(time.time())
                     )
                 )
-                if self.transcripts is not None
+                if transcripts is not None
                 else None
             ),
         )

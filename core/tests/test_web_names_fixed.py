@@ -9,7 +9,7 @@ from dmbot.memory import web_actions as wa
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript import name_pass as np
 from dmbot.transcript.models import Line
-from dmbot.transcript.name_pass_log import NamePassLog, undo_fix
+from dmbot.transcript.name_pass_log import NamePassLog, undo_fix, undo_for_web
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import names_fixed as web
 from dmbot.web import relationships, sessions
@@ -127,8 +127,8 @@ class Undoing(Fixed):
         self.cref = f"{GUILD}.{self.one.id}"
 
     async def run_bot(self, dms: Any = None) -> list[wa.Outcome]:
-        async def undo(cid: str, batch: int) -> int:
-            return await undo_fix(self.transcripts, self.memory, GUILD, cid, batch, now=AT + 99)
+        async def undo(cid: str, batch: int) -> int | None:
+            return await undo_for_web(self.transcripts, self.memory, GUILD, cid, batch, now=AT + 99)
 
         waiting = wa.Waiting(cast(Any, None), cast(Any, None), cast(Any, None), name_pass_undo=undo)
         done = []
@@ -169,15 +169,73 @@ class Undoing(Fixed):
         (shown,) = (await self.read())["fixed"]
         self.assertEqual((shown["undone"], shown["forms"]), (True, []))
 
-    async def test_an_undo_already_made_ends_gone_and_changes_nothing(self) -> None:
+    async def test_an_undo_already_made_is_done_with_nothing_put_back(self) -> None:
         sid = await self.session_with_fixes()
         fix = str(np.batch_of(sid, "e1"))
         await web.queue_undo(self.web, self.session, self.ref, fix)
         await self.run_bot()
+        before = await self.texts(sid)
         again = await web.queue_undo(self.web, self.session, self.ref, fix)
         (outcome,) = await self.run_bot()
-        self.assertEqual(outcome.error, wa.GONE)
-        self.assertEqual((await self.poll(again))["error"], wa.GONE)
+        self.assertEqual(outcome.error, "")  # the wish is met: it is undone
+        done = await self.poll(again)
+        self.assertEqual((done["state"], done["error"], done["putBack"]), ("done", "", 0))
+        self.assertEqual(await self.texts(sid), before)  # and nothing was changed
+
+    async def test_a_retaken_undo_after_the_lines_went_back_is_done_with_zero(self) -> None:
+        # the bot put the lines back and marked the fix, then died before it could finish the
+        # action; the retry finds nothing to put back, and the record says undone
+        sid = await self.session_with_fixes()
+        batch = np.batch_of(sid, "e1")
+        await undo_fix(self.transcripts, self.memory, GUILD, self.one.id, batch, now=AT + 50)
+        answer = await web.queue_undo(self.web, self.session, self.ref, str(batch))
+        await self.run_bot()
+        done = await self.poll(answer)
+        self.assertEqual((done["state"], done["error"], done["putBack"]), ("done", "", 0))
+
+    async def test_a_fix_the_lines_of_which_changed_and_was_never_undone_is_gone(self) -> None:
+        sid = await self.session_with_fixes()
+        batch = np.batch_of(sid, "e1")
+        async with self.db.guild(GUILD) as conn:  # no fix of this number was ever recorded
+            await conn.execute(
+                "UPDATE name_pass_fixes SET undone_at = NULL WHERE batch = %s", (batch,)
+            )
+            await conn.execute("DELETE FROM transcript_respells WHERE batch = %s", (batch,))
+        answer = await web.queue_undo(self.web, self.session, self.ref, str(batch))
+        await self.run_bot()
+        self.assertEqual((await self.poll(answer))["error"], wa.GONE)
+
+    async def test_the_route_returns_the_answer_and_the_path_to_poll(self) -> None:
+        import httpx
+
+        from dmbot.web.app import create_app
+        from dmbot.web.payments import FakeProvider
+        from tests.test_recap_web import HEADERS
+        from tests.test_web_api import FakeDiscord, settings
+
+        sid = await self.session_with_fixes()
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+            posted = await client.post(
+                f"/me/recaps/{self.ref}/names-fixed/{np.batch_of(sid, 'e1')}/undo"
+            )
+            self.assertEqual(posted.status_code, 202)
+            body = posted.json()
+            self.assertEqual(
+                body["poll"], f"/me/campaigns/{self.cref}/web/answers/{body['answer']}"
+            )
+            await self.run_bot()
+            polled = await client.get(body["poll"])
+            self.assertEqual((polled.json()["state"], polled.json()["putBack"]), ("done", 2))
 
     async def test_a_fix_whose_lines_all_changed_is_still_marked_undone(self) -> None:
         sid = await self.session_with_fixes()
@@ -188,10 +246,11 @@ class Undoing(Fixed):
             )
         answer = await web.queue_undo(self.web, self.session, self.ref, str(batch))
         await self.run_bot()
-        self.assertEqual((await self.poll(answer))["error"], wa.GONE)  # nothing put back
+        done = await self.poll(answer)  # nothing put back, and its record is spent: done, 0
+        self.assertEqual((done["state"], done["error"], done["putBack"]), ("done", "", 0))
         (shown,) = (await self.read())["fixed"]
         self.assertTrue(shown["undone"])  # but its record is spent: not shown as standing
-        kept = {c.heard for c in await self.memory.corrections(GUILD, self.one.id)}  # type: ignore[attr-defined]
+        kept = {c.heard for c in await self.memory.corrections(GUILD, self.one.id)}
         self.assertNotIn("Keirandal", kept)  # no keep-as-heard rule for lines never put back
 
     async def test_a_number_that_is_not_plain_digits_is_not_found(self) -> None:
@@ -209,10 +268,7 @@ class Undoing(Fixed):
         sid = await self.session_with_fixes()
         await web.queue_undo(self.web, self.session, self.ref, str(np.batch_of(sid, "e1")))
         await self.run_bot()
-        kept = {
-            c.heard
-            for c in await self.memory.corrections(GUILD, self.one.id)  # type: ignore[attr-defined]
-        }
+        kept = {c.heard for c in await self.memory.corrections(GUILD, self.one.id)}
         self.assertIn("Keirandal", kept)
 
     async def test_a_player_or_a_stranger_fix_cannot_be_queued(self) -> None:

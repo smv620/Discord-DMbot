@@ -81,6 +81,16 @@ class NamePassLog:
             )
             return int(cur.rowcount)
 
+    async def is_undone(self, guild_id: int, campaign_id: str, batch: int) -> bool:
+        """Has this fix been put back already (its record says so)?"""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_pass_fixes WHERE guild_id = %s AND campaign_id = %s"
+                " AND batch = %s AND undone_at IS NOT NULL",
+                (guild_id, campaign_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def report(self, guild_id: int, campaign_id: str, session_id: str) -> StoredReport | None:
         """The session's run, or None when the pass never ran there (or kept nothing)."""
         async with self._db.guild(guild_id) as conn:
@@ -145,3 +155,23 @@ async def undo_fix(
         except Exception:
             log.exception("Name pass undo: couldn't note it for the website")
     return lines
+
+
+async def undo_for_web(
+    transcripts: TranscriptStore,
+    memory: MemoryStore | None,
+    guild_id: int,
+    campaign_id: str,
+    batch: int,
+    *,
+    now: int,
+) -> int | None:
+    """The website's Undo: `undo_fix`, but told apart from "nothing to undo". How many lines went
+    back; 0 when the fix's record already says it was undone (a retry after a crash, or the DM
+    screen's button got there first: the wish is met); None when nothing could be put back and
+    the fix is not recorded as undone (lines changed since, or no fix of this campaign)."""
+    lines = await undo_fix(transcripts, memory, guild_id, campaign_id, batch, now=now)
+    if lines:
+        return lines
+    done = await NamePassLog.of(transcripts).is_undone(guild_id, campaign_id, batch)
+    return 0 if done else None

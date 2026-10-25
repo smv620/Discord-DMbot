@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.web import recaps
+from dmbot.web import recaps, relationships
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
@@ -42,7 +42,9 @@ async def read_names_fixed(db: Database, session: Session, ref: str) -> dict[str
     }
 
 
-async def queue_undo(db: Database, session: Session, ref: str, fix_id: object) -> str:
+async def queue_undo_polled(
+    db: Database, session: Session, ref: str, fix_id: object
+) -> tuple[str, str]:
     """Queue the Undo of one fix for the bot and return the answer's id (the page polls the usual
     answers door). DM only: anyone else gets "not found" before anything is queued. The id is the
     fix's Undo number; one that is not a fix of this campaign is "not found" too. The bot puts
@@ -57,14 +59,11 @@ async def queue_undo(db: Database, session: Session, ref: str, fix_id: object) -
         raise RecapError("not_found")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, _at, _row = await recaps._one(conn, ref, session, marks=False)
-        cur = await conn.execute(
-            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
-            (gid, cid, None, "names-fixed-undo", "", fix_id, "", False),
-        )
-        found = await cur.fetchone()
-    got = found["r"] if found else None
-    if got is None:
-        raise RecapError("not_found")
-    if got["status"] != "ok":
-        raise RecapError("not_found" if got["status"] == "not_found" else str(got["status"]))
-    return str(got["id"])
+        answer = await relationships.queue_in(conn, gid, cid, "names-fixed-undo", fix_id)
+    # (the answers door the page polls: the same one the other recap-page edits use)
+    return answer, f"/me/campaigns/{gid}.{cid}/web/answers/{answer}"
+
+
+async def queue_undo(db: Database, session: Session, ref: str, fix_id: object) -> str:
+    """`queue_undo_polled`, the answer's id alone."""
+    return (await queue_undo_polled(db, session, ref, fix_id))[0]

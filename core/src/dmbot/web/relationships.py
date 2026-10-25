@@ -363,6 +363,23 @@ async def _queue(
     return str(got["id"])
 
 
+async def queue_in(conn: Any, guild_id: int, campaign_id: str, action: str, target: str) -> str:
+    """Queue one target-only action for a campaign the caller has already been matched to (the
+    recap page's Undo of a name-pass fix): the one place besides `_queue` that calls the door.
+    The door itself checks the caller is a DM and the target is theirs."""
+    cur = await conn.execute(
+        "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+        (guild_id, campaign_id, None, action, "", target, "", False),
+    )
+    found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError("not_found" if got["status"] == "not_found" else str(got["status"]))
+    return str(got["id"])
+
+
 async def queue_add(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue a new connection `{a, b, words, secret}` and return the answer's id. DM only; the
     names, the words and the secret switch are checked here, by the door and again by the bot."""
