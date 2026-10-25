@@ -118,6 +118,7 @@ async def build_me(
     incoming: list[dict[str, Any]] = []
     recording: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
+    emailed: dict[str, dict[str, Any]] = {}  # campaign ref -> its open offer by email (#2532)
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
     plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
 
@@ -144,7 +145,7 @@ async def build_me(
                 # next time anyone touches it, but has already ended.
                 offered = await conn.execute(
                     "SELECT o.id, o.campaign_id, c.name, o.to_user_id, o.from_name,"
-                    " o.to_name, o.created_at FROM campaign_handover_offers o"
+                    " o.to_name, o.created_at, o.via_email FROM campaign_handover_offers o"
                     " JOIN campaigns c ON c.id = o.campaign_id AND c.guild_id = o.guild_id"
                     " WHERE o.guild_id = %(g)s AND o.status = 'open'"
                     "   AND o.created_at + %(days)s > %(now)s"
@@ -232,6 +233,15 @@ async def build_me(
                 )
             for row in await offered.fetchall():
                 to_me = row["to_user_id"] == session.user_id
+                if row["via_email"]:
+                    # Never the address (it is not stored), and never in the offer lists: it has no
+                    # name to wait on. Only the owner's own card carries it (`handover`).
+                    if not to_me:
+                        emailed[f"{guild.id}.{row['campaign_id']}"] = {
+                            "sentAt": _iso_time(row["created_at"]),
+                            "expiresAt": _iso_time(row["created_at"] + HANDOVER_SECONDS),
+                        }
+                    continue
                 (incoming if to_me else outgoing).append(
                     {
                         "id": offer_ref(guild.id, row["id"]),
@@ -346,6 +356,9 @@ async def build_me(
 
     # The account's stored DMbot ID, kept for life (a move to a new Discord account keeps it).
     account_number = await dmbot_id(db, session.user_id)
+
+    for card in campaigns:  # (only the owner's own card can carry an offer)
+        card["handover"] = emailed.get(card["ref"]) if card["role"] == "owner" else None
 
     return {
         "user": {"id": str(session.user_id), "name": session.display_name},

@@ -98,8 +98,19 @@ NAMES
 """  # noqa: E501 (the examples are the prompt's own lines)
 
 
+def _speaking() -> str:
+    """The sentence about "I" and "my" (#2650). Always the word as written: the code, not the
+    model, turns it into the character the DM chose (a name the text never says would fail the
+    check that every end is really in the text), and without a choice nobody is guessed."""
+    return (
+        " (when the text says 'I', 'my' or 'me', write that word as the end, for example 'I': "
+        "never write a name for it, and never guess who is speaking)."
+    )
+
+
 def read_instructions(own: Mapping[str, str] | None = None) -> str:
-    """Pass 1: what the careful model is asked to do. The text follows as data."""
+    """Pass 1: what the careful model is asked to do. The text follows as data. "I" and "my"
+    stay as written (#2650): who is speaking is the DM's to say, and code maps the word."""
     kinds = ", ".join(bg.KINDS)
     theirs = "".join(f'; "{label}" ({key})' for key, label in (own or {}).items())
     return (
@@ -121,8 +132,9 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "- RELATIONSHIPS: only what the text says plainly between two of those names, in plain "
         "words (leads, is a member of, is in, is a friend of, is an enemy of, owns, works for, "
         f"knows, is family of, pays{theirs}). Write each relationship's two ends as the full "
-        "names you listed under NAMES, never as 'my brother', 'the twins' or a title (a "
-        "character's own backstory says 'I' or 'my': write that character's listed name). "
+        "names you listed under NAMES, never as 'my brother', 'the twins' or a title"
+        + _speaking()
+        + " "
         f"'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text, and holds "
         "both names or a word of each (one that does not is dropped).\n"
         "- A rumour, a guess or something nobody knows is never a relationship: put it under "

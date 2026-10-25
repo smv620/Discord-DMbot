@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.web import all_names
 from dmbot.web.names import _parse
@@ -61,10 +62,10 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
             {
                 "id": row["id"],
                 "words": link_words(str(row["predicate"]), str(row["detail"] or ""), directional),
-                # how it reads from the second name when that differs ("has a niece"), else None
-                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional)
-                if str(row["predicate"]) == "kin_of"
-                else None,
+                # how it reads from the second name when that differs ("has a niece", "has as a
+                # member"), else None; every connection that has a reading back sends it (#2666),
+                # so the page can write each line from the name in the middle
+                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
@@ -415,6 +416,66 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
     raise RecapError("bad_action")
 
 
+# Answers to the connections that wait for the DM (#2635, #2642): body `{kind, action, id, secret}`.
+# `kind` "claim" (said at the table; actions confirm, reject; `secret` is "truth but secret") or
+# "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
+# `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others), or
+# "which" (a "Which Mara?" question, #2652; actions pick, with `entity` the candidate chosen, and
+# neither).
+WAITING_QUEUE = {
+    ("claim", "confirm"): "claim-confirm",
+    ("claim", "reject"): "claim-reject",
+    ("backstory", "keep"): "backstory-keep",
+    ("backstory", "skip"): "backstory-skip",
+    ("backstory", "keep_all"): "backstory-keep-all",
+    ("which", "pick"): "backstory-which-pick",
+    ("which", "neither"): "backstory-which-neither",
+}
+
+
+async def queue_waiting(db: Database, session: Session, ref: str, body: object) -> str:
+    """Queue the DM's answer to one waiting connection, or Keep all. DM only (the door checks), and
+    the bot applies the very calls the DM screen's buttons make. Returns the answer's id.
+
+    A claim that cannot be kept ends with one of four `error` words, read back by `read_answer`:
+    `gone` (no longer waiting, or dropped for reading like an instruction: final),
+    `name_first` (a new name in it must be answered first), `stopped_recording` (someone it cites
+    is no longer recorded: the claim is deleted) and `cannot_write` (the rules refuse that fact
+    now, for example a plan: it stays waiting). A "Which Mara?" answer ends `gone` (answered or
+    dropped already, or the pick is not one of its candidates) or `queue_full` (too many
+    connections wait: answer some first; the question stays)."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    action = WAITING_QUEUE.get((str(body.get("kind")), str(body.get("action"))))
+    if action is None:
+        raise RecapError("bad_action")
+    secret = body.get("secret", False)
+    if not isinstance(secret, bool):
+        raise RecapError("bad_action")
+    text = ""
+    target = "" if action == "backstory-keep-all" else str(body.get("id") or "")
+    if action == "backstory-keep-all":
+        # Keep all keeps exactly the connections the page showed (ids), never one that turned
+        # ready while the DM was looking
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 50:
+            raise RecapError("bad_action")
+        if not all(isinstance(i, str) and ID_PATTERN.match(i) for i in ids):
+            raise RecapError("not_found")
+        text = " ".join(dict.fromkeys(ids))
+    elif not ID_PATTERN.match(target):
+        raise RecapError("not_found")
+    if action == "backstory-which-pick":
+        picked = str(body.get("entity") or "")  # one of the question's candidates (the door checks)
+        if not ID_PATTERN.match(picked):
+            raise RecapError("not_found")
+        text = picked
+    return await _queue(
+        db, session, ref, entity="", action=action, target=target, text=text,
+        flag=secret and action in ("claim-confirm", "backstory-keep"),
+    )  # fmt: skip
+
+
 async def queue_reveal(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue the DM's 👁️ Reveal to players on one name or connection (#2405): `{kind: "name"|"link",
     id}`. It makes the same calls as Discord's. A name stops being held back from the players
@@ -452,9 +513,20 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
-    if got is None or not str(got["action"]).startswith("link-"):
+    if got is None or not str(got["action"]).startswith(("link-", "claim-", "backstory-")):
         raise RecapError("not_found")
     edge = None
+    if str(got["action"]).startswith(("claim-", "backstory-")):
+        # a waiting connection answered: how it ended, and for Keep all how many were kept
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "edge": None,
+            "removed": False,
+            "kept": int(got["resultId"])
+            if got["action"] == "backstory-keep-all" and got["resultId"]
+            else None,
+        }
     if got["state"] == "done" and got["resultId"] and got["resultOther"]:
         around = await read_web(db, session, ref, center=got["resultId"], hops=1)
         pair = sorted((got["resultId"], got["resultOther"]))
@@ -464,4 +536,66 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         "error": got["error"],
         "edge": edge,
         "removed": got["state"] == "done" and edge is None,
+    }
+
+
+WAITING_COUNT_KEYS = ("claims", "backstory", "which")
+
+
+def _can_be_secret(row: dict[str, Any]) -> bool:
+    """Whether "truth but secret" is offered: not for a condition ("Roan is dead"), by the DM
+    screen's own rule (`claims.condition_of`), so both read it the same way."""
+    said = Extracted(
+        str(row["subject"]), str(row["relationship"]), str(row["object"]),
+        str(row.get("details") or ""), (), str(row["how"]),
+    )  # fmt: skip
+    return condition_of(said) is None
+
+
+def _claim_statement(row: dict[str, Any]) -> str:
+    """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
+    session's date; the words are the claim's own, as the DM screen shows them)."""
+    base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
+    details = str(row.get("details") or "").strip()
+    return f"{base} ({details})" if details else base
+
+
+async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """What waits for the signed-in DM of this campaign (#2652): the claims PlotBot found at the
+    table, the connections a backstory found (ready, or waiting on a name, with the upload each came
+    from) and the "Which Mara?" questions, with the counts the overview's "waiting for you" needs.
+    DM only (the door answers anyone else with nothing, `not_found` here). Read-only, and nothing
+    from a transcript: a name, a short quote the DM's own text, a label the DM typed."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (guild_id, campaign_id))
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("status") != "ok":
+        raise RecapError("not_found")
+    claims = [
+        {**c, "statement": _claim_statement(c), "canSecret": _can_be_secret(c)}
+        for c in got["claims"]
+    ]
+    backstory = [
+        {**b, "how": link_words(str(b["predicate"]), str(b["detail"]))} for b in got["backstory"]
+    ]
+    which = [{**w, "how": link_words(str(w["predicate"]), str(w["detail"]))} for w in got["which"]]
+    ready = sum(1 for b in backstory if b["ready"])
+    totals = got.get("totals") or {}
+    total_claims = max(int(totals.get("claims", 0)), len(claims))  # (the lists are cut at caps)
+    total_backstory = max(int(totals.get("backstory", 0)), len(backstory))
+    return {
+        "claims": claims,
+        "backstory": backstory,
+        "which": which,
+        "counts": {
+            "claims": total_claims,
+            "backstory": total_backstory,
+            "ready": ready,
+            "which": len(which),
+            "all": total_claims + total_backstory + len(which),
+        },
     }
