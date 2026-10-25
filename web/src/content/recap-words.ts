@@ -38,6 +38,14 @@ export const RECAP_VOICE_LIVE = false;
 // of it, so it never describes a link nobody can make.
 export const RECAP_SHARE_LIVE = false;
 
+// RECAP_REMAKE_LIVE is "Remake the voice" after editing a recap's words (#2630): the page asks the API
+// what making the audio again would do, says whether only the voice or everything is made again and
+// why, shows how far the voice has got, and offers "Fix a name everywhere" in the editor. It needs the
+// API of #2644 deployed and dev1 to have seen one word changed and only the voice made again. It moves
+// with the What's new entry "Fix a word, remake only the voice" and can only be true with
+// RECAP_AUDIO_LIVE.
+export const RECAP_REMAKE_LIVE = false;
+
 export const recapsHeading = "Recaps";
 
 // How many recaps a campaign can have in a calendar month (UTC), and how many of those can be
