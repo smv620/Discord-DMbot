@@ -1204,11 +1204,8 @@ class WhatPeopleBelieve(Editing):
         async def spent(cid: str, answer: str) -> None:
             await self.actions.spent(self.g, cid, answer)
 
-        async def batch_of(cid: str, uid: int, claim: str) -> int | None:
-            return await self.actions.batch_of(self.g, cid, uid, claim)
-
         return await self.apply_all(
-            waiting=wa.Waiting(self.claims, self.backstory, now, kept, spent, batch_of)
+            waiting=wa.Waiting(self.claims, self.backstory, now, kept, spent)
         )
 
     async def connections(self) -> list[Any]:
@@ -1274,8 +1271,24 @@ class WhatPeopleBelieve(Editing):
         self.assertEqual(undone.error, "")
         self.assertEqual(len((await self.listed())["readings"]), 1)
         # an Undo already used leaves a later retried Place with none
-        self.assertIsNone(await self.actions.batch_of(self.g, self.one.id, ALICE.id, ident))
+        self.assertIsNone(await self.claims.placed_batch(self.g, self.one.id, ident))
         self.assertFalse((await self.poll(first))["undoable"])
+
+    async def test_a_retaken_worker_leaves_a_keep_the_retry_can_still_undo(self) -> None:
+        """The keep was written but its answer never marked done (the worker died): the retried
+        Place finds the keep in the change log, so the page has its Undo and it works."""
+        ident = await self.reading()
+        retry = await self.answer("place", ident)  # queued, then the worker died mid-way ...
+        placed = await self.claims.place(self.g, self.one.id, ident, opted_in=self.recorded)
+        self.assertIsNotNone(placed.batch)  # ... after the keep was written
+        (outcome,) = await self.run_bot()
+        self.assertEqual((outcome.error, outcome.result_other), ("", str(placed.batch)))
+        self.assertTrue((await self.poll(retry))["undoable"])
+        await self.answer("undo", retry)
+        (undone,) = await self.run_bot()
+        self.assertEqual(undone.error, "")
+        self.assertIsNone(await self.claims.placed_batch(self.g, self.one.id, ident))
+        self.assertEqual(len((await self.listed())["readings"]), 1)  # the question is back
 
     async def test_an_undo_reads_who_is_recorded_inside_the_undo(self) -> None:
         ident = await self.reading()

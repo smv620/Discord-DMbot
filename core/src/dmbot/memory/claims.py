@@ -959,6 +959,28 @@ class ClaimStore:
             row = await scope.get(CLAIMS, claim_id, lock=False)
         return None if row is None else claim_of(row)
 
+    async def placed_batch(self, guild_id: int, campaign_id: str, claim_id: str) -> int | None:
+        """The change batch in which this reading was kept as a belief, if that keep has not been
+        undone: found from the change log itself (claims are not logged, but the belief a keep
+        writes on the claim's connection is), so it holds when the answer that made the keep never
+        got to record it (a retaken worker, #2412). None when it was never kept or was undone."""
+        async with self._store._read(guild_id, campaign_id) as scope:
+            claim = await scope.get(CLAIMS, claim_id, lock=False)
+            if claim is None or claim["status"] != CLAIM_CONFIRMED or not claim["fact_id"]:
+                return None
+            cur = await scope.conn.execute(
+                "SELECT c.batch FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+                " AND c.table_name = 'memory_beliefs' AND c.op IN ('insert', 'update')"
+                " AND c.source = 'dm'"
+                " AND c.undoes IS NULL AND c.after->>'relation_id' = %s"
+                " AND NOT EXISTS (SELECT 1 FROM memory_changes u WHERE u.guild_id = c.guild_id"
+                " AND u.campaign_id = c.campaign_id AND u.undoes = c.batch)"
+                " ORDER BY c.version DESC LIMIT 1",
+                (guild_id, campaign_id, claim["fact_id"]),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["batch"])
+
     async def counts(
         self, guild_id: int, campaign_id: str, *, opted_in: Collection[int]
     ) -> dict[str, int]:
