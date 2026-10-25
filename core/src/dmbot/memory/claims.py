@@ -1033,7 +1033,12 @@ class ClaimStore:
             )
 
     async def place(
-        self, guild_id: int, campaign_id: str, claim_id: str, *, opted_in: Collection[int]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        claim_id: str,
+        *,
+        opted_in: Collection[int] | Callable[[], Collection[int]],
     ) -> Any:
         """The DM places a reading as a belief (`placing.place`); `confirm` refuses a reading."""
         from dmbot.memory import placing  # (it builds on this module, so it is read late)

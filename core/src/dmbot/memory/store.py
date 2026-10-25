@@ -4479,13 +4479,17 @@ async def _forget_quotes(w: Changes, entity_ids: Sequence[str]) -> None:
     )
 
 
-def _upgrade(old: dict[str, Any], status: str, secret: bool, source: str) -> dict[str, Any]:
+def _upgrade(
+    old: dict[str, Any], status: str, secret: bool, source: str, said_by: str | None = None
+) -> dict[str, Any]:
     """What saying something already known again changes: a stronger status (only the
     DM confirms or un-rejects) and secret=True. Never weakens anything."""
     changes: dict[str, Any] = {}
-    # (a proposal's secret flag only keeps it from the players; it is not a secret the DM
-    # keeps, so a waiting theory restated or merged into a known fact never hides that fact)
-    if secret and not old["secret"] and not (status == PROPOSED and "predicate" in old):
+    # A guess connection's secret flag only keeps it from the players; it is not a secret the DM
+    # keeps, so one restated or merged into a known fact (`said_by`: whose connection it was, when
+    # that is not `source`) never hides that fact. Any other proposal escalates as before.
+    guess = status == PROPOSED and "predicate" in old and (said_by or source) == "extractor"
+    if secret and not old["secret"] and not guess:
         changes["secret"] = True
         if "said_as" in old:  # a name (relations are upgraded here too)
             changes["said_as"] = None  # a secret name is never sent to the narrator (#1419)
@@ -4943,7 +4947,7 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         others = [state[fact_id] for fact_id in sorted(near, key=order.__getitem__)]
         twin = duplicate_of(moved, others)
         if twin is not None:  # both said the same: keep one, with the stronger status
-            upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM)
+            upgrade = _upgrade(_relation_row(twin), moved.status, moved.secret, DM, moved.source)
             if moved.directional and not twin.directional:  # the one with a direction wins (#2457)
                 upgrade = {
                     **upgrade, "directional": True, "subject_id": moved.subject_id,

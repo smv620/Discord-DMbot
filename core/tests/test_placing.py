@@ -472,13 +472,79 @@ class ReadersAndWriters(Placing):
         )}  # fmt: skip
         self.assertNotIn((self.bram, self.sword), known)
 
-    async def test_what_quotes_a_fact_source_skips_readings(self) -> None:
-        import inspect
+    async def test_a_reading_is_never_quoted_as_the_source_of_a_fact(self) -> None:
+        from dmbot.memory.continuity import ContinuityStore
+        from dmbot.memory.recall import RecallService, _Fact
 
-        from dmbot.memory import continuity, recall
+        shown = readings.BeliefProposal(
+            "party", "Bram", "carries", "Heartseeker", 1.0, "revealed_fact", ("1",)
+        )
+        placed = await self.place(await self.waiting_reading(shown, "dm_said"))
+        fact = _Fact(
+            placed.relation_id, self.bram, self.sword, "carries", "", None, False, (), 0,
+            self.bram, self.sword,
+        )  # fmt: skip
+        async with self.memory._read(GUILD_A, self.c) as scope:
+            self.assertEqual(await RecallService(self.memory)._sources(scope, [fact]), {})
+        world = await ContinuityStore(self.memory)._world(GUILD_A, self.c, {DM})
+        self.assertNotIn(placed.relation_id, world.said)
 
-        self.assertIn("reading IS NULL", inspect.getsource(recall.RecallService._sources))
-        self.assertIn("reading IS NULL", inspect.getsource(continuity))
+    async def test_every_guess_on_a_connection_is_linked_so_the_last_one_out_takes_it(
+        self,
+    ) -> None:
+        other = 4242
+        a = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        placed = await self.place(a)
+        b = await self.waiting_reading(belief("pc:Bram", "theory", 0.25), "player_said")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_claims SET speaker_ids = ARRAY[%s] WHERE id = %s", (other, b)
+            )
+        await self.claims.place(GUILD_A, self.c, b, opted_in={DM, other})
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertEqual(sorted(e["target_id"] for e in links), sorted([a, b]))
+        await self.claims.forget_speaker(GUILD_A, DM)  # A leaves: B's guess keeps the connection
+        self.assertEqual(len(await self.connections()), 1)
+        await self.claims.forget_speaker(GUILD_A, other)  # B leaves: nothing is left of it
+        self.assertEqual(await self.connections(), [])
+
+    async def test_a_placement_racing_stop_recording_me_cannot_survive_it(self) -> None:
+        import asyncio
+
+        for n in range(3):
+            claim_id = await self.waiting_reading(
+                readings.BeliefProposal(
+                    "pc:Mira", "Bram", f"keeps{n}", "Heartseeker", 0.5, "theory", ("1",)
+                ),
+                "player_said",
+            )
+            await asyncio.gather(
+                self.place(claim_id),
+                self.claims.forget_speaker(GUILD_A, DM),
+                return_exceptions=True,  # (the loser is told the question is gone)
+            )
+            await self.claims.forget_speaker(GUILD_A, DM)  # and a later one finds nothing to do
+        self.assertEqual(await self.rows("memory_claims"), [])
+        self.assertEqual(await self.connections(), [])
+        self.assertEqual(
+            [b for b in await self.rows("memory_beliefs") if b["status"] == "theory"], []
+        )
+
+    async def test_who_is_recorded_is_asked_again_inside_the_write(self) -> None:
+        claim_id = await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        asked: list[int] = []
+
+        def recorded() -> set[int]:
+            asked.append(1)
+            return {DM} if len(asked) == 1 else set()  # fine at first, gone by the write
+
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.place(GUILD_A, self.c, claim_id, opted_in=recorded)
+        self.assertEqual(len(asked), 2)
+        self.assertEqual(await self.connections(), [])
+        self.assertEqual(await self.rows("memory_claims"), [])  # the question went with them
 
     async def test_keeping_a_waiting_theory_judges_it_as_a_fact_then(self) -> None:
         keep, inn, hall = [await self.add(n, type="place") for n in ("Keep", "Inn", "Hall")]

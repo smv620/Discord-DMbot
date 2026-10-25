@@ -24,7 +24,7 @@ one write with one Undo, and the claim keeps which connection it became (`fact_i
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -129,7 +129,7 @@ async def place(
     campaign_id: str,
     claim_id: str,
     *,
-    opted_in: Collection[int],
+    opted_in: Collection[int] | Callable[[], Collection[int]],
 ) -> Placed:
     """The DM places a reading (see the module's note). The same early exits as `confirm` (the
     question is gone, a plan, an instruction, someone stopped being recorded), the names asked
@@ -151,11 +151,8 @@ async def place(
         async with store._write(guild_id, campaign_id, "extractor") as w:
             await w.update(CLAIMS, claim_id, {"status": CLAIM_DROPPED, "reason": INJECTION_REASON})
         raise MemoryRuleError(ODD_NOW)
-    if not claim.speaker_ids or any(s not in opted_in for s in claim.speaker_ids):
-        async with store._write(guild_id, campaign_id, DM) as w:
-            await w.delete(CLAIMS, claim_id)
-            await evidence.placeholder_claims(w.conn, guild_id, [claim_id])
-        raise MemoryRuleError(STOPPED_NOW)
+    if not _recorded(claim, opted_in):
+        await _stopped(store, guild_id, campaign_id, claim_id)
     reading = _checked(claim.reading)
     async with store._read(guild_id, campaign_id) as scope:
         onto = await _load_ontology(scope)
@@ -183,21 +180,43 @@ async def place(
         if isinstance(found, str) or found[0] in waiting or found[0] not in names.roles:
             raise MemoryRuleError(UNKNOWN_CHARACTER)
         holder = found[0]
+    stopped = False
     async with store._write(guild_id, campaign_id, DM) as w:
         current = await w.get(CLAIMS, claim_id)
         if current is None or current["status"] != CLAIM_PROPOSED:
             raise MemoryRuleError(GONE)
-        relation_id, belief, flags = await _place_in(
-            store, w, claim, reading, subject_id, term.key, object_id,
-            label, holder, names.roles,
-        )  # fmt: skip
-        row = await w.update(
-            CLAIMS,
-            claim_id,
-            {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": relation_id},
-        )
-        batch = w.batch
+        # Asked again under the lock, after every await above: a caller that can say who is
+        # recorded *now* passes a function (a snapshot taken earlier is all a collection is).
+        if _recorded(claim, opted_in):
+            relation_id, belief, flags = await _place_in(
+                store, w, claim, reading, subject_id, term.key, object_id,
+                label, holder, names.roles,
+            )  # fmt: skip
+            row = await w.update(
+                CLAIMS,
+                claim_id,
+                {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": relation_id},
+            )
+            batch = w.batch
+        else:
+            stopped = True  # (raising here would roll back the clean-up, so it is done after)
+    if stopped:
+        await _stopped(store, guild_id, campaign_id, claim_id)
     return Placed(claim_of(row), relation_id, belief, tuple(flags), batch)
+
+
+def _recorded(claim: Claim, opted_in: Collection[int] | Callable[[], Collection[int]]) -> bool:
+    """Is everyone whose words the claim holds recorded now?"""
+    now = opted_in() if callable(opted_in) else opted_in
+    return bool(claim.speaker_ids) and all(s in now for s in claim.speaker_ids)
+
+
+async def _stopped(store: Any, guild_id: int, campaign_id: str, claim_id: str) -> None:
+    """Someone whose words it holds stopped being recorded: the question goes, and it says so."""
+    async with store._write(guild_id, campaign_id, DM) as w:
+        await w.delete(CLAIMS, claim_id)
+        await evidence.placeholder_claims(w.conn, guild_id, [claim_id])
+    raise MemoryRuleError(STOPPED_NOW)
 
 
 async def _view_id(
@@ -258,13 +277,14 @@ async def _place_in(
         made_by=None if keeps else EXTRACTOR,
     )  # fmt: skip
     host = relation.id
-    if host not in before:
-        if not keeps:  # this placement made it to hold a guess: it stands on this claim
-            await evidence.add_in(
-                w, kind=evidence.CLAIM, target_id=claim.id, relation_id=host,
-                session_started_at=claim.session_started_at, trusted=True,
-            )  # fmt: skip
-    else:
+    if not keeps and waiting_guess(relation):
+        # The connection stands on every guess placed on it, not only the first one's, so each
+        # person's Stop recording me sees it (and the last one out takes it with them).
+        await evidence.add_in(
+            w, kind=evidence.CLAIM, target_id=claim.id, relation_id=host,
+            session_started_at=claim.session_started_at, trusted=True,
+        )  # fmt: skip
+    if host in before:
         if keeps and relation.status == PROPOSED and not waiting_guess(relation):
             raise MemoryRuleError(WAITING_ALREADY)  # someone else's question: not changed here
         if status == SECRET_PLOT and relation.status == CONFIRMED and not relation.secret:

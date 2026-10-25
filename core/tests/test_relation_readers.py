@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import re
+import unittest
 from pathlib import Path
 
 from tests.pg import DatabaseTest
@@ -89,7 +90,7 @@ def _store_functions() -> set[str]:
     return found
 
 
-class WhoReadsConnections(DatabaseTest):
+class WhoReadsConnections(unittest.TestCase):
     def test_every_file_that_touches_the_table_is_on_the_reviewed_list(self) -> None:
         found = {
             str(path.relative_to(SRC))
@@ -107,6 +108,8 @@ class WhoReadsConnections(DatabaseTest):
     def test_every_function_in_the_store_that_touches_the_table_is_reviewed(self) -> None:
         self.assertEqual(sorted(_store_functions()), sorted(STORE))
 
+
+class TheDoors(DatabaseTest):
     async def test_every_door_that_reads_connections_filters_confirmed(self) -> None:
         """The doors as the database has them (the last definition of each, not a string in the
         Python that builds it): each must filter on `status = 'confirmed'`."""
@@ -119,7 +122,21 @@ class WhoReadsConnections(DatabaseTest):
             )
             doors = {r["proname"]: r["prosrc"] for r in await cur.fetchall()}
         self.assertTrue(doors)  # the pin is looking at something
-        loose = sorted(
-            name for name, src in doors.items() if not re.search(r"status\s*=\s*'confirmed'", src)
-        )
+        keywords = {"where", "on", "join", "left", "inner", "set", "using", "as", "cross", "for"}
+        loose: list[str] = []
+        for name, src in doors.items():
+            for found in re.finditer(r"memory_relations(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?", src):
+                alias = found.group(1)
+                alias = None if alias is None or alias.lower() in keywords else alias
+                pattern = (  # the filter on THIS use of the table, not on any other table
+                    rf"\b{alias}\.status\s*=\s*'confirmed'"
+                    if alias
+                    else r"(?<![.\w])status\s*=\s*'confirmed'"
+                )
+                if not re.search(pattern, src):
+                    loose.append(f"{name} ({alias or 'no alias'})")
         self.assertEqual(loose, [], "a door reads connections without the confirmed filter")
+
+
+if __name__ == "__main__":
+    unittest.main()
