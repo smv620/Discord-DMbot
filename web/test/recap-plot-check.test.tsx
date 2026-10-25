@@ -2,6 +2,7 @@
 // @vitest-environment happy-dom
 // The Plot check on a recap's page (#2124): PlotBot's questions, the four answers, the chat with Save and
 // Not that, and the words Approve waits on. It shows only while PLOT_CHECK_LIVE is true (false today).
+import { workWords } from "../src/content/work-progress";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -249,6 +250,8 @@ describe("Approve never stays locked", () => {
     const blocked = await watch(async () => never);
     expect(blocked).toHaveBeenLastCalledWith(null);
     expect(screen.getByText(w.gaveUp)).toBeTruthy();
+    expect(screen.getByText(workWords.stoppedLooking)).toBeTruthy(); // the clock stopped with the looking
+    expect(screen.queryByText(/Running for/)).toBeNull();
   });
 
   it("keeps looking after a look fails, and still opens Approve at the limit", async () => {
@@ -293,5 +296,30 @@ describe("what the real API can say", () => {
     fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.leave, 1) }));
     expect(await within(issue(1)).findByText(w.problem.stale!)).toBeTruthy();
     await waitFor(() => expect(calls(api, "plotCheck").length).toBeGreaterThan(before));
+  });
+  describe("a message PlotBot never answers", () => {
+    async function stuckTalk(afterMs: number) {
+      live.on = true;
+      vi.useFakeTimers();
+      const api = mockApi("table");
+      api.plotChat = async () => [{ id: "m0", role: "dm", text: "hi", state: "waiting", error: "", proposals: [], at: 1790000000 }];
+      render(<RecapPlotCheck api={api} refId={draft.ref} text="x" onBlocked={() => {}} onFix={() => {}} />);
+      await vi.advanceTimersByTimeAsync(200);
+      fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+      await vi.advanceTimersByTimeAsync(afterMs);
+    }
+
+    it("says its own words after a quiet minute, and the clock still runs while the page is still looking", async () => {
+      await stuckTalk(70_000);
+      expect(screen.getByText(w.chatQuiet)).toBeTruthy(); // not the generic "try again", which has no button here
+      expect(screen.getByText(/Running for/)).toBeTruthy();
+    });
+
+    it("stops the clock and says to come back when the page gives up", async () => {
+      await stuckTalk(300_000);
+      expect(screen.getByText(w.chatSlow)).toBeTruthy();
+      expect(screen.getByText(workWords.stoppedLooking)).toBeTruthy();
+      expect(screen.queryByText(/Running for/)).toBeNull();
+    });
   });
 });

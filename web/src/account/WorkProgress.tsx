@@ -30,11 +30,14 @@ export interface WorkProgressProps {
   frozen?: boolean | undefined;
   /** Plain words on a failure, from the API. */
   reason?: string | null | undefined;
+  /** The page has no sign of progress to show (a move, a download), so the "last moved" line is left out
+   * rather than reading as a stuck job. Only the time running is shown. */
+  progressUnknown?: boolean | undefined;
   /** What to do next, when the page knows better than the general words. */
   whatToDo?: string | undefined;
 }
 
-export default function WorkProgress({ stage, done, total, unit, startedAt, updatedAt, serverNow, state, waiting, frozen, reason, whatToDo }: WorkProgressProps) {
+export default function WorkProgress({ stage, done, total, unit, startedAt, updatedAt, serverNow, state, waiting, frozen, progressUnknown, reason, whatToDo }: WorkProgressProps) {
   // The server's clock now, kept as its gap from this browser's clock when the answer arrived.
   const gap = useRef(0);
   const lastServerNow = useRef<number | null | undefined>(undefined);
@@ -89,7 +92,7 @@ export default function WorkProgress({ stage, done, total, unit, startedAt, upda
         <p class="small muted">
           {elapsed !== null && <span>{words.running(elapsed)} </span>}
           {/* A stall already says how long it has been quiet. */}
-          {state === "stalled" ? null : since === null ? words.noChangeYet : since < 5 ? words.justNow : words.lastChange(words.duration(since))}
+          {state === "stalled" || progressUnknown ? null : since === null ? words.noChangeYet : since < 5 ? words.justNow : words.lastChange(words.duration(since))}
         </p>
       )}
     </div>
