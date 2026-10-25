@@ -418,6 +418,7 @@ from dmbot.transcript.models import (
     TranscriptSession,
     line_ref,
 )
+from dmbot.transcript.name_pass_log import NamePassLog
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -9567,6 +9568,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._name_pass_asks[session_id] = [
                 (c.heard, c.times) for c in (*report.unsure, *report.new)
             ]
+        try:  # kept for the website's recap page (#2684); never stops the repair
+            await NamePassLog.of(self.transcripts).record(gid, cid, session_id, report, now=now)
+        except Exception:
+            log.exception("The name pass report couldn't be kept")
         if hold is not None:
             if not report.quiet:
                 hold.append(report)

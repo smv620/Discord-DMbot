@@ -3499,6 +3499,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ),
     # The recap's names to check, answered on its page (#2113): the read door and the queue door.
     ("dmbot_recap_names_read", "dmbot_recap_names_read(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_recap_names_fixed", "dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)"),  # (#2684)
     (
         "dmbot_name_answer_add",
         "dmbot_name_answer_add(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT)",
@@ -14738,6 +14739,116 @@ WEB_READINGS = (
     """
 )
 
+
+# What the name pass did to one session (#2684, #2628), kept so the website can show it and undo it
+# (it was only ever posted to Discord, and an Undo deletes the lines that said a fix was made).
+# `name_pass_reports`: one row for the session, the counts the DM is told (words left as heard,
+# names offered as new, words left alone near a secret name) and whether PlotBot's answer was cut.
+# `name_pass_fixes`: one row for each name fixed, with the Undo number, the list name and how many
+# times, and when it was undone. Counts and the campaign's own list names only: the spellings as
+# heard stay in `transcript_respells` (read from there while the fix stands, so they are never
+# copied and go with the lines they came from). Deleted with the session; its keys follow a campaign
+# that moves to another server.
+NAME_PASS_REPORTS = (
+    """
+    CREATE TABLE name_pass_reports (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_id  TEXT NOT NULL,
+        unsure      INTEGER NOT NULL DEFAULT 0 CHECK (unsure >= 0),
+        new_names   INTEGER NOT NULL DEFAULT 0 CHECK (new_names >= 0),
+        guarded     INTEGER NOT NULL DEFAULT 0 CHECK (guarded >= 0),
+        cut         BOOLEAN NOT NULL DEFAULT false,
+        made_at     BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, campaign_id, session_id),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (session_id, guild_id)
+            REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE TABLE name_pass_fixes (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_id  TEXT NOT NULL,
+        batch       BIGINT NOT NULL,
+        name        TEXT NOT NULL CHECK (char_length(name) BETWEEN 1 AND 200),
+        times       INTEGER NOT NULL CHECK (times >= 0),
+        made_at     BIGINT NOT NULL,
+        undone_at   BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, session_id, batch),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (session_id, guild_id)
+            REFERENCES transcript_sessions (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    -- (an Undo knows its batch and campaign, not the session)
+    CREATE INDEX name_pass_fixes_by_batch ON name_pass_fixes (guild_id, campaign_id, batch);
+    -- (the foreign keys to a session: deleting a session finds its rows by index, not a scan;
+    -- the reports' primary key leads with the campaign, so it does not serve that)
+    CREATE INDEX name_pass_reports_by_session ON name_pass_reports (session_id, guild_id);
+    CREATE INDEX name_pass_fixes_by_session ON name_pass_fixes (session_id, guild_id);
+    """
+    + _isolate("name_pass_reports")
+    + _isolate("name_pass_fixes")
+)
+
+
+# The recap page's "Names fixed this session" (#2684): what the name pass did to the recap's
+# session, read for a DM of the campaign only (anyone else gets NULL). The counts and each fix come
+# from `name_pass_reports` and `name_pass_fixes`; the spellings as heard are read from
+# `transcript_respells` while a fix stands (a fix that was undone has none) and are never copied.
+# They are words from a transcript, for the campaign's DM and no one else: the API never logs them.
+# A new function: no row changes.
+NAMES_FIXED_DOOR = r"""
+    CREATE FUNCTION dmbot_recap_names_fixed(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE sid TEXT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT s.id INTO sid FROM transcript_sessions s
+         WHERE s.guild_id = g AND s.campaign_id = c AND s.started_at = at_
+         ORDER BY s.id LIMIT 1;
+        RETURN jsonb_build_object(
+            'fixed', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', f.batch::text, 'name', f.name, 'times', f.times,
+                    'forms', COALESCE((
+                        SELECT jsonb_agg(jsonb_build_object('heard', x.form, 'times', x.n)
+                                         ORDER BY x.n DESC, x.form)
+                        FROM (SELECT form, count(*) AS n
+                              FROM transcript_respells r, unnest(r.was) AS form
+                              WHERE r.guild_id = g AND r.campaign_id = c
+                                AND r.session_id = f.session_id AND r.batch = f.batch
+                              GROUP BY form ORDER BY count(*) DESC, form LIMIT 12) x
+                    ), '[]'::jsonb),
+                    'undone', f.undone_at IS NOT NULL)
+                    ORDER BY f.times DESC, f.name, f.batch)
+                FROM name_pass_fixes f
+                WHERE f.guild_id = g AND f.campaign_id = c AND f.session_id = sid), '[]'::jsonb),
+            'unsure', COALESCE((SELECT p.unsure FROM name_pass_reports p
+                WHERE p.guild_id = g AND p.campaign_id = c AND p.session_id = sid), 0),
+            'new', COALESCE((SELECT p.new_names FROM name_pass_reports p
+                WHERE p.guild_id = g AND p.campaign_id = c AND p.session_id = sid), 0),
+            'guarded', COALESCE((SELECT p.guarded FROM name_pass_reports p
+                WHERE p.guild_id = g AND p.campaign_id = c AND p.session_id = sid), 0));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -15013,12 +15124,19 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0238_contradiction_grades",
         CONTRADICTION_GRADES,
     ),  # PlotBot's grade of each candidate (#2660)
+    (
+        "0239_name_pass_reports",
+        NAME_PASS_REPORTS,
+    ),  # what the name pass did, for the website (#2684)
+    ("0240_names_fixed_door", NAMES_FIXED_DOOR),  # the recap page reads it (#2684)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
     "memory_contradictions",
+    "name_pass_reports",
+    "name_pass_fixes",
     "memory_evidence",
     "recap_upload_rights",
     "plot_chat",

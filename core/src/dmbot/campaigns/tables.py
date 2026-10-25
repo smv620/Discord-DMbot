@@ -128,6 +128,10 @@ NOT_IN_BACKUP: dict[str, str] = {
     "owner_campaigns": "the owner's own list, rebuilt from who owns the restored campaign "
     "(PLAN:3722)",
     "merge_restores": "the undo record of one name merge (PLAN:1971)",
+    "name_pass_reports": "the name pass's report and Undo record: a run's history, the fixes "
+    "themselves are in the transcript (#2684)",
+    "name_pass_fixes": "the name pass's report and Undo record: a run's history, the fixes "
+    "themselves are in the transcript (#2684)",
     "memory_contradictions": "PlotBot's contradiction candidates and grades: made again by the "
     "next pass, nothing the DM wrote (#2660)",
     # Decided on #2552 (Supervisor, 2026-10-23):
