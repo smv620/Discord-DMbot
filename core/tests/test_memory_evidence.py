@@ -589,3 +589,51 @@ class ClaimLinesLeave(WordsBase):
                 "SELECT lines FROM memory_claims WHERE campaign_id = %s", (copy,)
             )
             self.assertEqual([r["lines"] for r in await cur.fetchall()], [[]])
+
+
+class ClaimSpeakersLeave(ClaimLinesLeave):
+    """The same for `speaker_ids` (#2679): the id goes, the claim stays, a backup never has it."""
+
+    async def speakers_of(self, claim_id: str) -> list[int] | None:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT speaker_ids FROM memory_claims WHERE id = %s", (claim_id,)
+            )
+            row = await cur.fetchone()
+        return None if row is None else list(row["speaker_ids"])
+
+    async def test_a_claim_with_two_speakers_keeps_the_other_one(self) -> None:
+        await self.claim("a" * 32, "confirmed", [self.mine, self.friends], [ME, FRIEND])
+        await self.store.delete_person(GUILD, ME)
+        self.assertEqual(await self.speakers_of("a" * 32), [FRIEND])
+
+    async def test_a_claim_with_only_that_speaker_stays_with_an_empty_list(self) -> None:
+        import json
+
+        await self.claim("b" * 32, "confirmed", [self.mine], [ME])
+        await self.store.delete_person(GUILD, ME)
+        self.assertEqual(await self.speakers_of("b" * 32), [])
+        self.assertEqual(await self.lines_of("b" * 32), [])
+        async with self.db.guild(GUILD) as conn:  # still read, and still backed up
+            claims = [r for r in await MemorySection().dump(conn, GUILD, self.campaign.id)]
+        mine = [r for r in claims if r["table"] == "claim" and r["id"] == "b" * 32]
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(mine[0]["speaker_ids"], [])
+        self.assertNotIn(f"[{ME}", json.dumps(mine))
+
+    async def test_stop_recording_me_takes_my_id_out_of_confirmed_claims(self) -> None:
+        from dmbot.memory.claims import ClaimStore
+
+        await self.claim("c" * 32, "confirmed", [self.mine, self.friends], [ME, FRIEND])
+        await ClaimStore(self.memory).forget_speaker(GUILD, ME)
+        self.assertEqual(await self.speakers_of("c" * 32), [FRIEND])
+
+    async def test_retention_removes_a_speaker_only_when_no_line_of_theirs_is_left(self) -> None:
+        other = f"elsewhere:1000:{FRIEND}"  # a line of FRIEND's in a session that stays
+        await self.claim("d" * 32, "confirmed", [self.mine, self.friends, other], [ME, FRIEND])
+        await self.store.end_session(GUILD, self.first, START + 100)
+        await self.store.delete_session_transcript(
+            GUILD, self.campaign.id, self.first, START + 10**8, START + 10**8
+        )
+        self.assertEqual(await self.lines_of("d" * 32), [other])
+        self.assertEqual(await self.speakers_of("d" * 32), [FRIEND])
