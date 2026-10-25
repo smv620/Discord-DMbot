@@ -361,7 +361,7 @@ class Placing(ConfirmedMemoryTest):
         ]
         self.assertEqual(sorted(e["target_id"] for e in links), sorted([first, second]))
         await self.memory.undo(
-            GUILD_A, self.c, placed.batch, source="dm",  # type: ignore[arg-type]
+            GUILD_A, self.c, placed.batch, source="dm",
             after=lambda c: ClaimStore.reopen_in(c, second),
         )  # fmt: skip
         links = [
