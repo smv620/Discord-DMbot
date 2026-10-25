@@ -14733,6 +14733,10 @@ NAME_PASS_REPORTS = (
     );
     -- (an Undo knows its batch and campaign, not the session)
     CREATE INDEX name_pass_fixes_by_batch ON name_pass_fixes (guild_id, campaign_id, batch);
+    -- (the foreign keys to a session: deleting a session finds its rows by index, not a scan;
+    -- the reports' primary key leads with the campaign, so it does not serve that)
+    CREATE INDEX name_pass_reports_by_session ON name_pass_reports (session_id, guild_id);
+    CREATE INDEX name_pass_fixes_by_session ON name_pass_fixes (session_id, guild_id);
     """
     + _isolate("name_pass_reports")
     + _isolate("name_pass_fixes")
