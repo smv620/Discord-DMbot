@@ -22,8 +22,9 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_memory_claims import said
 from tests.test_recap_web import BOB, HEADERS, NOW, callers
+from tests.test_web_all_names import MEMBER
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
-from tests.test_web_relationships import BOB_USER, MEMBER, Web
+from tests.test_web_relationships import BOB_USER, Web
 
 
 class TheSecretOffer(unittest.TestCase):
@@ -1188,7 +1189,7 @@ class WhatPeopleBelieve(Editing):
                 "SELECT id FROM memory_claims WHERE reading IS NOT NULL AND status = 'proposed'"
             )
             # (two made in the same second share a created_at: the one not handed out before)
-            made = getattr(self, "made", set())
+            made: set[str] = getattr(self, "made", set())
             (fresh,) = [str(r["id"]) for r in await cur.fetchall() if str(r["id"]) not in made]
             self.made = made | {fresh}
             return fresh

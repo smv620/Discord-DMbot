@@ -20,7 +20,7 @@ import { accountWords as audioWords, price as audioPrice } from "../content/reca
 import { campaignPage as campaignWords } from "../content/campaign-page";
 import { panelWords, remakeSentence, remakeWords } from "../content/recap-panel";
 import { stageWords } from "../content/work-progress";
-import { RECAP_AUDIO_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { PLOT_CHECK_LIVE, RECAP_AUDIO_LIVE, RECAP_NAME_CHECKS_LIVE, RECAP_REMAKE_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { RECAP_MAKE_LIVE, makeWords } from "../content/recap-make";
 import {
   ApiError,
@@ -36,24 +36,18 @@ import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
 import RecapUnchecked from "./RecapUnchecked";
 import RecapApprove from "./RecapApprove";
-import RecapMake from "./RecapMake";
 import RecapEmailLine from "./RecapEmail";
-import RecapFix from "./RecapFix";
 import RecapFixName from "./RecapFixName";
 import { audioIsStale, useRemake } from "./useRemake";
 import WorkProgress from "./WorkProgress";
+import LazyPanel from "./LazyPanel";
 import RecapProgress, { discordLink } from "./RecapProgress";
 import RecapShareControls from "./RecapShare";
 import RecapChoicesPart from "./RecapChoices";
 import { keepFocus } from "./focus";
-import RecapNames from "./RecapNames";
-import NamesFixed from "./NamesFixed";
-import PresentPerScene from "./PresentPerScene";
-import RecapReport from "./RecapReport";
 import { NAMES_FIXED_LIVE } from "../content/names-fixed-words";
 import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
 import { AFTER_SESSION_REPORT_LIVE } from "../content/report-words";
-import RecapPlayer from "./RecapPlayer";
 import CampaignNav from "./CampaignNav";
 
 const POLL_MS = 5000;
@@ -210,7 +204,9 @@ function List({ api, campaign }: { api: AccountApi; campaign: string | null }) {
         </ul>
       )}
       {/* Recaps for past sessions (#2610): one campaign's DMs only, and only behind its own switch. */}
-      {RECAP_MAKE_LIVE && RECAPS_LIVE && campaign && <RecapMake api={api} campaignRef={campaign} />}
+      {RECAP_MAKE_LIVE && RECAPS_LIVE && campaign && (
+        <LazyPanel load={() => import("./RecapMake")} what="the recaps for past sessions" props={{ api, campaignRef: campaign }} />
+      )}
       {/* Behind the same switch as the list's other promises (#1423): nothing while recaps are off. */}
       {RECAPS_LIVE &&
         allowanceLines(load.thisMonth, RECAP_AUDIO_LIVE, new Date()).map((line) => (
@@ -404,7 +400,7 @@ function AudioPanel({
     <section class="panel" aria-labelledby="recap-audio-panel">
       <h3 id="recap-audio-panel">{panelWords.heading}</h3>
       {playable && (links.voice || links.music) && (
-        <RecapPlayer voice={links.voice} music={links.music} onFail={failed} />
+        <LazyPanel load={() => import("./RecapPlayer")} what="the audio player" props={{ voice: links.voice, music: links.music, onFail: failed }} />
       )}
       {playable && links.mix && (
         <div>
@@ -523,6 +519,10 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   // The email switch as the DM has it now (null until the choices have loaded), so the line while a
   // recap is made follows it instead of the first read of the recap.
   const [emailOn, setEmailOn] = useState<boolean | null>(null);
+  // The Plot check (#2124): why Approve waits, and words its "Fix the recap" puts in the fix box.
+  const [plotWhy, setPlotWhy] = useState<string | null>(null);
+  const [plotNonce, setPlotNonce] = useState(0);
+  const [fixPrefill, setFixPrefill] = useState<{ n: number; text: string } | null>(null);
   // Set when Try again is accepted: the tries the failure had, and how long a read of it is ignored.
   const staleFailure = useRef<{ triesLeft: number; until: number } | null>(null);
 
@@ -904,13 +904,46 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         )
       )}
 
-      {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
+      {!editing && (
+        <LazyPanel
+          key={`fix-${recap.ref}`}
+          load={() => import("./RecapFix")}
+          what="the fix-a-word tool"
+          props={{ api, recap, onRecap: setRecap, prefill: fixPrefill }}
+        />
+      )}
+      {/* (the switch is tested here so the build drops a panel that is not live: the page stays within its weight budget) */}
+      {RECAP_NAME_CHECKS_LIVE && (
+        <LazyPanel
+          key={`names-${recap.ref}`}
+          load={() => import("./RecapNameChecks")}
+          what="the names to check"
+          props={{ api, refId: recap.ref }}
+        />
+      )}
+      {PLOT_CHECK_LIVE && !editing && recap.status === "draft" && recap.canEdit && (
+        <LazyPanel
+          key={`plot-${recap.ref}`}
+          load={() => import("./RecapPlotCheck")}
+          what="the plot check"
+          props={{
+            api,
+            refId: recap.ref,
+            text: recap.text,
+            onBlocked: setPlotWhy,
+            reloadKey: plotNonce,
+            onFix: (text: string) => setFixPrefill((was) => ({ n: (was?.n ?? 0) + 1, text })),
+          }}
+        />
+      )}
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
           recap={recap}
           onRecap={setRecap}
           pageFocus={() => headingRef.current}
+          blockedBy={plotWhy}
+          onPlotOpen={() => setPlotNonce((n) => n + 1)}
           remake={remake}
         />}
       {!editing && (
@@ -924,11 +957,30 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
-      {!editing && <RecapNames api={api} recapRef={recap.ref} />}
-      {PRESENT_PER_SCENE_LIVE && !editing && <PresentPerScene key={recap.ref} api={api} recap={recap} onRecap={setRecap} />}
-      {NAMES_FIXED_LIVE && !editing && recap.canEdit && <NamesFixed key={recap.ref} api={api} recapRef={recap.ref} />}
+      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this campaign" props={{ api, recapRef: recap.ref }} />}
+      {PRESENT_PER_SCENE_LIVE && !editing && (
+        <LazyPanel
+          key={`present-${recap.ref}`}
+          load={() => import("./PresentPerScene")}
+          what="who was in each scene"
+          props={{ api, recap, onRecap: setRecap }}
+        />
+      )}
+      {NAMES_FIXED_LIVE && !editing && recap.canEdit && (
+        <LazyPanel
+          key={`fixed-${recap.ref}`}
+          load={() => import("./NamesFixed")}
+          what="the names fixed this session"
+          props={{ api, recapRef: recap.ref }}
+        />
+      )}
       {AFTER_SESSION_REPORT_LIVE && !editing && recap.campaign && recap.canEdit && (
-        <RecapReport key={`${recap.campaign}.${recap.sessionAt}`} api={api} campaignRef={recap.campaign} sessionAt={recap.sessionAt} />
+        <LazyPanel
+          key={`${recap.campaign}.${recap.sessionAt}`}
+          load={() => import("./RecapReport")}
+          what="the after-session report"
+          props={{ api, campaignRef: recap.campaign, sessionAt: recap.sessionAt }}
+        />
       )}
       {!editing &&
         !recap.working &&
