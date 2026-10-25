@@ -237,6 +237,38 @@ class ThePass(NamesTest):
         self.assertTrue(lookup.keep_as_heard("Keirandal"))
         self.assertEqual(KEEP, "keep")
 
+    async def test_the_report_is_kept_for_the_website_and_an_undo_marks_it(self) -> None:
+        from dmbot.transcript.name_pass_log import NamePassLog
+
+        log = NamePassLog.of(self.transcripts)
+        self.assertIsNone(await log.report(GUILD, self.campaign.id, self.session))
+        self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
+        await self.run_pass()
+        kept = await log.report(GUILD, self.campaign.id, self.session)
+        assert kept is not None
+        self.assertEqual((kept.unsure, kept.new_names, kept.guarded, kept.cut), (0, 0, 0, False))
+        (fix,) = kept.fixes
+        self.assertEqual((fix.name, fix.times, fix.undone_at), ("Kethrandil", 3, None))
+        button = self.bot.post.await_args.args[2].children[0]  # type: ignore[attr-defined]
+        it = self.it()
+        it.message = SimpleNamespace(content="Fixed.", id=1, edit=AsyncMock(), components=[])
+        await button.callback(it)
+        after = await log.report(GUILD, self.campaign.id, self.session)
+        assert after is not None
+        self.assertIsNotNone(after.fixes[0].undone_at)
+        # and another campaign never reads it
+        other = (await self.campaigns.create(GUILD, "Other", DM)).id
+        self.assertIsNone(await log.report(GUILD, other, self.session))
+
+    async def test_the_counts_of_what_was_not_sure_are_kept_too(self) -> None:
+        from dmbot.transcript.name_pass_log import NamePassLog
+
+        self.ai.complete.return_value = reply({"n": 1, "answer": "unsure", "name": ""})
+        await self.run_pass()
+        kept = await NamePassLog.of(self.transcripts).report(GUILD, self.campaign.id, self.session)
+        assert kept is not None
+        self.assertEqual((kept.unsure, kept.fixes), (1, ()))
+
     async def test_only_a_dm_may_press_undo(self) -> None:
         self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
         await self.run_pass()
