@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { KB, checkBuild, localReferences, table, weighPage } from "../scripts/weight.mjs";
+import { KB, checkBuild, localReferences, onDemandReferences, table, weighPage } from "../scripts/weight.mjs";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -51,7 +51,9 @@ describe("what a page loads", () => {
   it("follows the minified imports a build writes, with no space before the quote", () => {
     expect(
       localReferences(`import{r as e}from"./a.js";import{b}from"./b.js";export{x}from"./c.js";import"./d.js";const f=()=>import("/_astro/e.js")`, "js").sort(),
-    ).toEqual(["./a.js", "./b.js", "./c.js", "./d.js", "/_astro/e.js"]);
+    ).toEqual(["./a.js", "./b.js", "./c.js", "./d.js"]);
+    // (a chunk written as import("…") is loaded on demand, not up front)
+    expect(onDemandReferences(`const f=()=>import("/_astro/e.js");import{r as e}from"./a.js"`)).toEqual(["/_astro/e.js"]);
     expect(localReferences(`import x from"https://other.example/a.js"`, "js")).toEqual([]);
     const dist = build({
       "p.html": `<astro-island component-url="/_astro/Island.js"></astro-island>`,
@@ -61,6 +63,45 @@ describe("what a page loads", () => {
     const r = weighPage(dist, "p.html");
     expect([...r.files.keys()].sort()).toEqual(["_astro/Island.js", "_astro/preact.js"]);
     expect(r.totalBytes).toBeGreaterThan(11 * KB);
+  });
+
+  it("does not count a chunk loaded on demand, but limits its own size", () => {
+    const dist = build({
+      "p.html": `<astro-island component-url="/_astro/Island.js"></astro-island>`,
+      "_astro/Island.js": `export default()=>import("./Panel.js")`,
+      "_astro/Panel.js": 30 * KB,
+    });
+    const r = weighPage(dist, "p.html");
+    expect([...r.files.keys()]).toEqual(["_astro/Island.js"]);
+    expect([...r.onDemand.keys()]).toEqual(["_astro/Panel.js"]);
+    const ok = checkBuild(dist, { htmlKB: 52, totalKB: 185, imageKB: 150, onDemandKB: 40 });
+    expect(ok.problems).toEqual([]);
+    const big = checkBuild(dist, { htmlKB: 52, totalKB: 185, imageKB: 150, onDemandKB: 20 });
+    expect(big.problems.join("\n")).toContain("_astro/Panel.js loads on demand");
+  });
+
+  it("weighs what an on-demand chunk imports, so a small entry file cannot hide a big library", () => {
+    const dist = build({
+      "p.html": `<astro-island component-url="/_astro/Island.js"></astro-island>`,
+      "_astro/Island.js": `export default()=>import("./Panel.js")`,
+      "_astro/Panel.js": `import{x}from"./Big.js";export default()=>x`,
+      "_astro/Big.js": 100 * KB,
+    });
+    const r = weighPage(dist, "p.html");
+    expect(r.onDemand.get("_astro/Panel.js")).toBeGreaterThan(100 * KB);
+    const big = checkBuild(dist, { htmlKB: 52, totalKB: 185, imageKB: 150, onDemandKB: 45 });
+    expect(big.problems.join("\n")).toContain("_astro/Panel.js loads on demand");
+  });
+
+  it("counts a chunk that is also loaded up front only once, and not as on demand", () => {
+    const dist = build({
+      "p.html": `<astro-island component-url="/_astro/Island.js"></astro-island>`,
+      "_astro/Island.js": `import"./Shared.js";export default()=>import("./Shared.js")`,
+      "_astro/Shared.js": 30 * KB,
+    });
+    const r = weighPage(dist, "p.html");
+    expect([...r.files.keys()].sort()).toEqual(["_astro/Island.js", "_astro/Shared.js"]);
+    expect([...r.onDemand.keys()]).toEqual([]);
   });
 
   it("reads a stylesheet's @import", () => {
