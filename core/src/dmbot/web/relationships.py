@@ -655,6 +655,7 @@ def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
             "stage": stage,
             "waitedSeconds": max(0, now - created) if created else 0,
             "lastMovedAt": claimed or created,
+            "now": now,  # the server's clock, so the page need not guess it (seconds)
             # nothing has moved for longer than a stalled worker is given before it is retaken
             "stalled": state in ("waiting", "working")
             and now - (claimed or created) > RETAKE_AFTER_S,

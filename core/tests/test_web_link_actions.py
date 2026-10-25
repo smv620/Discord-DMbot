@@ -1257,6 +1257,7 @@ class WhatPeopleBelieve(Editing):
         self.assertEqual((done["state"], done["error"], done["undoable"]), ("done", "", True))
         self.assertEqual(done["waits"]["stage"], "done")
         self.assertGreater(done["waits"]["lastMovedAt"], 0)
+        self.assertGreaterEqual(done["waits"]["now"], done["waits"]["lastMovedAt"])  # the server's
         self.assertEqual((await self.listed())["readings"], [])  # it left the list
         host = [r for r in await self.connections() if r.status != "confirmed"]
         self.assertEqual(len(host), 0)  # (a guess connection is not a connection: not even listed)
