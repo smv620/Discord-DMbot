@@ -1175,3 +1175,13 @@ cleaner use (`beliefs.party_knows()` in SQL), and the website's relationship web
 guesses arrive (#2412) The party's belief and the flag always agree, and tests hold the readers to it. A
 reworded connection (#2408) carries the old one's beliefs, evidence, mentions and session span. The flag
 and the API's `secret` field stay until every reader has moved and a later migration drops the flag.
+
+## The name pass's report, kept for the website (#2684)
+
+PlotBot's name pass (#2628) used to say what it did only in a Discord message, and an Undo deleted the
+lines that proved a fix was made. `name_pass_reports` (migration 0239) now keeps one row for each session
+(the counts: words left as heard, names offered as new, words left alone near a secret name, and whether
+PlotBot's answer was cut) and `name_pass_fixes` one row for each name fixed (its Undo number, the list
+name, how many times, and when it was undone). Counts and the campaign's own list names only; the
+spellings as heard stay in `transcript_respells`, read from there while a fix stands and never copied.
+Written by the pass; the Discord Undo marks a fix undone. A backup leaves both out (a log of a run).
