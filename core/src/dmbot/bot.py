@@ -67,6 +67,7 @@ from dmbot.campaigns.models import (
     STORY_GUIDE,
     CampaignError,
 )
+from dmbot.campaigns.moves import HandoverMover
 from dmbot.campaigns.web_delete import Notice, WebDeleteNotices
 from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
 from dmbot.channel_access import (
@@ -1590,6 +1591,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
+            # a hand-over to another server: its audio files go with it, and the caches that are
+            # kept by campaign id alone are dropped
+            mover=HandoverMover(
+                campaigns,
+                clock=time.time,
+                consenting=lambda guild: consent.agreed(guild),  # who agreed there, as a restore
+                audio=self.recap_audio_files,
+                forgotten=self._forget_moved,
+                busy=self._winding_down,
+            ),
         )
         # Stops made on the website (#1151): the same stop as the Stop button, for our servers.
         self.site_stops = SiteStops(
@@ -1779,6 +1790,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self.site_offers.follow(self.campaigns.listen), "site-offers"),
             self._watched(self.site_offers.every_hour(), "site-offer-sweeps"),
             self._watched(self.site_offers.follow_decided(self.campaigns.listen), "site-decisions"),
+            self._watched(self.site_offers.follow_moves(self.campaigns.listen), "campaign-moves"),
             self._watched(self.site_stops.follow(self.campaigns.listen), "site-consent-stops"),
         ]
 
@@ -11041,6 +11053,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if complete:  # (a lock for a campaign that is gone, or one a pass holds, is left)
             npcs_prune_locks(alive)
             rules_prune_locks(alive)
+
+    def _winding_down(self, guild_id: int, campaign_id: str) -> bool:
+        """Is a session of this campaign still finishing its after-session work (#2532)?"""
+        return any(t.campaign_id == campaign_id for t in self._ending.get(guild_id, []))
+
+    def _forget_moved(self, campaign_id: str) -> None:
+        """A campaign moved to another server: drop what is kept by its id alone, and its loaded
+        names. The caches keyed by (server, campaign) need nothing: the campaign no longer exists
+        under the old server, so nothing asks for those keys again (as for a deleted campaign),
+        and under the new server they start empty."""
+        self._forget_campaign(campaign_id)
+        if self.lookup is not None:
+            self.lookup.drop([campaign_id])
 
     def _forget_campaign(self, campaign_id: str) -> None:
         """A campaign is gone: drop what the NPC list and the rules channel kept for it in

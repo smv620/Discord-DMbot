@@ -15,6 +15,8 @@ if TYPE_CHECKING:  # keeps this module free of the database driver
 CHANNEL = "dmbot_handover_offers"
 # An offer answered or taken back on the website: the bot tells the other person (#737).
 DECIDED = "dmbot_handover_decided"
+# A person accepted for another server: the bot moves the campaign there (#2532, slice C).
+MOVE = "dmbot_handover_move"
 
 
 def payload(guild_id: int, offer_id: int) -> str:

@@ -8,13 +8,11 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-import psycopg
 
 from dmbot.campaigns import CampaignStore
-from dmbot.schema import WEB_ROLE
 from dmbot.web import grants, sessions
 from dmbot.web.discord import DiscordUser
-from tests.pg import SUPERUSER_URL
+from tests.pg import sender_pids
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 from tests.test_web_api import ALICE, GORRAK, QUILLON, THURSDAY
@@ -336,8 +334,11 @@ class Plans(LinkBase):
             got = await self.post(bob, "decline", token=token)
             self.assertEqual(got.status_code, 200, got.text)
             seen = []
-            async for note in listener.notifies(timeout=5, stop_after=1):
-                seen.append(note.payload)
+            mine = sender_pids(self.db, self.web)  # (other workers notify on this channel too)
+            async for note in listener.notifies(timeout=5):
+                if note.pid in mine:
+                    seen.append(note.payload)
+                    break
         [row] = await self.offers()
         self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])
 
@@ -371,7 +372,8 @@ class Plans(LinkBase):
             await listener.execute("LISTEN dmbot_handover_decided")
             first = await self.post(bob, "decline", token=token)
             second = await self.post(bob, "decline", token=token)
-            seen = [n.payload async for n in listener.notifies(timeout=2)]
+            mine = sender_pids(self.db, self.web)
+            seen = [n.payload async for n in listener.notifies(timeout=2) if n.pid in mine]
         self.assertEqual((first.status_code, second.status_code), (200, 409))
         [row] = await self.offers()
         self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])  # one notice, not two
@@ -388,16 +390,6 @@ class Moving(LinkBase):
         patcher = patch("dmbot.web.handover_accept.MOVES_ARE_RUN", True)
         patcher.start()
         self.addCleanup(patcher.stop)
-        # The move door is not granted to the website until the bot's move exists (C2): the test
-        # grants it itself, as a build that has the mover will.
-        admin = await psycopg.AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
-        try:
-            await admin.execute(
-                f"GRANT EXECUTE ON FUNCTION {self.schema}.dmbot_handover_request_move"
-                f"(BIGINT, BIGINT, TEXT, TEXT, BIGINT) TO {WEB_ROLE}"
-            )
-        finally:
-            await admin.close()
         await self.give_plan(BOB.id)
         async with self.db.guild(QUILLON.id) as conn:  # DMbot is installed in Quillon's Corner
             await conn.execute(
@@ -423,9 +415,80 @@ class Moving(LinkBase):
             look["servers"],
             [
                 {"id": "111", "name": "Thursday Table", "current": True, "botIn": True},
-                {"id": "222", "name": "Quillon's Corner", "current": False, "botIn": True},
+                {
+                    "id": "222",
+                    "name": "Quillon's Corner",
+                    "current": False,
+                    "botIn": True,
+                    "why": None,
+                },
             ],  # (Gorrak's Hall: not one they manage)
         )
+
+    async def share_rules(self, status: str) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
+                " created_at) VALUES (%s, %s, %s, 'house_rules', 'Ours', %s, %s, 5)",
+                (THURSDAY.id, self.campaign.id, "c" * 32, status, ALICE.id),
+            )
+
+    async def test_a_campaign_that_shares_rules_cannot_move_and_the_page_says_so_up_front(
+        self,
+    ) -> None:
+        await self.share_rules("shared")
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        look = (await self.post(bob, "look", token=token)).json()
+        [here, there] = look["servers"]
+        self.assertIsNone(here.get("why"))  # it can still be handed over on this server
+        self.assertEqual(there["why"], "shares_rules")  # a code; the page owns the words
+        self.assertTrue(look["canAccept"])
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "shares_rules"))
+        row = await self.row()
+        self.assertEqual((row["to_user_id"], row["move_to_guild_id"]), (0, None))  # not claimed
+        ok = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual(ok.status_code, 200)  # the same server is fine
+
+    async def test_a_failed_move_shows_its_reason_to_the_person_who_accepted_only(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertIsNone(look["moveFailed"])
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET move_failed_for = %s,"
+                " move_failed_reason = 'A session is running. Try again after it ends.'"
+                " WHERE guild_id = %s",
+                (BOB.id, THURSDAY.id),
+            )
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual(look["moveFailed"], "A session is running. Try again after it ends.")
+        carol = await self.person(CAROL)
+        other = (await self.post(carol, "look", token=token)).json()
+        self.assertIsNone(other["moveFailed"])
+
+    async def test_a_campaign_that_shares_rules_cannot_be_accepted_by_someone_outside_its_server(
+        self,
+    ) -> None:
+        await self.share_rules("shared")
+        token = await self.link()
+        bob = await self.bob_in(QUILLON)  # not in the campaign's own server
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertFalse(look["canAccept"])
+        self.assertEqual(
+            look["why"], "shares_rules"
+        )  # said in a code, so the page need not work it out
+        [only] = look["servers"]
+        self.assertEqual(only["why"], "shares_rules")
+
+    async def test_a_rule_set_that_is_not_shared_does_not_stop_a_move(self) -> None:
+        await self.share_rules("unshared")
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual(got.status_code, 202)
 
     async def test_asking_for_another_server_claims_the_link_and_records_the_wish(self) -> None:
         token = await self.link()
@@ -531,3 +594,23 @@ class Moving(LinkBase):
             (row["status"], row["to_user_id"], row["move_to_guild_id"]),
             ("open", BOB.id, QUILLON.id),
         )
+
+    async def test_end_to_end_the_wish_becomes_a_campaign_in_the_other_server(self) -> None:
+        """The page asks (202 moving), the bot's mover moves it, and the new owner's account page
+        shows the campaign in the other server while the old server has nothing left."""
+        from dmbot.campaigns.moves import HandoverMover
+
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual(got.status_code, 202)
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        mover = HandoverMover(store, clock=lambda: self.now)
+        [offer_id] = await mover.waiting(THURSDAY.id)
+        self.assertEqual(await mover.move(THURSDAY.id, offer_id), "moved")
+        me = (await bob.get("/me")).json()
+        mine = [c for c in me["campaigns"] if c["role"] == "owner"]
+        self.assertEqual(
+            [(c["name"], c["serverName"]) for c in mine], [("Frostmaiden", "Quillon's Corner")]
+        )
+        self.assertEqual(await store.get(THURSDAY.id, self.campaign.id), None)
