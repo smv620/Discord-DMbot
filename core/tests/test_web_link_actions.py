@@ -1186,9 +1186,12 @@ class WhatPeopleBelieve(Editing):
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute(
                 "SELECT id FROM memory_claims WHERE reading IS NOT NULL AND status = 'proposed'"
-                " ORDER BY created_at DESC, id LIMIT 1"
             )
-            return str((await cur.fetchone() or {})["id"])
+            # (two made in the same second share a created_at: the one not handed out before)
+            made = getattr(self, "made", set())
+            (fresh,) = [str(r["id"]) for r in await cur.fetchall() if str(r["id"]) not in made]
+            self.made = made | {fresh}
+            return fresh
 
     async def listed(self, who: Any = None) -> dict[str, Any]:
         return await relationships.read_readings(self.web, who or self.session, self.cref)
