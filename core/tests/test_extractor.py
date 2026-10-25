@@ -4,6 +4,7 @@ calls it. The database half proves a claim from someone who stopped recording is
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import unittest
 from collections.abc import Collection, Sequence
@@ -12,7 +13,7 @@ from typing import Any
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
-from dmbot.memory import extractor
+from dmbot.memory import extractor, readings
 from dmbot.memory.claims import ClaimStore, Extracted, Proposed
 from dmbot.sidebar import answer as sidebar
 from dmbot.transcript.models import (
@@ -134,6 +135,151 @@ def go(ai: Any, store: Any, lines: list[Line], consenting: Any = None, **kw: Any
         ai, store, lines, guild_id=GUILD_A, campaign_id="c", dm_ids={DM},
         consenting=consenting or everyone, model=lambda: "m", session_started_at=1, **kw,
     )  # fmt: skip
+
+
+class Believing:
+    """A fake AI that answers the claims question with nothing and the readings question with one
+    theory (by a player), citing the first line, or whatever `answer` says."""
+
+    def __init__(
+        self,
+        answer: str | None = None,
+        fail_readings: Exception | None = None,
+        cut: bool = False,
+    ) -> None:
+        self.systems: list[str] = []
+        self.sent_readings: list[str] = []
+        self.answer = answer
+        self.fail_readings = fail_readings
+        self.cut = cut
+
+    async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+        self.systems.append(system)
+        if system is extractor.SYSTEM:
+            return Reply(json.dumps({"claims": []}), False, 10, 5, "m-fast")
+        self.sent_readings.append(text)
+        if self.fail_readings is not None:
+            raise self.fail_readings
+        first = text.split("\n")[1].split(" ")[0]
+        theory = {
+            "rule": "theory", "who": "Mira", "shared": False, "strength": "",
+            "subject": "Bram", "relationship": "carries", "object": "Heartseeker",
+            "lines": [int(first)],
+        }  # fmt: skip
+        return Reply(self.answer or json.dumps({"readings": [theory]}), self.cut, 10, 5, "m-fast")
+
+
+class Kept(Recorder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.versions: list[str] = []
+
+    async def propose(
+        self, guild_id: int, campaign_id: str, claims: Sequence[Extracted],
+        speakers: Any, *, opted_in: Collection[int], **kw: Any,
+    ) -> Proposed:  # fmt: skip
+        self.versions.append(kw["prompt_version"])
+        return await super().propose(
+            guild_id, campaign_id, claims, speakers, opted_in=opted_in, **kw
+        )
+
+
+class ReadingPass(unittest.IsolatedAsyncioTestCase):
+    async def test_off_by_default_nothing_is_asked_twice(self) -> None:
+        ai, store = Believing(), Kept()
+        report = await go(ai, store, session(10))
+        self.assertEqual((report.calls, report.readings), (1, 0))
+        self.assertNotIn(readings.READING_SYSTEM, ai.systems)
+
+    async def test_on_each_batch_is_asked_again_and_the_belief_waits_as_a_claim(self) -> None:
+        ai, store = Believing(), Kept()
+        report = await go(ai, store, session(10), readings=True)
+        self.assertEqual((report.calls, report.readings, report.readings_refused), (2, 1, 0))
+        self.assertEqual(ai.systems, [extractor.SYSTEM, readings.READING_SYSTEM])
+        self.assertEqual(store.versions, [extractor.READING_PROMPT_VERSION])
+        ((claims, speakers, _),) = store.calls
+        self.assertEqual(claims[0].reading["view"], "pc:Mira")  # type: ignore[index]
+        self.assertEqual((claims[0].how, speakers["1"]), ("player_said", ALICE))
+
+    async def test_the_reading_call_is_held_to_the_same_call_limit_and_counted(self) -> None:
+        counted: list[int] = []
+
+        async def count() -> None:
+            counted.append(1)
+
+        ai = Believing()
+        report = await go(ai, Kept(), session(10), readings=True, max_calls=1, count_call=count)
+        self.assertEqual((report.calls, len(counted), report.readings), (1, 1, 0))
+        ai2 = Believing()
+        two = await go(ai2, Kept(), session(25), readings=True, max_calls=3, count_call=count)
+        self.assertEqual(two.calls, 3)  # claims, readings, then the next claims: no more
+
+    async def test_a_reveal_a_player_says_is_refused_and_counted(self) -> None:
+        answer = json.dumps(
+            {"readings": [{"rule": "reveal", "subject": "Bram", "relationship": "carries",
+                           "object": "Heartseeker", "because": "the ledger", "lines": [2]}]}
+        )  # fmt: skip
+        report = await go(Believing(answer), Kept(), session(10), readings=True)
+        self.assertEqual((report.readings, report.readings_refused), (0, 1))  # line 2 is a player's
+
+    async def test_a_failed_reading_call_never_stops_the_claims(self) -> None:
+        ai = Believing(fail_readings=RuntimeError("boom"))
+        report = await go(ai, Kept(), session(25), readings=True)
+        self.assertEqual((report.failed, report.readings_failed, report.stopped), (0, 3, ""))
+        self.assertEqual(report.calls, 6)  # all three batches still got both questions
+
+    async def test_out_of_funds_on_the_reading_call_stops_the_run(self) -> None:
+        ai = Believing(fail_readings=AIOutOfFunds("no money"))
+        report = await go(ai, Kept(), session(25), readings=True)
+        self.assertEqual(report.stopped, "out of funds")
+        self.assertEqual(report.calls, 2)
+
+    async def test_a_speaker_who_stops_between_the_two_calls_is_not_in_the_second(self) -> None:
+        calls = [0]
+
+        async def stops_after_the_first() -> Collection[int]:
+            calls[0] += 1
+            return {DM, ALICE, BOB} if calls[0] <= 1 else {DM, ALICE}
+
+        lines = [line(n, BOB if n % 2 else ALICE, f"said-by-{'bob' if n % 2 else 'alice'}")
+                 for n in range(1, 11)]  # fmt: skip
+        ai = Believing()
+        await go(ai, Kept(), lines, stops_after_the_first, readings=True)
+        self.assertTrue(ai.sent_readings)
+        self.assertNotIn("said-by-bob", "".join(ai.sent_readings))
+        self.assertIn("said-by-alice", "".join(ai.sent_readings))
+
+    async def test_a_cut_reading_answer_keeps_the_whole_items_and_is_reported_as_cut(self) -> None:
+        whole = {
+            "rule": "theory", "who": "Mira", "shared": False, "strength": "",
+            "subject": "Bram", "relationship": "carries", "object": "Heartseeker", "lines": [1],
+        }  # fmt: skip
+        text = '{"readings": [' + json.dumps(whole) + ', {"rule": "theory", "who": "Mi'
+        report = await go(Believing(text, cut=True), Kept(), session(10), readings=True)
+        self.assertEqual(
+            (report.readings, report.readings_refused, report.readings_cut), (1, 0, 1)
+        )  # one kept, none "refused", the cut said out loud
+        self.assertIn("1 cut short", report.line())
+
+    async def test_out_of_funds_on_the_reading_call_still_notes_the_batch_as_read(self) -> None:
+        ai = Believing(fail_readings=AIOutOfFunds("no money"))
+        report = await go(ai, Kept(), session(25), readings=True)
+        self.assertEqual((report.stopped, report.through_ms), ("out of funds", 10_000))
+
+    async def test_a_claims_answer_cut_off_is_counted(self) -> None:
+        class Cutting(Canned):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+                got = await super().complete(system, text, max_tokens=max_tokens)
+                return dataclasses.replace(got, cut=True)
+
+        report = await go(Cutting(), Recorder(), session(10))
+        self.assertEqual(report.cut, 1)
+        self.assertIn("1 answer(s) cut short", report.line())
+
+    async def test_the_log_line_has_counts_only(self) -> None:
+        report = await go(Believing(), Kept(), session(10), readings=True)
+        self.assertIn("readings: 1 found, 0 refused, 0 failed, 0 cut short", report.line())
+        self.assertNotIn("Heartseeker", report.line())
 
 
 class Running(unittest.IsolatedAsyncioTestCase):

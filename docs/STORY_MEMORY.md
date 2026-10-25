@@ -642,7 +642,13 @@ claim it was made for (an evidence link), so Stop recording me removes only the 
 Both ways of forgetting a person (`forget_speaker` and Delete my transcripts) run the same code under each
 campaign's lock and take the deleted rows out of the undo log (`memory/forget_readings.py`). A reading's claim
 is never quoted as the source of a fact (recall and continuity skip claims that carry one).
-Not yet: the deception event (`manipulated_by`), the running pass and the review lists (slice 3).
+**The running pass (slice 3a, off by default).** With `DMBOT_STORY_READINGS=1` (and the extractor on), each batch
+of lines is asked the second question after its claims (`memory/extractor.py`, `readings.READING_SYSTEM`). It is a
+call like any other: counted before it is made and held to the same session and day limits, so a session reaches
+its limit sooner and the limit does not grow. Its answers are stored as claims that carry a reading (prompt version
+`readings-1`), never as facts and never making a new name. A failed reading call never stops the claims; running out
+of money stops the run. The log gets counts only.
+Not yet: the deception event (`manipulated_by`) and the review lists (slice 3b).
 
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.

@@ -562,6 +562,7 @@ class ClaimStore:
         skip: Collection[str] = (),
         new_names: int = NEW_NAME_LIMIT,
         limit: int = MAX_CLAIMS,
+        make_names: bool = True,
     ) -> Proposed:
         """Store what the extractor said as proposals. `speakers` maps each transcript line
         the call was given to who spoke it; `opted_in` is who may be recorded *now*, read
@@ -576,7 +577,9 @@ class ClaimStore:
         is one proposal, and a spelling near a name already waiting joins it. Nothing is joined
         to a confirmed entry here: a likely match is shown to the DM by the names review. A name
         the DM said isn't a name (`skip` too: the people at the table) drops its claims for good.
-        `dms` are the campaign's DMs: only they can say a secret name."""
+        `dms` are the campaign's DMs: only they can say a secret name. `make_names` False: a claim
+        with a name DMbot does not know is dropped (nothing waits for the name), so it can never
+        become a new name later (a reading never makes one, #2412)."""
         waiting = dropped = repeated = 0
         why: Counter[str] = Counter()
         async with self._store._write(guild_id, campaign_id, EXTRACTOR) as w:
@@ -599,9 +602,10 @@ class ClaimStore:
                     asked.add(key)
 
             leftovers = [
-                r for r in await w.select(CLAIMS, " AND status = 'proposed'")
-                if r["reason"] == WAITING_NAME_REASON
-            ]  # fmt: skip
+                r
+                for r in await w.select(CLAIMS, " AND status = 'proposed'")
+                if r["reason"] == WAITING_NAME_REASON and make_names
+            ]  # fmt: skip  (a pass that makes no names leaves earlier waiting claims alone)
 
             def judged(claim: Extracted) -> str:
                 cited = [speakers.get(ref) for ref in claim.lines]
@@ -617,7 +621,9 @@ class ClaimStore:
                 cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
                 if reason == UNKNOWN_NAME_REASON:
                     unknown = _unknown_names(claim, names)
-                    if any(name_key(n) in refused_names for n in unknown):
+                    if not make_names:
+                        unknown = []  # dropped below with its reason, not kept waiting
+                    elif any(name_key(n) in refused_names for n in unknown):
                         reason = NAME_REJECTED_REASON
                         unknown = []  # never made into an entry again
                     elif any(name_key(n) in skip for n in unknown):

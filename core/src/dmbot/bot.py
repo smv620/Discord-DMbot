@@ -8633,6 +8633,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 max_calls=allowed,
                 skip=skip,
                 after_ms=after_ms,
+                readings=self.settings.story_readings_on,
                 count_call=lambda: transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 ),

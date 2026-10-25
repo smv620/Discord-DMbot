@@ -172,7 +172,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         )
         return SimpleNamespace(
             settings=SimpleNamespace(
-                story_extractor_on=True, story_extractor_max_calls=480,
+                story_extractor_on=True, story_readings_on=False, story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
             ),
             extractor_ai=object(),
