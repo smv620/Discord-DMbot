@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AccountApi } from "../src/account/api";
+import { ApiError, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import WebReadings from "../src/account/WebReadings";
 import { readingWords as w } from "../src/content/web-readings";
@@ -31,14 +31,14 @@ describe("What people believe", () => {
     expect(c.textContent).toContain(w.rules["theory"]);
     expect(c.textContent).toContain(w.believedBy("the party"));
     expect(c.textContent).toContain(w.sure("fairly sure"));
-    expect(c.textContent).toMatch(/From the session of \d{1,2} [A-Z][a-z]+\./);
+    expect(c.textContent).toMatch(/Session of \d{1,2} [A-Z][a-z]+/);
     expect(card("The ferryman plans to sink the barge").textContent).toContain(w.rules["plot"]);
   });
 
   it("keeps one as a belief, and the list no longer shows it", async () => {
     const api = await open();
     press(card("Mira Voss took the key"), w.place);
-    await waitFor(() => expect(screen.getByText(w.done.place)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(w.keptFor("the party"))).toBeTruthy());
     expect(api.calls).toContain(`answerReading:${REF}:place:r1`);
     await waitFor(() => expect(screen.queryByText("Mira Voss took the key")).toBeNull());
     expect(screen.getByText(w.count(5))).toBeTruthy();
@@ -101,7 +101,7 @@ describe("What people believe", () => {
     // every button waits meanwhile, so nothing is sent twice
     for (const b of screen.getAllByRole("button", { name: w.no })) expect((b as HTMLButtonElement).disabled).toBe(true);
     release();
-    await waitFor(() => expect(screen.getByText(w.done.place)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(w.keptFor("the party"))).toBeTruthy());
     expect(real.calls.filter((c) => c.startsWith("answerReading:"))).toHaveLength(1);
   });
 
@@ -121,7 +121,47 @@ describe("What people believe", () => {
     press(card("Mira Voss took the key"), w.place);
     await screen.findByText(w.stalledWhat);
     release();
-    await waitFor(() => expect(screen.getByText(w.done.place)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(w.keptFor("the party"))).toBeTruthy());
+  });
+
+  it("shows how long it has waited and when it last moved from the server's times, not the page's", async () => {
+    const real = mockApi("table");
+    let release: () => void = () => {};
+    const aged: AccountApi & { calls: string[] } = {
+      ...real,
+      calls: real.calls,
+      answerReading: async (ref, answer, onLook) => {
+        // queued at server time 1000; 100 seconds later it was picked up (stage working) at 1090, and now it is 1100
+        onLook?.({ waits: { stage: "queued", waitedSeconds: 0, lastMovedAt: 1000, stalled: false } });
+        onLook?.({ waits: { stage: "working", waitedSeconds: 100, lastMovedAt: 1090, stalled: false } });
+        await new Promise<void>((r) => (release = r));
+        return real.answerReading!(ref, answer, onLook);
+      },
+    };
+    await open(aged);
+    press(card("Mira Voss took the key"), w.place);
+    await screen.findByText(w.stages["working"] as string);
+    const text = document.querySelector(".work-progress")?.textContent ?? "";
+    expect(text).toContain("Running for 1 min."); // 100 seconds since it was queued
+    expect(text).toContain("Last progress 10 sec ago"); // 10 seconds since it was picked up, not "just now"
+    release();
+    await waitFor(() => expect(screen.getByText(w.keptFor("the party"))).toBeTruthy());
+  });
+
+  it("words an Undo that has nothing left to take back", async () => {
+    const real = mockApi("table");
+    const noUndo: AccountApi & { calls: string[] } = {
+      ...real,
+      calls: real.calls,
+      answerReading: async (ref, answer, onLook) => {
+        if (answer.action === "undo") throw new ApiError("gone");
+        return real.answerReading!(ref, answer, onLook);
+      },
+    };
+    await open(noUndo);
+    press(card("Mira Voss took the key"), w.place);
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    await waitFor(() => expect(alertText()).toBe(w.errors["undo-gone"]));
   });
 
   it("shows nothing at all to a player or a peek viewer", async () => {

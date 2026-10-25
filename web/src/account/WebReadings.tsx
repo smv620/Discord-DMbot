@@ -22,7 +22,19 @@ const errorWords = (error: unknown): string =>
 
 type Said = { ok: boolean; text: string; n: number } | null;
 /** The wait as the page has seen it: the stage, when it began, and when it last moved (the page's own clock). */
-type Sending = { stage: string; since: number; movedAt: number; stalled: boolean; moveKey: string };
+type Sending = {
+  stage: string;
+  /** The page's clock when it began waiting, and when it last saw the wait move (used until the server's times can be placed). */
+  since: number;
+  movedAt: number;
+  stalled: boolean;
+  moveKey: string;
+  /** The server's times, once known: when the answer was queued (the first "queued" look's last-moved time), how long it has
+   * waited, and when it last moved. The server's own clock is then `queuedAt + waitedSeconds`. */
+  queuedAt: number | null;
+  waited: number;
+  lastMovedAt: number;
+};
 
 export default function WebReadings({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
   const [list, setList] = useState<Readings | null>(null);
@@ -50,8 +62,10 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
     } catch (error) {
       if (mine !== latest.current) return;
       // A player, a peek viewer or another DM gets "not found": the part is simply not there.
-      if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "not-allowed")) setList(null);
-      else setFailed(true);
+      if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "not-allowed")) {
+        setList(null);
+        setFailed(false);
+      } else setFailed(true);
     }
   }
 
@@ -68,7 +82,7 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
     if (!api.answerReading || inFlight.current) return;
     inFlight.current = true;
     const now = Math.floor(Date.now() / 1000);
-    setSending({ stage: "queued", since: now, movedAt: now, stalled: false, moveKey: "" });
+    setSending({ stage: "queued", since: now, movedAt: now, stalled: false, moveKey: "", queuedAt: null, waited: 0, lastMovedAt: 0 });
     setSaid(null);
     setUndo(null);
     // What the bot says about the wait; "last moved" is when the page saw the stage or the move time change.
@@ -84,6 +98,10 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
               stalled: look.waits!.stalled,
               movedAt: key !== was.moveKey ? seen : was.movedAt,
               moveKey: key,
+              // While queued, "last moved" is when it was queued, which places the server's clock.
+              queuedAt: look.waits!.stage === "queued" ? look.waits!.lastMovedAt : was.queuedAt,
+              waited: look.waits!.waitedSeconds,
+              lastMovedAt: look.waits!.lastMovedAt,
             }
           : was,
       );
@@ -93,7 +111,10 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
       setSaid({ ok: true, text: ok, n: ++counter.current });
       if (answer.action === "place" && got.undoable) setUndo({ answerId: got.answerId });
     } catch (error) {
-      setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
+      // "Gone" on an Undo means there is nothing left to take back, not that the belief isn't waiting.
+      const text =
+        answer.action === "undo" && error instanceof ApiError && error.kind === "gone" ? w.errors["undo-gone"] : errorWords(error);
+      setSaid({ ok: false, text: text as string, n: ++counter.current });
     } finally {
       await read(); // (what shows is always the API's own, whatever happened)
       inFlight.current = false;
@@ -129,6 +150,14 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
       </p>
       <p class="small">{w.lead}</p>
       {list.capped && <p class="small">{w.more}</p>}
+      {failed && (
+        <p class="warn" role="alert">
+          {w.loadFailed}{" "}
+          <button type="button" class="button secondary" onClick={() => void read()}>
+            {w.reload}
+          </button>
+        </p>
+      )}
 
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
         {said?.ok ? <span key={said.n}>{said.text}</span> : ""}
@@ -138,31 +167,43 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
       </p>
       {sending && (
         <>
-          <WorkProgress
-            stage={w.stages[sending.stage] ?? w.stages["queued"] ?? ""}
-            startedAt={sending.since}
-            updatedAt={sending.movedAt}
-            serverNow={Math.floor(Date.now() / 1000)}
-            state={sending.stalled ? "stalled" : "running"}
-          />
-          {sending.stalled && <p class="small">{w.stalledWhat}</p>}
+          <p class="small">{w.oneAtATime}</p>
+          {(() => {
+            // The server's times when they can be placed (its clock is when it queued the answer plus how long it has
+            // waited); until then the page's own clock, so "last moved" never claims more than the page saw.
+            const known = sending.queuedAt !== null && sending.lastMovedAt > 0;
+            const serverNow = known ? (sending.queuedAt as number) + sending.waited : Math.floor(Date.now() / 1000);
+            return (
+              <WorkProgress
+                stage={w.stages[sending.stage] ?? w.stages["working"] ?? ""}
+                startedAt={known ? serverNow - sending.waited : sending.since}
+                updatedAt={known ? sending.lastMovedAt : sending.movedAt}
+                serverNow={serverNow}
+                state={sending.stalled ? "stalled" : "running"}
+                whatToDo={w.stalledWhat}
+              />
+            );
+          })()}
         </>
       )}
       {undo && !busy && (
-        <p class="row">
+        <div class="row">
           <button type="button" class="button secondary" onClick={() => void send({ action: "undo", id: undo.answerId }, w.done.undo)}>
             {w.undo}
           </button>
-        </p>
+          <span class="small muted">{w.undoHint}</span>
+        </div>
       )}
 
       {list.readings.map((r) => (
         <div key={r.id} class="panel">
-          <p class="small muted">{w.rules[r.rule] ?? w.rules["theory"]}</p>
           <p id={`wr-${r.id}`}>{r.statement}</p>
           <p class="small">
             {w.believedBy(r.who)}. {w.sure(r.sureness)}.
-            {r.sessionAt > 0 && <> {w.saidAt(sessionDay(r.sessionAt))}</>}
+          </p>
+          <p class="small muted">
+            {w.rules[r.rule] ?? w.other}
+            {r.sessionAt > 0 && <> · {w.saidAt(sessionDay(r.sessionAt))}</>}
           </p>
           {!r.canPlace && <p class="small">{w.waitingOn(r.waitingOn)}</p>}
           <div class="row">
@@ -172,7 +213,7 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
                 class="button"
                 disabled={busy}
                 aria-describedby={`wr-${r.id}`}
-                onClick={() => void send({ action: "place", id: r.id }, w.done.place)}
+                onClick={() => void send({ action: "place", id: r.id }, w.keptFor(r.who))}
               >
                 {w.place}
               </button>

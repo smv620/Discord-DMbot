@@ -80,7 +80,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "What people believe, on the Story graph",
-    text: "On a campaign's Story graph, What people believe lists theories, accusations and reveals DMbot noticed. Press Keep as a belief to write one down as what that person thinks, or Not right to drop it. Right after keeping one, Undo takes it back. A belief is never treated as a fact. If a new name is in it, answer that name in Check new names first. Only you, the DM, see this.",
+    text: "On a campaign's Story graph, What people believe lists theories, accusations and reveals DMbot heard. Press Keep as a belief to note what that person thinks, or Drop it to skip one. Undo is there right after you keep one. A belief is never treated as a fact. If a new name is in it, answer Check new names first. Only you, the DM, see this.",
   },
   {
     audience: "gameMaster",

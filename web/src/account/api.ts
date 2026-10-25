@@ -1362,6 +1362,7 @@ interface NameAnswer {
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
+const READING_POLLS = 150;
 /** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
 interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
@@ -2157,8 +2158,8 @@ export function httpApi(
   /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
    * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
    * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
-  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void): Promise<WebAnswer> {
-    for (let i = 0; i < NAME_POLLS; i++) {
+  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void, polls = NAME_POLLS): Promise<WebAnswer> {
+    for (let i = 0; i < polls; i++) {
       let got: WebAnswer | null = null;
       try {
         got = (await call("GET", path)) as WebAnswer;
@@ -2168,7 +2169,7 @@ export function httpApi(
       }
       if (got?.state === "done") return got;
       if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
-      if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      if (i < polls - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
     }
     throw new ApiError("still-waiting");
   }
@@ -2723,8 +2724,12 @@ export function httpApi(
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
       const queued = (await call("POST", `${base}/readings`, answer)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/answers/${encodeURIComponent(queued.answer)}`, (look) =>
-        onLook?.({ waits: look.waits ?? null }),
+      // Looks for 150 seconds, longer than the 120 the bot is given before an answer it picked up is taken
+      // again, so a wait that has stalled is shown as stalled before the page stops looking.
+      const got = await waitForAnswer(
+        `${base}/answers/${encodeURIComponent(queued.answer)}`,
+        (look) => onLook?.({ waits: look.waits ?? null }),
+        READING_POLLS,
       );
       return { answerId: queued.answer, undoable: got.undoable === true };
     },
