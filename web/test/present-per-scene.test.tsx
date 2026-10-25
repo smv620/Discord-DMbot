@@ -32,8 +32,8 @@ const scene = (n: number): string => screen.getByText(`Scene ${n}`).closest("li"
 describe("Who was in each scene", () => {
   it("lists who was in each scene", async () => {
     await open();
-    expect(scene(1)).toContain("Present: Mira, Tavian");
-    expect(scene(2)).toContain(`Present: ${w.nobody}`);
+    expect(scene(1)).toContain("Mira, Tavian");
+    expect(scene(2)).toContain(w.nobody);
   });
 
   it("saves the whole new list for a scene and says what it will do", async () => {
@@ -42,9 +42,9 @@ describe("Who was in each scene", () => {
     fireEvent.click(screen.getByLabelText("Brannoch"));
     fireEvent.click(screen.getByLabelText("Tavian"));
     fireEvent.click(screen.getByRole("button", { name: w.save }));
-    await waitFor(() => expect(screen.getByText(w.saved)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(w.saved(2))).toBeTruthy());
     expect(api.calls).toContain(`setBeatPresent:${DRAFT}:2:Tavian|Brannoch`);
-    expect(scene(2)).toContain("Present: Tavian, Brannoch");
+    expect(scene(2)).toContain("Tavian, Brannoch");
     // The keyboard stays on that scene's line.
     await waitFor(() => expect(document.activeElement?.getAttribute("data-scene")).toBe("2"));
   });
@@ -54,7 +54,7 @@ describe("Who was in each scene", () => {
     fireEvent.click(screen.getByRole("button", { name: w.changeScene(1) }));
     fireEvent.click(screen.getByLabelText("Brannoch"));
     fireEvent.click(screen.getByRole("button", { name: w.cancel }));
-    expect(scene(1)).toContain("Present: Mira, Tavian");
+    expect(scene(1)).toContain("Mira, Tavian");
     expect(api.calls.some((c) => c.startsWith("setBeatPresent"))).toBe(false);
   });
 
@@ -66,14 +66,53 @@ describe("Who was in each scene", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["stale"]));
     expect(api.calls).toContain(`recap:${DRAFT}`);
     // The scenes now show what the newer text says, and the message is still there after the re-read.
-    await waitFor(() => expect(scene(3)).toContain("Present: Brannoch, Mira"));
+    await waitFor(() => expect(scene(3)).toContain("Brannoch, Mira"));
     expect(screen.getByRole("alert").textContent).toBe(w.errors["stale"]);
+  });
+
+  it("refuses a name that isn't a character, keeps the editor open and says nothing was saved", async () => {
+    const api = mockApi("table");
+    const recap = await api.recap!(DRAFT);
+    // DMbot listed someone who is no longer a character here: shown ticked, so the DM can untick it.
+    recap.beats = [{ n: 1, present: ["Mira", "Gone Person"] }];
+    render(<Page api={api} first={recap} />);
+    fireEvent.click(screen.getByRole("button", { name: w.changeScene(1) }));
+    expect((screen.getByLabelText("Gone Person") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["bad-present"]));
+    expect(screen.getByRole("button", { name: w.save })).toBeTruthy(); // still open, ticks kept
+    fireEvent.click(screen.getByLabelText("Gone Person"));
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await waitFor(() => expect(screen.getByText(w.saved(1))).toBeTruthy());
+  });
+
+  it("does not claim the scenes were updated when they could not be read again", async () => {
+    const api = mockApi("table");
+    const recap = await api.recap!(DRAFT);
+    api.recap = async () => {
+      throw new Error("offline");
+    };
+    render(<Page api={api} first={recap} />);
+    fireEvent.click(screen.getByRole("button", { name: w.changeScene(3) }));
+    fireEvent.click(screen.getByLabelText("Tavian"));
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(w.errors["reread"]));
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-scene")).toBe("3"));
+  });
+
+  it("offers no Change when the recap has no characters to pick from", async () => {
+    const api = mockApi("table");
+    const recap = { ...(await api.recap!(DRAFT)), characters: [] };
+    render(<PresentPerScene api={api} recap={recap} onRecap={() => {}} />);
+    expect(scene(1)).toContain("Mira");
+    expect(screen.queryByRole("button", { name: /Change/ })).toBeNull();
   });
 
   it("changes nothing on a posted recap: the list is there, with no Change button", async () => {
     await open(POSTED);
-    expect(scene(1)).toContain("Present: Mira");
+    expect(scene(1)).toContain("Mira");
     expect(screen.queryByRole("button", { name: /Change/ })).toBeNull();
+    expect(screen.getByText(w.locked)).toBeTruthy();
   });
 
   it("shows nothing for a recap with no scenes", async () => {

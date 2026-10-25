@@ -75,7 +75,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Who was in each scene",
-    text: "Below a recap's text, Who was in each scene lists the characters DMbot thinks were in each scene. Before you approve the recap, press Change on a scene, tick or untick characters and press Save. Your list wins: DMbot won't change it. The text above isn't changed; DMbot uses your list when it writes the recap again. Only the DM sees this.",
+    text: "Under a recap, Who was in each scene shows the characters DMbot guesses were in each scene. If it is wrong, press Change on that scene, tick the right characters and press Save list. Your list is final: DMbot never changes it. Do it before you approve the recap. Only you, the DM, see this.",
   },
   {
     audience: "gameMaster",
