@@ -380,6 +380,9 @@ export interface Recap {
   uncheckedDraft?: string[];
   /** Whether the API takes "approve it as it is" for such a draft (#2305). Missing from an older API. */
   canApproveUnchecked?: boolean;
+  /** A fingerprint of the words this view shows, sent back with "approve it as it is" so that only the
+   * words the DM read are approved (#2305). Missing from an older API. */
+  textHash?: string;
   /** While it is being made: how far along (#2564, #2608). Missing from an API older than that. */
   progress?: JobProgress;
   /** Start the recap over is possible now (#2608): not while it is written or sent. */
@@ -743,6 +746,29 @@ export interface FixPoints {
   /** Plain-words answers (story help, "DMbot can't do that"): shown as they are. */
   replies: string[];
 }
+/** One new name a recap asks the DM to check (#2113). `answering` while the bot is applying an
+ * answer; `error` is the bot's word when the last answer failed. */
+export interface NameCheck {
+  id: string;
+  name: string;
+  /** What the recap says about it, in the story's words. */
+  note: string;
+  answering: boolean;
+  error: string;
+}
+export interface NameCheckList {
+  names: NameCheck[];
+  /** The known names an answer can say a name is the same as. */
+  known: { id: string; name: string; kind: string }[];
+  /** The kinds a name can be said to be. */
+  kinds: { key: string; label: string }[];
+}
+export type NameCheckAnswer =
+  | { action: "confirm"; kind: string }
+  | { action: "same"; known: string }
+  | { action: "respell"; text: string }
+  | { action: "not_a_name" }
+  | { action: "explain"; text: string };
 export interface VoiceResult {
   state: FixState;
   /** Only when `done`: what was heard. */
@@ -1471,6 +1497,9 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "not-yet" // a draft is opened as it is only after 3 days of waiting (#2305)
+  | "changed" // the draft was revised since the page showed it (#2305)
+  | "bad-hash" // the page sent no fingerprint of the words (#2305)
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
@@ -1598,7 +1627,7 @@ export interface AccountApi {
   approveRecap?(ref: string, choice: ApproveChoice, options?: { post?: boolean }): Promise<Recap>;
   /** "Use this draft as it is" for a recap unchecked for 3 days (#2297, #2305): it then goes on as
    * a finished draft for the DM to edit and approve as usual. Missing from an older API. */
-  approveUnchecked?(ref: string): Promise<Recap>;
+  approveUnchecked?(ref: string, textHash: string): Promise<Recap>;
   /** Short-lived addresses of the recap's audio (#1418). Empty when there is none to play. */
   recapAudioLinks?(ref: string): Promise<RecapAudioLinks>;
   /** The DM's three recap choices for a campaign, and whether the narration may be offered
@@ -1727,6 +1756,10 @@ export interface AccountApi {
   recapAudioRemake?(ref: string): Promise<RecapRemake>;
   /** "Tell DMbot what to fix" (#2114): send a note, follow the request, and rewrite with the points
    * the DM kept. Missing from an API older than #2113. */
+  /** The recap's new names to check, and the choices for answering them (#2114 part 3). */
+  nameChecks?(ref: string): Promise<NameCheckList>;
+  /** Queue one answer for the bot; the name leaves the list once it is applied. */
+  answerNameCheck?(ref: string, id: string, answer: NameCheckAnswer): Promise<void>;
   sendFix?(ref: string, text: string): Promise<{ requestId: string }>;
   fixResult?(ref: string, requestId: string): Promise<FixResult>;
   /** "Speak instead" (#2113 part 2): send a recorded note (webm or ogg, at most 2 MB and 2 minutes) and
@@ -1831,6 +1864,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  not_yet: "not-yet",
+  changed: "changed",
+  bad_hash: "bad-hash",
   ended: "ended",
   owner: "owner-offer",
   bad_server: "bad-server",
@@ -2338,8 +2374,8 @@ export function httpApi(
           ...(options?.post ? { post: true } : {}),
         }),
       ),
-    approveUnchecked: async (ref) =>
-      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, {})),
+    approveUnchecked: async (ref, textHash) =>
+      recapFrom(await call("POST", `/me/recaps/${encodeURIComponent(ref)}/approve-unchecked`, { textHash })),
     recapAudioLinks: async (ref) =>
       (
         (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/audio`)) as {
@@ -2365,6 +2401,15 @@ export function httpApi(
         "POST",
         `/me/recaps/${encodeURIComponent(ref)}/audio/again`,
       )) as Recap,
+    nameChecks: async (ref) =>
+      (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    answerNameCheck: async (ref, id, answer) => {
+      await call(
+        "POST",
+        `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`,
+        answer,
+      );
+    },
     recapAudioRemake: async (ref) =>
       (await call(
         "GET",

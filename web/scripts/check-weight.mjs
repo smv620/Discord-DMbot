@@ -18,9 +18,12 @@ import { checkBuild, table } from "./weight.mjs";
 // Raised on 2026-10-24 (#2617): turning narration on brings the audio choice, the player and the names
 // panel into /account/recaps (176.7 KB) and Help's narration steps into help.html (50.3 KB). Each is
 // legitimate and was looked at; both budgets are today's largest plus about 5% of headroom.
+// Raised on 2026-10-25 (#2520): the recaps page is 187.8 KB with "Names to check" on it (the panels that are
+// switched off are not in the build). The one budget goes to 190 KB, today's largest plus about 1%; WebDev
+// asked Supervisor to look at what else can be split off the recaps island before the next raise.
 export const budgets = {
   htmlKB: 52,
-  totalKB: 185,
+  totalKB: 190,
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
 
