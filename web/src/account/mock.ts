@@ -44,6 +44,7 @@ import type {
   CampaignSettingName,
   Timeline,
   WebRevealTarget,
+  Reading,
   Waiting,
   MyNpcNote,
   NpcPage,
@@ -608,6 +609,19 @@ function webVisibility(ref: string): "private" | "peek" | "open" {
   return /\.web-private$/.test(ref) ? "private" : /\.web-open$/.test(ref) ? "open" : "peek";
 }
 
+/** The pretend readings (#2412): `r-gone` is not waiting any more when answered, `r-busy` can't be written now. */
+function pretendReadings(): Reading[] {
+  const base = { why: null, waitingOn: [] as string[], canPlace: true, sessionAt: 1791000000 };
+  return [
+    { ...base, id: "r1", rule: "theory", who: "the party", statement: "Mira Voss took the key", sureness: "fairly sure" },
+    { ...base, id: "r2", rule: "reveal", who: "Rook", statement: "Roan is the one who warned the harbour", sureness: "seen" },
+    { ...base, id: "r-gone", rule: "accusation", who: "the party", statement: "Brannoch burned the ferry", sureness: "doubtful" },
+    { ...base, id: "r-busy", rule: "false_clue", who: "the DM's view", statement: "Far Hall hid the second key", sureness: "false" },
+    { ...base, id: "r-name", rule: "theory", who: "the party", statement: "Newcomer sent the letter", sureness: "a guess", canPlace: false, why: "name_first", waitingOn: ["Newcomer"] },
+    { ...base, id: "r-plot", rule: "plot", who: "the DM's view", statement: "The ferryman plans to sink the barge", sureness: "secret plot" },
+  ];
+}
+
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
 /** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
 function pretendWaiting(): Waiting {
@@ -637,6 +651,7 @@ function pretendWaiting(): Waiting {
 }
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
+  const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
   let failedMove = false; // the move asked for failed: the offer is open again with the reason
@@ -1394,6 +1409,45 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
       return answer.action === "keep_all" ? { kept: ids.length } : {};
+    },
+    // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
+    // reading answers `a-<id>` and can be undone with that answer's id; `r-gone` is already gone,
+    // `r-busy` can't be written now, `r-name` waits on a new name.
+    async webReadings(ref) {
+      calls.push(`webReadings:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const state = (readingState[ref] ??= { list: pretendReadings(), kept: new Map() });
+      return structuredClone({ readings: state.list, counts: { readings: state.list.length }, capped: false });
+    },
+    async answerReading(ref, answer, onLook) {
+      calls.push(`answerReading:${ref}:${answer.action}:${answer.id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const state = (readingState[ref] ??= { list: pretendReadings(), kept: new Map() });
+      const at = Math.floor(Date.now() / 1000);
+      onLook?.({ waits: { stage: "queued", waitedSeconds: 0, lastMovedAt: at, stalled: false } });
+      onLook?.({ waits: { stage: "working", waitedSeconds: 1, lastMovedAt: at, stalled: false } });
+      if (answer.action === "undo") {
+        const back = state.kept.get(answer.id);
+        if (!back) throw new ApiError("gone");
+        state.kept.delete(answer.id);
+        state.list.push(back);
+        return { answerId: `u-${answer.id}`, undoable: false };
+      }
+      const found = state.list.find((r) => r.id === answer.id);
+      if (!found || answer.id === "r-gone") {
+        state.list = state.list.filter((r) => r.id !== answer.id);
+        throw new ApiError("gone");
+      }
+      if (!found.canPlace) throw new ApiError("name-first");
+      if (answer.id === "r-busy") throw new ApiError("cannot-write");
+      state.list = state.list.filter((r) => r.id !== answer.id);
+      if (answer.action === "no") return { answerId: `a-${answer.id}`, undoable: false };
+      state.kept.set(`a-${answer.id}`, found);
+      return { answerId: `a-${answer.id}`, undoable: true };
     },
     async webPeek(ref) {
       calls.push(`webPeek:${ref}`);

@@ -28,6 +28,8 @@ READERS = {
     "memory/forget_readings.py": "Stop recording me removes a connection made only to hold a guess",
     "memory/beliefs.py": "beliefs hang on any connection; every players' reader filters on the "
     "party's belief at 1.0, which a guess never is",
+    "memory/contradictions.py": DM_ONLY
+    + ": kept connections and waiting guess connections, ids and numbers, no words",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
