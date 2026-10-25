@@ -725,6 +725,8 @@ def create_app(
         )
         if outcome == "accepted" and ref is not None:
             return {"status": "accepted", "campaignRef": ref}
+        if outcome == "moving":  # asked for another server; the bot moves it (#2532, slice C)
+            return JSONResponse({"status": "moving"}, status_code=202)  # type: ignore[return-value]
         refusals = {
             "ended": (409, "ended"),
             "no_plan": (402, "not_on_a_paid_plan"),

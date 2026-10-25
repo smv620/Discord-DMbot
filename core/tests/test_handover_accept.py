@@ -8,13 +8,16 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+import psycopg
 
 from dmbot.campaigns import CampaignStore
-from dmbot.web import grants
+from dmbot.schema import WEB_ROLE
+from dmbot.web import grants, sessions
 from dmbot.web.discord import DiscordUser
+from tests.pg import SUPERUSER_URL
 from tests.test_handover_email import OfferBase
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
-from tests.test_web_api import ALICE, QUILLON, THURSDAY
+from tests.test_web_api import ALICE, GORRAK, QUILLON, THURSDAY
 from tests.test_web_email_signin import BOB
 
 CAROL = DiscordUser(id=3003, name="Carol", email="carol@example.com")
@@ -372,3 +375,159 @@ class Plans(LinkBase):
         self.assertEqual((first.status_code, second.status_code), (200, 409))
         [row] = await self.offers()
         self.assertEqual(seen, [f"{THURSDAY.id}:{row['id']}"])  # one notice, not two
+
+
+class Moving(LinkBase):
+    """Slice C1 (#2532): accepting for another server records the wish and claims the link in one
+    step. The bot's move (C2) is not built yet, so it is held behind `MOVES_ARE_RUN`."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from unittest.mock import patch
+
+        patcher = patch("dmbot.web.handover_accept.MOVES_ARE_RUN", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # The move door is not granted to the website until the bot's move exists (C2): the test
+        # grants it itself, as a build that has the mover will.
+        admin = await psycopg.AsyncConnection.connect(SUPERUSER_URL, autocommit=True)
+        try:
+            await admin.execute(
+                f"GRANT EXECUTE ON FUNCTION {self.schema}.dmbot_handover_request_move"
+                f"(BIGINT, BIGINT, TEXT, TEXT, BIGINT) TO {WEB_ROLE}"
+            )
+        finally:
+            await admin.close()
+        await self.give_plan(BOB.id)
+        async with self.db.guild(QUILLON.id) as conn:  # DMbot is installed in Quillon's Corner
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_at, via) VALUES (%s, %s, 'link')",
+                (QUILLON.id, self.now),
+            )
+
+    async def bob_in(self, *guilds: Any) -> httpx.AsyncClient:
+        token = await sessions.sign_in(self.web, BOB, list(guilds), now=self.now, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://api.dmbot.example",
+            headers=self.alice.headers,
+        )  # fmt: skip
+        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.addAsyncCleanup(client.aclose)
+        return client
+
+    async def test_the_page_lists_their_servers_and_whether_dmbot_is_in_each(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON, GORRAK)
+        look = (await self.post(bob, "look", token=token)).json()
+        self.assertEqual(
+            look["servers"],
+            [
+                {"id": "111", "name": "Thursday Table", "current": True, "botIn": True},
+                {"id": "222", "name": "Quillon's Corner", "current": False, "botIn": True},
+            ],  # (Gorrak's Hall: not one they manage)
+        )
+
+    async def test_asking_for_another_server_claims_the_link_and_records_the_wish(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((got.status_code, got.json()), (202, {"status": "moving"}))
+        row = await self.row()
+        self.assertEqual(
+            (row["status"], row["to_user_id"], row["move_to_guild_id"]),
+            ("open", BOB.id, QUILLON.id),
+        )
+        campaign = await CampaignStore(self.db).get(THURSDAY.id, self.campaign.id)
+        assert campaign is not None
+        self.assertEqual(campaign.owner_user_id, ALICE.id)  # nothing has moved yet
+
+    async def test_a_server_without_dmbot_or_not_theirs_is_refused_and_nothing_is_claimed(
+        self,
+    ) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, GORRAK)
+        for server in (str(GORRAK.id), "999", "nonsense"):  # no DMbot there / not theirs / junk
+            got = await self.post(bob, "accept", token=token, serverId=server)
+            self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_server"), server)
+        self.assertEqual((await self.row())["to_user_id"], 0)
+
+    async def test_no_plan_cannot_ask_for_a_move(self) -> None:
+        token = await self.link()
+        async with self.db.plan_writer(BOB.id) as conn:
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (BOB.id,))
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (402, "not_on_a_paid_plan"))
+        self.assertIsNone((await self.row())["move_to_guild_id"])
+
+    async def test_while_a_move_is_asked_for_it_cannot_be_taken_back_replaced_or_run_out(
+        self,
+    ) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual(
+            (await self.alice.delete(f"/me/campaigns/{self.ref}/handover")).status_code, 404
+        )
+        again = await self.offer("someone.else@example.org")
+        self.assertEqual((again.status_code, again.json()["error"]), (409, "not_allowed"))
+        async with self.db.guild(THURSDAY.id) as conn:  # eight days on
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET created_at = created_at - 8 * 86400"
+            )
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        self.assertEqual(await store.offers_to_end(THURSDAY.id, self.now), [])
+        [row] = await self.offers()
+        self.assertEqual((row["status"], row["move_to_guild_id"]), ("open", QUILLON.id))
+        shown = await store.open_offer(THURSDAY.id, self.campaign.id, self.now)
+        self.assertIsNotNone(shown)  # the card still shows it waiting
+
+    async def test_a_second_person_cannot_use_the_link_after_a_move_is_asked_for(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        carol = await self.person(CAROL)
+        self.addAsyncCleanup(carol.aclose)
+        self.assertEqual((await self.post(carol, "look", token=token)).json(), {"status": "ended"})
+
+    async def test_without_the_bots_move_another_server_is_refused(self) -> None:
+        # The default until C2: an accepted move that never runs must not be possible.
+        from unittest.mock import patch
+
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        with patch("dmbot.web.handover_accept.MOVES_ARE_RUN", False):
+            look = (await self.post(bob, "look", token=token)).json()
+            self.assertEqual([s["id"] for s in look["servers"]], ["111"])
+            got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_server"))
+        self.assertEqual((await self.row())["to_user_id"], 0)
+
+    async def test_a_server_they_are_in_but_do_not_manage_is_refused_and_nothing_is_claimed(
+        self,
+    ) -> None:
+        async with self.db.guild(GORRAK.id) as conn:  # DMbot is installed there
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_at, via) VALUES (%s, %s, 'link')",
+                (GORRAK.id, self.now),
+            )
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, GORRAK)
+        got = await self.post(bob, "accept", token=token, serverId=str(GORRAK.id))
+        self.assertEqual((got.status_code, got.json()["error"]), (422, "bad_server"))
+        self.assertEqual((await self.row())["to_user_id"], 0)
+
+    async def test_a_pending_move_cannot_be_looked_at_answered_or_declined_underneath(self) -> None:
+        token = await self.link()
+        bob = await self.bob_in(THURSDAY, QUILLON)
+        await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
+        self.assertEqual((await self.post(bob, "look", token=token)).json(), {"status": "ended"})
+        same = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
+        self.assertEqual((same.status_code, same.json()["error"]), (409, "ended"))
+        declined = await self.post(bob, "decline", token=token)
+        self.assertEqual((declined.status_code, declined.json()["error"]), (409, "ended"))
+        row = await self.row()  # the claim and the wish are untouched
+        self.assertEqual(
+            (row["status"], row["to_user_id"], row["move_to_guild_id"]),
+            ("open", BOB.id, QUILLON.id),
+        )
