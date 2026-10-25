@@ -93,14 +93,14 @@ describe("Names fixed this session", () => {
   });
 });
 
-// The door writes how many lines were put back as `put_back` (core PR 2709): the real client must read that word.
+// The door writes how many lines were put back as `putBack` (core PR 2709): the real client must read that word.
 describe("the real client reads the Undo's answer", () => {
-  it("takes put_back from the polled answer", async () => {
+  it("takes putBack from the polled answer", async () => {
     const { httpApi } = await import("../src/account/api");
     const seen: string[] = [];
     const fetchMock = async (url: string, init?: { method?: string }): Promise<Response> => {
       seen.push(`${init?.method ?? "GET"} ${url}`);
-      const body = init?.method === "POST" ? { answer: "ans1" } : { state: "done", error: null, put_back: 7, waits: { stage: "done", waitedSeconds: 1, lastMovedAt: 1, stalled: false } };
+      const body = init?.method === "POST" ? { answer: "ans1" } : { state: "done", error: null, putBack: 7, waits: { stage: "done", waitedSeconds: 1, lastMovedAt: 1, stalled: false } };
       return new Response(JSON.stringify(body), { status: init?.method === "POST" ? 202 : 200, headers: { "content-type": "application/json" } });
     };
     const original = globalThis.fetch;
@@ -111,6 +111,23 @@ describe("the real client reads the Undo's answer", () => {
       expect(got.putBack).toBe(7);
       expect(seen[0]).toContain(`/me/recaps/${REF}/names-fixed/12/undo`);
       expect(seen[1]).toContain("/me/campaigns/100.cmp1/web/answers/ans1");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  // The door refuses an Undo made too soon after the last with 429 and `too_soon`: the page must say the
+  // "bit quick" sentence, not the generic failure.
+  it("says the 'a bit quick' sentence for a 429 too_soon", async () => {
+    const { httpApi } = await import("../src/account/api");
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "too_soon" }), { status: 429, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    try {
+      const api = httpApi("https://api.example.test");
+      const error = await api.undoNameFix!(REF, "12").catch((e: unknown) => e);
+      expect((error as { kind?: string }).kind).toBe("too-soon");
+      expect(w.errors["too-soon"]).toBe("That was a bit quick. Wait a few seconds, then try again.");
     } finally {
       globalThis.fetch = original;
     }
