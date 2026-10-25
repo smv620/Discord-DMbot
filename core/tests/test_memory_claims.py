@@ -557,6 +557,8 @@ class Stored(ConfirmedMemoryTest):
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
         original, copy = await self.snapshot(), await self.snapshot(GUILD_B, restored.id)
         original.pop("memory_mentions"), copy.pop("memory_mentions")
+        for row in original["memory_claims"]:  # line references name their speakers: not carried
+            row["lines"] = []
         self.assertEqual(copy, original)
         self.assertEqual(
             sorted(r["status"] for r in copy["memory_claims"]), ["dropped", "proposed", "rejected"]

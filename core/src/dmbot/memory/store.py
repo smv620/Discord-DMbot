@@ -33,7 +33,7 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, kin, merge_restore, notify, standing, states
+from dmbot.memory import beliefs, evidence, kin, merge_restore, notify, standing, states
 from dmbot.memory import threads as threads_mod
 from dmbot.memory._changes import (
     ALIASES,
@@ -994,6 +994,12 @@ class MemoryStore:
         if row is None:  # (a SELECT of scalar subqueries always returns one row)
             raise RuntimeError("The health counts returned no row")
         return row
+
+    async def evidence_audit(self, guild_id: int, campaign_id: str) -> evidence.Audit:
+        """Counts of this campaign's evidence links: how many, how many are placeholders, how many
+        point at nothing and how many at another campaign's thing (#2662). Counts only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await evidence.audit(scope.conn, guild_id, campaign_id)
 
     async def chain(
         self, guild_id: int, campaign_id: str, entity_id: str
@@ -3401,6 +3407,7 @@ class MemoryStore:
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
         }
+        found: list[dict[str, Any]] = []
         if mention_ids:
             found = await w.select(MENTIONS, " AND id = ANY(%s)", [list(mention_ids)])
             if len(found) != len(set(mention_ids)):
@@ -3428,6 +3435,11 @@ class MemoryStore:
             row = await w.update(RELATIONS, same.id, upgrade)
             return _relation(row), []
         await w.insert(RELATIONS, _relation_row(new))
+        for mention in found:  # what it was said in: typed links (#2662), beside the old list
+            await evidence.add_in(
+                w, kind=evidence.LINE, target_id=str(mention["line_ref"]), relation_id=new.id,
+                session_started_at=mention["session_started_at"], trusted=True,
+            )  # fmt: skip
         flags = await _flag_problems(w, onto, new, types[s], types[o], existing)
         return new, flags
 

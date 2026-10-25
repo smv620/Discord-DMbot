@@ -18,7 +18,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, notify, sheets
+from dmbot.memory import beliefs, evidence, notify, sheets
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
@@ -26,6 +26,7 @@ from dmbot.memory._changes import (
     CLAIMS,
     CORRECTIONS,
     ENTITIES,
+    EVIDENCE,
     FLAGS,
     IMPRESSIONS,
     PERSPECTIVES,
@@ -96,6 +97,7 @@ _TAGS: dict[str, Table] = {
     "relation": RELATIONS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "belief": BELIEFS,
+    "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
     "impression": IMPRESSIONS,
     "attitude": ATTITUDES,
     "correction": CORRECTIONS,
@@ -314,6 +316,20 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
             row = row_of(raw, table)
             if table is RELATIONS:
                 row["mention_ids"] = []  # mentions aren't backed up
+            if table is CLAIMS:
+                # a claim's line references name their speakers (#2676); a restored campaign has
+                # none of those lines, and a backup is read by the whole server
+                row["lines"] = []
+            if table is BELIEFS:
+                # the old list can hold a line's reference, which names its speaker; the typed
+                # links (a line's as a placeholder) carry the evidence now, and a backup is read
+                # by the whole server
+                row["evidence_ids"] = []
+            if table is EVIDENCE and row["kind"] == evidence.LINE:
+                # A line of this server's transcripts: its reference names the speaker, and a
+                # restored campaign has none of these lines, so the link goes as a placeholder
+                # (it keeps the kind and the session). A backup is read by the whole server.
+                row["target_id"] = None
             out.append({"table": tag, **row})
     return out
 
@@ -333,6 +349,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
+        elif table is EVIDENCE:
+            _check_evidence(raw)
         elif not all(_valid(c, raw[c]) for c in table.columns):
             raise CampaignError(DAMAGED)
         if table is CLAIMS:
@@ -353,6 +371,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         if table is ALIASES:  # worked out again, not taken from the file
             raw = {**raw, "sound_codes": list(sound_codes(raw["text"]))}
         by_tag[raw["table"]].append(raw)
+    _tidy_evidence(by_tag)
     _check_terms(by_tag)
     # A sheet belongs to the player playing the character, as everywhere else (#723).
     # One left from another player, or on an entry with no player (an undone merge), is
@@ -677,3 +696,48 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         if allowed is None or r["condition"] not in allowed or r["entity_id"] in open_for:
             raise CampaignError(DAMAGED)
         open_for.add(r["entity_id"])
+
+
+def _check_evidence(raw: dict[str, Any]) -> None:
+    """A link row from a file: one owner (a connection or a belief), a known kind, a short target
+    or none (a placeholder), and the session and time as whole numbers. Untrusted."""
+    owner_ok = (raw["relation_id"] is None) != (raw["belief_id"] is None)
+    ids_ok = all(raw[c] is None or is_id(raw[c]) for c in ("relation_id", "belief_id")) and is_id(
+        raw["id"]
+    )
+    target = raw["target_id"]
+    target_ok = target is None or (
+        isinstance(target, str) and 1 <= len(target) <= evidence.TARGET_MAX
+    )
+    ints_ok = (
+        all(
+            raw[c] is None
+            or (isinstance(raw[c], int) and not isinstance(raw[c], bool) and raw[c] >= 0)
+            for c in ("session_started_at", "added_at")
+        )
+        and raw["added_at"] is not None
+    )
+    if not (owner_ok and ids_ok and target_ok and ints_ok and raw["kind"] in evidence.KINDS):
+        raise CampaignError(DAMAGED)
+
+
+def _tidy_evidence(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """What a file's links may point at, whatever the file says (it is untrusted): a line is never
+    brought back (its reference names a speaker, and a restored campaign has none of those
+    lines), and a claim, clue or event must be a row of this same file, else the link is a
+    placeholder. A belief's old list and a claim's `lines` are not read from a file for the same
+    reason (they hold line references, which name speakers)."""
+    for row in by_tag["belief"]:
+        row["evidence_ids"] = []
+    for row in by_tag["claim"]:  # an older file's references are not brought back (#2676)
+        row["lines"] = []
+    claims = {r["id"] for r in by_tag["claim"]}
+    entity_kind = {r["id"]: r["type"] for r in by_tag["entity"]}
+    for row in by_tag["evidence"]:
+        kind, target = row["kind"], row["target_id"]
+        if (
+            kind == evidence.LINE
+            or (kind == evidence.CLAIM and target not in claims)
+            or (kind in (evidence.CLUE, evidence.EVENT) and entity_kind.get(target) != kind)
+        ):
+            row["target_id"] = None
