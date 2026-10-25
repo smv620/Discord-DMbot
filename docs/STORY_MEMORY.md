@@ -694,6 +694,13 @@ the owner chooses it, one at a time.
   available". It keeps the session and the kind of evidence, and never the words or who said them.
 - A belief the DM confirmed stands on its own, because it is the DM's word.
 - A link never gives anyone access to what it points at.
+- **Built (#2662):** the table is `memory_evidence` (a link's owner is a connection or a belief; kind
+  `claim`, `line`, `clue` or `event`; the target; the session; when it was added). A new connection
+  or belief writes its links there beside the old lists (`mention_ids`, `evidence_ids`), which a
+  later migration drops once nothing reads them; a reader takes the table. A removed line or claim
+  clears its link's target in every place that removes one. A backup carries a line's link as a
+  placeholder (a restored campaign has none of those lines). The health report counts links,
+  placeholders, dangling and foreign links.
 
 **Embeddings (meaning search).** Voyage AI (owner, 2026-10-24): `voyage-3.5` for embeddings and
 `rerank-2.5` for the second pass that picks what matters most. It is named on the privacy page as a

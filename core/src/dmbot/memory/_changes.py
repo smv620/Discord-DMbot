@@ -185,6 +185,15 @@ BELIEFS = Table(
      "evidence_ids", "seq", "recorded_at", "pinned"),
     defaults={"pinned": False},  # the DM's 📌 100% truth (#2447)
 )  # fmt: skip
+# What a connection or a belief stands on, one typed link each (#2662): unlogged, because an
+# Undo must not bring back a line's reference once the line's words were removed (the link is
+# then a placeholder). Deleted with its connection or belief by the database.
+EVIDENCE = Table(
+    "memory_evidence",
+    "id",
+    ("id", "relation_id", "belief_id", "kind", "target_id", "session_started_at", "added_at"),
+    logged=False,
+)
 # The DM's word that a book entry and a table entry are one, or are not (#1715).
 PLAN_SAME_AS = Table(
     "plan_same_as",
@@ -197,7 +206,7 @@ PLAN_POSITION = Table(
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS)  # fmt: skip
+       BELIEFS, EVIDENCE)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # What links to a row (table, column, is the column a list), checked before deleting it,

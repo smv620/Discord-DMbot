@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from dmbot.db import Conn
+from dmbot.memory import evidence as evidence_links
 from dmbot.memory._changes import (
     BELIEFS,
     ENTITIES,
@@ -27,6 +28,7 @@ from dmbot.memory._changes import (
     Changes,
     Scope,
 )
+from dmbot.memory.evidence import CLAIM, LINE
 from dmbot.memory.models import (
     BELIEF_STATUSES,
     CONFIRMED,
@@ -119,7 +121,7 @@ async def _add(
     # the version its own log row takes, so newer rows sort later; one past the pair's last when
     # that is higher (a restored backup brings rows numbered by another campaign's history)
     seq = max(w.version + 1, int(last[0]["seq"]) + 1 if last else 0)
-    return await w.insert(
+    row = await w.insert(
         BELIEFS,
         {
             "id": new_id(),
@@ -134,6 +136,13 @@ async def _add(
             "pinned": bool(last[0]["pinned"]) if pinned is None and last else bool(pinned),
         },
     )
+    for item in dict.fromkeys(evidence):  # the same evidence as typed links (#2662)
+        is_claim = await evidence_links.resolves(w.conn, w.guild_id, w.campaign_id, CLAIM, item)
+        await evidence_links.add_in(
+            w, kind=CLAIM if is_claim else LINE, target_id=item, belief_id=row["id"],
+            session_started_at=session_at, trusted=True,
+        )  # fmt: skip
+    return row
 
 
 async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:

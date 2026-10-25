@@ -19,6 +19,9 @@ What each number means:
 - asked_dm: proposed claims waiting for the DM from this session, plus the "Did they mean…?" name
   questions the session closed (answered, expired or ended; the caller adds those, which live in
   memory while the session runs). Speaker questions are not counted.
+- evidence, evidence_placeholders, evidence_dangling, evidence_foreign (#2662): how many evidence
+  links the campaign has, how many lost their line or claim, how many point at nothing and how
+  many at another campaign's thing (the last two should stay 0).
 """
 
 from __future__ import annotations
@@ -95,6 +98,12 @@ class Health:
     unused_terms: int
     flags_this_session: int
     asked_dm: int
+    # the evidence links (#2662): all of them, the placeholders, and the ones that point at
+    # nothing or at another campaign's thing (both should stay 0)
+    evidence: int = 0
+    evidence_placeholders: int = 0
+    evidence_dangling: int = 0
+    evidence_foreign: int = 0
 
     def line(self) -> str:
         """Counts only: no name, no text."""
@@ -102,7 +111,9 @@ class Health:
             f"memory health: entities={self.entities} confirmed={self.confirmed} "
             f"proposed={self.proposed} duplicates={self.duplicates} orphans={self.orphans} "
             f"unused_terms={self.unused_terms} flags_this_session={self.flags_this_session} "
-            f"asked_dm={self.asked_dm}"
+            f"asked_dm={self.asked_dm} evidence={self.evidence}"
+            f" evidence_placeholders={self.evidence_placeholders}"
+            f" evidence_dangling={self.evidence_dangling} evidence_foreign={self.evidence_foreign}"
         )
 
 
@@ -120,6 +131,7 @@ async def read(
     # campaign-scoped read.
     row = await memory.health_counts(guild_id, campaign_id, since=since, recent=RECENT_SESSIONS)
     confirmed, proposed = int(row["confirmed"]), int(row["proposed"])
+    links = await memory.evidence_audit(guild_id, campaign_id)
     return Health(
         entities=confirmed + proposed,
         confirmed=confirmed,
@@ -129,4 +141,8 @@ async def read(
         unused_terms=int(row["unused_terms"]),
         flags_this_session=int(row["flags"]),
         asked_dm=int(row["claims"]) + max(0, names_asked),
+        evidence=links.links,
+        evidence_placeholders=links.placeholders,
+        evidence_dangling=links.dangling,
+        evidence_foreign=links.foreign,
     )

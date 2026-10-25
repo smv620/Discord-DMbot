@@ -622,28 +622,23 @@ class RecallService:
 
     async def _sources(self, scope: Scope, facts: Sequence[_Fact]) -> Sources:
         """For each fact, where it was said: (line reference, session, speakers who said it)
-        from its mentions and from the claim it was confirmed from.
+        from its evidence links and from the claim it was confirmed from.
         Today the quoted lines come only from the claim (the extractor path, off until #1282):
-        nothing writes `memory_mentions` (#1740), so `mention_ids` are empty on a live table and
-        a fact the DM typed in by hand has no quoted lines until the extractor is on."""
+        nothing writes `memory_mentions` (#1740), so a fact the DM typed in by hand has no links
+        and no quoted lines until the extractor is on."""
         out: Sources = {}
-        mention_ids = sorted({m for f in facts for m in f.mention_ids})
-        by_mention: dict[str, tuple[str, int | None]] = {}
-        if mention_ids:
-            cur = await scope.conn.execute(
-                "SELECT id, line_ref, session_started_at FROM memory_mentions"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
-                (*scope.ids, mention_ids),
+        # The lines each fact stands on: its typed evidence links (#2662). A placeholder (the line
+        # was removed) has no target and says nothing here.
+        cur = await scope.conn.execute(
+            "SELECT relation_id, target_id, session_started_at FROM memory_evidence"
+            " WHERE guild_id = %s AND campaign_id = %s AND relation_id = ANY(%s)"
+            " AND kind = 'line' AND target_id IS NOT NULL ORDER BY added_at, id",
+            (*scope.ids, [f.id for f in facts]),
+        )
+        for r in await cur.fetchall():
+            out.setdefault(str(r["relation_id"]), []).append(
+                (str(r["target_id"]), r["session_started_at"], None)
             )
-            by_mention = {
-                str(r["id"]): (str(r["line_ref"]), r["session_started_at"])
-                for r in await cur.fetchall()
-            }
-        for f in facts:
-            for m in f.mention_ids:
-                if m in by_mention:
-                    ref, session = by_mention[m]
-                    out.setdefault(f.id, []).append((ref, session, None))
         cur = await scope.conn.execute(
             "SELECT fact_id, lines, speaker_ids, session_started_at FROM memory_claims"
             " WHERE guild_id = %s AND campaign_id = %s AND fact_id = ANY(%s)"
