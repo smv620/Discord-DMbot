@@ -1168,12 +1168,16 @@ class WhatPeopleBelieve(Editing):
         self.recorded = {7}
 
     async def reading(
-        self, status: str = "theory", confidence: float = 0.5, obj: str = "Far Hall"
+        self,
+        status: str = "theory",
+        confidence: float = 0.5,
+        obj: str = "Far Hall",
+        view: str = "pc:Rook",
     ) -> str:
         from dmbot.memory import readings
 
         theory = readings.BeliefProposal(
-            "pc:Rook", "Mira Voss", "knows", obj, confidence, status, ("1",)
+            view, "Mira Voss", "knows", obj, confidence, status, ("1",)
         )
         await self.claims.propose(
             self.g, self.one.id, [readings.as_claim(theory, "player_said")], {"1": 7},
@@ -1289,6 +1293,23 @@ class WhatPeopleBelieve(Editing):
         self.assertEqual(undone.error, "")
         self.assertIsNone(await self.claims.placed_batch(self.g, self.one.id, ident))
         self.assertEqual(len((await self.listed())["readings"]), 1)  # the question is back
+
+    async def test_a_retried_place_undoes_its_own_keep_not_another_on_the_same_connection(
+        self,
+    ) -> None:
+        first = await self.reading(view="pc:Rook")
+        second = await self.reading(view="pc:Mira Voss")
+        await self.answer("place", first)
+        await self.run_bot()
+        retry = await self.answer("place", second)
+        placed = await self.claims.place(self.g, self.one.id, second, opted_in=self.recorded)
+        (outcome,) = await self.run_bot()  # (the worker died after the keep: the retry finds it)
+        self.assertEqual((outcome.error, outcome.result_other), ("", str(placed.batch)))
+        await self.answer("undo", retry)
+        (undone,) = await self.run_bot()
+        self.assertEqual(undone.error, "")
+        self.assertIsNone(await self.claims.placed_batch(self.g, self.one.id, second))
+        self.assertIsNotNone(await self.claims.placed_batch(self.g, self.one.id, first))  # stays
 
     async def test_an_undo_reads_who_is_recorded_inside_the_undo(self) -> None:
         ident = await self.reading()
