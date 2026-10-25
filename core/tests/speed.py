@@ -13,6 +13,7 @@ import hashlib
 import math
 import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 # The fixed work takes about this long on a quiet machine (measured when this was written).
 QUIET_S = 0.012
@@ -31,6 +32,24 @@ def slowdown() -> float:
     """How many times slower than a quiet machine this one is right now (1.0 or more), taking the
     best of a few tries so one pause does not count."""
     return min(MOST, max(1.0, min(_work() for _ in range(5)) / QUIET_S))
+
+
+# The fixed query takes about this long on a quiet database (10,000 rows, md5 each).
+QUIET_DB_S = 0.012
+_DB_WORK = "SELECT sum(length(md5(n::text))) FROM generate_series(1, 10000) n"
+
+
+async def db_slowdown(conn: Any) -> float:
+    """`slowdown` for a test that waits on the database (#2694). The CPU probe above cannot see a
+    database that other test workers have starved while this process is idle, so a query-bound
+    test measures the database itself: the same small query, best of a few, against what it takes
+    on a quiet one. Never below 1, never above `MOST`."""
+    best = math.inf
+    for _ in range(5):
+        began = time.perf_counter()
+        await conn.execute(_DB_WORK)
+        best = min(best, time.perf_counter() - began)
+    return min(MOST, max(1.0, best / QUIET_DB_S))
 
 
 def allowed(limit: float, *scales: float) -> float:
