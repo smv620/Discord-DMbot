@@ -655,7 +655,12 @@ screen would (`ClaimStore.place`, `reject`, the store's Undo). `place` asks who 
 (the bot passes a function, not a snapshot). The answer is polled like the others and also says its wait (stage,
 how long, when it last moved: counts and stages only) and whether it can still be undone. A Discord version waits
 until the owner asks for one.
-Not yet: the deception event (`manipulated_by`) and the clue as typed links.
+**What a placed reading rests on (slice 3c).** When a reading is placed, the clue or event it names as its reason
+(`because`) and the act or ward that faked or blocked it (`manipulated_by`) become typed links (`clue` or `event`) on
+the belief it made (on the connection, for a secret plot, which makes no belief). A name is looked up among the
+campaign's existing, kept entries and links only when it fits exactly one clue or event: a reading never makes a name
+or an event, a name that finds nothing, a waiting entry, a person, a place or an item adds no link, and none of that
+stops the placing. The faked clue's own `manipulated_by` column stays the DM's to set.
 
 DMbot proposes these; the DM confirms them in the review below, as every fact today. Code checks the
 shapes (a confidence from 0 to 1, a known status, both ends in the campaign); the AI never writes The truth.

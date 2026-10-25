@@ -125,6 +125,72 @@ class Placing(ConfirmedMemoryTest):
         held = {b.relation_id for b in await self.memory.party_view(GUILD_A, self.c)}
         self.assertIn(placed.relation_id, held)
 
+    async def links_of(self, belief_id: str) -> list[tuple[str, str | None]]:
+        rows = await self.rows("memory_evidence")
+        return sorted((e["kind"], e["target_id"]) for e in rows if e["belief_id"] == belief_id)
+
+    async def test_the_clue_a_reveal_names_becomes_a_link_on_its_belief(self) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("party", "revealed_fact", 1.0, because="the ledger"), "dm_said"
+        )
+        placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(
+            await self.links_of(latest["id"]), sorted([("claim", claim_id), ("clue", ledger)])
+        )
+
+    async def test_a_frame_up_links_the_event_that_faked_it(self) -> None:
+        planted = await self.add("The Planted Ledger", type="event")
+        await self.relate(self.bram, "carries", self.sword, status="confirmed")
+        proposal = belief(
+            "truth",
+            "false_evidence",
+            0.0,
+            because="the ledger",
+            manipulated_by="the planted ledger",
+        )
+        placed = await self.place(await self.waiting_reading(proposal, "dm_said"))
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertIn(("event", planted), await self.links_of(latest["id"]))
+
+    async def test_a_name_that_finds_nothing_or_is_not_a_clue_or_event_adds_no_link(self) -> None:
+        await self.add("Heartseeker II", type="item")
+        await self.add("Old Tom", type="clue", status="proposed")  # still waiting for the DM
+        for n, reason in enumerate(("the missing ledger", "Mira", "Old Tom", "Heartseeker II")):
+            with self.subTest(reason):
+                await self.add(f"Trinket {n}", type="item")  # (a fresh guess each time)
+                proposal = readings.BeliefProposal(
+                    "pc:Mira", "Bram", "carries", f"Trinket {n}", 0.5, "theory", ("1",),
+                    because=reason,
+                )  # fmt: skip
+                claim_id = await self.waiting_reading(proposal, "player_said")
+                placed = await self.place(claim_id)
+                latest = (await self.beliefs_of(placed.relation_id))[-1]
+                self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_a_name_that_fits_two_entries_adds_no_link(self) -> None:
+        letter = await self.add("Letter", type="clue")
+        await self.memory.add_alias(
+            GUILD_A, self.c, letter, "the note", kind="nickname", source="dm", status="confirmed"
+        )
+        await self.add("The Note", type="event")
+        claim_id = await self.waiting_reading(belief("pc:Mira", "theory", 0.5, because="the note"))
+        placed = await self.place(claim_id)
+        latest = (await self.beliefs_of(placed.relation_id))[-1]
+        self.assertEqual(await self.links_of(latest["id"]), [("claim", claim_id)])
+
+    async def test_a_secret_plot_links_its_reason_on_the_connection(self) -> None:
+        ledger = await self.add("The Ledger", type="clue")
+        claim_id = await self.waiting_reading(
+            belief("truth", "secret_plot", 1.0, because="the ledger"), "dm_said"
+        )
+        placed = await self.place(claim_id)
+        links = [
+            e for e in await self.rows("memory_evidence") if e["relation_id"] == placed.relation_id
+        ]
+        self.assertIn(("clue", ledger), [(e["kind"], e["target_id"]) for e in links])
+
     async def test_a_reveal_of_a_secret_connection_is_refused_and_writes_nothing(self) -> None:
         await self.relate(self.bram, "carries", self.sword, status="confirmed", secret=True)
         before = await self.snapshot()
