@@ -39,6 +39,7 @@ import RecapApprove from "./RecapApprove";
 import RecapMake from "./RecapMake";
 import RecapEmailLine from "./RecapEmail";
 import RecapFix from "./RecapFix";
+import RecapNameChecks from "./RecapNameChecks";
 import RecapFixName from "./RecapFixName";
 import { audioIsStale, useRemake } from "./useRemake";
 import WorkProgress from "./WorkProgress";
@@ -905,6 +906,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       )}
 
       {!editing && <RecapFix key={`fix-${recap.ref}`} api={api} recap={recap} onRecap={setRecap} />}
+      <RecapNameChecks key={`names-${recap.ref}`} api={api} refId={recap.ref} />
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
