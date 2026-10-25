@@ -1063,6 +1063,15 @@ class ClaimStore:
             await w.update(
                 CLAIMS, claim_id, {"status": CLAIM_PROPOSED, "decided_at": None, "fact_id": None}
             )
+            # A guess placed on a connection that other guesses share left a link from that
+            # connection to this claim (links are not in the change log, so the Undo did not take
+            # it): the connection no longer stands on a claim that waits again. Links on a belief
+            # went with the belief, and a connection the placing made went whole.
+            await w.conn.execute(
+                "DELETE FROM memory_evidence WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = 'claim' AND target_id = %s AND relation_id IS NOT NULL",
+                (*w.ids, claim_id),
+            )
 
     async def place(
         self,
