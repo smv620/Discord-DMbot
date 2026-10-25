@@ -1946,9 +1946,13 @@ class RecapWorker:
                     check=", ".join(cl.kinds(problems)), ours=why != STOP_CEILING,
                 )  # fmt: skip
             cut = len(best.cuts)
+        # (the away notes are read again from the text that is kept, cuts and all)
+        kept_notes = tuple(n for n in best.notes if not away.is_note(n)) + self._away_notes(
+            prose.summary, sheet, inputs
+        )
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
-            why, loop.round, len(best.notes), cut,
+            why, loop.round, len(kept_notes), cut,
         )  # fmt: skip
         await self._store.update(
             gid, cid, job.session_at,
@@ -1963,12 +1967,7 @@ class RecapWorker:
                 waits=0,
                 since=0,
                 told=False,
-                notes=best.notes
-                + tuple(
-                    n
-                    for n in self._away_notes(best.summary, sheet, inputs)
-                    if n not in best.notes
-                )
+                notes=kept_notes
                 + (() if best.grade or job.grade else (cr.STYLE_UNCHECKED,)),
                 cut=cut,
             ).to_json(),

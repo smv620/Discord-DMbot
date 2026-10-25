@@ -35,12 +35,14 @@ from dmbot.recaps.critics import Change
 OPENING, INTRODUCE, THREAD, CLOSING, MOMENT = "opening", "introduce", "thread", "closing", "moment"
 KINDS = (OPENING, INTRODUCE, THREAD, CLOSING, MOMENT)
 MAX_FINDINGS = 6  # for one reading: the writer is asked for a few things well, not everything
+MAX_INTRODUCE = 3  # a draft full of new names should not drown the other findings
+# Most useful first, so the cap drops the least useful.
+_PRIORITY = (OPENING, MOMENT, CLOSING, THREAD, INTRODUCE)
 
-# Words that open a sentence with nobody named.
+# Pronouns that open a sentence with nobody named ("That night, …" and "Then Maris …" are fine).
 _PRONOUNS = frozenset(
-    {"he", "she", "they", "it", "we", "his", "her", "their", "its", "him", "them", "this", "that",
-     "these", "those", "there", "then", "so", "but", "and"}
-)  # fmt: skip
+    {"he", "she", "they", "it", "we", "his", "her", "their", "its", "him", "them"}
+)
 # A favour, a debt, a promise or a threat: something that should come to a result.
 _THREAD = re.compile(
     r"\b(owe[sd]?|debt|favou?r|promis(?:e|ed|es)|vow(?:ed|s)?|swore|sworn|oath|bargain|"
@@ -58,7 +60,7 @@ _PARTY = re.compile(r"\b(party|company|travellers|travelers|adventurers|heroes)\
 # Right after, or right before, a name: something that says who or what it is.
 _AFTER = re.compile(r"^\s*(?:,\s*(?:a|an|the|who|whose|once|former|formerly)\b|\()", re.IGNORECASE)
 _BEFORE = re.compile(
-    r"(?:\b(?:a|an|the|old|young|local|famed|named|called|known as)\s+(?:[\w'-]+\s+){0,3}|"
+    r"(?:\b(?:a|an|the|old|young|local|famed|named|called|known as)\s+(?:[\w'-]+\s+){0,1}|"
     r"\b(?:named|called|known as)\s+)$",
     re.IGNORECASE,
 )
@@ -111,12 +113,15 @@ def findings(
     if _first_word(sentences[0]) in _PRONOUNS:
         out.append(Finding(OPENING, 1))
     known = previous.casefold()
+    in_party = {aliases.get(pc, pc) for pc in present}
     # a name is introduced where it first appears; the earlier recap and a player character
-    # need none
+    # need none. A spelling that is only another way to write a name is looked at with it.
     for name in sorted(names):
-        if name.casefold() in known or name in present:
+        if name in aliases:
             continue
         spellings = _spellings(name, aliases)
+        if name in in_party or any(sp.casefold() in known for sp in spellings):
+            continue
         for number, sentence in enumerate(sentences, start=1):
             found = _mentions(sentence, spellings)
             if found:
@@ -126,9 +131,9 @@ def findings(
     for number, sentence in enumerate(sentences, start=1):
         if number == len(sentences) or not _THREAD.search(sentence) or _RESULT.search(sentence):
             continue
-        later = " ".join(sentences[number:])
-        if not _RESULT.search(later):
+        if not _RESULT.search(" ".join(sentences[number:])):
             out.append(Finding(THREAD, number))
+            break  # one thread at a time: the writer fixes the first and the rest is the DM's
     last = sentences[-1]
     if _THREAD.search(last) and not _PARTY.search(last) and not _mentions(last, sorted(present)):
         out.append(Finding(CLOSING, len(sentences)))
@@ -136,7 +141,11 @@ def findings(
     for pc in sorted(present):
         if not _mentions(whole, _spellings(pc, aliases)):
             out.append(Finding(MOMENT, 0, pc))
-    return out[:MAX_FINDINGS]
+    kept: list[Finding] = []
+    for kind in _PRIORITY:
+        mine = [f for f in out if f.kind == kind]
+        kept.extend(mine[:MAX_INTRODUCE] if kind == INTRODUCE else mine)
+    return kept[:MAX_FINDINGS]
 
 
 def _quote(sentences: Sequence[str], number: int) -> str:
@@ -159,7 +168,10 @@ def changes(found: Sequence[Finding], sentences: Sequence[str]) -> list[Change]:
             )
             note = f"Check: {f.name} is named without saying who or what that is."
         elif f.kind == THREAD:
-            ask = f"{where}: say what came of it, or that it is still open, from the beats"
+            ask = (
+                f"{where}: say what came of it, or that it is still open, only if the beats say; "
+                "otherwise leave it out"
+            )
             note = f"Check: sentence {f.sentence} may leave a favour, promise or threat hanging."
         elif f.kind == CLOSING:
             ask = f"{where}: say why this matters to the party, from the beats"
@@ -174,3 +186,18 @@ def changes(found: Sequence[Finding], sentences: Sequence[str]) -> list[Change]:
 def notes(found: Sequence[Finding], sentences: Sequence[str]) -> tuple[str, ...]:
     """What the DM reads for findings that remain after the writer's one fix."""
     return tuple(c.note for c in changes(found, sentences))
+
+
+_NOTES = re.compile(
+    r"^Check: (the recap opens without saying who it is about\."
+    r"|.+ is named without saying who or what that is\."
+    r"|sentence \d+ may leave a favour, promise or threat hanging\."
+    r"|the recap ends on a threat without saying why the party should care\."
+    r"|.+ is not in the recap\.)$"
+)
+
+
+def is_note(text: str) -> bool:
+    """Is this one of this module's notes? The stop path rebuilds them from the final text, so
+    an older reading's copy (with that draft's sentence numbers) must not stay beside them."""
+    return bool(_NOTES.match(text))
