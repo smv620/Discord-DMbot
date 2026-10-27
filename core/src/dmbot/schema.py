@@ -10780,6 +10780,16 @@ _MENTIONS_OF = """'hidden', p.hidden,
                                    AND m.entity_id = p.id),"""
 assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
 ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
+# The Names page's type filter takes several kinds at once (owner request, 2026-10-27): the
+# door's `k` is a comma-separated list of kinds, and a name is kept when its kind is any of them.
+# A one-kind list is what it took before, so every caller keeps working. (A redefined function loses
+# its pinned settings, so the copy of the door's tail that sets them again comes with it.)
+assert ALL_NAMES_MENTIONS.count("(kind_ IS NULL OR v.kind = kind_)") == 1
+ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
+    "(kind_ IS NULL OR v.kind = kind_)",
+    "(kind_ IS NULL OR v.kind = ANY (string_to_array(kind_, ',')))",
+    1,
+)
 
 
 TRANSCRIPT_SPEAKER_NAMES = """
@@ -15292,6 +15302,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0240_names_fixed_door", NAMES_FIXED_DOOR),  # the recap page reads it (#2684)
     ("0241_names_fixed_undo", NAMES_FIXED_UNDO),  # and undoes a fix, queued for the bot (#2684)
     ("0242_name_change_words", NAME_CHANGE_WORDS),  # Change the words on names to check (#2593)
+    ("0247_all_names_kinds", ALL_NAMES_KINDS),  # the Names page's type filter takes several kinds
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
