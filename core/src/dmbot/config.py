@@ -99,6 +99,9 @@ class Settings:
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
     story_contradictions_on: bool = False
+    # After a session, the report for the website (#2661): PlotBot grades the minor contradictions
+    # and sorts what the party has wrong, and the DM answers on the page. Same gates as the grades.
+    story_report_on: bool = False
     # Images posted in the table chat are described once by the AI (#2450). Off until dev1 has run
     # a live check; with it off no image is fetched or sent anywhere. `table_images_per_day` is the
     # most images one campaign has described in a day (each counts toward its AI use); past it an
@@ -322,6 +325,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + contradictions_raw
             + '".'
         )
+    report_raw = (get("DMBOT_STORY_REPORT") or "0").lower()
+    if report_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_STORY_REPORT must be 1 (on) or 0 (off), got "{report_raw}".')
     extractor_tier = (get("DMBOT_STORY_EXTRACTOR_TIER") or "fast").lower()
     if extractor_tier not in ("fast", "careful", "deep"):
         raise ConfigError(
@@ -476,6 +482,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
+        story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
