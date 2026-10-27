@@ -136,6 +136,19 @@ class Storing(ConfirmedMemoryTest):
         self.assertEqual(order, [False, True])
 
 
+class TheColumnLimit(ConfirmedMemoryTest):
+    async def test_the_reason_limit_in_the_schema_is_the_one_the_code_keeps(self) -> None:
+        from dmbot.memory.contradiction_grades import REASON_MAX
+
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint"
+                " WHERE conrelid = 'memory_differences'::regclass AND contype = 'c'"
+            )
+            defs = " ".join(str(r["d"]) for r in await cur.fetchall())
+        self.assertIn(f"<= {REASON_MAX}", defs)
+
+
 class Answering(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()

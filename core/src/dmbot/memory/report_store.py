@@ -18,7 +18,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
-from dmbot.memory.contradiction_grades import REASON_MAX, one_line
+from dmbot.memory.contradiction_grades import one_line
 from dmbot.memory.differences import Difference
 from dmbot.memory.store import MemoryStore
 
@@ -33,8 +33,6 @@ MAKING, READY, FAILED = "making", "ready", "failed"
 STALLED_S = 900  # a run that has not moved for this long is dead (a restart): it may begin again
 READING, GRADING, SORTING = "reading", "grading", "sorting"
 STAGES = (READING, GRADING, SORTING)
-if REASON_MAX != 2000:  # (a raise: `python -O` drops an assert) the column's own limit, 0244
-    raise RuntimeError("the reason limit and migration 0244 no longer agree")
 
 
 def contradiction_key(perspective_id: str, kind: str, first_id: str, second_id: str) -> str:
