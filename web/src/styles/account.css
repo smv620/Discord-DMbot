@@ -905,7 +905,7 @@
 
   /* Other names fill what is left of the line and are cut with … (the full list is the tooltip,
      and the editor shows it whole). */
-  .account .name-others {
+  .account .name-aka {
     flex: 1 1 8rem;
     min-width: 0;
     overflow: hidden;

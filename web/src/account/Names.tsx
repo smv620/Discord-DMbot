@@ -591,7 +591,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           <span class="campaign-name">{row.name}</span>
         )}
         {row.others.length > 0 && (
-          <span class="small muted name-others" title={row.others.join(", ")}>
+          <span class="small muted name-aka" title={row.others.join(", ")}>
             {words.alsoCalled}: {row.others.join(", ")}
           </span>
         )}
