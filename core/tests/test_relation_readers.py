@@ -57,6 +57,9 @@ STORE = {
     "_standing_index": CONFIRMED_ONLY,
     "_deed_rows": CONFIRMED_ONLY,
     "_audience": CONFIRMED_ONLY + ": who may be told",
+    "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
+    "_recheck_led_to_after_undo": CONFIRMED_ONLY
+    + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",

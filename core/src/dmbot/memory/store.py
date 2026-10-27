@@ -193,6 +193,11 @@ PARTY_NAME = "The party"
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
+UNDO_LED_TO_LOOP = "Undoing this would make a loop of 'led to' links. Take one of them away first."
+MERGE_LED_TO_LOOP = (
+    "These two can't be joined yet: one led to something that led to the other, and joining them "
+    "would make a loop. Take away one of those “led to” links first."
+)
 DUE_MAX = 120  # letters in a promise's due note
 THREAD_KINDS_ONLY = "A thread is a quest, a mystery, a hook, a goal or a promise."
 STANDING_VIEWERS = ("character", "faction", "place")
@@ -3411,18 +3416,7 @@ class MemoryStore:
             # Whatever the path (extractor, "Connect to…"), a "led to" link is the DM's secret
             # and may not close a loop (#1679).
             secret = True
-            for end in (subject_id, object_id):
-                if (await _entity_row(w, end))["status"] != CONFIRMED:
-                    raise MemoryRuleError(LED_TO_CONFIRM)
-            live = await w.select(
-                RELATIONS,
-                " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
-                [],
-            )
-            if threads_mod.would_loop(
-                [(r["subject_id"], r["object_id"]) for r in live], subject_id, object_id
-            ):
-                raise MemoryRuleError(LED_TO_LOOP)
+            await _check_led_to_live(w, None, subject_id, object_id)
         types = {
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
@@ -3514,6 +3508,17 @@ class MemoryStore:
             if to_session_at is not None:
                 _check_span(current["from_session_at"], to_session_at)
                 changes["to_session_at"] = to_session_at
+            if (
+                current["predicate"] == threads_mod.LED_TO
+                and changes.get("status") == CONFIRMED
+                and current["status"] != CONFIRMED
+                and changes.get("to_session_at", current["to_session_at"]) is None
+            ):
+                # Confirming a "led to" link makes it live, so it gets the checks a new one gets
+                # (#2673): both ends confirmed, and no loop with the links already live.
+                await _check_led_to_live(
+                    w, relation_id, current["subject_id"], current["object_id"]
+                )
             row = await w.update(RELATIONS, relation_id, changes)
             if waiting_guess(_relation(current)) and row["status"] == CONFIRMED:
                 await flag_kept(w, relation_id)  # (only a guess host was never judged as a fact)
@@ -4066,6 +4071,7 @@ class MemoryStore:
         try:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
+                await _recheck_led_to_after_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -4122,6 +4128,7 @@ class MemoryStore:
             if any(w.now - r["made_at"] > within for r in rows):
                 raise TooLateToUndo(self._too_late())
             await undo_batch(w, batch)
+            await _recheck_led_to_after_undo(w, batch)
             back = await w.get(RELATIONS, ended[0]["row_id"])
             if back is None:
                 raise MemoryRuleError(NOT_FOUND)
@@ -4895,6 +4902,94 @@ async def _move_aliases(
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
 
+async def _live_led_to(w: Changes, *, skip: str | None = None) -> list[tuple[str, str]]:
+    """The (from, to) pairs of the campaign's live "led to" links (confirmed, not ended)."""
+    live = await w.select(
+        RELATIONS,
+        " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
+        [],
+    )
+    return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
+
+
+async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:
+    """An Undo puts rows back as they were, without the checks a new change meets. If it made a
+    "led to" link live again (a rejected link the DM brought back), that link gets the loop check
+    now: the other direction may have been added while it was off (#2673). A loop refuses the
+    whole undo (nothing is written, as for any other change since)."""
+    cur = await w.conn.execute(
+        "SELECT DISTINCT row_id FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+        " AND batch = %s AND table_name = %s AND (after->>'predicate' = 'led_to'"
+        " OR before->>'predicate' = 'led_to')",
+        (*w.ids, batch, RELATIONS.name),
+    )
+    ids = [r["row_id"] for r in await cur.fetchall()]
+    if not ids:
+        return
+    for row in await w.select(RELATIONS, " AND id = ANY(%s)", [ids]):
+        link = _relation(row)
+        if _live_led_to_link(link):
+            try:
+                await _check_led_to_live(w, link.id, link.subject_id, link.object_id)
+            except MemoryRuleError as refused:
+                # The loop gets its own words so the DM knows what to do; any other refusal
+                # (an end no longer confirmed) is the usual "changed since".
+                raise MemoryRuleError(
+                    UNDO_LED_TO_LOOP if str(refused) == LED_TO_LOOP else CHANGED_SINCE
+                ) from None
+
+
+async def _check_led_to_live(w: Changes, relation_id: str | None, start: str, end: str) -> None:
+    """A "led to" link about to become live (`relation_id`: itself, left out of the graph; None for
+    one not made yet): both ends confirmed and no loop. The one place these rules live, for a new
+    link, a confirmed one (#2673) and a Keep on a waiting guess."""
+    for name in (start, end):
+        if (await _entity_row(w, name))["status"] != CONFIRMED:
+            raise MemoryRuleError(LED_TO_CONFIRM)
+    if threads_mod.would_loop(await _live_led_to(w, skip=relation_id), start, end):
+        raise MemoryRuleError(LED_TO_LOOP)
+
+
+def _live_led_to_link(link: Relation) -> bool:
+    return (
+        link.predicate == threads_mod.LED_TO
+        and link.status == CONFIRMED
+        and link.to_session_at is None
+    )
+
+
+async def _refuse_led_to_loop(
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    gone_rows: Sequence[Mapping[str, Any]],
+    state: Mapping[str, Relation],
+) -> None:
+    """Moving the other entry's links onto the kept one can join two ends of a chain (A led to X,
+    X led to B, and A is B). Such a merge is refused before anything is written, and the DM decides
+    which link goes (#2673). A loop that was there before is not this merge's doing and does not
+    block it. Only when both entries have a live "led to" link can a merge make a loop, so
+    a merge of anything else reads nothing more (it stays within its statement budget, #164)."""
+    gone_has = any(
+        r["predicate"] == threads_mod.LED_TO
+        and r["status"] == CONFIRMED
+        and r["to_session_at"] is None
+        for r in gone_rows
+    )
+    keep_has = any(
+        _live_led_to_link(f) and keep_id in (f.subject_id, f.object_id) for f in state.values()
+    )
+    if not (gone_has and keep_has):
+        return
+    pairs = await _live_led_to(w)
+    moved = [(keep_id if a == gone_id else a, keep_id if b == gone_id else b) for a, b in pairs]
+    moved = [(a, b) for a, b in moved if a != b]  # (a link to itself says nothing any more)
+    if threads_mod.loops_through(moved, keep_id) and not (
+        threads_mod.loops_through(pairs, keep_id) or threads_mod.loops_through(pairs, gone_id)
+    ):
+        raise MemoryRuleError(MERGE_LED_TO_LOOP)
+
+
 async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
     """The other entry's facts move over. They're checked one by one, in the same order
     as before, against an in-memory copy of every fact they could clash with (so the
@@ -4910,6 +5005,7 @@ async def _move_relations(w: Changes, keep_id: str, gone_id: str) -> None:
         return
     ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
     state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
+    await _refuse_led_to_loop(w, keep_id, gone_id, rows, state)
     # Which facts touch each entry, kept up to date as facts move or go, so each fact
     # is checked against its neighbours only (not every fact in `state`), in `state`'s
     # order so the same twin is found as before (#342 review).
