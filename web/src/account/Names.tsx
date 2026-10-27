@@ -84,7 +84,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const [smartRun, setSmartRun] = useState<{ since: number } | null>(null);
   const [smartProblem, setSmartProblem] = useState<string | null>(null);
   const smartLatest = useRef(0);
-  const smartWords_ = useRef("");
+  const meaningBox = useRef<HTMLInputElement>(null);
+  const smartShowing = useRef(false); // (a ref: a change that finishes later must see it now, not as of its render)
+  const lastSearch = useRef("");
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -160,26 +162,31 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   }
 
   /** One meaning search. A newer search, or going back to the list, makes an older answer be ignored. */
-  async function searchByMeaning(words_: string): Promise<void> {
-    const text = words_.trim();
-    if (!ref || !api.smartNames || text === "" || smartRun) return;
+  async function searchByMeaning(typed: string): Promise<void> {
+    const text = typed.trim();
+    if (!ref || !api.smartNames || smartRun) return;
+    if (text === "") {
+      setSmartProblem(smartWords.typeSome);
+      return;
+    }
     if (text.length > 100) {
       setSmartProblem(smartWords.tooLong);
       return;
     }
     const mine = ++smartLatest.current;
-    smartWords_.current = text;
+    lastSearch.current = text;
     setSmartProblem(null);
     setSmartRun({ since: Date.now() / 1000 });
     try {
       const got = await api.smartNames(ref, text);
       if (mine !== smartLatest.current) return;
+      smartShowing.current = true;
       setSmart(got.names);
     } catch (error) {
       if (mine !== smartLatest.current) return;
       const kindOf = error instanceof ApiError ? error.kind : "network";
       if (kindOf === "signed-out") setView("signed-out");
-      else setSmartProblem(kindOf === "not-available" ? smartWords.notReady : kindOf === "network" ? words.errors.network ?? smartWords.failed : smartWords.failed);
+      else setSmartProblem(smartProblemFor(kindOf));
     } finally {
       if (mine === smartLatest.current) setSmartRun(null);
     }
@@ -187,20 +194,33 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
   /** After a change to a name: read the same search again, quietly, so the rows are not out of date. */
   async function refreshSmart(): Promise<void> {
-    if (!ref || !api.smartNames || smartWords_.current === "") return;
+    if (!ref || !api.smartNames || !smartShowing.current || lastSearch.current === "") return;
+    const mine = smartLatest.current;
     try {
-      setSmart((await api.smartNames(ref, smartWords_.current)).names);
+      const got = await api.smartNames(ref, lastSearch.current);
+      // Back to all names, or a newer search, while this was on its way: its answer is not wanted.
+      if (mine === smartLatest.current && smartShowing.current) setSmart(got.names);
     } catch {
       // (the rows stay as they were; the next Search says what is wrong)
     }
   }
 
-  function backToList(): void {
-    smartLatest.current++; // (an answer still on its way is no longer wanted)
+  /** Leaves the search results (Back, or any use of the list's own controls): an answer still on its way is no
+   * longer wanted, and the words are forgotten. */
+  function leaveSmart(): void {
+    smartLatest.current++;
+    smartShowing.current = false;
+    lastSearch.current = "";
     setSmart(null);
     setSmartRun(null);
     setSmartProblem(null);
+  }
+
+  function backToList(): void {
+    leaveSmart();
     setMeaning("");
+    // The button that was pressed is gone: the keyboard goes to the box, ready for the next search.
+    setTimeout(() => meaningBox.current?.focus(), 0);
   }
 
   // Search as you type, filter and sort: a new read from page 1 (the first one at once).
@@ -209,6 +229,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     const wait = first.current ? 0 : SEARCH_MS;
     first.current = false;
     setNews(null);
+    if (smartShowing.current) leaveSmart(); // (typing in Find a name, or a type, sort or size, is back to the list)
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
     // `load` reads the latest query through a ref, so only these restart the read.
@@ -258,7 +279,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       setMerging(false);
       setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
       setTimeout(() => newsBox.current?.focus(), 0);
-      await load(pageNow.current, true);
+      await reload();
     } catch (error) {
       const said = refusal(error);
       if (said === null) {
@@ -271,12 +292,19 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         // It may have happened, or a name is gone: read the list again and start the ticking over.
         setPicked([]);
         setMerging(false);
-        await load(pageNow.current, true);
+        await reload();
       }
     } finally {
       mergeFlight.current = false;
       setMergeBusy(false);
     }
+  }
+
+  /** The list as it is now, and the search results too when they are showing (they would be out of date). */
+  function reload(): Promise<unknown> {
+    const read = load(pageNow.current, true);
+    // (no extra step when no search is showing: the editor stays busy only as long as the list read takes)
+    return smartShowing.current ? read.then(refreshSmart) : read;
   }
 
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
@@ -297,7 +325,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       if (error instanceof ApiError && error.kind === "still-waiting") {
         // It may still happen: say so, and read the list again so it shows if it did.
         setNews({ ok: false, text: said, n: ++sayings.current });
-        await load(pageNow.current, true);
+        await reload();
         return null;
       }
       if (error instanceof ApiError && error.kind === "not-found") {
@@ -306,7 +334,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         setNews({ ok: false, text: said, n: ++sayings.current });
         // The editor is gone: the keyboard goes to the news, as after a remove or a merge.
         setTimeout(() => newsBox.current?.focus(), 0);
-        await load(pageNow.current, true);
+        await reload();
         return null;
       }
       return said;
@@ -317,8 +345,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       // The editor is gone: the keyboard goes to the news, where the result is said.
       setTimeout(() => newsBox.current?.focus(), 0);
     }
-    await load(pageNow.current, true);
-    if (smart !== null) await refreshSmart();
+    await reload();
     return null;
   }
 
@@ -454,7 +481,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
               value={meaning}
               autoComplete="off"
               spellcheck={false}
-              maxLength={100}
+              ref={meaningBox}
               aria-describedby="names-smart-hint"
               onInput={(e) => setMeaning((e.target as HTMLInputElement).value)}
             />
@@ -463,7 +490,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
             {smartWords.hint}
           </p>
           <div class="row">
-            <button type="submit" class="button" disabled={smartRun !== null || meaning.trim() === ""}>
+            {/* aria-disabled, not disabled: pressing it must not drop the keyboard (a search already running is
+                ignored, and an empty one says what to type). */}
+            <button type="submit" class="button" aria-disabled={smartRun !== null}>
               {smartWords.button}
             </button>
             {smart !== null && (
@@ -472,6 +501,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
               </button>
             )}
           </div>
+          {smart !== null && <p class="small muted">{smartWords.showing}</p>}
           {smartRun !== null && (
             <WorkProgress stage={smartWords.stage} state="running" startedAt={smartRun.since} progressUnknown />
           )}
@@ -565,6 +595,13 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       />}
     </div>
   );
+}
+
+/** The words for a meaning search that did not work. */
+function smartProblemFor(kind: string): string {
+  if (kind === "not-available") return smartWords.notReady;
+  if (kind === "network") return words.errors.network ?? smartWords.failed;
+  return smartWords.failed;
 }
 
 /** "A, B and C". */

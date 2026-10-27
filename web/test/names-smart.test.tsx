@@ -54,12 +54,13 @@ describe("Search by meaning", () => {
     fireEvent.input(box(), { target: { value: "holy healer" } });
     await new Promise((r) => setTimeout(r, 400));
     expect(calls(api)).toHaveLength(0);
-    expect((screen.getByRole("button", { name: s.button }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("Search with nothing typed is not offered", async () => {
-    await open();
-    expect((screen.getByRole("button", { name: s.button }) as HTMLButtonElement).disabled).toBe(true);
+  it("Search with nothing typed says what to type, and sends nothing", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: s.button }));
+    expect(await screen.findByText(s.typeSome)).toBeTruthy();
+    expect(calls(api)).toHaveLength(0);
   });
 
   it("searches once on Enter, shows the closest names in the same rows, and never sends the words in the call log", async () => {
@@ -93,7 +94,8 @@ describe("Search by meaning", () => {
     fireEvent.input(box(), { target: { value: "holy healer" } });
     fireEvent.click(screen.getByRole("button", { name: s.button }));
     expect(await screen.findByText(s.stage)).toBeTruthy();
-    expect((screen.getByRole("button", { name: s.button }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: s.button }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: s.button })); // (a second press is ignored)
     release();
     await waitFor(() => expect(screen.queryByText(s.stage)).toBeNull());
     expect(rows()).toHaveLength(1);
@@ -105,9 +107,11 @@ describe("Search by meaning", () => {
     fireEvent.input(box(), { target: { value: "holy healer" } });
     fireEvent.click(screen.getByRole("button", { name: s.button }));
     await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(screen.getByText(s.showing)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: s.back }));
     await waitFor(() => expect(rows()).toHaveLength(before));
     expect(box().value).toBe("");
+    await waitFor(() => expect(document.activeElement).toBe(box())); // the button is gone: the keyboard goes to the box
     expect(screen.queryByRole("button", { name: s.back })).toBeNull();
   });
 
@@ -168,6 +172,68 @@ describe("Search by meaning", () => {
     release();
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(before).toBeGreaterThan(1);
+  });
+
+  it("using Find a name or a type while results show is back to the list", async () => {
+    await open();
+    const before = rows().length;
+    fireEvent.input(box(), { target: { value: "holy healer" } });
+    fireEvent.click(screen.getByRole("button", { name: s.button }));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    fireEvent.input(screen.getByLabelText(w.searchLabel), { target: { value: "a" } });
+    await waitFor(() => expect(screen.queryByText(s.showing)).toBeNull());
+    await waitFor(() => expect(rows().length).toBeGreaterThan(1));
+    expect(rows().length).toBeLessThanOrEqual(before);
+  });
+
+  it("a change to a shown name reads the search again, and Back while that is on its way is respected", async () => {
+    const api = mockApi("table");
+    const real = api.smartNames!.bind(api);
+    let hold = false;
+    let waiting = false;
+    let release: () => void = () => {};
+    api.smartNames = async (ref, words) => {
+      if (hold) {
+        waiting = true;
+        await new Promise<void>((r) => (release = r));
+      }
+      return real(ref, words);
+    };
+    await open("/account/names/100.cmp1", api);
+    fireEvent.input(box(), { target: { value: "holy healer" } });
+    fireEvent.click(screen.getByRole("button", { name: s.button }));
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    // a rename: the search is read again (held here), and Back is pressed meanwhile
+    hold = true;
+    fireEvent.click(screen.getByRole("button", { name: "Sister Ilse" }));
+    const spelling = await screen.findByLabelText(w.spellLabel);
+    fireEvent.input(spelling, { target: { value: "Sister Ilsa" } });
+    fireEvent.click(screen.getByRole("button", { name: w.saveSpelling }));
+    await waitFor(() => expect(waiting).toBe(true)); // (the search is read again after the rename)
+    fireEvent.click(screen.getByRole("button", { name: s.back }));
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(s.showing)).toBeNull(); // the late answer did not bring the results back
+    expect(rows().length).toBeGreaterThan(1);
+  });
+
+  it("refuses more than 100 characters in plain words, and sends nothing", async () => {
+    const api = await open();
+    fireEvent.input(box(), { target: { value: "x".repeat(101) } });
+    fireEvent.click(screen.getByRole("button", { name: s.button }));
+    expect(await screen.findByText(s.tooLong)).toBeTruthy();
+    expect(calls(api)).toHaveLength(0);
+  });
+
+  it("goes to the sign-in view when the session ended during a search", async () => {
+    const api = mockApi("table");
+    api.smartNames = async () => {
+      throw new ApiError("signed-out");
+    };
+    await open("/account/names/100.cmp1", api);
+    fireEvent.input(box(), { target: { value: "holy healer" } });
+    fireEvent.click(screen.getByRole("button", { name: s.button }));
+    expect(await screen.findByText(w.signedOut)).toBeTruthy();
   });
 
   it("has no accessibility violations with the box and a result", async () => {

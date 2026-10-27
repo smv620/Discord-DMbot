@@ -17,16 +17,18 @@ export const NAMES_SMART_LIVE = false;
 export const smartWords = {
   label: "Search by meaning",
   region: "Search names by meaning",
-  hint: "Say what it is or who it is connected to, like “ice goddess” or “friend of Brannoc”. Press Search. It can take a few seconds.",
+  hint: "Describe it in your own words, like “ice goddess” or “friend of Brannoc”. Use Find a name when you know part of the name. Press Search. It can take a few seconds.",
+  typeSome: "Type a few words first.",
+  showing: "Showing the closest names. Press Back to all names, or use Find a name or the types, to see the list again.",
   button: "Search",
   // The stage shown while it works (counts and stages only: never the words typed).
   stage: "Looking for names that mean this",
-  found: (n: number): string => (n === 1 ? "1 name found." : `${n} names found, the closest first.`),
+  found: (n: number): string => (n === 1 ? "1 name found, the closest match." : `${n} names found, the closest first.`),
   none: "No names are close to that. Try other words, or use Find a name.",
   back: "Back to all names",
   notReady: "Search by meaning isn't ready for this campaign yet. Use Find a name for now.",
   failed: "That search didn't work. Press Search to try again, or use Find a name.",
-  tooLong: "Use 100 letters or fewer.",
+  tooLong: "Use 100 characters or fewer.",
 } as const;
 
 export const namesPage = {
