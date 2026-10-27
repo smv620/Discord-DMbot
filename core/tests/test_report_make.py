@@ -162,6 +162,32 @@ class Making(ConfirmedMemoryTest):
         self.assertEqual(len(await self.reports.differences(GUILD_A, self.c)), 1)
         self.assertGreater(len(await self.grades.rows(GUILD_A, self.c)), 0)
 
+    async def test_a_call_limit_during_grading_marks_the_report_not_whole(self) -> None:
+        client = Canned()
+        made = await self.go(client, max_calls=0)  # not one call for the grading
+        self.assertEqual((client.calls, made.failed), (0, ""))
+        assert made.graded is not None
+        self.assertGreater(made.graded.left, 0)  # counted from what was found, not what was asked
+        self.assertEqual((await self.run_of()).reason, rm.LEFT)
+
+    async def test_a_run_taken_over_cannot_finish_the_one_that_took_over(self) -> None:
+        takeover: list[int | None] = []
+
+        class Slow(Canned):
+            async def complete(inner, system: str, text: str, *, max_tokens: int = 0) -> Reply:
+                if not takeover:  # the first call: the run stalls, another one takes over
+                    self.now += rs.STALLED_S + 1
+                    takeover.append(await self.reports.begin(GUILD_A, self.c, SESSION))
+                return await super().complete(system, text, max_tokens=max_tokens)
+
+        made = await self.go(Slow())
+        self.assertEqual(made.failed, "")  # the old run thought it finished
+        (token,) = takeover
+        self.assertIsNotNone(token)
+        run = await self.run_of()
+        # but its finish changed nothing: the new run is still the one making the report
+        self.assertEqual((run.state, run.started_at), ("making", token))
+
     async def test_each_call_is_counted_before_it_is_made(self) -> None:
         events: list[str] = []
         client = Canned()

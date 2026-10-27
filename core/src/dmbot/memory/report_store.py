@@ -95,6 +95,8 @@ class Run:
     total: int
     started_at: int
     updated_at: int
+    # `reason` is a failure code when `state` is failed, and `left_for_next_time` when it is ready
+    # but not whole (a call limit left items); empty otherwise.
     reason: str
 
 

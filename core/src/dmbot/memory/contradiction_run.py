@@ -31,6 +31,7 @@ class Report:
     failed: int = 0
     cut: int = 0
     dropped: int = 0  # old grades of clashes no longer found, deleted
+    left: int = 0  # found and still without a major or minor grade (never asked, or not graded)
     stopped: str = ""
 
     def line(self) -> str:
@@ -69,6 +70,7 @@ async def run(
         if r.grade in (MAJOR, MINOR)
     }
     todo = [c for c in found if key(c) not in done]
+    report.left = len(todo)
     if not todo or max_calls <= 0:
         return report
     items = await grader.describe(memory, guild_id, campaign_id, todo)
@@ -82,6 +84,8 @@ async def run(
     )  # fmt: skip
     report.stopped = result.stopped
     for g in result.graded:
+        if g.grade in (MAJOR, MINOR):
+            report.left -= 1
         if g.grade == MAJOR:
             report.major += 1
         elif g.grade == MINOR:

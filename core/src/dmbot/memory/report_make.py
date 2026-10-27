@@ -65,7 +65,8 @@ class Made:
         g = self.graded
         return (
             f"Report: contradictions found={g.found if g else 0} major={g.major if g else 0} "
-            f"minor={g.minor if g else 0} not_graded={g.not_graded if g else 0}; "
+            f"minor={g.minor if g else 0} not_graded={g.not_graded if g else 0} "
+            f"left={g.left if g else 0}; "
             f"differences={self.differences} sorted={self.sorted} not_sorted={self.not_sorted}; "
             f"calls={self.calls}" + (f" failed={self.failed}" if self.failed else "")
         )
@@ -151,7 +152,7 @@ async def make(
         }
         made.not_sorted = sum(1 for d in found if (d.perspective_id, d.relation_id) not in real)
         made.failed = OUT_OF_FUNDS if stopped else ""
-        if not made.failed and (made.not_sorted or (made.graded and made.graded.not_graded)):
+        if not made.failed and (made.not_sorted or (made.graded and made.graded.left)):
             left = LEFT
     except Exception as exc:  # never fatal: the run is reported failed, with a code and no words
         log.warning("Report: making it failed (%s)", type(exc).__name__)
