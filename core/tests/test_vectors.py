@@ -188,6 +188,54 @@ class Lines(Kept):
         self.assertEqual(gone, 1)
         self.assertEqual(await self.store.count(GUILD, self.one), 0)
 
+    async def test_delete_my_transcripts_takes_the_numbers_through_the_bots_own_route(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        mine, other = await self.make_line(self.one, PLAYER), await self.make_line(self.one, DM)
+        await self.store.save_lines(
+            GUILD, self.one, MODEL,
+            [vs.Item(vs.LINE, mine, "h", [1.0]), vs.Item(vs.LINE, other, "h", [1.0])],
+        )  # fmt: skip
+        bot: DMBot = DMBot.__new__(DMBot)  # (a bare bot: only what this method reads is set)
+        bot.transcripts = self.transcripts
+        bot.memory = SimpleNamespace(forget_alias_user=AsyncMock())  # type: ignore[assignment]
+        bot.tables = {}
+        bot._ending = {}
+        self.assertEqual(await bot.delete_my_lines(GUILD, PLAYER), (1, 1))
+        self.assertEqual(await self.kept_lines(self.one), {other})
+
+    async def test_the_retention_sweep_takes_the_numbers_of_the_lines_it_deletes(self) -> None:
+        from dmbot.transcript.keep import DAY, KeepJob
+
+        now = START + 400 * DAY
+        sid = await self.transcripts.open_session(GUILD, self.one, START)
+        (old,) = await self.transcripts.add_lines(GUILD, sid, [line(1, PLAYER, "old words")])
+        await self.transcripts.end_session(GUILD, sid, START + 3600)
+        fresh_sid = await self.transcripts.open_session(GUILD, self.one, now - DAY)
+        (fresh,) = await self.transcripts.add_lines(GUILD, fresh_sid, [line(1, PLAYER, "new")])
+        await self.transcripts.end_session(GUILD, fresh_sid, now - DAY + 3600)
+        await self.store.save_lines(
+            GUILD, self.one, MODEL,
+            [vs.Item(vs.LINE, str(old), "h", [1.0]), vs.Item(vs.LINE, str(fresh), "h", [1.0])],
+        )  # fmt: skip
+        await self.campaigns.set_transcript_keep(GUILD, self.one, 90)
+
+        async def post(campaign: object, text: str) -> bool:
+            return True
+
+        job = KeepJob(
+            campaigns=self.campaigns,
+            transcripts=self.transcripts,
+            guild_ids=self.campaigns.guilds_with_campaigns,
+            post_screen=post,
+        )
+        result = await job.run_once(now)
+        self.assertEqual(result.sessions, 1)
+        self.assertEqual(await self.kept_lines(self.one), {str(fresh)})
+
     async def test_a_deleted_campaign_takes_all_its_numbers(self) -> None:
         mine = await self.make_line(self.one)
         await self.store.save_lines(GUILD, self.one, MODEL, [vs.Item(vs.LINE, mine, "h", [1.0])])

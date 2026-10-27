@@ -97,10 +97,19 @@ class Embedding(unittest.IsolatedAsyncioTestCase):
                 await client(Fake((200, reply))).embed(["a", "b"])
             self.assertEqual(caught.exception.kind, "reply")
 
+    async def test_no_credit_left_takes_the_ai_out_of_funds_path(self) -> None:
+        from dmbot.ai import AIOutOfFunds
+
+        with self.assertLogs("dmbot.memory.voyage", "ERROR") as logged:
+            with self.assertRaises(AIOutOfFunds) as caught:
+                await client(Fake((402, b"the dragon text"))).embed(["the dragon text"])
+            with self.assertRaises(AIOutOfFunds):
+                await client(Fake((402, b""))).rerank("q", ["a"], top_k=1)
+        self.assertNotIn("dragon", str(caught.exception) + "".join(logged.output))
+
     async def test_a_failed_call_says_how_and_never_what_was_sent(self) -> None:
         for status, kind, permanent in (
             (401, "auth", True),
-            (402, "plan", True),
             (400, "refused", True),
             (429, "busy", False),
             (503, "busy", False),

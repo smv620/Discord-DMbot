@@ -14,12 +14,15 @@ is a change here. dev1's live run on the server is the proof they still hold.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeGuard
 
 import aiohttp
+
+from dmbot.ai import OUT_OF_FUNDS, AIOutOfFunds
 
 API_BASE = "https://api.voyageai.com"
 BATCH = 64  # texts per embeddings call: well inside the service's limits
@@ -34,7 +37,6 @@ Transport = Callable[[str, str, "Mapping[str, Any] | None"], Awaitable[tuple[int
 # What to check for each kind, in plain words; used by the test tool (a later slice of #2664).
 CHECKS: dict[str, str] = {
     "auth": "check that VOYAGE_API_KEY is right and has not expired.",
-    "plan": "the account is out of credit or over its limit.",
     "refused": "the request was turned down.",
     "busy": "the service was busy or down; try again in a few minutes.",
     "network": "the connection failed or timed out; check the server's network.",
@@ -57,7 +59,7 @@ class ProviderError(Exception):
     @property
     def permanent(self) -> bool:
         """Whether trying again would fail the same way (a bad key, a refused request)."""
-        return self.kind in ("auth", "refused", "plan")
+        return self.kind in ("auth", "refused")
 
 
 def _number(x: object) -> TypeGuard[int | float]:
@@ -65,11 +67,17 @@ def _number(x: object) -> TypeGuard[int | float]:
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
-def _fail(status: int) -> ProviderError:
+log = logging.getLogger(__name__)
+
+
+def _fail(status: int) -> Exception:
     if status in (401, 403):
         return ProviderError("auth", status)
     if status == 402:
-        return ProviderError("plan", status)
+        # No credit left: the same path as the AI account running out (`ai.py`), so every caller
+        # that already stops and tells plainly on `AIOutOfFunds` does the same here.
+        log.error("Voyage AI says the account is out of credit")
+        return AIOutOfFunds(OUT_OF_FUNDS)
     if status == 429 or status >= 500:
         return ProviderError("busy", status)
     return ProviderError("refused", status)
