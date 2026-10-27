@@ -716,8 +716,9 @@ class RecapWorker:
             if self._structured_split:
                 # A strong model drafts the labels, a fast one puts them in the schema, and the same
                 # check as below decides. When that gives nothing the one call below is made, as
-                # before: the new way only ever adds a try (#2714). A try is usually one more call, two when
-                # the form is redone on the stronger tier, three when the one call follows both.
+                # before: the new way only ever adds a try (#2714). A try is usually one more call,
+                # two when the form is redone on the stronger tier, three when the one call
+                # follows both.
                 try:
                     tried = await ai_structured.structured(
                         sp.draft_system(),
