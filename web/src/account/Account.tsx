@@ -13,6 +13,7 @@ import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-d
 import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
 import { handoverToken } from "./handover-token";
 import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
+import { DELETE_MY_LINES_LIVE } from "../content/delete-my-lines-switch";
 import { keepFocus } from "./focus";
 import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
@@ -1611,10 +1612,15 @@ function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: 
   const { api, refresh } = useShared();
   const { busy, notice, run, clear } = useAction();
   const [asking, setAsking] = useState(false);
+  // "Delete my transcripts" (#2769), a lazy piece so My Account stays light: the lines stay when recording stops.
+  const deleteLines = DELETE_MY_LINES_LIVE && api.myLines && (
+    <LazyPanel load={() => import("./DeleteMyLines")} what="Delete my transcripts" props={{ api, serverId: entry.serverId, serverName: entry.serverName }} />
+  );
   if (!entry.on) {
     return (
       <li data-recording={entry.serverId}>
         <p>{text.recordingOld(entry.serverName)}</p>
+        {deleteLines}
       </li>
     );
   }
@@ -1656,6 +1662,7 @@ function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: 
           {text.stopRecording}
         </button>
       )}
+      {deleteLines}
     </li>
   );
 }

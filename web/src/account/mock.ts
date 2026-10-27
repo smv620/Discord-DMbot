@@ -809,6 +809,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   const lateLooks = new Map<string, number>();
+  const lineDeletions: { id: string; serverId: string; looks: number }[] = [];
+  const deletedLines = new Set<string>();
   const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
   const ruleChoices = new Map<string, Map<string, boolean>>();
@@ -2701,6 +2703,46 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           incoming: now.offers.incoming.filter((o) => o.id !== offerId),
         },
       };
+    },
+    // The pretend "Delete my transcripts" (#2769): "srv-thursday" has 12 lines in 3 sessions, "srv-gorrak" none. The bot
+    // answers on the second look; `.myLinesFail` is set by a test that wants a failure. Deleted lines stay deleted.
+    async myLines(serverId: string) {
+      calls.push(`myLines:${serverId}`);
+      await reachable();
+      signedIn();
+      if (!(me?.recording ?? []).some((r) => r.serverId === serverId)) throw new ApiError("not-found");
+      const open = lineDeletions.find((d) => d.serverId === serverId && d.looks < 3);
+      const gone = deletedLines.has(serverId);
+      return {
+        lines: serverId === "srv-thursday" && !gone ? 12 : 0,
+        sessions: serverId === "srv-thursday" && !gone ? 3 : 0,
+        open: open ? { id: open.id, state: "waiting" as const } : null,
+      };
+    },
+    async deleteMyLines(serverId: string) {
+      calls.push(`deleteMyLines:${serverId}`);
+      await reachable();
+      signedIn();
+      if (serverId !== "srv-thursday" || deletedLines.has(serverId)) throw new ApiError("nothing-to-delete");
+      const open = lineDeletions.find((d) => d.serverId === serverId && d.looks < 3);
+      if (open) return open.id;
+      const id = `d${lineDeletions.length + 1}`.padEnd(32, "0");
+      lineDeletions.push({ id, serverId, looks: 0 });
+      return id;
+    },
+    async myLinesStatus(serverId: string, id: string) {
+      calls.push(`myLinesStatus:${serverId}:${id}`);
+      await reachable();
+      signedIn();
+      const found = lineDeletions.find((d) => d.id === id && d.serverId === serverId);
+      if (!found) throw new ApiError("not-found");
+      found.looks += 1;
+      const now = Math.floor(Date.now() / 1000);
+      const base = { startedAt: now, updatedAt: now, serverNow: now, reason: null };
+      if (found.looks === 1) return { ...base, stage: "waiting", state: "running" as const, lines: null, sessions: null };
+      if (found.looks === 2) return { ...base, stage: "deleting", state: "running" as const, lines: null, sessions: null };
+      deletedLines.add(serverId);
+      return { ...base, stage: "done", state: "done" as const, lines: 12, sessions: 3 };
     },
     async stopRecording(serverId: string) {
       calls.push(`stop-recording:${serverId}`);
