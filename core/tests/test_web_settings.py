@@ -71,6 +71,19 @@ class FakeBot:
         await self.store.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
         return True
 
+    async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
+        return ws.Member("Someone", False)
+
+    async def apply_co_dm(
+        self, campaign: Campaign, user_id: int, name: str, add: bool, asker_id: int
+    ) -> ws.CoDmDone:
+        self.calls.append(("co_dm", f"{user_id}:{add}"))
+        if add:
+            await self.store.add_dm(campaign.guild_id, campaign.id, user_id)
+        else:
+            await self.store.remove_dm(campaign.guild_id, campaign.id, user_id)
+        return ws.CoDmDone()
+
 
 class Settings(Base):
     async def asyncSetUp(self) -> None:
