@@ -461,6 +461,7 @@ class BackgroundOffer(_Menu):
             known = await memory.known_keys(guild, campaign.id)
 
             own = await own_kinds(memory, campaign)
+            aliases = await confirmed_aliases(memory, campaign)
             # Two passes (#2454): the careful model reads the whole text into a plain list, the
             # fast model shapes it, and the code checks every name and quote against the text.
             read_ai = getattr(bot, "background_read_ai", None)
@@ -499,6 +500,7 @@ class BackgroundOffer(_Menu):
                     skip_name=lambda name: name_key(name) in known,
                     skip_pair=skip_pair,
                     progress=on_step,
+                    aliases=aliases,
                 )
             found = bg.merge(
                 [read.names],
@@ -627,6 +629,28 @@ async def store(
 def _plural(kind: str, count: int) -> str:
     one, many = bg.LABELS.get(kind, (kind, kind + "s"))
     return f"{count} {one if count == 1 else many}"
+
+
+async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str, tuple[str, ...]]:
+    """Each confirmed public name of the campaign (its key) to the other confirmed public spellings
+    that mean only it (#2762), so a document that says "the Ashen King" can back a link the AI
+    wrote with the name. A spelling that fits more than one entry is left out, as are secret ones
+    and the table's people: nothing here may ever match the wrong name or show a secret."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    owners: dict[str, set[str]] = {}
+    for key, entries in lookup.by_key.items():
+        for e in entries:
+            if e.confirmed and not e.secret and not e.person:
+                owners.setdefault(key, set()).add(e.entity_id)
+    out: dict[str, list[str]] = {}
+    for key, ids in owners.items():
+        if len(ids) != 1:
+            continue
+        (entity,) = ids
+        canonical = name_key(lookup.entities[entity].name)
+        if key != canonical:
+            out.setdefault(canonical, []).append(key)
+    return {k: tuple(v) for k, v in out.items()}
 
 
 def _waiting_note(queued: int) -> str:

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -324,6 +324,17 @@ def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
     return None
 
 
+def _alias(haystack: str, end: str, aliases: Mapping[str, Sequence[str]]) -> str | None:
+    """The campaign's confirmed alias of this name that the (squashed) text uses instead of it
+    (#2762): the text says "the Ashen King" where the AI wrote the canonical "Aldric Vane". The
+    map holds only aliases that fit this one entry (`aliases` is built that way), so any of them in
+    the text stands for the end; None when none is there."""
+    for alias in aliases.get(name_key(end), ()):
+        if _has(haystack, alias):
+            return alias
+    return None
+
+
 def _spellings(
     raw: object, name: str, haystack: str, *, skip: set[str], cued: frozenset[str]
 ) -> list[str]:
@@ -565,12 +576,18 @@ def _quote_window(words: list[str], a: str, b: str) -> list[str]:
 
 
 def read_connections(
-    reply: str, piece: str, own: Collection[str] = (), dropped: Dropped | None = None
+    reply: str,
+    piece: str,
+    own: Collection[str] = (),
+    dropped: Dropped | None = None,
+    aliases: Mapping[str, Sequence[str]] | None = None,
 ) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
     names are checked against the merged list later (`keep_connections`). `dropped` counts why
-    each line that failed did."""
+    each line that failed did. `aliases` (a name key of the campaign to its confirmed public alias
+    keys, each fitting that one entry only) lets a text that uses only an alias back the canonical
+    name the AI wrote (#2762): secret aliases are never in it, so nothing secret is matched here."""
     lost = dropped if dropped is not None else Counter()
     data = _json(reply)
     items = data.get("connections") if isinstance(data, dict) else None
@@ -637,7 +654,7 @@ def read_connections(
         seen = [a, b]
         for index, end in enumerate((a, b)):
             if not _has(haystack, end):
-                spelled = _variant(haystack, end, variants)
+                spelled = _alias(haystack, end, aliases or {}) or _variant(haystack, end, variants)
                 if spelled is not None:
                     seen[index] = spelled
         if name_key(seen[0]) == name_key(seen[1]):  # two ends that came to one spelling
