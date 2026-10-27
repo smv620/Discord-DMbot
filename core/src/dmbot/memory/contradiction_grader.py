@@ -149,11 +149,13 @@ async def grade(
     session_started_at: int | None = None,
     count_call: Callable[[], Awaitable[None]] | None = None,
     max_calls: int = 20,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> Result:
     """Grade these candidates, `BATCH` to a question. Never raises for the AI service: a failed,
     cut or unreadable call leaves its candidates `not_graded`. `count_call` counts each call before
     it is made (the plan's ceilings); `max_calls` holds the run to it (the rest are not asked, and
-    are not stored: asking again later is the point of leaving them out)."""
+    are not stored: asking again later is the point of leaving them out). `on_progress(done, total)`
+    says how far it has got after each question: counts only (#2661)."""
     result = Result([])
     for start in range(0, len(items), BATCH):
         batch = items[start : start + BATCH]
@@ -180,14 +182,16 @@ async def grade(
             result.graded += [
                 Graded(d.candidate, NOT_GRADED, "", session_started_at) for d in batch
             ]
-            continue
-        result.asked += len(batch)
-        if reply.cut:
-            result.cut += 1
-        got = {} if reply.refused else parse_grades(reply.text, len(batch), cut=reply.cut)
-        for n, d in enumerate(batch, 1):
-            grade_, reason = got.get(n, (NOT_GRADED, ""))
-            result.graded.append(Graded(d.candidate, grade_, reason, session_started_at))
+        else:
+            result.asked += len(batch)
+            if reply.cut:
+                result.cut += 1
+            got = {} if reply.refused else parse_grades(reply.text, len(batch), cut=reply.cut)
+            for n, d in enumerate(batch, 1):
+                grade_, reason = got.get(n, (NOT_GRADED, ""))
+                result.graded.append(Graded(d.candidate, grade_, reason, session_started_at))
+        if on_progress is not None:
+            await on_progress(min(start + BATCH, len(items)), len(items))
     return result
 
 

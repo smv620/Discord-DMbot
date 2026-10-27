@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { NAME_LIMIT, namesPage as words } from "../content/names-words";
+import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, namesPage as words } from "../content/names-words";
 import {
   type AccountApi,
   ApiError,
@@ -69,7 +69,11 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [kind, setKind] = useState("");
+  // The types ticked (none ticked is every type), and how many names a page holds (#2295, owner
+  // request 2026-10-27: compact rows, so a page can be long).
+  const [kinds, setKinds] = useState<string[]>([]);
+  const kind = kinds.join(",");
+  const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
@@ -78,8 +82,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   // Only the newest read may set what is shown, so a slow old answer never overwrites a new one.
   const latest = useRef(0);
   const pageNow = useRef(1);
-  const queryNow = useRef({ q, kind, sort });
-  queryNow.current = { q, kind, sort };
+  const queryNow = useRef({ q, kind, sort, size });
+  queryNow.current = { q, kind, sort, size };
   // Names ticked for "Merge selected" (#2427): kept across searches and pages, so look-alikes found
   // by different searches can be merged together.
   const [picked, setPicked] = useState<NameRow[]>([]);
@@ -153,9 +157,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     setNews(null);
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
-    // `load` reads the latest query through a ref, so only these three restart the read.
+    // `load` reads the latest query through a ref, so only these restart the read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, ref, q, kind, sort]);
+  }, [api, ref, q, kind, sort, size]);
 
   // The most-mentioned name first, as the one to keep by default.
   const ordered = [...picked].sort(
@@ -303,7 +307,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           {words.webLink}
         </a>
         {data.canEdit ? (
-          <p class="small muted">{words.undoNote}</p>
+          <p class="small muted">
+            <span id="names-press-hint">{words.pressName}</span> {words.undoNote}
+          </p>
         ) : (
           <p class="note" role="note">
             {words.readOnly}
@@ -328,23 +334,49 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           {words.searchHint}
         </p>
         <label class="field">
-          {words.kindLabel}
-          <select value={kind} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
-            <option value="">{words.allKinds(everything)}</option>
-            {data.kinds.map((k) => (
-              <option key={k.key} value={k.key}>
-                {words.kindOption(k.label, k.count)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label class="field">
           {words.sortLabel}
           <select value={sort} onChange={(e) => setSort((e.target as HTMLSelectElement).value as NameSort)}>
             <option value="name">{words.sortName}</option>
             <option value="newest">{words.sortNewest}</option>
           </select>
         </label>
+        <label class="field">
+          {words.perPageLabel}
+          <select value={String(size)} onChange={(e) => setSize(Number((e.target as HTMLSelectElement).value))}>
+            {NAMES_PAGE_SIZES.map((n) => (
+              <option key={n} value={String(n)}>
+                {words.perPageOption(n)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <fieldset class="names-types">
+          <legend>{words.kindLabel}</legend>
+          <div class="names-type-list">
+            {data.kinds.map((k) => (
+              <label class="choice names-type" key={k.key}>
+                <input
+                  type="checkbox"
+                  checked={kinds.includes(k.key)}
+                  onChange={() =>
+                    setKinds((now) => (now.includes(k.key) ? now.filter((x) => x !== k.key) : [...now, k.key]))
+                  }
+                />{" "}
+                {words.kindOption(k.label, k.count)}
+              </label>
+            ))}
+            {/* Always there (and dimmed when nothing is ticked), so pressing it never drops the keyboard. */}
+            {/* aria-disabled, not disabled: a disabled button drops the keyboard when it is pressed last. */}
+            <button
+              type="button"
+              class="link-button small"
+              aria-disabled={kinds.length === 0}
+              onClick={() => kinds.length > 0 && setKinds([])}
+            >
+              {words.allKinds(everything)}
+            </button>
+          </div>
+        </fieldset>
       </form>
 
       {/* Always on the page, so a screen reader hears each new count and each result. */}
@@ -394,7 +426,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
 
       {shown.length === 0 ? (
-        <p class="muted">{q.trim() !== "" || kind !== "" ? words.noMatch : words.noNames}</p>
+        <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
       ) : (
         <ul class="names-list" aria-label={words.listLabel} aria-busy={busy}>
           {shown.map((row) => (
@@ -549,7 +581,27 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
             />
           </label>
         )}
-        <span class="campaign-name">{row.name}</span>
+        {canEdit ? (
+          // The name itself opens the editor: a button that looks like a link, because it changes
+          // the page rather than going to another one.
+          <button
+            type="button"
+            class="link-button campaign-name name-open"
+            aria-expanded={open}
+            aria-controls={panel}
+            aria-describedby="names-press-hint"
+            onClick={onToggle}
+          >
+            {row.name}
+          </button>
+        ) : (
+          <span class="campaign-name">{row.name}</span>
+        )}
+        {row.others.length > 0 && (
+          <span class="small muted name-aka" title={row.others.join(", ")}>
+            {words.alsoCalled}: {row.others.join(", ")}
+          </span>
+        )}
         <span class="tags">
           <span class="tag">{kindWords(kinds, row.kind)}</span>
           {row.secret && (
@@ -558,31 +610,12 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
               <span>{words.secretWords}</span>
             </span>
           )}
+          {row.npcId && (
+            <a class="small" href={`${campaignPath}${encodeURIComponent(row.npcId)}`} aria-label={words.npcLinkFor(row.name)}>
+              {words.npcLink}
+            </a>
+          )}
         </span>
-      </div>
-      {row.others.length > 0 && (
-        <p class="small muted">
-          {words.alsoCalled}: {row.others.join(", ")}
-        </p>
-      )}
-      <div class="row">
-        {row.npcId && (
-          <a class="button secondary" href={`${campaignPath}${encodeURIComponent(row.npcId)}`} aria-label={words.npcLinkFor(row.name)}>
-            {words.npcLink}
-          </a>
-        )}
-        {canEdit && (
-          <button
-            type="button"
-            class="button secondary"
-            aria-expanded={open}
-            aria-controls={panel}
-            aria-label={open ? words.doneFor(row.name) : words.changeFor(row.name)}
-            onClick={onToggle}
-          >
-            {open ? words.done : words.change}
-          </button>
-        )}
       </div>
       {canEdit && open && (
         <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />

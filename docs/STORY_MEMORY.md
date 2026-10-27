@@ -749,8 +749,36 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   extractor) runs it after the extractor in the after-session steps: the campaign's plan must include
   story memory (closed if it can't be checked), it makes at most 3 AI calls a session, counted in the
   extractor's session and day limits, and the log gets counts only.
-  Still to build: the PlotBot grade (major or minor, with a reason), the cap of 3 said on the DM screen,
-  and the minor ones kept for the after-session report.
+  **Built (#2660 slice 2e): telling the DM.** After the grading, with the same switches and plan check, DMbot
+  tells the DM the `major` clashes not yet told, at most 3 each time the step runs (once after a session), as
+  one message (one plain line each, saying when the game times aren't known or one side is a guess, and
+  "Nothing was changed. You decide what is true."). The line can name an entry, so with a **private** DM
+  screen it is posted there (and pulled back if the screen opens up); with peek or open it goes to each DM by
+  private message and the screen never carries it. If the private messages are closed the screen says only how
+  many wait, and they stay untold for the next session. A clash is marked told only once a message reached
+  a DM. No AI call. The minor ones are not told here; they wait for the after-session report. Still to
+  build: that report, and the point-of-view reading in `continuity.conflicts_in` (not wired until Supervisor
+  says).
+
+**Built (#2661 slice 2, migration 0244): the report's storage.** `memory_differences` keeps what the
+party (or a player's character) believes that differs from The truth, with PlotBot's sort (disguised,
+misunderstood, false, or `not_sorted` when the answer was cut or unreadable: never "false") and its
+one-line reason. `report_answers` keeps the DM's answer to each item (`intended`, `not_a_problem`,
+`remind`, `fixed`), apart from the items and under a key made from the item's own ids, so an item that is
+made again meets its answer again, and one that is no longer found is dropped without losing the DM's
+decision. `memory_report_runs` keeps how far making a session's report has got (stage, done of total,
+started, last moved), counts and codes only. The items are made again by each check and are not in a
+backup; the answers cannot be made again, so they are (the `report_answers` backup section). Nothing here
+holds a transcript word or a speaker.
+
+**Built (#2661 slice 3a): PlotBot's sort.** `memory/difference_sorter.py` sorts what the party has wrong into
+disguised, misunderstood and false, with a one-line reason, as the contradiction grader grades clashes: the
+AI is shown each difference as two plain statements in the campaign's own names (what the point of view
+believes, and what the DM's view holds or says is not so), never a transcript line or anyone's speech.
+A cut, refused or unreadable answer is `not_sorted` and is asked again next time, never "false"; the whole
+items before a cut are kept; calls are counted before they are made and held to a limit; progress is said
+in counts. Nothing changes a belief. Still to build: the make job that runs the grading and the sort under
+the plan's limits with the shared progress, and the doors.
 
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;
@@ -763,6 +791,12 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   it in story time. A guess The truth neither holds nor denies is not a difference, nor is the DM's own
   doubt. Ids and numbers only (the sort into disguised, misunderstood and false is PlotBot's, a later
   slice); each point of view and connection is reported once.
+  **Built (#2661 slice 3b): the make job.** `memory/report_make.py` makes one session's report in the
+  order reading, grading, sorting: it finds the differences, grades the clashes (the contradiction
+  pass, with its progress), drops differences that no longer hold, sorts the rest, then marks the run
+  ready. One run at a time per session; one call limit shared by both steps; a step that could not
+  finish leaves its items for the next run, never as "nothing found". A failure keeps only a code
+  (`out_of_funds`, `failed`); the log line and the progress are counts and stages, never words.
 
 Everything after a session is built on the **website first**. A Discord version is added only when
 the owner chooses it, one at a time.
