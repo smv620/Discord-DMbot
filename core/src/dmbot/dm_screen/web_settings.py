@@ -29,7 +29,7 @@ from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import CHOICES, _shorter, days_of, saved_text
 from dmbot.rules import optional
-from dmbot.rules.optional import OptionalRule
+from dmbot.rules.optional import NO_SCREEN_NOTE, OptionalRule
 
 log = logging.getLogger(__name__)
 
@@ -48,12 +48,6 @@ BAD_VALUE = "bad_value"  # a choice Discord does not offer
 NEEDS_CONFIRM = "needs_confirm"  # a shorter transcript limit without the DM's yes
 REFUSED = "refused"  # the rules refused it; `note` has the words Discord would show
 FAILED = "failed"  # anything unexpected; the choice can be sent again
-
-
-# Said after a saved optional rule when the DM screen could not be told (Discord says the same).
-NO_SCREEN_NOTE = (
-    "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that channel."
-)
 
 
 @dataclass(frozen=True, slots=True)

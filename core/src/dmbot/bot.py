@@ -342,7 +342,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice
+from dmbot.rules import house_voice, optional
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -10289,8 +10289,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         try:
             return await self.post(
                 campaign.dm_screen_channel_id,
-                f"{'✅' if turn_on else '⬜'} Optional rule turned {'on' if turn_on else 'off'}: "
-                f"**{rule.name}** (by <@{sender_id}>)",
+                optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
             )
         except Exception as exc:  # the type only
             log.warning("The DM screen line for an optional rule failed: %s", type(exc).__name__)

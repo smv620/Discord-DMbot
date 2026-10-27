@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from dmbot.campaigns import Campaign, CampaignError
 from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
@@ -33,7 +34,7 @@ class RuleBot(FakeBot):
             self.posted.append((channel_id, text))
             return self.posts
 
-        self._me = SimpleNamespace(campaigns=store, post=post)
+        self._me: Any = SimpleNamespace(campaigns=store, post=post)
 
     async def apply_optional_rule(
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
@@ -41,12 +42,12 @@ class RuleBot(FakeBot):
         from dmbot.bot import DMBot
 
         self.calls.append(("optional_rule", f"{rule.id}:{turn_on}"))
-        return await DMBot.apply_optional_rule(  # type: ignore[arg-type]
-            self._me, campaign, rule, turn_on, sender_id
-        )
+        return await DMBot.apply_optional_rule(self._me, campaign, rule, turn_on, sender_id)
 
 
 class _Screen(Settings):
+    bot: RuleBot
+
     async def sql_screen(self, channel: int) -> None:
         async with self.db.guild(self.g) as conn:
             await conn.execute(
@@ -88,6 +89,30 @@ class TheOptionalRule(_Screen):
             text, f"✅ Optional rule turned on: **{BOTH.name}** (by <@{self.session.user_id}>)"
         )
 
+    async def test_the_off_line_on_the_dm_screen_says_off(self) -> None:
+        await self.sql_screen(555)
+        await self.rule_choice(BOTH.id, False)
+        await self.run_bot()
+        ((_, text),) = self.bot.posted
+        self.assertEqual(
+            text, f"⬜ Optional rule turned off: **{BOTH.name}** (by <@{self.session.user_id}>)"
+        )
+
+    async def test_an_id_that_is_not_in_the_catalog_is_bad_value(self) -> None:
+        # The website refuses it before queueing; the bot checks again at the moment of use.
+        item = ws.Setting(
+            "x" * 32, self.one.id, self.session.user_id, "optional_rule", "no-such-rule", True
+        )
+        self.assertEqual((await ws.apply(self.bot, self.g, item)).error, ws.BAD_VALUE)
+        self.assertEqual(await self.overrides(), {})
+        self.assertEqual(self.bot.calls, [])
+
+    async def test_a_choice_changes_only_its_own_campaign(self) -> None:
+        await self.rule_choice(BOTH.id, True)
+        await self.run_bot()
+        self.assertEqual(await self.overrides(), {BOTH.id: True})
+        self.assertEqual(await self.campaigns.optional_rule_overrides(self.g, self.two.id), {})
+
     async def test_no_dm_screen_is_no_failure(self) -> None:
         await self.rule_choice(BOTH.id, True)
         (done,) = await self.run_bot()
@@ -111,8 +136,8 @@ class TheOptionalRule(_Screen):
         async def gone(g: int, c: str) -> None:
             return None
 
-        self.bot.get_campaign = gone  # type: ignore[method-assign]
-        (done,) = await self.run_bot()
+        with patch.object(self.bot, "get_campaign", gone):
+            (done,) = await self.run_bot()
         self.assertEqual(done.error, ws.NOT_FOUND)
 
     async def test_a_campaign_that_goes_while_the_rule_is_saved_is_not_found(self) -> None:
@@ -121,8 +146,8 @@ class TheOptionalRule(_Screen):
         async def vanishing(campaign: Campaign, rule: OptionalRule, on: bool, who: int) -> None:
             raise CampaignError("gone")
 
-        self.bot.apply_optional_rule = vanishing  # type: ignore[method-assign]
-        (done,) = await self.run_bot()
+        with patch.object(self.bot, "apply_optional_rule", vanishing):
+            (done,) = await self.run_bot()
         self.assertEqual(done.error, ws.NOT_FOUND)
 
     async def test_a_rule_that_does_not_apply_to_the_main_rules_is_bad_value(self) -> None:
@@ -159,11 +184,13 @@ class TheOptionalRule(_Screen):
         async def broken(campaign: Campaign, rule: OptionalRule, on: bool, who: int) -> None:
             raise RuntimeError(f"boom {rule.name}")
 
-        self.bot.apply_optional_rule = broken  # type: ignore[method-assign]
         await self.rule_choice(BOTH.id, True)
         item = await self.items.claim_next(self.g)
         assert item is not None
-        with self.assertLogs("dmbot.dm_screen.web_settings", level="INFO") as logged:
+        with (
+            patch.object(self.bot, "apply_optional_rule", broken),
+            self.assertLogs("dmbot.dm_screen.web_settings", level="INFO") as logged,
+        ):
             await ws.run_one(self.bot, self.items, self.g, item)
         text = "\n".join(logged.output)
         self.assertNotIn(BOTH.id, text)
@@ -181,8 +208,8 @@ class TheRealBot(_Screen):
 
         await self.sql_screen(777)
         campaign = await self.campaign()
-        me = SimpleNamespace(campaigns=self.campaigns, post=AsyncMock(return_value=True))
-        noted = await DMBot.apply_optional_rule(me, campaign, BOTH, True, 4242)  # type: ignore[arg-type]
+        me: Any = SimpleNamespace(campaigns=self.campaigns, post=AsyncMock(return_value=True))
+        noted = await DMBot.apply_optional_rule(me, campaign, BOTH, True, 4242)
         self.assertTrue(noted)
         self.assertEqual(
             await self.campaigns.optional_rule_overrides(self.g, self.one.id), {BOTH.id: True}
@@ -197,8 +224,8 @@ class TheRealBot(_Screen):
 
         from dmbot.bot import DMBot
 
-        me = SimpleNamespace(campaigns=self.campaigns, post=AsyncMock())
-        await DMBot.apply_optional_rule(me, await self.campaign(), BOTH, False, 1)  # type: ignore[arg-type]
+        me: Any = SimpleNamespace(campaigns=self.campaigns, post=AsyncMock())
+        await DMBot.apply_optional_rule(me, await self.campaign(), BOTH, False, 1)
         me.post.assert_not_awaited()
 
     async def test_a_line_that_cannot_be_posted_is_said_and_the_rule_stays_saved(self) -> None:
@@ -210,10 +237,8 @@ class TheRealBot(_Screen):
         await self.sql_screen(777)
         campaign = await self.campaign()
         for post in (AsyncMock(return_value=False), AsyncMock(side_effect=RuntimeError("down"))):
-            me = SimpleNamespace(campaigns=self.campaigns, post=post)
-            self.assertFalse(
-                await DMBot.apply_optional_rule(me, campaign, BOTH, True, 1)  # type: ignore[arg-type]
-            )
+            me: Any = SimpleNamespace(campaigns=self.campaigns, post=post)
+            self.assertFalse(await DMBot.apply_optional_rule(me, campaign, BOTH, True, 1))
             self.assertEqual(
                 await self.campaigns.optional_rule_overrides(self.g, self.one.id), {BOTH.id: True}
             )
@@ -226,7 +251,7 @@ class TheMissedLine(_Screen):
         await self.queue(setting="optional_rule", value=BOTH.id, on=True)
         (done,) = await self.run_bot()
         self.assertEqual(done.error, "")
-        self.assertEqual(done.note, f"{BOTH.name} is now on. {ws.NO_SCREEN_NOTE}")
+        self.assertEqual(done.note, f"{BOTH.name} is now on. {optional.NO_SCREEN_NOTE}")
         self.assertEqual(
             await self.campaigns.optional_rule_overrides(self.g, self.one.id), {BOTH.id: True}
         )

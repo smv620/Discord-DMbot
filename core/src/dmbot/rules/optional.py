@@ -119,3 +119,18 @@ def covered_by(target_ruleset: str) -> list[OptionalRule]:
 def is_on(rule_id: str, overrides: Mapping[str, bool], default: bool) -> bool:
     """A rule the DM switched keeps that choice; any other follows the campaign default."""
     return overrides.get(rule_id, default)
+
+
+# Said after a saved optional rule when the DM screen could not be told. One text for Discord's
+# menu and the website's Settings tab, so the two never drift apart.
+NO_SCREEN_NOTE = (
+    "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that "
+    "channel; `/dmbot start` sets it up again next session."
+)
+
+
+def screen_line(rule: OptionalRule, turn_on: bool, by: str) -> str:
+    """The DM screen's record of a rule switched on or off. `by` is the mention of whoever chose
+    it (the DM screen's own posts never ping)."""
+    mark, word = ("✅", "on") if turn_on else ("⬜", "off")
+    return f"{mark} Optional rule turned {word}: **{rule.name}** (by {by})"
