@@ -1412,7 +1412,13 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/all-names")
     async def me_campaign_all_names(
-        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: str = "1"
+        ref: str,
+        signed: Signed,
+        q: str = "",
+        kind: str = "",
+        sort: str = "name",
+        page: str = "1",
+        size: str = str(all_names.PAGE_SIZE),
     ) -> dict[str, Any]:
         """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
         server manager who is not a DM gets no secret names; anyone else gets "not found". A page
@@ -1423,8 +1429,9 @@ def create_app(
             # Plain ASCII digits only, at most nine: "²", "--1" and a 5,000-digit page are not
             # pages, and must not reach int() (which would raise a 500).
             number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
+            wanted = int(size) if re.fullmatch(r"[0-9]{1,4}", size) else 0  # (0 is refused)
             return await all_names.read_page(
-                db, session, ref, q=q, kind=kind, sort=sort, page=number
+                db, session, ref, q=q, kind=kind, sort=sort, page=number, size=wanted
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))

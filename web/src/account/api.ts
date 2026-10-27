@@ -1350,10 +1350,12 @@ export interface NamesPage {
 
 export interface NamesQuery {
   q: string;
-  /** A kind's key, or "" for every kind. */
+  /** Kind keys joined with commas ("npc,place"), or "" for every kind. */
   kind: string;
   sort: NameSort;
   page: number;
+  /** Names per page: 20, 50, 200 or 500 (core refuses any other); the API's usual (50) when missing. */
+  size?: number;
 }
 
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
@@ -2658,6 +2660,7 @@ export function httpApi(
       }).deleted,
     allNames: async (ref, q) => {
       const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
+      if (q.size !== undefined) params.set("size", String(q.size));
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
