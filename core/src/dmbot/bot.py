@@ -1418,6 +1418,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
                 structured_split=settings.recap_structured_output_split,
+                structured_beats=settings.recap_structured_output_beats,
             )
         # PlotBot's check of each ready recap against the earlier accepted ones (#2122): advice for
         # the DM's recap page only. Off unless DMBOT_PLOT_CHECK is on (it needs the recaps).
