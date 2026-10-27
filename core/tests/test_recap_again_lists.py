@@ -279,6 +279,37 @@ class TheQuestion(Lists):
             await view.yes.callback(interaction)
         self.assertEqual(told[-1], ra.QUEUED)  # (no "the recap you had stays")
 
+    async def test_when_the_read_fails_the_plain_question_promises_nothing(self) -> None:
+        await self.lines(SESSION)
+        await self.written(SESSION)
+        me = self.me(again="needs_confirm")
+
+        async def broken(*args: Any) -> Any:
+            raise RuntimeError("down")
+
+        me.recaps = SimpleNamespace(saved_lists=broken)
+        # (lists unknown too, so the lists question comes first; its yes then asks the plain one)
+        said, interaction = await self.asked(me)
+        ((_, view),) = said
+        self.assertIsNone(view.finished)
+        me.recap_saved_lists = AsyncMock(return_value=None)  # the plain step cannot read it either
+        told: list[tuple[str, Any]] = []
+
+        async def tell(i: Any, text: str, *, view: Any = None) -> None:
+            told.append((text, view))
+
+        with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
+            await ra.start(interaction, await self.campaign(), SESSION, lists_ok=False)
+        (plain, plain_view) = told[-1]
+        self.assertEqual(plain, ra.ASK)
+        self.assertNotIn("stays", plain)
+        self.assertNotIn("replaces", plain)
+        self.assertIsNone(plain_view.kept)
+        me.recap_again = AsyncMock(return_value="queued")
+        with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
+            await plain_view.yes.callback(interaction)
+        self.assertEqual(told[-1][0], ra.QUEUED)  # (no promise about an old recap)
+
     async def test_an_approved_recap_without_lists_is_asked_with_the_stays_promise(self) -> None:
         await self.lines(SESSION)
         await self.written(SESSION, approved=True)

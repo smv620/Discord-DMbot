@@ -164,12 +164,10 @@ async def start(
         await _tell(interaction, FAILED)
         return
     if outcome == "needs_confirm":
-        kept = bool(found and found.kept)  # (unknown: nothing is promised)
-        await _tell(
-            interaction,
-            ASK_KEPT if kept else ASK_DRAFT,
-            view=ConfirmView(campaign.id, session_at, kept=kept),
-        )
+        kept = found.kept if found is not None else None
+        # Not known (the read failed): the plain question, and nothing is promised either way.
+        ask = ASK if kept is None else ASK_KEPT if kept else ASK_DRAFT
+        await _tell(interaction, ask, view=ConfirmView(campaign.id, session_at, kept=kept))
     elif outcome == "queued":
         keeping = replace_ok if keeps_old is None else keeps_old
         await _tell(interaction, QUEUED_KEEPING if keeping else QUEUED)
