@@ -3,14 +3,14 @@
 // choice a change is sent as. The pretend API hides a wrong address, so the real client is checked here.
 import { describe, expect, it } from "vitest";
 
-import { httpApi } from "../src/account/api";
+import { ApiError, httpApi } from "../src/account/api";
 
-function fake(answers: unknown[]) {
+function fake(answers: unknown[], status = 200) {
   const seen: { url: string; method: string; body: unknown }[] = [];
   const queue = [...answers];
   const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
     seen.push({ url: String(url), method: String(init?.method), body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    return new Response(JSON.stringify(queue.shift() ?? {}), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(queue.shift() ?? {}), { status, headers: { "Content-Type": "application/json" } });
   }) as unknown as typeof fetch);
   return { api, seen };
 }
@@ -38,5 +38,18 @@ describe("the game masters calls", () => {
       ["POST", { setting: "co_dm", value: "2", on: true }],
       ["POST", { setting: "co_dm", value: "2", on: false }],
     ]);
+  });
+});
+
+describe("the refusals the website turns away at once", () => {
+  it.each([
+    [409, "plan_holder", "plan-holder"],
+    [409, "too_many", "too-many-masters"],
+    [400, "unknown_person", "unknown-person"],
+  ])("reads %s %s as the %s kind", async (status, code, kind) => {
+    const { api } = fake([{ error: code }], status);
+    const error = await api.setCampaignSetting!("100.cmp1", { setting: "co_dm", value: "2", on: true }).catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).kind).toBe(kind);
   });
 });

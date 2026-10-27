@@ -1669,6 +1669,9 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "plan-holder" // the game master whose plan runs the campaign cannot be removed (#2768)
+  | "too-many-masters" // the campaign already has the most game masters (#2768)
+  | "unknown-person" // not someone DMbot can offer as a game master (#2768)
   | "bad-answer" // the Plot check's answer was not one it takes (#2122)
   | "plot-open" // Approve waits for the Plot check's open questions (#2122)
   | "not-yet" // a draft is opened as it is only after 3 days of waiting (#2305)
@@ -2160,6 +2163,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_action: "bad-action",
   bad_setting: "bad-setting",
   bad_value: "bad-value",
+  plan_holder: "plan-holder",
+  too_many: "too-many-masters",
+  unknown_person: "unknown-person",
 };
 
 /** The recap routes answer 409 `busy` ("being written or sent now"), which the shared code table reads as

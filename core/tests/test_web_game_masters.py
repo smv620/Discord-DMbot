@@ -7,13 +7,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
+
 from dmbot.campaigns.store import MAX_DMS
 from dmbot.members import MemberDirectory
-from dmbot.web import game_masters, sessions
+from dmbot.web import campaign_settings, game_masters, sessions
+from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
+from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
-from tests.test_recap_web import BOB, NOW, Base
-from tests.test_web_api import ALICE, THURSDAY
+from tests.test_recap_web import BOB, HEADERS, NOW, Base
+from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
 
 CARL = SimpleNamespace(id=3003, name="Carl", email="carl@example.com")  # plays; runs nothing
 DANA = 6001  # agreed to be recorded; a member of the server
@@ -53,6 +57,35 @@ class GameMastersBase(Base):
         with self.assertRaises(RecapError) as caught:
             await game_masters.read_game_masters(self.web, session, ref)
         return str(caught.exception.code)
+
+    async def queue(self, body: object, ref: str | None = None, session: Any = None) -> str:
+        return await campaign_settings.queue_setting(
+            self.web, session or self.session, ref or self.cref(), body
+        )
+
+    async def queue_refused(self, body: object, session: Any = None, ref: str | None = None) -> str:
+        with self.assertRaises(RecapError) as caught:
+            await self.queue(body, ref, session)
+        return str(caught.exception.code)
+
+    async def rows(self) -> list[dict[str, Any]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT setting, value, turn_on, flag, user_id FROM setting_actions ORDER BY seq"
+            )
+            return list(await cur.fetchall())
+
+    async def door(self, uid: str | None, on: bool | None) -> Any:
+        """Call the queue door itself, as the website's role does, to run its own refusals."""
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s) AS r",
+                (THURSDAY.id, self.one.id, uid, on),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return row["r"]
 
 
 class TheList(GameMastersBase):
@@ -157,3 +190,147 @@ class TheCandidates(GameMastersBase):
             with self.assertRaises(RecapError) as caught:
                 await game_masters.read_candidates(self.web, who, self.cref(), "")
             self.assertEqual(caught.exception.code, "not_allowed")
+
+
+class Queueing(GameMastersBase):
+    """An add or a removal is queued like the other settings, with quick refusals; the bot checks
+    every rule of Discord's game masters again when it applies it."""
+
+    async def test_an_add_is_queued_with_the_persons_id_and_which_way(self) -> None:
+        await self.agreed(DANA, "Dana")
+        answer = await self.queue({"setting": "co_dm", "value": str(DANA), "on": True})
+        self.assertRegex(answer, r"^[0-9a-f]{32}$")
+        (row,) = await self.rows()
+        self.assertEqual(
+            (row["setting"], row["value"], row["turn_on"], row["flag"], row["user_id"]),
+            ("co_dm", str(DANA), True, False, ALICE.id),
+        )
+
+    async def test_a_removal_is_queued_and_the_waiting_answer_reads_back(self) -> None:
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, DANA)
+        answer = await self.queue({"setting": "co_dm", "value": str(DANA), "on": False})
+        got = await campaign_settings.read_setting(self.web, self.session, self.cref(), answer)
+        self.assertEqual(
+            (got["state"], got["setting"], got["value"]), ("waiting", "co_dm", str(DANA))
+        )
+
+    async def test_the_plan_holder_cannot_be_removed(self) -> None:
+        body = {"setting": "co_dm", "value": str(ALICE.id), "on": False}
+        self.assertEqual(await self.queue_refused(body), "plan_holder")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_an_add_at_the_limit_is_turned_away(self) -> None:
+        await self.agreed(DANA, "Dana")
+        for i in range(MAX_DMS - 1):  # (the owner is one already)
+            await self.campaigns.add_dm(THURSDAY.id, self.one.id, 8000 + i)
+        body = {"setting": "co_dm", "value": str(DANA), "on": True}
+        self.assertEqual(await self.queue_refused(body), "too_many")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_person_nobody_knows_is_not_queued(self) -> None:
+        self.assertEqual(
+            await self.queue_refused({"setting": "co_dm", "value": str(ELI), "on": True}),
+            "unknown_person",
+        )  # (a member who never agreed is not offered, so cannot be queued by a made-up id either)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_an_agreement_in_another_server_does_not_count(self) -> None:
+        await self.agreed(FAY, "Fay", guild_id=OTHER_SERVER)
+        self.assertEqual(
+            await self.queue_refused({"setting": "co_dm", "value": str(FAY), "on": True}),
+            "unknown_person",
+        )
+
+    async def test_a_malformed_id_or_no_yes_or_no_is_a_bad_value(self) -> None:
+        for body in (
+            {"setting": "co_dm", "value": "dana", "on": True},
+            {"setting": "co_dm", "value": "0", "on": True},
+            {"setting": "co_dm", "value": "1" * 20, "on": True},
+            {"setting": "co_dm", "value": 6001, "on": True},
+            {"setting": "co_dm", "value": str(DANA)},
+            {"setting": "co_dm", "value": str(DANA), "on": "yes"},
+        ):
+            self.assertEqual(await self.queue_refused(body), "bad_value", body)
+        # The door says the same on its own: a route that forgot to check is still turned away.
+        self.assertEqual((await self.door(None, True))["status"], "bad_value")
+        self.assertEqual((await self.door("12", None))["status"], "bad_value")
+
+    async def test_a_player_a_manager_who_is_not_a_dm_and_another_campaigns_dm_are_refused(
+        self,
+    ) -> None:
+        await self.agreed(DANA, "Dana")
+        body = {"setting": "co_dm", "value": str(DANA), "on": True}
+        for who in (
+            await self.signed(CARL, manage=False),
+            await self.signed(CARL, manage=True),
+            await self.signed(BOB, manage=True),
+        ):
+            self.assertEqual(await self.queue_refused(body, session=who), "not_allowed")
+        self.assertEqual(await self.queue_refused(body, ref=self.cref(self.two)), "not_allowed")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_the_queue_still_takes_the_other_choices(self) -> None:
+        await self.queue({"setting": "visibility", "value": "private"})
+        (row,) = await self.rows()
+        self.assertEqual((row["setting"], row["turn_on"]), ("visibility", None))
+
+    async def test_a_choice_that_is_not_a_game_master_change_cannot_carry_a_yes_or_no(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            with self.assertRaises(Exception):  # noqa: B017 (a CHECK refusing the row)
+                await conn.execute(
+                    "INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting,"
+                    " value, turn_on, created_at) VALUES (%s, %s, %s, %s, 'visibility',"
+                    " 'open', true, %s)",
+                    (THURSDAY.id, self.one.id, "f" * 32, ALICE.id, NOW),
+                )
+
+
+class TheRoutes(GameMastersBase):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        app = create_app(
+            settings(), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        self.client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.addAsyncCleanup(self.client.aclose)
+
+    async def test_the_dm_reads_the_list_and_the_people_over_http(self) -> None:
+        await self.agreed(DANA, "Dana")
+        base = f"/me/campaigns/{self.cref()}/game-masters"
+        got = await self.client.get(base)
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(set(got.json()), {"max", "gameMasters"})
+        found = await self.client.get(f"{base}/candidates", params={"q": "dan"})
+        self.assertEqual(found.json(), {"people": [{"userId": str(DANA), "name": "Dana"}]})
+
+    async def test_a_campaign_that_is_not_theirs_says_not_allowed(self) -> None:
+        base = f"/me/campaigns/{self.cref(self.two)}/game-masters"
+        for path in (base, f"{base}/candidates"):
+            got = await self.client.get(path)
+            self.assertEqual((got.status_code, got.json()["error"]), (403, "not_allowed"))
+
+    async def test_a_change_is_queued_over_http_and_the_refusals_have_their_own_codes(self) -> None:
+        await self.agreed(DANA, "Dana")
+        base = f"/me/campaigns/{self.cref()}/settings"
+        made = await self.client.post(
+            base, json={"setting": "co_dm", "value": str(DANA), "on": True}, headers=HEADERS
+        )
+        self.assertEqual(made.status_code, 202, made.text)
+        got = await self.client.get(f"{base}/answers/{made.json()['answer']}")
+        self.assertEqual((got.status_code, got.json()["setting"]), (200, "co_dm"))
+        for body, status, code in (
+            ({"setting": "co_dm", "value": str(ALICE.id), "on": False}, 409, "plan_holder"),
+            ({"setting": "co_dm", "value": str(ELI), "on": True}, 400, "unknown_person"),
+            ({"setting": "co_dm", "value": "nope", "on": True}, 400, "bad_value"),
+        ):
+            bad = await self.client.post(base, json=body, headers=HEADERS)
+            self.assertEqual((bad.status_code, bad.json()["error"]), (status, code))
+
+    async def test_a_bad_address_is_not_found(self) -> None:
+        got = await self.client.get("/me/campaigns/nonsense/game-masters")
+        self.assertEqual(got.status_code, 404)

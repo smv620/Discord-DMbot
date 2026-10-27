@@ -1721,6 +1721,10 @@ def create_app(
         "bad_setting": (400, "bad_setting"),
         "bad_value": (400, "bad_value"),
         "too_soon": (429, "too_soon"),
+        # A game master change the website can turn away at once (#2768); the bot checks again.
+        "plan_holder": (409, "plan_holder"),
+        "too_many": (409, "too_many"),
+        "unknown_person": (400, "unknown_person"),
     }
 
     delete_refusals = {

@@ -5,8 +5,9 @@ The website's database role has no right on the campaign tables, so a choice is 
 database door (`dmbot_web_setting_add`, schema.py), which checks the signed-in person is a DM of the
 campaign; the bot applies it the way Discord's ⚙️ Settings buttons do (dm_screen/web_settings.py)
 and the page reads where it stands. A server manager who is not a DM, a player and anyone else get
-"not allowed" or "not found", the same as for the other pages. Not here: game masters, hand over,
-pause and delete (the page sends the DM to Discord for those).
+"not allowed" or "not found", the same as for the other pages. Optional rules (#2753) and game
+masters (#2768) go through the same queue. Not here: hand over, pause and delete (the page sends the
+DM to Discord for those).
 
 A campaign is named by `<server>.<campaign>`, as for the recap and transcript pages.
 """
@@ -33,6 +34,8 @@ CHOICES: dict[str, tuple[str, ...]] = {
 
 
 OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off (#2753)
+CO_DM = "co_dm"  # a fifth: one game master added or removed (#2768)
+PERSON_ID = re.compile(r"^[1-9][0-9]{0,18}$")  # a Discord id: digits, never a name
 
 
 def _arguments(body: object) -> tuple[str, str, bool]:
@@ -63,6 +66,19 @@ def _optional_rule(body: object) -> tuple[str, bool] | None:
     return rule_id, on
 
 
+def _co_dm(body: object) -> tuple[str, bool] | None:
+    """(person's id, add) when the body is a game master change (#2768), None otherwise. The id is
+    digits only, as a Discord id is, and `on` a real yes or no: anything else is the refusal word.
+    The database door checks the person is one the candidates list offers; the bot checks every
+    rule of Discord's game masters again when it applies the change."""
+    if not isinstance(body, dict) or body.get("setting") != CO_DM:
+        return None
+    person, add = body.get("value"), body.get("on")
+    if not isinstance(person, str) or not PERSON_ID.match(person) or not isinstance(add, bool):
+        raise RecapError("bad_value")
+    return person, add
+
+
 async def queue_setting(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
@@ -71,13 +87,19 @@ async def queue_setting(db: Database, session: Session, ref: str, body: object) 
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     rule = _optional_rule(body)
-    setting, value, confirmed = ("", "", False) if rule else _arguments(body)
+    master = _co_dm(body)
+    setting, value, confirmed = ("", "", False) if rule or master else _arguments(body)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if rule:
             cur = await conn.execute(
                 "SELECT dmbot_web_optional_rule_add(%s, %s, %s, %s) AS r",
                 (guild_id, campaign_id, rule[0], rule[1]),
+            )
+        elif master:
+            cur = await conn.execute(
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, master[0], master[1]),
             )
         else:
             cur = await conn.execute(
