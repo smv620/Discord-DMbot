@@ -276,7 +276,11 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
                 self.fail("DMBOT_TEST_DATABASE_URL is needed")
             self.skipTest("set DMBOT_TEST_DATABASE_URL to test the migration")
         self.schema = f"t_{uuid.uuid4().hex[:16]}"
-        self.before = tuple(m for m in MIGRATIONS if m[0] != BEFORE)
+        # Everything up to (not counting) 0187, in the real order: a later migration may rely on
+        # the column 0187 adds (0253's entity text does), so the ones after it wait for the run
+        # below, as they would on a real database.
+        at = next(i for i, m in enumerate(MIGRATIONS) if m[0] == BEFORE)
+        self.before = tuple(MIGRATIONS[:at])
         self.db = await Database.open(
             TEST_URL, schema=self.schema, max_size=2, migrations=self.before
         )
