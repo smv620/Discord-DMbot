@@ -20,6 +20,8 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Conn, Database
@@ -566,7 +568,53 @@ async def read_recap(db: Database, session: Session, ref: str) -> dict[str, Any]
                     return _held_view(guild_id, held)
             # Released between the list and this page: the job exists now (one more look).
             *_, row = await _one(conn, ref, session)
-    return _view(row)
+        guild_id, campaign_id, session_at = row["guild_id"], row["campaign_id"], row["session_at"]
+        cur = await conn.execute(
+            "SELECT dmbot_recap_present(%s, %s, %s) AS r", (guild_id, campaign_id, session_at)
+        )
+        scenes = (await cur.fetchone() or {}).get("r")
+    view = _view(row)
+    if isinstance(scenes, dict) and scenes["beats"]:
+        # Who was in each scene and who the DM may pick (#2577): names only, the DM's view only
+        # (the shared link and a player's page never get these keys).
+        view["beats"] = [
+            {"n": int(b["n"]), "present": list(b["present"]), "saved": bool(b["saved"])}
+            for b in scenes["beats"]
+        ]
+        view["characters"] = list(scenes["characters"])
+    return view
+
+
+async def set_beat_present(
+    db: Database, session: Session, ref: str, n: object, present: object
+) -> dict[str, Any]:
+    """Save who was in scene `n` (#2577), for a DM of the campaign: the whole new list, 0 to 12 of
+    the campaign's player characters. Kept on the scene with a mark that it is the DM's word; the
+    recap's text is not changed. Refusals: `not_found`, `stale` (no such scene: the recap was made
+    again since the page read it), `not_allowed` (posted, or not ready), `bad_present`."""
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 1000:
+        raise RecapError("stale")
+    if (
+        not isinstance(present, list)
+        or len(present) > 12
+        or not all(isinstance(p, str) for p in present)
+    ):
+        raise RecapError("bad_present")
+    parsed = parse_ref(ref)
+    if parsed is None:
+        raise RecapError("not_found")
+    guild_id, campaign_id, session_at = parsed
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_recap_set_present(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, session_at, n, Jsonb(present)),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if not isinstance(got, dict) or "error" in got:
+        raise RecapError(str((got or {}).get("error", "not_found")))
+    return {"n": int(got["n"]), "present": list(got["present"]), "saved": True}
 
 
 async def edit_recap(
