@@ -10155,9 +10155,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if store is None:
             return
         for guild in list(self.guilds):
-            await store.fail_stalled(
-                guild.id
-            )  # (a stopped bot's leftovers, before this round's own)
             for _ in range(web_restore.PER_ROUND):
                 item = await store.claim_next(guild.id)
                 if item is None:
@@ -10166,9 +10163,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     if not await web_restore.run_one(self, store, guild.id, item):
                         break
 
+    async def tidy_web_restores(self) -> None:
+        """The upkeep of the website's restore rows (#2746), about once a minute: end what a
+        stopped bot left, keep a queue alive, end the rows of a server the bot has left (they hold
+        whole campaigns), delete what is a day old. Every server that has rows, not only the ones
+        the bot is in."""
+        if self.web_restores is not None:
+            await web_restore.tidy(self.web_restores, lambda g: self.get_guild(g) is not None)
+
     async def in_server(self, guild_id: int, user_id: int) -> bool:
         """Whether this person is still in the server (a website restore is judged at the moment
-        it is applied, not when it was asked for). The cache first, then one lookup."""
+        it is applied, not when it was asked for). The cache first, then one lookup. Only "no such
+        member" is False: a Discord error is not an answer, so it rises."""
         guild = self.get_guild(guild_id)
         if guild is None:
             return False
@@ -10178,14 +10184,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await guild.fetch_member(user_id)
         except discord.NotFound:
             return False
-        except discord.HTTPException:
-            log.warning("Couldn't look up a member for a website restore")
-            return False
-        return True
+        return True  # (any other Discord error rises: the restore fails and can be tried again)
 
-    async def import_backup(
+    async def restore_copy(
         self, guild_id: int, data: object, importer_id: int, **kw: Any
     ) -> Campaign:
+        """Restore a copy the way Discord's `/dmbot restore` does (for a website restore)."""
         return await self.campaigns.import_backup(guild_id, data, importer_id, **kw)
 
     async def after_restore(self, guild_id: int, campaign_id: str, replaced: bool) -> None:

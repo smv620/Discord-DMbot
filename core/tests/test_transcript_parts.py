@@ -134,7 +134,11 @@ class TheSet(_Base):
             seen.append((done, total))
 
         await self.campaigns.import_backup(GUILD_B, main, DM_B, parts=files, progress=progress)
-        self.assertEqual(seen, [(1, len(files))])
+        # a tick after the files are checked and after each section, then one for each file
+        self.assertEqual(seen[-1], (1, len(files)))
+        self.assertEqual({total for _, total in seen}, {len(files)})
+        self.assertEqual([done for done, _ in seen], sorted(done for done, _ in seen))
+        self.assertGreater(len(seen), 2)
 
         async def broken(done: int, total: int) -> None:
             raise RuntimeError("the progress line failed")

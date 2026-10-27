@@ -107,6 +107,14 @@ PARTS_NOT_THIS_COPY = (
 )
 
 
+NOT_THIS_DM = "Only this campaign's DM can replace it with a backup."
+
+
+class PartsError(CampaignError):
+    """The transcripts files are not exactly the set the copy came with (#2552): a file from
+    another copy, repeated, or one missing."""
+
+
 class BackupTooBig(CampaignError):
     """The campaign is bigger than a restore takes, so no copy is made of it."""
 
@@ -1650,11 +1658,15 @@ class CampaignStore:
         parts: Sequence[bytes] = (),
         left_out: LeftOut | None = None,
         progress: Callable[[int, int], Awaitable[None]] | None = None,
+        in_transaction: Callable[[Conn, str], Awaitable[None]] | None = None,
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
 
-        `progress(done, total)`: told after each transcripts file is loaded, for a page that shows
-        "3 of 5 files" (#2746). It cannot change the restore; a failure in it is not the restore's.
+        `progress(done, total)`: told after each step (the files are checked, each section is
+        written, each transcripts file is loaded), for a page that shows "3 of 5 files" and when it
+        last moved (#2746). It cannot change the restore; a failure in it is not the restore's.
+        `in_transaction(conn, campaign_id)`: run on the restore's own connection just before it
+        commits, so a record of the outcome commits with the copy or not at all.
 
         `left_out` counts the lines not brought back because their speaker erased them after the
         copy was made (#2605).
@@ -1676,6 +1688,15 @@ class CampaignStore:
         # meanwhile (#164).
         info, sections = await asyncio.to_thread(self._checked, data)
         order = await self._part_order(data, parts)
+
+        async def tick(done: int) -> None:
+            if progress is not None:
+                try:
+                    await progress(done, len(order))
+                except Exception as exc:  # (only a progress line: never the restore's)
+                    log.warning("A restore's progress line failed: %s", type(exc).__name__)
+
+        await tick(0)
         # The Shared story switch comes back on only for the person who confirmed the right to
         # use the material (the file's confirmation is theirs); anyone else restoring the file
         # starts with it off and confirms for themselves (#1692, CLAUDE.md IP rule).
@@ -1693,7 +1714,7 @@ class CampaignStore:
                 await self._lock(conn, guild_id, replace_campaign_id)
                 existing = await self._require(conn, guild_id, replace_campaign_id)
                 if importer_id not in existing.dm_user_ids:
-                    raise CampaignError("Only this campaign's DM can replace it with a backup.")
+                    raise CampaignError(NOT_THIS_DM)
                 if existing.owner_user_id is None:  # the importer becomes its owner
                     await self._require_slot(conn, importer_id)
                 campaign_id = replace_campaign_id
@@ -1814,6 +1835,7 @@ class CampaignStore:
                     raise
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
+                await tick(0)
             if order:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
@@ -1825,11 +1847,7 @@ class CampaignStore:
                     except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
-                    if progress is not None:
-                        try:
-                            await progress(done, len(order))
-                        except Exception as exc:  # (only a progress line: never the restore's)
-                            log.warning("A restore's progress line failed: %s", type(exc).__name__)
+                    await tick(done)
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(
@@ -1839,6 +1857,8 @@ class CampaignStore:
                 " WHERE u IS NOT NULL ON CONFLICT DO NOTHING",
                 (campaign_id, guild_id, importer_id, guild_id, campaign_id),
             )
+            if in_transaction is not None:
+                await in_transaction(conn, campaign_id)
             return await self._require(conn, guild_id, campaign_id)
 
     @staticmethod
@@ -1854,17 +1874,17 @@ class CampaignStore:
             or not isinstance(manifest.get("id"), str)
             or type(manifest.get("count")) is not int
         ):
-            raise CampaignError(PARTS_NOT_THIS_COPY)
+            raise PartsError(PARTS_NOT_THIS_COPY)
         numbered: dict[int, int] = {}
         for index, raw in enumerate(parts):
             part = await asyncio.to_thread(decode_part, raw)
             if part["backup"] != manifest["id"]:
-                raise CampaignError(PARTS_NOT_THIS_COPY)
+                raise PartsError(PARTS_NOT_THIS_COPY)
             if part["part"] in numbered or not 1 <= part["part"] <= manifest["count"]:
-                raise CampaignError(PARTS_NOT_THIS_COPY)
+                raise PartsError(PARTS_NOT_THIS_COPY)
             numbered[part["part"]] = index
         if len(numbered) != manifest["count"]:
-            raise CampaignError(
+            raise PartsError(
                 f"This copy has {manifest['count']} transcripts file"
                 f"{'' if manifest['count'] == 1 else 's'}, and you gave {len(numbered)}. "
                 "Give all of them, or none to restore without the transcripts."

@@ -36,24 +36,25 @@ from typing import Protocol
 
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.models import Campaign
-from dmbot.campaigns.parts import LeftOut
+from dmbot.campaigns.parts import DAMAGED as PART_DAMAGED
+from dmbot.campaigns.parts import TOO_BIG_PART, LeftOut
 from dmbot.campaigns.store import (
     DAMAGED,
     NO_ROOM_TO_RESTORE,
     NOT_A_BACKUP,
-    PARTS_NOT_THIS_COPY,
+    NOT_HERE,
+    NOT_THIS_DM,
+    PartsError,
     decode_backup,
 )
 from dmbot.campaigns.store import TOO_BIG as FILE_TOO_BIG
-from dmbot.db import Database
+from dmbot.db import Conn, Database
 from dmbot.ui import logic
 
 log = logging.getLogger(__name__)
 
 PER_ROUND = 1  # restores applied in one round for one server (each can be large)
-STALLED_AFTER_S = (
-    300  # a working row that has not moved for this long belongs to a bot that stopped
-)
+STALLED_AFTER_S = 300  # a working row not moving for this long belongs to a bot that stopped
 FINISH_TRIES = 3  # writing the outcome: a database blip must not leave a finished copy "working"
 FINISH_PAUSE_S = 1.0
 KEEP_FOR_S = 86400  # a row and its files go 24 hours after it began
@@ -67,28 +68,24 @@ TOO_BIG = "too_big"
 PARTS = "parts"  # the transcripts files are not exactly the set this copy came with
 FAILED = "failed"  # anything unexpected; trying again is fine
 
-# The store's plain-words refusals, as the word the page has words for.
+# The store's refusals (its constants, not their wording), as the word the page has words for.
 _BY_MESSAGE = {
     NO_ROOM_TO_RESTORE: PLAN,
+    NOT_HERE: NOT_FOUND,
+    NOT_THIS_DM: NOT_ALLOWED,
     FILE_TOO_BIG: TOO_BIG,
+    TOO_BIG_PART: TOO_BIG,
     NOT_A_BACKUP: NOT_A_BACKUP_WORD,
     DAMAGED: NOT_A_BACKUP_WORD,
-    PARTS_NOT_THIS_COPY: PARTS,
+    PART_DAMAGED: NOT_A_BACKUP_WORD,
 }
 
 
-def refusal_word(message: str) -> str:
+def refusal_word(error: CampaignError) -> str:
     """The page's word for a refusal the store worded for Discord."""
-    word = _BY_MESSAGE.get(message)
-    if word is not None:
-        return word
-    if message.startswith("This copy has") and "transcripts file" in message:
+    if isinstance(error, PartsError):
         return PARTS
-    if message.startswith("Only this campaign's DM"):
-        return NOT_ALLOWED
-    if "transcripts" in message and "damaged" in message.lower():
-        return NOT_A_BACKUP_WORD
-    return FAILED
+    return _BY_MESSAGE.get(str(error), FAILED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +120,7 @@ class Host(Protocol):
 
     def session_lock(self, guild_id: int) -> asyncio.Lock: ...
 
-    async def import_backup(
+    async def restore_copy(
         self,
         guild_id: int,
         data: object,
@@ -133,6 +130,7 @@ class Host(Protocol):
         parts: list[bytes],
         left_out: LeftOut,
         progress: Callable[[int, int], Awaitable[None]],
+        in_transaction: Callable[[Conn, str], Awaitable[None]],
     ) -> Campaign: ...
 
     async def after_restore(self, guild_id: int, campaign_id: str, replaced: bool) -> None:
@@ -223,39 +221,102 @@ class WebRestores:
                 (int(self._now()), stage, done_parts, guild_id, item.id, item.claimed_at),
             )
 
-    async def finish(self, guild_id: int, item: Restore, outcome: Outcome) -> bool:
-        """Done, or failed with why. The table's trigger empties the copy and its files. Only the
-        worker holding the current claim writes. False: not its row any more."""
+    async def mark(self, conn: Conn, guild_id: int, item: Restore, outcome: Outcome) -> bool:
+        """Done, or failed with why, on this connection. The table's trigger empties the copy and
+        its files. Only the worker holding the current claim writes."""
         state = "failed" if outcome.error else "done"
+        cur = await conn.execute(
+            "UPDATE web_restores SET state = %s, stage = %s, error = %s, result_id = %s,"
+            " left_out = %s, done_parts = CASE WHEN %s THEN done_parts ELSE parts_wanted END,"
+            " updated_at = %s"
+            " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+            (
+                state,
+                state,
+                outcome.error,
+                outcome.result_id,
+                outcome.left_out,
+                bool(outcome.error) or item.without_parts,
+                int(self._now()),
+                guild_id,
+                item.id,
+                item.claimed_at,
+            ),
+        )
+        return bool(cur.rowcount)
+
+    async def finish(self, guild_id: int, item: Restore, outcome: Outcome) -> bool:
+        """`mark` on its own connection. False: not its row any more, or already ended (a copy
+        that is in marks its own row done in the same transaction as the copy)."""
+        async with self._db.guild(guild_id) as conn:
+            return await self.mark(conn, guild_id, item, outcome)
+
+    async def guilds(self) -> list[int]:
+        """Every server that has rows, the ones the bot has left included: their rows hold whole
+        campaigns and must still go. Server ids only."""
+        async with self._db.unscoped() as conn:
+            cur = await conn.execute("SELECT guild_id FROM web_restore_guilds ORDER BY guild_id")
+            return [int(r["guild_id"]) for r in await cur.fetchall()]
+
+    async def forget_if_empty(self, guild_id: int) -> None:
+        """Take a server off the list once none of its rows is left."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM web_restore_guilds g WHERE g.guild_id = %s AND NOT EXISTS"
+                " (SELECT 1 FROM web_restores r WHERE r.guild_id = g.guild_id)",
+                (guild_id,),
+            )
+
+    async def touch_waiting(self, guild_id: int) -> int:
+        """Show the rows still waiting their turn as alive (one restore runs at a time, so the
+        page's two-minute stall for `restore_waiting` would otherwise fire on a queue)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE web_restores SET state = %s, stage = %s, error = %s, result_id = %s,"
-                " left_out = %s, done_parts = CASE WHEN %s THEN done_parts ELSE parts_wanted END,"
-                " updated_at = %s"
-                " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
-                (
-                    state,
-                    state,
-                    outcome.error,
-                    outcome.result_id,
-                    outcome.left_out,
-                    bool(outcome.error) or item.without_parts,
-                    int(self._now()),
-                    guild_id,
-                    item.id,
-                    item.claimed_at,
-                ),
+                "UPDATE web_restores SET updated_at = %s WHERE guild_id = %s AND state = 'waiting'",
+                (int(self._now()), guild_id),
             )
-            return bool(cur.rowcount)
+            return int(cur.rowcount)
+
+    async def fail_not_here(self, guild_id: int) -> int:
+        """End, as not allowed, the rows of a server the bot is not in: nothing can apply them,
+        and the person is `busy` everywhere while they stand."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE web_restores SET state = 'failed', stage = 'failed', error = %s,"
+                " updated_at = %s WHERE guild_id = %s"
+                " AND state IN ('receiving', 'waiting', 'working')",
+                (NOT_ALLOWED, now, guild_id),
+            )
+            return int(cur.rowcount)
 
     async def sweep(self, guild_id: int) -> int:
-        """Delete rows 24 hours after they began, ended or not; the files go with them."""
+        """Delete ended rows 24 hours after they began, and the files with them. A row still
+        `working` is `fail_stalled`'s, never deleted under the worker."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "DELETE FROM web_restores WHERE guild_id = %s AND created_at < %s",
+                "DELETE FROM web_restores WHERE guild_id = %s AND created_at < %s"
+                " AND state <> 'working'",
                 (guild_id, int(self._now()) - KEEP_FOR_S),
             )
             return int(cur.rowcount)
+
+
+async def tidy(store: WebRestores, in_server: Callable[[int], bool]) -> None:
+    """The upkeep of the rows, for every server that has any: end what a stopped bot left, keep a
+    queue alive, end the rows of a server the bot has left, and delete what is a day old. Each step
+    has its own `try`, so one failing never skips the rest."""
+    for guild_id in await store.guilds():
+        steps = (
+            (store.fail_stalled, store.touch_waiting, store.sweep, store.forget_if_empty)
+            if in_server(guild_id)
+            else (store.fail_not_here, store.sweep, store.forget_if_empty)
+        )
+        for step in steps:
+            try:
+                await step(guild_id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Website restore upkeep (%s): %s", step.__name__, type(exc).__name__)
 
 
 async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) -> Outcome:
@@ -279,7 +340,7 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
     try:
         data = await asyncio.to_thread(decode_backup, main)
     except CampaignError as exc:
-        return Outcome(refusal_word(str(exc)))
+        return Outcome(refusal_word(exc))
     del main
     if logic.backup_campaign_name(data) is None:
         return Outcome(NOT_A_BACKUP_WORD)
@@ -299,8 +360,16 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
         async def progress(done: int, total: int) -> None:
             await store.move(guild_id, item, done_parts=done)
 
+        async def record(conn: Conn, campaign_id: str) -> None:
+            """The row is marked done on the restore's own connection, so the copy and its
+            outcome commit together: a crash can never leave a copy that is in as a row that
+            reads failed (a second try would make a second campaign)."""
+            await store.mark(
+                conn, guild_id, item, Outcome(result_id=campaign_id, left_out=erased.lines)
+            )
+
         try:
-            campaign = await host.import_backup(
+            campaign = await host.restore_copy(
                 guild_id,
                 data,
                 item.user_id,
@@ -308,9 +377,10 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
                 parts=parts,
                 left_out=erased,
                 progress=progress,
+                in_transaction=record,
             )
         except CampaignError as exc:
-            return Outcome(refusal_word(str(exc)))
+            return Outcome(refusal_word(exc))
     # The copy is in. What follows (the planner's statistics, the rules channel) is tidying: if it
     # fails the restore still happened, and saying "failed" would invite a second copy.
     try:
@@ -322,8 +392,10 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
 
 async def run_one(host: Host, store: WebRestores, guild_id: int, item: Restore) -> bool:
     """Apply one claimed restore and mark it. A bug never leaves the row "working": it ends as
-    `failed` for the page to offer another try. False when the row could not be marked (the loop
-    stops; the row is taken again later). Only the outcome word is logged, never the copy."""
+    `failed` for the page to offer another try. A copy that is in has marked its own row done in
+    the same transaction, so the mark here finds it already ended. False when the row could not
+    be marked (the loop stops; a row left `working` is failed by upkeep, never retaken). Only the
+    outcome word is logged, never the copy."""
     try:
         done = await apply(host, store, guild_id, item)
     except Exception as exc:
@@ -340,7 +412,7 @@ async def run_one(host: Host, store: WebRestores, guild_id: int, item: Restore) 
                 await asyncio.sleep(FINISH_PAUSE_S)
     if marked is None:
         return False
-    if not marked:
-        log.info("A website restore was no longer this worker's to mark")
+    if not marked and done.error:
+        log.info("A website restore's row had already ended")
     log.info("Website restore: %s", done.error or "done")
     return True

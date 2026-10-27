@@ -13394,6 +13394,37 @@ WEB_BACKUPS = (
     """
 )
 
+# The servers that have website-restore rows (#2746): `web_restores` is isolated per server, so a
+# sweep that must reach a server the bot has left (its rows hold whole campaigns) cannot list them
+# itself. A routing table like `campaign_guilds`: server ids and nothing else, so no row-level
+# security (see the rules at the top of this file). A trigger fills it when a row is staged, and
+# the bot's upkeep removes a server once it has no rows left. (`web_restores` is new and empty
+# everywhere, so there is nothing to backfill.)
+WEB_RESTORE_GUILDS = """
+    CREATE TABLE web_restore_guilds (
+        guild_id BIGINT PRIMARY KEY
+    );
+    CREATE FUNCTION dmbot_note_restore_guild() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        INSERT INTO web_restore_guilds (guild_id) VALUES (NEW.guild_id) ON CONFLICT DO NOTHING;
+        RETURN NULL;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_note_restore_guild() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_note_restore_guild() FROM PUBLIC;
+    CREATE TRIGGER web_restore_guilds_note
+        AFTER INSERT ON web_restores
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_restore_guild();
+"""
+
 WEB_RESTORES = (
     """
     -- A backup loaded from the website (#2745), waiting for the bot. The website's role cannot
@@ -16093,6 +16124,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0251_web_restores",
         WEB_RESTORES,
     ),  # a backup loaded from the website, waiting for the bot (#2745)
+    ("0255_restore_guilds", WEB_RESTORE_GUILDS),  # servers with restore rows, for the sweep (#2746)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -16234,7 +16266,7 @@ USER_ISOLATED_TABLES = (
 # administrator (#665).
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
-ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
+ROUTING_TABLES = ("live_session_guilds", "campaign_guilds", "web_restore_guilds")
 UNSCOPED_TABLES = (
     "schema_migrations",
     "ontology_predicate_versions",

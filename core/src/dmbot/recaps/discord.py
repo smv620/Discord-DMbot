@@ -143,6 +143,7 @@ log = logging.getLogger("dmbot.bot")
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
@@ -300,6 +301,7 @@ class RecapFeatures:
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
         async def run_web_restores(self) -> None: ...
+        async def tidy_web_restores(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -337,7 +339,14 @@ class RecapFeatures:
         """Apply the copies DMs uploaded on the website (#2746). Its own loop: a big restore takes
         minutes, and the recap requests, settings and backups must not wait for it. One restore at
         a time in this process, so a row that stopped moving belongs to a bot that stopped."""
+        rounds = 0
         while True:
+            if rounds % WEB_RESTORE_TIDY_EVERY == 0:  # about a minute; the first round too
+                try:
+                    await self.tidy_web_restores()
+                except Exception as exc:
+                    log.warning("The website restore upkeep failed: %s", type(exc).__name__)
+            rounds += 1
             try:
                 await self.run_web_restores()
             except Exception as exc:  # the type only: a database error can quote a row
@@ -1908,8 +1917,6 @@ class RecapFeatures:
                             await self.web_settings.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
-                        if self.web_restores is not None:
-                            await self.web_restores.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
                 if self.web_delete_notices is not None or self.web_backups is not None:
