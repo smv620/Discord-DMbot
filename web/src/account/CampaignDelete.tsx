@@ -6,8 +6,8 @@
 import { useRef, useState } from "preact/hooks";
 
 import { BACKUP_HAS_TRANSCRIPTS, campaignDeleteWords as words } from "../content/campaign-delete";
-import { ApiError, type AccountApi } from "./api";
-import { useObservedWait } from "./useObservedWait";
+import { ApiError, type AccountApi, type JobProgress } from "./api";
+import { stageWords } from "../content/work-progress";
 import WorkProgress from "./WorkProgress";
 
 const squash = (name: string): string => name.split(/\s+/).filter(Boolean).join(" ").toLocaleLowerCase();
@@ -37,6 +37,8 @@ export default function CampaignDelete({
   const [problem, setProblem] = useState("");
   const [saved, setSaved] = useState(false);
   const [kept, setKept] = useState(false);
+  // How far DMbot has got with the backup (its own answer: stage, how long, last moved).
+  const [made, setMade] = useState<JobProgress | null>(null);
   const working = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
   const boxId = `delete-${refId}`;
@@ -53,8 +55,9 @@ export default function CampaignDelete({
     setState("backup");
     setProblem("");
     setSaved(false);
+    setMade(null);
     try {
-      const blob = await api.campaignBackup(refId);
+      const blob = await api.campaignBackup(refId, setMade);
       const href = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = href;
@@ -88,7 +91,6 @@ export default function CampaignDelete({
     }
   };
 
-  const backingUp = useObservedWait(state === "backup", "backup");
   const matches = squash(typed) === squash(name);
   const backups = !tryIt && !!api.campaignBackup;
   if (!open) {
@@ -117,12 +119,13 @@ export default function CampaignDelete({
               {state === "backup" ? words.backingUp : words.backup}
             </button>
           </div>
-          {state === "backup" && backingUp.startedAt !== null && (
+          {state === "backup" && (
             <WorkProgress
-              stage={words.backingUp}
-              startedAt={backingUp.startedAt}
-              progressUnknown
-              state="running"
+              stage={made ? stageWords(words.stage, made.stage) : words.backingUp}
+              startedAt={made?.startedAt}
+              updatedAt={made?.updatedAt}
+              serverNow={made?.serverNow}
+              state={made && made.state !== "done" ? made.state : "running"}
             />
           )}
           <p class="small">{words.backupNote}</p>
