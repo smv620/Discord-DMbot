@@ -15,6 +15,7 @@ from dmbot.recaps.store import RecapStore
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.recap_dm import (
     ASK,
+    CHANGED,
     DECIDED,
     GONE,
     NOT_NOW,
@@ -257,8 +258,18 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
 
     async def test_yes_on_a_recap_decided_meanwhile_posts_nothing(self) -> None:
         button, bot, interaction = press("yes", decided=False)
+        bot.recaps.get = AsyncMock(side_effect=[job(), job(status="posted")])
         await button.callback(interaction)
         self.assertEqual(told(interaction), DECIDED)
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_yes_after_the_text_changed_says_so_not_that_it_was_decided(self) -> None:
+        button, bot, interaction = press("yes", decided=False)
+        # (still a draft when asked again: the refusal was the words, not a decision)
+        bot.recaps.get = AsyncMock(side_effect=[job(), job(status="draft")])
+        await button.callback(interaction)
+        self.assertEqual(told(interaction), CHANGED)
+        self.assertNotEqual(told(interaction), DECIDED)
         bot.post_recaps.assert_not_awaited()
 
     async def test_not_this_one_skips_it_and_removes_the_buttons(self) -> None:

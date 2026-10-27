@@ -165,7 +165,22 @@ class Talking(PlotBase):
                     (THURSDAY.id, self.one.id, f"{n:032x}", ALICE.id),
                 )
         got = await self.say()
-        self.assertEqual((got.status_code, got.json()["error"]), (429, "too_soon"))
+        # (its own code: it is the campaign's hour that is full, not this issue's talk)
+        self.assertEqual((got.status_code, got.json()["error"]), (429, "hour_full"))
+
+    async def test_a_talk_of_twenty_nine_days_stays_when_a_message_is_sent(self) -> None:
+        recent = "floor(extract(epoch FROM clock_timestamp())) - 29 * 86400"
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at, user_id,"
+                " role, body, state, created_at) VALUES (%s, %s, %s, 'kept', 100, %s, 'dm', 'x',"
+                f" 'done', {recent})",
+                (THURSDAY.id, self.one.id, "e" * 32, ALICE.id),
+            )
+        await self.say()
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT id FROM plot_chat WHERE issue_id = 'kept'")
+            self.assertEqual(len(await cur.fetchall()), 1)
 
     async def test_talks_older_than_thirty_days_are_deleted_when_a_message_is_sent(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:
