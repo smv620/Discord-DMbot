@@ -61,6 +61,22 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Calls: 5", text)  # beats, prose, fact check, grader, finish
         self.assertIn("spend $", text)
 
+    async def test_structured_asks_both_steps_the_two_pass_way_and_reports_counts_only(
+        self,
+    ) -> None:
+        draft = "event | lines 1 | who | where | The party reached the keep at dusk"
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        careful = fx.Canned(draft)
+        out = await run.run_text(inputs(), fast, careful, structured=True)
+        self.assertEqual(out.job.state, "ready")
+        self.assertEqual(out.structured and out.structured["runs"], 1)
+        text = "\n".join(run.report(out, {}))
+        self.assertIn("Structured: runs 1, passes 2", text)
+        self.assertNotIn(draft, text)
+        plain = await run.run_text(inputs(), happy(), fx.Canned())
+        self.assertIsNone(plain.structured)
+        self.assertNotIn("Structured:", "\n".join(run.report(plain, {})))
+
     async def test_the_report_shows_how_the_opening_was_split_by_count_never_by_word(self) -> None:
         from tests import test_recap_split as st
 

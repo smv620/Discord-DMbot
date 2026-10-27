@@ -53,6 +53,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from dmbot import ai_structured
 from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Reply
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
@@ -138,6 +139,8 @@ class Outcome:
     # (stage, try, the check's problems) for each prose or finish check that failed (#1969)
     failures: list[tuple[str, int, list[str]]] = field(default_factory=list)
     calls: list[cl.CallEvent] = field(default_factory=list)  # each AI call, in order (#2053)
+    # With --structured (#2714): how the draft-then-form passes went, counts only; else None
+    structured: dict[str, int] | None = None
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -190,6 +193,7 @@ async def run_text(
     story: pl.Story | None = None,
     start: tuple[str, dict[str, Any]] | None = None,
     reads: str = "beats",
+    structured: bool = False,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
@@ -234,7 +238,10 @@ async def run_text(
         critics=critics,
         story=story,  # PlotBot's story memory, when a test or tool connects it (#2254)
         reads=reads,  # what the writer reads (#2590)
+        structured_split=structured,  # the draft-then-form way for both steps (#2714)
+        structured_beats=structured,
     )
+    structured_before = ai_structured.STATS.as_dict()
     stopped = ""
     for _ in range(40):  # each pass is one stage; a run never spins
         before = store.job
@@ -260,6 +267,11 @@ async def run_text(
         sheets=store.sheets,
         failures=failures,
         calls=calls,
+        structured=(
+            {k: v - structured_before[k] for k, v in ai_structured.STATS.as_dict().items()}
+            if structured
+            else None
+        ),
     )
 
 
@@ -463,6 +475,12 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
         f"Calls: {sum(c.calls for _, c in counted)} ({split}); "
         f"tokens in {tokens_in}, out {tokens_out}; spend {spend}",
     ]
+    if out.structured is not None:  # counts only, for the comparison with the one-call way (#2714)
+        lines.append(
+            "Structured: " + ", ".join(f"{k} {v}" for k, v in out.structured.items() if v)
+            if any(out.structured.values())
+            else "Structured: no step used it (nothing to split or write)"
+        )
     return lines
 
 
@@ -609,6 +627,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--claude-model", metavar="NAME",
         help="with --compare: the Claude writer (default: the creative model on file)",
     )  # fmt: skip
+    parser.add_argument(
+        "--structured", action="store_true",
+        help="ask the split and the beat sheet the structured way (a strong model drafts, a fast "
+        "one fills the form, #2714); the report adds the counts. For comparing with a plain run",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -648,6 +671,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     elif args.writers != "claude,gemini":
         parser.error("--writers goes with --compare")
     args.reads_each = parse_reads(args.reads, parser.error)
+    if args.structured and (args.golden or args.compare or args.review):
+        parser.error(
+            "--structured goes with --session or --transcript, not --golden, --compare or --review"
+        )
     if args.out and not (args.transcript or args.compare or args.session):
         parser.error("--out goes with --session, --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
@@ -966,7 +993,7 @@ async def _session(
             return await _compare(args, inputs, fast, careful, models, prices, agreed, at)
         out = await run_text(
             inputs, fast, careful, agreed, session_at=at, models=models,
-            reads=args.reads_each[0], **_WRITERS,
+            reads=args.reads_each[0], structured=args.structured, **_WRITERS,
         )  # fmt: skip
         lines = report(out, prices)
         if lines == [REFUSED]:
@@ -1134,8 +1161,9 @@ async def _transcript(
     if args.compare:
         return await _compare(args, inputs, fast, careful, models, prices, None, 1)
     out = await run_text(
-        inputs, fast, careful, session_at=1, models=models, reads=args.reads_each[0], **_WRITERS
-    )
+        inputs, fast, careful, session_at=1, models=models, reads=args.reads_each[0],
+        structured=args.structured, **_WRITERS,
+    )  # fmt: skip
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)
