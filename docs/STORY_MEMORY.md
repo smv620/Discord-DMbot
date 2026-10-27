@@ -814,6 +814,14 @@ processor before it is used.
 - Each vector stores the model name and version, so a change of model re-embeds everything.
 - Vectors are per campaign and never compared across campaigns or servers.
 - `pgvector` is a database image change, which only dev1 deploys.
+- **Built (#2664 part 2): where the numbers live.** `memory_vectors` (migration 0248) holds them as a
+  plain list of numbers, and `memory/vectors.py` compares them in Python inside ONE campaign (stock
+  Postgres has no `pgvector`; a read over 20,000 rows logs a counts-only warning, and `pgvector`
+  can replace the comparison later without changing what a row means). A transcript line's row is
+  tied to the line by a foreign key that deletes it with the line, so Stop recording me, Delete my
+  transcripts, retention and a deleted session or campaign all take the numbers in the same
+  statement. A line deleted while its text was away at Voyage AI is never saved (the save selects
+  the line). Not in a backup: they are made again.
 
 **Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
 rule says which in `memory/checks.py`'s docstring.

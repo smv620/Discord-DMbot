@@ -173,6 +173,15 @@ class Isolation(MemoryTest):
             GUILD_A, self.c, [Extracted("Belleros", "knows", "Cerric", "", ("1",), "dm_said")],
             {"1": DM}, opted_in={DM}, prompt_version="p1", model="m1", session_started_at=1_000,
         )  # fmt: skip
+        # and the numbers meaning search compares (#2664)
+        from dmbot.memory import vectors
+
+        await vectors.VectorStore(self.db).save(
+            GUILD_A,
+            self.c,
+            "voyage-3.5",
+            [vectors.Item(vectors.ASSERTION, "x", vectors.text_hash("x"), [1.0, 0.0])],
+        )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
