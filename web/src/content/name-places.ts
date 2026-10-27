@@ -14,10 +14,10 @@ export const namePlaceWords = {
     const rest = String(s % 60).padStart(2, "0");
     const clock =
       h > 0 ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
-    // "in" so it reads as time into the session, not a time of day.
-    return `${clock} in`;
+    // "at" so it reads as a point in the session, not a time of day.
+    return `at ${clock}`;
   },
-  lineRemoved: "A line a player had removed",
+  lineRemoved: "A line that was removed",
   // A whole window with nothing left to show; it is never hidden without saying so.
   gone: (n: number): string =>
     `Session ${n}: this part of the transcript is no longer available.`,

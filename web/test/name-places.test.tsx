@@ -87,9 +87,9 @@ describe("where it was said", () => {
   });
 
   it("formats times as m:ss and h:mm:ss", () => {
-    expect(w.time(65)).toBe("1:05 in");
-    expect(w.time(3725)).toBe("1:02:05 in");
-    expect(w.time(-4)).toBe("0:00 in");
+    expect(w.time(65)).toBe("at 1:05");
+    expect(w.time(3725)).toBe("at 1:02:05");
+    expect(w.time(-4)).toBe("at 0:00");
     expect(w.more(1)).toBe("1 more place in the transcripts.");
   });
 
