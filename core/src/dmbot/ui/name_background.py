@@ -35,7 +35,7 @@ from dmbot.memory.backstory_links import (
     Waiting,
     WhichWaiting,
 )
-from dmbot.memory.end_match import bare
+from dmbot.memory.end_match import FILLER, bare
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -631,22 +631,35 @@ def _plural(kind: str, count: int) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
+def usable_alias(key: str) -> bool:
+    """Whether a spelling is distinctive enough to stand for a name on its own (#2762): after the
+    titles and articles are taken off ("the King" is nothing, "the Ashen King" is "ashen"), it
+    needs two words, or one of five letters or more. A bare title or a short word is shared by
+    too many people to be a name."""
+    core = [w for w in key.split() if w not in FILLER]
+    return bool(core) and (len(core) >= 2 or len(core[0]) >= 5)
+
+
 async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str, tuple[str, ...]]:
     """Each confirmed public name of the campaign (its key) to the other confirmed public spellings
     that mean only it (#2762), so a document that says "the Ashen King" can back a link the AI
-    wrote with the name. A spelling that fits more than one entry is left out, as are secret ones
-    and the table's people: nothing here may ever match the wrong name or show a secret."""
+    wrote with the name. Every owner of a spelling is counted first (secret ones, ones not yet
+    confirmed, kinds the players don't know and the table's own people included) and a spelling
+    with more than one owner, or a secret one, is refused: nothing here may ever match the wrong
+    name or touch a secret. A spelling too plain to name anyone (a bare title) is left out too."""
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     owners: dict[str, set[str]] = {}
     for key, entries in lookup.by_key.items():
-        for e in entries:
-            if e.confirmed and not e.secret and not e.person:
-                owners.setdefault(key, set()).add(e.entity_id)
+        owners.setdefault(key, set()).update(e.entity_id for e in entries)
+    for key, people in lookup.people_by_key.items():  # (a person at the table owns it too)
+        owners.setdefault(key, set()).update(f"person:{e.entity_id}" for e in people)
     out: dict[str, list[str]] = {}
-    for key, ids in owners.items():
-        if len(ids) != 1:
+    for key, entries in lookup.by_key.items():
+        if len(owners[key]) != 1 or not usable_alias(key):
             continue
-        (entity,) = ids
+        if not all(e.confirmed and not e.secret and not e.person for e in entries):
+            continue
+        (entity,) = owners[key]
         canonical = name_key(lookup.entities[entity].name)
         if key != canonical:
             out.setdefault(canonical, []).append(key)

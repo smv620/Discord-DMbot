@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 from dmbot.memory import background as bg
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import Alias
-from dmbot.ui.name_background import confirmed_aliases
+from dmbot.ui.name_background import confirmed_aliases, usable_alias
 from tests.test_transcript_cleaner import alias, entity
 
 ALDRIC, MIRA, VALE = "a" * 32, "b" * 32, "c" * 32
@@ -89,6 +89,39 @@ class TheAliasMap(unittest.IsolatedAsyncioTestCase):
     async def test_an_alias_two_entries_share_is_left_out(self) -> None:
         memory = lookup_of(alias(ALDRIC, "the Old One"), alias(VALE, "the Old One"))
         self.assertEqual(await confirmed_aliases(memory, CAMPAIGN), {})
+
+    async def test_a_spelling_shared_with_a_secret_or_unconfirmed_or_hidden_entry_is_refused(
+        self,
+    ) -> None:
+        # the same spelling is also a secret name of another entry, or a proposed one's
+        secret = alias(VALE, "the Ashen King", secret=True)
+        memory = lookup_of(alias(ALDRIC, "the Ashen King"), secret=(secret,))
+        self.assertEqual(await confirmed_aliases(memory, CAMPAIGN), {})
+        memory = lookup_of(
+            alias(ALDRIC, "the Ashen King"), alias(VALE, "the Ashen King", status="proposed")
+        )
+        self.assertEqual(await confirmed_aliases(memory, CAMPAIGN), {})
+
+    async def test_a_spelling_a_person_at_the_table_has_is_refused(self) -> None:
+        data = LookupData(
+            1,
+            (entity(ALDRIC, "Aldric Vane"),),
+            (alias(ALDRIC, "Aldric Vane"), alias(ALDRIC, "the Ashen King")),
+            (), (), (), (),
+            people=(alias("p" * 32, "the Ashen King"),),
+        )  # fmt: skip
+        memory = SimpleNamespace(lookup_data=AsyncMock(return_value=data))
+        self.assertEqual(await confirmed_aliases(memory, CAMPAIGN), {})
+
+    async def test_a_bare_title_or_a_short_word_is_no_alias(self) -> None:
+        memory = lookup_of(
+            alias(ALDRIC, "the King"), alias(ALDRIC, "Ash"), alias(ALDRIC, "the Ashen King")
+        )
+        self.assertEqual(await confirmed_aliases(memory, CAMPAIGN), ALIASES)
+        self.assertFalse(usable_alias("the king"))
+        self.assertFalse(usable_alias("ash king"))
+        self.assertTrue(usable_alias("the ashen king"))
+        self.assertTrue(usable_alias("grey wolf"))
 
     async def test_a_secret_alias_is_never_listed(self) -> None:
         memory = lookup_of(secret=(alias(ALDRIC, "the hooded stranger", secret=True),))
