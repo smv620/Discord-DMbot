@@ -1635,8 +1635,21 @@ export type ApiErrorKind =
   | "session-running" // a session is running, so the campaign can't be deleted (#2555)
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
+  | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
+
+/** How the page asks for a copy being made on DMbot's side (#2751): first after 1.5 s, then slower, to 10 s. */
+const BACKUP_POLL_MS = 1500;
+const BACKUP_POLL_MAX_MS = 10_000;
+const BACKUP_GIVE_UP_MS = 16 * 60_000;
+/** What a failed copy's `reason` means to the page (core web/campaign_backup.py REASONS). */
+const backupReasons: Record<string, ApiErrorKind> = {
+  plan: "no-backup",
+  too_big: "too-big",
+  not_allowed: "not-allowed",
+  not_found: "not-found",
+};
 
 export class ApiError extends Error {
   constructor(
@@ -1686,8 +1699,12 @@ export interface AccountApi {
   /** Delete a campaign for good, with its name typed to confirm (#2555; core #2554). `channelsLeft` is true
    * when DMbot couldn't reach the server, so its Discord channels stay. Only the plan holder may. */
   deleteCampaign?(ref: string, name: string): Promise<{ channelsLeft: boolean }>;
-  /** The whole campaign as a JSON backup file, offered before Delete (owner and co-DMs; not Try It). */
-  campaignBackup?(ref: string): Promise<Blob>;
+  /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
+   * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
+   * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
+   * `too-big`, `not-allowed`, `not-found`, `too-soon`, and `backup-failed` (it could not be made, or took longer
+   * than the 15 minutes it is kept). */
+  campaignBackup?(ref: string, onProgress?: (progress: JobProgress) => void): Promise<Blob>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
   /** `{moving: true}` (HTTP 202) when the campaign has to move to another server first: the bot does it within
@@ -2244,8 +2261,24 @@ export function httpApi(
     },
     deleteCampaign: async (ref, name) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
-    campaignBackup: async (ref) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/backup`, undefined, true)) as Blob,
+    campaignBackup: async (ref, onProgress) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
+      const asked = (await call("POST", base)) as { id: string };
+      const began = Date.now();
+      let wait = BACKUP_POLL_MS;
+      for (;;) {
+        const got = (await call("GET", `${base}/${encodeURIComponent(asked.id)}`)) as JobProgress & { ready: boolean };
+        onProgress?.(got);
+        if (got.state === "failed") throw new ApiError(backupReasons[got.reason ?? ""] ?? "backup-failed");
+        if (got.ready) break;
+        // DMbot keeps a copy 15 minutes; a copy not ready by then is not coming.
+        if (Date.now() - began > BACKUP_GIVE_UP_MS) throw new ApiError("backup-failed");
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        wait = Math.min(wait * 1.5, BACKUP_POLL_MAX_MS);
+      }
+      // Once: DMbot deletes the copy as it is sent.
+      return (await call("GET", `${base}/${encodeURIComponent(asked.id)}/file`, undefined, true)) as Blob;
+    },
     takeBackHandover: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
     },
