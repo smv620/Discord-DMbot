@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, patch
 import discord
 
 from dmbot.bot import DMBot
-from dmbot.campaigns import Campaign
-from dmbot.campaigns.store import LAST_DM, MAX_DMS, TOO_MANY_DMS
+from dmbot.campaigns import Campaign, CampaignError
+from dmbot.campaigns.store import MAX_DMS, TOO_MANY_DMS
 from dmbot.dm_screen import game_masters
 from dmbot.dm_screen import web_settings as ws
 from tests.test_recap_web import BOB
@@ -58,13 +58,15 @@ class CoDmBot(FakeBot):
             get_member=lambda uid: None,
             fetch_member=fetch,
         )
-        self._me: Any = SimpleNamespace(campaigns=store, get_guild=lambda gid: guild)
+        me: Any = SimpleNamespace(campaigns=store, get_guild=lambda gid: guild)
+        me.find_member = lambda gid, uid: DMBot.find_member(me, gid, uid)
+        self._me = me
 
     async def find_member(self, guild_id: int, user_id: int) -> ws.Member | None:
         return await DMBot.find_member(self._me, guild_id, user_id)
 
     async def apply_co_dm(
-        self, campaign: Campaign, user_id: int, name: str, add: bool, asker_id: int
+        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
     ) -> ws.CoDmDone:
         self.calls.append(("co_dm", f"{user_id}:{add}"))
 
@@ -80,7 +82,7 @@ class CoDmBot(FakeBot):
             patch.object(game_masters, "follow_access_on", follow),
             patch.object(game_masters, "tell_new", tell),
         ):
-            return await DMBot.apply_co_dm(self._me, campaign, user_id, name, add, asker_id)
+            return await DMBot.apply_co_dm(self._me, campaign, user_id, add, asker_id)
 
 
 class TheCoDm(Settings):
@@ -197,8 +199,7 @@ class TheCoDm(Settings):
         lone = await self.campaigns.create(self.g, "Lone", DANA)
         item = ws.Setting("b", lone.id, DANA, "co_dm", str(DANA), False, 1, False)
         done = await ws.apply(self.bot, self.g, item)
-        self.assertEqual(done.error, ws.REFUSED)
-        self.assertIn(done.note, (LAST_DM, game_masters.PLAN_HOLDER_SELF))
+        self.assertEqual((done.error, done.note), (ws.REFUSED, game_masters.PLAN_HOLDER_SELF))
 
     async def test_removing_someone_who_is_not_a_game_master_says_so(self) -> None:
         done = await self.change(ELI, False)
@@ -215,7 +216,7 @@ class TheCoDm(Settings):
         self.assertEqual((await ws.apply(self.bot, self.g, item)).error, ws.NOT_FOUND)
 
     async def test_an_id_that_is_not_a_person_or_a_missing_yes_no_is_a_bad_value(self) -> None:
-        for value in ("abc", "", "-5", "0", "1" * 20, "١٢٣", "12 3"):
+        for value in ("abc", "", "-5", "0", "1" * 20, "9" * 19, "١٢٣", "12 3"):
             self.assertEqual((await self.change(value, True)).error, ws.BAD_VALUE, value)
         self.assertEqual((await self.change(DANA, None)).error, ws.BAD_VALUE)
         self.assertEqual(self.bot.calls, [])
@@ -259,3 +260,34 @@ class TheFollowUp(Settings):
             )
         self.assertEqual(words, game_masters.ACCESS_LATE)
         self.assertEqual(taken, [self.one])
+
+
+class TheMessage(Settings):
+    async def test_tell_new_sends_one_message_that_pings_nobody_and_says_false_when_it_fails(
+        self,
+    ) -> None:
+        sent: list[Any] = []
+
+        async def send(text: str, **kw: Any) -> None:
+            sent.append((text, kw))
+
+        member = SimpleNamespace(send=send)
+        guild = SimpleNamespace(
+            name="Thursday", get_member=lambda uid: member, fetch_member=AsyncMock()
+        )
+        self.assertTrue(await game_masters.tell_new(cast(Any, guild), self.one, DANA, "Alice"))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("This doesn't start any recording of you.", sent[0][0])
+        self.assertIn("allowed_mentions", sent[0][1])
+        failing = SimpleNamespace(
+            send=AsyncMock(
+                side_effect=discord.Forbidden(SimpleNamespace(status=403, reason="x"), "no")
+            )
+        )
+        guild.get_member = lambda uid: failing
+        self.assertFalse(await game_masters.tell_new(cast(Any, guild), self.one, DANA, "Alice"))
+
+    async def test_a_server_the_bot_is_not_in_is_a_campaign_gone(self) -> None:
+        me = SimpleNamespace(campaigns=self.campaigns, get_guild=lambda gid: None)
+        with self.assertRaises(CampaignError):
+            await DMBot.apply_co_dm(cast(Any, me), self.one, DANA, True, ALICE.id)

@@ -50,7 +50,10 @@ FAILED = (
 )
 NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
 NOT_A_PERSON = "Bots can't be game masters. Pick a person."
-NOT_IN_SERVER = "They aren't in this server any more, so they can't be a game master."
+NOT_IN_SERVER = (
+    "They aren't in this server any more, so they can't be a game master. "
+    "Pick someone who is in the server."
+)
 ALREADY = "**{name}** is already a game master."
 TOO_MANY = TOO_MANY_DMS
 # Two voices, because only the plan holder has the 🤝 Hand over button.

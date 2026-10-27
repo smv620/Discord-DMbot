@@ -119,12 +119,13 @@ class Host(Protocol):
         ...
 
     async def apply_co_dm(
-        self, campaign: Campaign, user_id: int, name: str, add: bool, asker_id: int
+        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
     ) -> CoDmDone:
         """Save the change with the store's own rules (raises `CampaignError` with Discord's
         words), then do what Discord's menu does: the running session takes the new set, the
         DM screen's permissions and game-time channel are applied again, and a new game master
-        gets the one private message. Nothing here touches anyone's consent."""
+        gets the one private message. The caller has checked an added person is in the server and
+        not a bot. Nothing here touches anyone's consent."""
         ...
 
 
@@ -266,7 +267,7 @@ async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
     ):
         return Outcome(BAD_VALUE)
     person, add = int(item.value), item.turn_on
-    if person < 1:
+    if person < 1 or person >= 2**63:  # (the database's id range)
         return Outcome(BAD_VALUE)
     guild_id = campaign.guild_id
     try:
@@ -288,7 +289,7 @@ async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
             return Outcome(REFUSED, game_masters.GONE_FROM_LIST)
     name = member.name if member is not None else game_masters.LEFT
     try:
-        done = await host.apply_co_dm(campaign, person, name, add, item.user_id)
+        done = await host.apply_co_dm(campaign, person, add, item.user_id)
     except CampaignError as exc:
         if str(exc) == OWNER_STAYS:
             return Outcome(
@@ -296,7 +297,7 @@ async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
             )
         return Outcome(REFUSED, str(exc))  # (the limit, the last game master, a campaign gone)
     # Short sentences for the page (it shows the note without the bold marks).
-    shown = game_masters.md(name)
+    shown = name  # raw: the page shows the note as plain text, so no escapes
     first = (
         f"**{shown}** is now a game master." if add else f"**{shown}** is no longer a game master."
     )

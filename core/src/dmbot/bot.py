@@ -10485,12 +10485,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return web_settings.Member(found.display_name, found.bot)
 
     async def apply_co_dm(
-        self, campaign: Campaign, user_id: int, name: str, add: bool, asker_id: int
+        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
     ) -> web_settings.CoDmDone:
         """A game master added or removed on the website (#2776), exactly as Discord's 👑 Game
         masters does it: the store's rules, then access follows and a new game master gets the
-        one private message. The change stays saved if either follow-up fails. Ids in the log
-        only."""
+        one private message. The caller has checked an added person is in the server and not a
+        bot. The change stays saved if either follow-up fails. Ids in the log only."""
         guild = self.get_guild(campaign.guild_id)
         if guild is None:
             raise CampaignError(screen_messages.CAMPAIGN_GONE)
@@ -10508,8 +10508,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         late = await game_masters.follow_access_on(self, guild, changed)
         if not add:
             return web_settings.CoDmDone(late=late)
-        asker = guild.get_member(asker_id)
-        by = asker.display_name if asker is not None else "A game master"
+        try:  # the cache is often empty (no members intent), so ask Discord too
+            asker = await self.find_member(campaign.guild_id, asker_id)
+        except Exception:
+            asker = None
+        by = asker.name if asker is not None else "A game master"
         told = await game_masters.tell_new(guild, changed, user_id, by)
         return web_settings.CoDmDone(told=told, late=late)
 

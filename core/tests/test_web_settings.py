@@ -75,7 +75,7 @@ class FakeBot:
         return ws.Member("Someone", False)
 
     async def apply_co_dm(
-        self, campaign: Campaign, user_id: int, name: str, add: bool, asker_id: int
+        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
     ) -> ws.CoDmDone:
         self.calls.append(("co_dm", f"{user_id}:{add}"))
         if add:
