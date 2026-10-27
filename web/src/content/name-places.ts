@@ -12,12 +12,18 @@ export const namePlaceWords = {
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     const rest = String(s % 60).padStart(2, "0");
-    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
+    const clock =
+      h > 0 ? `${h}:${String(m).padStart(2, "0")}:${rest}` : `${m}:${rest}`;
+    // "in" so it reads as time into the session, not a time of day.
+    return `${clock} in`;
   },
-  lineRemoved: "A line that was removed",
+  lineRemoved: "A line a player had removed",
   // A whole window with nothing left to show; it is never hidden without saying so.
-  gone: (n: number): string => `A line from session ${n}, no longer available.`,
-  openTranscript: "Open in transcript",
-  openTranscriptFor: (n: number): string => `Open in transcript: session ${n}`,
-  more: (n: number): string => (n === 1 ? "1 more place in the transcripts." : `${n} more places in the transcripts.`),
+  gone: (n: number): string =>
+    `Session ${n}: this part of the transcript is no longer available.`,
+  openTranscriptFor: (n: number): string => `Open session ${n} transcript`,
+  more: (n: number): string =>
+    n === 1
+      ? "1 more place in the transcripts."
+      : `${n} more places in the transcripts.`,
 } as const;

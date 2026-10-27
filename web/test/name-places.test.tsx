@@ -2,11 +2,14 @@
 // @vitest-environment happy-dom
 // "Where it was said" under a name to check (#2403; core #2329). Shown only while NAME_PLACES_LIVE is true
 // (false today), so these tests switch it on. The lines are transcript words: they are drawn, never logged.
+import { readFileSync } from "node:fs";
+
 import { cleanup, render, screen, within } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mockApi, mockRecaps } from "../src/account/mock";
+import NamePlaces from "../src/account/NamePlaces";
 import RecapNameChecks from "../src/account/RecapNameChecks";
 import { nameCheckWords as nw } from "../src/content/recap-name-checks";
 import { namePlaceWords as w } from "../src/content/name-places";
@@ -35,7 +38,8 @@ afterEach(() => {
 });
 
 const draft = mockRecaps()[0]!;
-const row = (name: string) => screen.getByRole("group", { name }) as HTMLElement;
+const row = (name: string) =>
+  screen.getByRole("group", { name }) as HTMLElement;
 
 async function open(on = true) {
   live.places = on;
@@ -67,8 +71,13 @@ describe("where it was said", () => {
   it("links to the transcript at that session and counts the places left out", async () => {
     await open();
     const card = within(row("Brannoch"));
-    const link = card.getByRole("link", { name: w.openTranscriptFor(12) }) as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toMatch(/^\/account\/transcripts\/[^/]+\/12$/);
+    const link = card.getByRole("link", {
+      name: w.openTranscriptFor(12),
+    }) as HTMLAnchorElement;
+    const campaign = draft.ref.split(".").slice(0, 2).join(".");
+    expect(link.getAttribute("href")).toBe(
+      `/account/transcripts/${encodeURIComponent(campaign)}/12`,
+    );
     expect(card.getByText(w.more(3))).toBeTruthy();
   });
 
@@ -78,21 +87,85 @@ describe("where it was said", () => {
   });
 
   it("formats times as m:ss and h:mm:ss", () => {
-    expect(w.time(65)).toBe("1:05");
-    expect(w.time(3725)).toBe("1:02:05");
-    expect(w.time(-4)).toBe("0:00");
+    expect(w.time(65)).toBe("1:05 in");
+    expect(w.time(3725)).toBe("1:02:05 in");
+    expect(w.time(-4)).toBe("0:00 in");
     expect(w.more(1)).toBe("1 more place in the transcripts.");
   });
 
   it("never writes the transcript words to the console", async () => {
-    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map(
+      (m) => vi.spyOn(console, m).mockImplementation(() => {}),
+    );
     await open();
-    for (const s of spies) for (const call of s.mock.calls) expect(JSON.stringify(call)).not.toContain("we rode to Brannoch");
+    for (const s of spies)
+      for (const call of s.mock.calls)
+        expect(JSON.stringify(call)).not.toContain("we rode to Brannoch");
   });
 
   it("has no accessibility violations", async () => {
     await open();
     const result = await axe.run(document.body);
     expect(result.violations).toEqual([]);
+  });
+});
+
+describe("the page itself", () => {
+  it("never draws a removed line's words or speaker, nor lines of an unavailable window", () => {
+    const places = [
+      {
+        session: 3,
+        available: true,
+        lines: [{ removed: true, speaker: "Mira", at: 5, text: "SECRET" }],
+      },
+      {
+        session: 4,
+        available: false,
+        lines: [{ speaker: "Kes", at: 9, text: "HIDDEN" }],
+      },
+    ] as unknown as Parameters<typeof NamePlaces>[0]["places"];
+    const { container } = render(
+      <NamePlaces places={places} more={0} campaignRef="1.2" />,
+    );
+    const text = container.textContent ?? "";
+    for (const bad of ["SECRET", "Mira", "HIDDEN", "Kes"])
+      expect(text).not.toContain(bad);
+    expect(text).toContain(w.lineRemoved);
+    expect(text).toContain(w.gone(4));
+  });
+
+  it("shows at most two windows of three lines", () => {
+    const lines = [1, 2, 3, 4].map((n) => ({
+      speaker: "Mira",
+      at: n,
+      text: `line${n}`,
+    }));
+    const places = [1, 2, 3].map((session) => ({
+      session,
+      available: true,
+      lines,
+    }));
+    const { container } = render(
+      <NamePlaces places={places} more={0} campaignRef="1.2" />,
+    );
+    expect(container.textContent).not.toContain("line4");
+    expect(container.textContent).not.toContain(w.session(3));
+    expect(container.querySelectorAll("li li")).toHaveLength(6);
+  });
+
+  it("is held with its What's new entry and one GO_LIVE row", async () => {
+    const real = await vi.importActual<
+      typeof import("../src/content/recap-words")
+    >("../src/content/recap-words");
+    const { held } = await import("../src/content/whats-new");
+    expect(
+      held
+        .map((h) => h.title)
+        .includes("See where a recap's new name was said"),
+    ).toBe(!real.NAME_PLACES_LIVE);
+    const golive = readFileSync(process.cwd() + "/../docs/GO_LIVE.md", "utf8");
+    expect(
+      golive.split("\n").filter((l) => l.startsWith("| `NAME_PLACES_LIVE`")),
+    ).toHaveLength(1);
   });
 });

@@ -4,7 +4,15 @@
 import { namePlaceWords as words } from "../content/name-places";
 import type { NamePlace } from "./api";
 
-export default function NamePlaces({ places, more, campaignRef }: { places: NamePlace[]; more: number; campaignRef: string }) {
+export default function NamePlaces({
+  places,
+  more,
+  campaignRef,
+}: {
+  places: NamePlace[];
+  more: number;
+  campaignRef: string;
+}) {
   if (places.length === 0 && more <= 0) return null;
   return (
     <div class="stack">
@@ -18,6 +26,7 @@ export default function NamePlaces({ places, more, campaignRef }: { places: Name
               <>
                 <span class="muted">{words.session(place.session)}</span>
                 <ul>
+                  {/* The door sends at most three lines a window; the cap only guards the page. */}
                   {place.lines.slice(0, 3).map((line, i) =>
                     line.removed ? (
                       <li key={i} class="muted">
@@ -33,8 +42,10 @@ export default function NamePlaces({ places, more, campaignRef }: { places: Name
                     ),
                   )}
                 </ul>
-                <a href={`/account/transcripts/${encodeURIComponent(campaignRef)}/${place.session}`} aria-label={words.openTranscriptFor(place.session)}>
-                  {words.openTranscript}
+                <a
+                  href={`/account/transcripts/${encodeURIComponent(campaignRef)}/${place.session}`}
+                >
+                  {words.openTranscriptFor(place.session)}
                 </a>
               </>
             )}

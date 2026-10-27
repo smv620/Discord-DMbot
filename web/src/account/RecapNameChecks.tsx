@@ -5,11 +5,28 @@
 // queues for the bot (the same paths as Discord's 📝 Check new names), so this page asks again about
 // every two seconds until the name leaves the list. DMbot never decides what a name is.
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
+import { campaignRefOf } from "./RecapNames";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { NAME_MAX_LETTERS, NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
-import { NAME_CHANGE_WORDS_LIVE, NAME_PLACES_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
-import { ApiError, type AccountApi, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
+import {
+  NAME_MAX_LETTERS,
+  NOTE_MAX_LETTERS,
+  SPELLING_MAX_LETTERS,
+  nameCheckWords as words,
+} from "../content/recap-name-checks";
+import {
+  NAME_CHANGE_WORDS_LIVE,
+  NAME_PLACES_LIVE,
+  RECAP_NAME_CHECKS_LIVE,
+  RECAPS_LIVE,
+} from "../content/recap-words";
+import {
+  ApiError,
+  type AccountApi,
+  type NameCheck,
+  type NameCheckAnswer,
+  type NameCheckList,
+} from "./api";
 import { keepFocus } from "./focus";
 import NamePlaces from "./NamePlaces";
 import { useObservedWait } from "./useObservedWait";
@@ -18,7 +35,13 @@ import WorkProgress from "./WorkProgress";
 const POLL_MS = 2000;
 const POLL_LIMIT = 30; // about a minute: the bot normally answers within seconds
 
-export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId: string }) {
+export default function RecapNameChecks({
+  api,
+  refId,
+}: {
+  api: AccountApi;
+  refId: string;
+}) {
   const [list, setList] = useState<NameCheckList | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -50,7 +73,12 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
 
   const waiting = (list?.names ?? []).some((n) => n.answering) || busy.size > 0;
   // The wait shows how long it has run and when the list last changed (the page sees no stage from the bot).
-  const seen = useObservedWait(waiting, (list?.names ?? []).map((n) => `${n.id}:${n.answering ? 1 : 0}:${n.name}`).join(","));
+  const seen = useObservedWait(
+    waiting,
+    (list?.names ?? [])
+      .map((n) => `${n.id}:${n.answering ? 1 : 0}:${n.name}`)
+      .join(","),
+  );
   useEffect(() => {
     if (!waiting) {
       looks.current = 0;
@@ -66,13 +94,23 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
       if (got) {
         const now = new Set(got.names.map((n) => n.id));
         // Change the words keeps the card and gives it new words (#2593), which also ends its wait.
-        const renamedCard = got.names.find((n) => busyNow.has(n.id) && before.has(n.id) && before.get(n.id) !== n.name);
+        const renamedCard = got.names.find(
+          (n) =>
+            busyNow.has(n.id) &&
+            before.has(n.id) &&
+            before.get(n.id) !== n.name,
+        );
         // A name that left the list is answered; one that is still there with a word in `error` failed.
         setBusy((was) => {
           const next = new Set(was);
           for (const id of was) {
             const card = got.names.find((n) => n.id === id);
-            if (!card || (card.error ?? "") !== "" || (before.has(id) && before.get(id) !== card.name)) next.delete(id);
+            if (
+              !card ||
+              (card.error ?? "") !== "" ||
+              (before.has(id) && before.get(id) !== card.name)
+            )
+              next.delete(id);
           }
           return next;
         });
@@ -82,7 +120,9 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
         } else if (renamedCard) {
           // The card goes on under its new words: say so, and put the focus where the next answer is made.
           setSaid(words.changed(renamedCard.name));
-          keepFocus(() => document.getElementById(`name-check-${renamedCard.id}-kind`));
+          keepFocus(() =>
+            document.getElementById(`name-check-${renamedCard.id}-kind`),
+          );
         }
       }
       if (looks.current >= POLL_LIMIT) setSlow(true);
@@ -90,7 +130,13 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     return () => clearTimeout(timer);
   });
 
-  if (!RECAPS_LIVE || !RECAP_NAME_CHECKS_LIVE || !api.nameChecks || !api.answerNameCheck) return null;
+  if (
+    !RECAPS_LIVE ||
+    !RECAP_NAME_CHECKS_LIVE ||
+    !api.nameChecks ||
+    !api.answerNameCheck
+  )
+    return null;
   if (failed) {
     return (
       <section class="stack" aria-labelledby="name-checks-heading">
@@ -121,7 +167,10 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
       await api.answerNameCheck!(refId, name.id, answer);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
-      setProblems((was) => ({ ...was, [name.id]: words.problem[kind] ?? words.problem.server ?? "" }));
+      setProblems((was) => ({
+        ...was,
+        [name.id]: words.problem[kind] ?? words.problem.server ?? "",
+      }));
       setBusy((was) => {
         const next = new Set(was);
         next.delete(name.id);
@@ -142,9 +191,17 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
             key={n.id}
             name={n}
             list={list}
-            campaignRef={refId.split(".").slice(0, 2).join(".")}
+            campaignRef={campaignRefOf(refId)}
             busy={busy.has(n.id) || n.answering}
-            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? (changing.current.has(n.id) ? words.changeFailed : words.failedHint) : "")}
+            problem={
+              problems[n.id] ||
+              (n.error
+                ? (words.problem[n.error.replaceAll("_", "-")] ??
+                  (changing.current.has(n.id)
+                    ? words.changeFailed
+                    : words.failedHint))
+                : "")
+            }
             onSend={(answer) => void send(n, answer)}
           />
         ))}
@@ -215,10 +272,21 @@ function NameRow({
             {words.noteFrom} {name.note}
           </p>
         )}
-        {NAME_PLACES_LIVE && <NamePlaces places={name.places ?? []} more={name.morePlaces ?? 0} campaignRef={campaignRef} />}
+        {NAME_PLACES_LIVE && (
+          <NamePlaces
+            places={name.places ?? []}
+            more={name.morePlaces ?? 0}
+            campaignRef={campaignRef}
+          />
+        )}
         <div class="row">
           <label for={`${id}-kind`}>{words.kind}</label>
-          <select id={`${id}-kind`} value={kind} disabled={busy} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
+          <select
+            id={`${id}-kind`}
+            value={kind}
+            disabled={busy}
+            onChange={(e) => setKind((e.target as HTMLSelectElement).value)}
+          >
             <option value="">{words.kindNone}</option>
             {list.kinds.map((k) => (
               <option key={k.key} value={k.key}>
@@ -226,10 +294,22 @@ function NameRow({
               </option>
             ))}
           </select>
-          <button type="button" class="button" disabled={busy || kind === ""} aria-label={words.yesWith(name.name)} onClick={() => onSend({ action: "confirm", kind })}>
+          <button
+            type="button"
+            class="button"
+            disabled={busy || kind === ""}
+            aria-label={words.yesWith(name.name)}
+            onClick={() => onSend({ action: "confirm", kind })}
+          >
             {words.yes}
           </button>
-          <button type="button" class="button secondary" disabled={busy} aria-label={words.notANameFor(name.name)} onClick={() => onSend({ action: "not_a_name" })}>
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy}
+            aria-label={words.notANameFor(name.name)}
+            onClick={() => onSend({ action: "not_a_name" })}
+          >
             {words.notAName}
           </button>
         </div>
@@ -239,13 +319,29 @@ function NameRow({
               <div class="row" role="group" aria-label={words.longerLabel}>
                 <span class="small muted">{words.longerLabel}</span>
                 {longer.map((option) => (
-                  <button key={option} type="button" class="button secondary" disabled={busy} aria-label={words.useName(option)} onClick={() => { setWholeName(option); setHeard(option); setChanging(true); }}>
+                  <button
+                    key={option}
+                    type="button"
+                    class="button secondary"
+                    disabled={busy}
+                    aria-label={words.useName(option)}
+                    onClick={() => {
+                      setWholeName(option);
+                      setHeard(option);
+                      setChanging(true);
+                    }}
+                  >
                     {option}
                   </button>
                 ))}
               </div>
             )}
-            <details open={changing} onToggle={(e) => setChanging((e.target as HTMLDetailsElement).open)}>
+            <details
+              open={changing}
+              onToggle={(e) =>
+                setChanging((e.target as HTMLDetailsElement).open)
+              }
+            >
               <summary>{words.changeUse}</summary>
               <fieldset class="stack" disabled={busy}>
                 <legend>{words.changeLabel}</legend>
@@ -254,13 +350,34 @@ function NameRow({
                   <label for={`${id}-words`} class="visually-hidden">
                     {words.changeLabel}
                   </label>
-                  <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
+                  <input
+                    id={`${id}-words`}
+                    type="text"
+                    maxLength={NAME_MAX_LETTERS}
+                    autocomplete="off"
+                    autocapitalize="words"
+                    spellcheck={false}
+                    value={wholeName}
+                    onInput={(e) => {
+                      const typed = (e.target as HTMLInputElement).value;
+                      setWholeName(typed);
+                      if (typed.trim() === "") setHeard("");
+                    }}
+                  />
                   <button
                     type="button"
                     class="button secondary"
-                    disabled={wholeName.trim() === "" || wholeName.trim() === name.name}
+                    disabled={
+                      wholeName.trim() === "" || wholeName.trim() === name.name
+                    }
                     aria-label={words.changeFor(name.name)}
-                    onClick={() => onSend({ action: "change_words", words: wholeName.trim(), ...(heard !== "" ? { heard } : {}) })}
+                    onClick={() =>
+                      onSend({
+                        action: "change_words",
+                        words: wholeName.trim(),
+                        ...(heard !== "" ? { heard } : {}),
+                      })
+                    }
                   >
                     {words.changeUse}
                   </button>
@@ -275,7 +392,13 @@ function NameRow({
             <legend>{words.actually}</legend>
             <div class="row">
               <label for={`${id}-known`}>{words.sameLabel}</label>
-              <select id={`${id}-known`} value={known} onChange={(e) => setKnown((e.target as HTMLSelectElement).value)}>
+              <select
+                id={`${id}-known`}
+                value={known}
+                onChange={(e) =>
+                  setKnown((e.target as HTMLSelectElement).value)
+                }
+              >
                 <option value="">{words.sameNone}</option>
                 {list.known.map((k) => (
                   <option key={k.id} value={k.id}>
@@ -283,23 +406,62 @@ function NameRow({
                   </option>
                 ))}
               </select>
-              <button type="button" class="button secondary" disabled={known === ""} aria-label={words.sameFor(name.name)} onClick={() => onSend({ action: "same", known })}>
+              <button
+                type="button"
+                class="button secondary"
+                disabled={known === ""}
+                aria-label={words.sameFor(name.name)}
+                onClick={() => onSend({ action: "same", known })}
+              >
                 {words.sameUse}
               </button>
             </div>
             <div class="row">
               <label for={`${id}-spell`}>{words.spellLabel}</label>
-              <input id={`${id}-spell`} type="text" maxLength={SPELLING_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={spelling} onInput={(e) => setSpelling((e.target as HTMLInputElement).value)} />
-              <button type="button" class="button secondary" disabled={spelling.trim() === ""} aria-label={words.spellFor(name.name)} onClick={() => onSend({ action: "respell", text: spelling.trim() })}>
+              <input
+                id={`${id}-spell`}
+                type="text"
+                maxLength={SPELLING_MAX_LETTERS}
+                autocomplete="off"
+                autocapitalize="words"
+                spellcheck={false}
+                value={spelling}
+                onInput={(e) =>
+                  setSpelling((e.target as HTMLInputElement).value)
+                }
+              />
+              <button
+                type="button"
+                class="button secondary"
+                disabled={spelling.trim() === ""}
+                aria-label={words.spellFor(name.name)}
+                onClick={() =>
+                  onSend({ action: "respell", text: spelling.trim() })
+                }
+              >
                 {words.spellUse}
               </button>
             </div>
           </fieldset>
           <div class="row">
             <label for={`${id}-note`}>{words.explainLabel}</label>
-            <input id={`${id}-note`} type="text" maxLength={NOTE_MAX_LETTERS} autocomplete="off" value={note} disabled={busy} onInput={(e) => setNote((e.target as HTMLInputElement).value)} />
+            <input
+              id={`${id}-note`}
+              type="text"
+              maxLength={NOTE_MAX_LETTERS}
+              autocomplete="off"
+              value={note}
+              disabled={busy}
+              onInput={(e) => setNote((e.target as HTMLInputElement).value)}
+            />
             {room <= 50 && <span class="small muted">{words.left(room)}</span>}
-            <button type="button" class="button secondary" disabled={busy || note.trim() === ""} aria-label={words.explainFor(name.name)} onClick={() => onSend({ action: "explain", text: note.trim() })}>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy || note.trim() === ""}
+              aria-label={words.explainFor(name.name)}
+              onClick={() => onSend({ action: "explain", text: note.trim() })}
+            >
               {words.explainSend}
             </button>
           </div>
