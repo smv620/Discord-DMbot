@@ -507,6 +507,10 @@ export interface SessionReport {
   /** While `making` or `failed`: the shared wait shape (counts and codes only). */
   progress?: JobProgress | null;
   counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };
+  /** Found but not sorted or graded (the call limit stopped the run): a count, never read as "nothing found". */
+  notSorted?: number;
+  /** A ready report the call limit cut short: the rest is checked after the next session. */
+  leftForNextTime?: boolean;
   contradictions: ReportContradiction[];
   differences: { disguised: ReportDifference[]; misunderstood: ReportDifference[]; false: ReportDifference[] };
 }

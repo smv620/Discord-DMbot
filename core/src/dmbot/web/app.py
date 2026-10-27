@@ -53,6 +53,7 @@ from dmbot.web import (
     offers,
     past_sessions,
     relationships,
+    report,
     sessions,
     shared_recaps,
     sharing,
@@ -1145,6 +1146,21 @@ def create_app(
         session, _token = signed
         try:
             return await past_sessions.read_past_sessions(db, session, ref)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report(ref: str, at: str, signed: Signed) -> dict[str, Any]:
+        """One session's after-session report (#2661): the minor contradictions and what the party
+        has wrong, sorted, with the DM's answers. DM only: a player, a peek or another campaign's
+        DM gets 403 `not_allowed`; a time that is not a time, or a campaign that is not there, 404.
+        Nothing here is ever in a players' view."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        try:
+            return await report.read_report(db, session, ref, when)
         except RecapError as err:
             if err.code == "not_allowed":
                 raise HTTPException(status_code=403, detail="not_allowed") from None

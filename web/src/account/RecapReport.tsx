@@ -252,10 +252,13 @@ function Ready({
 }) {
   const { counts, contradictions, differences } = report;
   const total = contradictions.length + differences.disguised.length + differences.misunderstood.length + differences.false.length;
-  if (total === 0) return <p>{w.empty}</p>;
+  // A run the call limit cut short is never "nothing to check": the rest comes after the next session.
+  const cutShort = report.leftForNextTime === true || (report.notSorted ?? 0) > 0;
+  if (total === 0) return <p>{cutShort ? w.leftForNextTime : w.empty}</p>;
   return (
     <div class="stack">
       <p>{w.counts(counts)}</p>
+      {cutShort && <p class="small muted">{w.leftForNextTime}</p>}
       {contradictions.length > 0 && (
         <section class="stack" aria-labelledby="report-c">
           <h3 id="report-c">{w.contradictionsHeading}</h3>
