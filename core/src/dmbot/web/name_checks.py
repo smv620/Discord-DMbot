@@ -16,7 +16,7 @@ from typing import Any
 from dmbot.db import Database
 from dmbot.memory.models import NAME_MAX
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
-from dmbot.memory.places import cut, find_in
+from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.web import recaps
@@ -46,13 +46,20 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
         gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
         cur = await conn.execute("SELECT dmbot_recap_names_read(%s, %s, %s) AS r", (gid, cid, at))
         got = (await cur.fetchone() or {}).get("r")
+        if got is not None:
+            cur = await conn.execute(
+                "SELECT dmbot_recap_name_places(%s, %s, %s) AS r", (gid, cid, at)
+            )
+            found = (await cur.fetchone() or {}).get("r") or {}
     if got is None:
         raise RecapError("not_found")
     # Suggestions made before pronouns were kept out ("We", "I'll") are still stored: they are
     # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
     # pronoun the database marks as made before the gate. The marker is not passed on.
     waiting = [
-        _with_longer_names({k: v for k, v in n.items() if k != "old"})
+        _with_places(
+            _with_longer_names({k: v for k, v in n.items() if k != "old"}), found.get(n["id"])
+        )
         for n in got["names"]
         if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
     ]
@@ -73,6 +80,48 @@ def _with_longer_names(card: dict[str, Any]) -> dict[str, Any]:
             before, heard, after = cut(said, found[0], found[1], 120)
             quotes.append(f"{before}**{heard}**{after}")
     card["longerNames"] = longer_names(quotes, name)[:MAX_OFFERED]
+    return card
+
+
+SOMEONE = "Someone"  # as Discord's card: a speaker whose name was not kept
+
+
+def _with_places(card: dict[str, Any], found: dict[str, Any] | None) -> dict[str, Any]:
+    """Where the name was said (#2403): the door's windows made ready for the page. The door only
+    marks which lines' speakers agree now; a line of someone who does not is `{"removed": true}`
+    with no speaker, time or words, and a window with nothing left to show says so with no lines.
+    The words are drawn from this answer only: nothing is kept, cached or logged."""
+    if not found or not (found.get("windows") or found.get("more")):
+        return card  # nothing said anywhere: the card is as before, and the page shows no places
+    name = str(card.get("name", ""))
+    places: list[dict[str, Any]] = []
+    for window in found.get("windows", []):
+        lines: list[dict[str, Any]] = []
+        started = int(window.get("startedAt") or 0) * 1000
+        for line in window.get("lines", []):
+            if not line.get("agreed"):
+                lines.append({"removed": True})
+                continue
+            said = " ".join(str(line.get("text", "")).split())
+            spot = find_in(said, [name]) if line.get("hit") else None
+            if spot:
+                before, heard, after = cut(said, spot[0], spot[1], LINE_CHARS)
+                said = f"{before}{heard}{after}"
+            else:
+                said = trimmed(said, LINE_CHARS)
+            lines.append(
+                {
+                    "speaker": str(line.get("name") or SOMEONE),
+                    "at": max(0, (int(line.get("ms") or 0) - started) // 1000),
+                    "text": said,
+                }
+            )
+        shown = any(not x.get("removed") for x in lines)
+        places.append(
+            {"session": int(window["session"]), "available": shown, "lines": lines if shown else []}
+        )
+    card["places"] = places
+    card["morePlaces"] = int(found.get("more", 0))
     return card
 
 
