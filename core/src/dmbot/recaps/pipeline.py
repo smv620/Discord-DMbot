@@ -317,6 +317,7 @@ class RecapWorker:
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
         on_call: Callable[[cl.CallEvent], None] | None = None,
+        on_count: Callable[[str, int], None] | None = None,
         creative: Client | None = None,
         formatting: Client | None = None,
         story: Story | None = None,
@@ -345,6 +346,7 @@ class RecapWorker:
         self._draft_stage = "write" if self._two else "prose"  # the stage the draft's call is in
         self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
         self._on_note = on_note  # plain notes a test run puts in its report (#2013)
+        self._on_count = on_count  # (name, number): counts a test run reports, never words (#2738)
         # Each AI call as it returns, for a test run's "Calls" section (#2053): counts and fixed
         # words only. The worker fills in the event as the answer is checked.
         self._on_call = on_call
@@ -1700,6 +1702,7 @@ class RecapWorker:
             # What a reader who was away could still not follow, after the writer's one fix: a
             # note for the DM, never another round (#2680).
             sentences_now, left = self._away(job.summary, sheet, inputs)
+            self._count("away_left", len(left))
             return await self._save_loop(
                 gid, cid, job,
                 replace(
@@ -1715,6 +1718,15 @@ class RecapWorker:
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
         )
+
+    def _count(self, name: str, number: int) -> None:
+        """A count for a test run's report (#2738); a callback that fails never fails the recap."""
+        if self._on_count is None:
+            return
+        try:
+            self._on_count(name, number)
+        except Exception:
+            log.exception("Recap: a test run's count hook failed")
 
     @staticmethod
     def _told(loop: cr.Loop) -> tuple[str, ...]:
@@ -1872,6 +1884,7 @@ class RecapWorker:
                 "Recap: the away-reader check found %d: %s",
                 len(found_away), sorted({f.kind for f in found_away}),
             )  # fmt: skip
+            self._count("away_found", len(found_away))
         changes = [*(loop.motives or ()), *plot, *style, *asked_away]
         hard, soft = cr.count(changes)
         log.info("Recap: critics reading %d: %d hard, %d soft", loop.round + 1, hard, soft)
@@ -2160,10 +2173,10 @@ class RecapWorker:
                 )  # fmt: skip
             cut = len(best.cuts)
         # (the away notes are read again from the text that is kept, cuts and all)
+        away_left = self._away_notes(prose.summary, sheet, inputs)
+        self._count("away_left", len(away_left))
         kept_notes = (
-            told
-            + tuple(n for n in best.notes if not away.is_note(n) and n not in told)
-            + self._away_notes(prose.summary, sheet, inputs)
+            told + tuple(n for n in best.notes if not away.is_note(n) and n not in told) + away_left
         )
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
