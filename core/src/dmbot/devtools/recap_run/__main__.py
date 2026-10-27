@@ -629,8 +629,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )  # fmt: skip
     parser.add_argument(
         "--structured", action="store_true",
-        help="ask the split and the beat sheet the structured way (a strong model drafts, a fast "
-        "one fills the form, #2714); the report adds the counts. For comparing with a plain run",
+        help="with --session or --transcript only (not --golden, --compare or --review): ask the "
+        "split and the beat sheet the structured way (a strong model drafts, a fast one fills the "
+        "form, #2714); the report adds the counts. To compare, run the session once without it "
+        "and once with it",
     )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
