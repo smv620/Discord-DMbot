@@ -27,7 +27,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -274,7 +274,7 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
-from dmbot.memory.contradiction_grades import GradeStore
+from dmbot.memory.contradiction_grades import MAJOR, GradeStore
 from dmbot.memory.exposures import (
     ExposureStore,
     dedupe,
@@ -448,8 +448,15 @@ from dmbot.transcription.base import (
 )
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
+from dmbot.ui import (
+    contradiction_notes,
+    image_fix,
+    looked_at,
+    name_pass_undo,
+    recap_audio,
+    rule_card,
+)
 from dmbot.ui import guide as guide_screen
-from dmbot.ui import image_fix, looked_at, name_pass_undo, recap_audio, rule_card
 from dmbot.ui import logic as ui_logic
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
@@ -3073,6 +3080,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("new names", lambda: self.post_new_names(table)),
             ("new connections", lambda: self.post_claims(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
+            # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
+            ("big clashes", lambda: self.tell_contradictions(table)),
             ("quiet threads", lambda: self.warn_about_threads(table)),
             (
                 "story watch",
@@ -8723,6 +8732,67 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             log.info(report.line())
 
+    async def tell_contradictions(self, table: Table) -> None:
+        """After the grading, with the same switches (#2660): the major clashes PlotBot graded that
+        were not told yet, at most `contradiction_notes.SAY_MAX` each time this step runs, as one
+        private message. The minor ones are left for the after-session report. No AI call, no
+        transcript line read; nothing changes a belief. The line can name an entry, so with a
+        private DM screen it goes there (pulled back if the screen opens up), and otherwise to each
+        DM by private message with only a number on the screen. A clash is marked told only once a
+        message reached the DM, so one that did not is tried again next session."""
+        if (
+            not self.settings.story_contradictions_on
+            or not self.settings.story_extractor_on
+            or self.memory is None
+            or table.campaign_id is None
+            or table.screen_channel_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            grades = GradeStore.of(self.memory)
+            waiting = await grades.rows(gid, cid, grade=MAJOR, unsaid=True)
+            told = waiting[: contradiction_notes.SAY_MAX]
+            log.info("Contradictions: %d major waiting, %d told", len(waiting), len(told))
+            if not told:
+                return
+            texts = contradiction_notes.told_parts(told)  # (split at line ends, never cut short)
+            private = campaign.dm_screen_visibility == "private"
+            if private:
+                sent = True
+                for text in texts:
+                    sent = sent and await self.post(
+                        table.screen_channel_id, text, secret_of=(gid, cid)
+                    )
+            else:
+                # Players may peek at the screen, and the line can name an entry: the DMs' own
+                # private messages instead, and nothing named on the screen (as the secret
+                # questions do). Told only if a DM got every part.
+                results = []
+                for dm in campaign.dm_user_ids:
+                    got = [await self.sidebar_send_dm(dm, text) for text in texts]
+                    results.append("sent" if all(g == "sent" for g in got) else got[-1])
+                sent = "sent" in results
+                if not sent and "forbidden" in results:
+                    await self.post(
+                        table.screen_channel_id,
+                        contradiction_notes.waiting_text(len(told), private=False),
+                    )  # (no name, no number; they stay untold, so a later session tries again)
+            if sent:
+                await grades.mark_said(
+                    gid,
+                    cid,
+                    [
+                        (t.perspective_id, t.kind, t.first_relation_id, t.second_relation_id)
+                        for t in told
+                    ],
+                )
+
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology
         steward decided (#1303), counts only. Never shown to a player or a DM. Nothing is
@@ -9555,19 +9625,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         now = int(time.time())
         report = await name_pass_run.run(
             self.transcripts, lookup, ask, gid, cid, session_id,
-            people=people, agreed=agreed, now=now,
+            people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
+            consenting=lambda: self.consent.consenting(gid),
         )  # fmt: skip
         # The words PlotBot was not sure of, and the ones it says are new names, are name questions
         # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
-        # are answered (#2169). The report counts only what will really be offered: a word the
-        # campaign knows already, or a person at the table, is not (the same rule the scan uses).
-        skip = set(await self.memory.known_keys(gid, cid)) | people
-        report = replace(
-            report,
-            unsure=tuple(c for c in report.unsure if name_key(c.heard) not in skip),
-            new=tuple(c for c in report.new if name_key(c.heard) not in skip),
-        )
+        # are answered (#2169). The report counts only what will really be offered: `run` leaves out
+        # a word the campaign knows already, or a person at the table (the scan's own rule).
         if report.unsure or report.new:
             self._name_pass_asks[session_id] = [
                 (c.heard, c.times) for c in (*report.unsure, *report.new)
