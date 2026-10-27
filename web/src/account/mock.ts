@@ -878,6 +878,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       got.looks += 1;
       return { session, state: "making", progress: { stage: got.looks === 1 ? "reading" : "grading", done: got.looks === 1 ? null : 2, total: got.looks === 1 ? null : 5, unit: "items", startedAt: 1791000000, updatedAt: 1791000000 + got.looks * 10, serverNow: 1791000000 + got.looks * 12, state: "running" }, counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
     }
+    // A ready report the call limit cut short: never "nothing to check" (core `left_for_next_time`).
+    if (campaignRef.endsWith(".report-cut")) return { session, state: "ready", counts: none, notSorted: 3, leftForNextTime: true, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
     if (campaignRef.endsWith(".report-empty")) return { session, state: "ready", counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
     const items = reportItems();
     const withAnswer = <T extends { id: string; answer: ReportAnswer | null }>(x: T): T => ({ ...x, answer: got.answers.get(x.id) ?? null });

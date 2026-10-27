@@ -84,12 +84,13 @@ class Smart(fx.Canned):
 
 def ending_fails_after_the_draft(real: Any) -> Any:
     """A `check_prose` that finds the draft clean (the closure `checked`) and every later check
-    failing on the ending: the check that fails only once the critics have had their say."""
+    failing on a secret: a check that fails only once the critics have had their say. (Not the
+    ending: a cut that takes the ending off a draft is allowed to stand, #2741.)"""
 
     def check(*a: Any, **k: Any) -> list[str]:
         if sys._getframe(1).f_code.co_name == "checked":
             return list(real(*a, **k))
-        return ["the recap must end exactly where the session stopped"]
+        return ["it names something the DM keeps secret: leave it out"]
 
     return check
 
@@ -323,7 +324,7 @@ class Criticising(WorkerHarness):
         self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
         self.assertEqual(job.last_error, pl.CHECK_WAIT)
         # (the reason shown is only CHECK_WAIT: the log is where the failed rule is named)
-        self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
+        self.assertTrue(any("the draft fails" in m and "secret" in m for m in logged.output))
 
     async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
         real = rd.check_prose
@@ -481,6 +482,62 @@ class Criticising(WorkerHarness):
         )  # fmt: skip
         return await self.worker._stop_critics(1, self.one.id, job, loop, inputs, why)
 
+    # --- what the DM was told about the draft (#2741) ------------------------------------
+
+    async def test_the_not_fact_checked_note_survives_the_critics_agreeing(self) -> None:
+        fast = self.fast_for()
+        await self.setUpWorker(fast, fx.Canned(facts=["not json at all"]), critics=True)
+        job = await self.go()
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual((job.state, loop.done), ("ready", True))
+        self.assertIn(pl.NOT_FACT_CHECKED_NOTE, loop.notes)
+
+    async def test_a_revision_that_was_fact_checked_drops_the_not_fact_checked_note(self) -> None:
+        fast = self.fast_for(WITH_MOTIVE, grades=2)
+        careful = fx.Canned(fx.prose_answer(CLEAN), facts=["not json at all"])
+        await self.setUpWorker(fast, careful, critics=True)
+        job = await self.go()
+        loop = cr.loop_from_json(job.critics)
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("avenge", job.summary)  # the revision replaced the text
+        self.assertNotIn(pl.NOT_FACT_CHECKED_NOTE, loop.notes)  # the new text was checked
+
+    async def stop_with(self, told: tuple[str, ...], cuts: tuple[int, ...] = ()) -> Any:
+        """The critics stop on the stored draft, which carries `told` and whose best draft is the
+        same text (with `cuts` hard-flagged sentences when given)."""
+        await self.setUpWorker(fx.Canned(), fx.Canned(), critics=True)
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET summary = %s", (CLEAN,))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        best = cr.Best(
+            CLEAN, ("1. Low strings.", "2. A drone."), {}, 1 if cuts else 0, 0, (), cuts, False
+        )
+        loop = cr.Loop(round=1, best=best, notes=told)
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=list(fx.NAMES), secret_names=[],
+            previous="", earlier=None, day=4, window_chars=40_000, hours=2.5, campaign_name="",
+        )  # fmt: skip
+        done = await self.worker._stop_critics(1, self.one.id, job, loop, inputs, pl.STOP_TALLY)
+        assert done is not None
+        return cr.loop_from_json(done.critics)
+
+    async def test_the_notes_survive_the_critics_stopping(self) -> None:
+        loop = await self.stop_with((pl.NOT_FACT_CHECKED_NOTE,))
+        self.assertIn(pl.NOT_FACT_CHECKED_NOTE, loop.notes)
+
+    async def test_a_critics_stop_cut_that_takes_the_ending_off_says_so(self) -> None:
+        last = len(rd.sentences_of(CLEAN))
+        real = rd.check_prose
+
+        def ends_badly(*a: Any, **k: Any) -> list[str]:
+            return [*real(*a, **k), "it must end exactly where the session stopped"]
+
+        with patch.object(rd, "check_prose", ends_badly):
+            loop = await self.stop_with((), cuts=(last,))
+        self.assertIn(pl.ENDING_CUT_NOTE, loop.notes)
+        self.assertEqual(loop.cut, 1)
+
     async def test_an_unfixable_draft_holds_when_the_service_or_the_tally_stopped_the_loop(
         self,
     ) -> None:
@@ -612,14 +669,14 @@ class Criticising(WorkerHarness):
         with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped("no agreement", tries=1)
         self.assertEqual(job.state, "failed")
-        self.assertIn("(check: ending)", job.last_error)
+        self.assertIn("(check: secret)", job.last_error)
         self.assertEqual(job.tries, 0)  # given back
 
     async def test_the_job_ceiling_with_a_failed_check_fails_and_keeps_the_try(self) -> None:
         with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped(pl.STOP_CEILING, tries=1)
         self.assertEqual((job.state, job.tries), ("failed", 1))
-        self.assertIn("(check: ending)", job.last_error)
+        self.assertIn("(check: secret)", job.last_error)
 
     async def test_an_unfixable_draft_with_no_agreement_fails_and_gives_the_try_back(self) -> None:
         job = await self.stopped("no agreement", unfixable=True, tries=1)

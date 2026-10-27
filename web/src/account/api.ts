@@ -507,6 +507,10 @@ export interface SessionReport {
   /** While `making` or `failed`: the shared wait shape (counts and codes only). */
   progress?: JobProgress | null;
   counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };
+  /** Found but not sorted or graded (the call limit stopped the run): a count, never read as "nothing found". */
+  notSorted?: number;
+  /** A ready report the call limit cut short: the rest is checked after the next session. */
+  leftForNextTime?: boolean;
   contradictions: ReportContradiction[];
   differences: { disguised: ReportDifference[]; misunderstood: ReportDifference[]; false: ReportDifference[] };
 }
@@ -2336,11 +2340,10 @@ export function httpApi(
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`)) as SessionReport,
     makeSessionReport: async (campaignRef, at) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report/make`, {})) as SessionReport,
+    // Written at once by the API (an answer is the DM's bookkeeping, not a change to the story: Supervisor on
+    // #2661), so there is nothing to wait for or poll; the page reads the report again.
     answerReport: async (campaignRef, at, id, action) => {
-      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}`;
-      const queued = (await call("POST", `${base}/sessions/${at}/report`, { id, action })) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`, { id, action });
     },
     setBeatPresent: async (recapRef, n, present) =>
       (await call("PUT", `/me/recaps/${encodeURIComponent(recapRef)}/beats/${n}/present`, { present })) as RecapBeat,
