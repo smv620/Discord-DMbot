@@ -9,8 +9,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+from dmbot.recaps.discord import RecapFeatures
 from dmbot.ui import recap_upload as ru
-from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS
+from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS, lists_warning
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import Base
 
@@ -20,6 +21,11 @@ OTHER = 4242
 
 def talk(store: Any, campaign: Any, user: int = fx.DM) -> tuple[Any, Any]:
     bot = SimpleNamespace(recaps=store)
+
+    async def saved_lists(campaign: Any, at: int, user: int) -> Any:
+        return await RecapFeatures.recap_saved_lists(bot, campaign, at, user)
+
+    bot.recap_saved_lists = saved_lists
     response = SimpleNamespace(is_done=lambda: False, send_message=AsyncMock(), defer=AsyncMock())
     interaction = SimpleNamespace(
         client=bot,
@@ -120,6 +126,31 @@ class Adding(Base):
         assert job is not None
         self.assertEqual((job.summary, job.written_by), ("A new telling.", "Garrick"))
         self.assertTrue(job.earlier)
+
+    async def test_replacing_a_recap_with_saved_lists_says_they_will_be_deleted(self) -> None:
+        interaction, send = talk(self.store, self.one)
+        await ru.submit(interaction, self.draft(rights=True))
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET beats = %s::jsonb WHERE guild_id = 1 AND session_at = 700",
+                ('[{"saved": true, "present": ["Mira"]}, {"saved": true}, {}]',),
+            )
+        await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
+        self.assertEqual(said(send), ru.ASK_REPLACE + "\n" + lists_warning(2))
+        job = await self.store.get(1, self.one.id, 700)
+        assert job is not None
+        self.assertEqual(job.summary, TEXT)  # (asking changed nothing)
+
+    async def test_replacing_a_recap_that_cannot_be_read_warns_anyway(self) -> None:
+        interaction, send = talk(self.store, self.one)
+        await ru.submit(interaction, self.draft(rights=True))
+
+        async def broken(*args: Any) -> Any:
+            raise RuntimeError("down")
+
+        interaction.client.recap_saved_lists = broken
+        await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
+        self.assertEqual(said(send), ru.ASK_REPLACE + "\n" + lists_warning(None))
 
     async def test_somebody_who_is_not_a_dm_adds_nothing(self) -> None:
         interaction, send = talk(self.store, self.one, user=OTHER)

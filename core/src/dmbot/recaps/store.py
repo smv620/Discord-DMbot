@@ -275,6 +275,16 @@ _PLOT_OPEN = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class SavedLists:
+    """What making a recap again would throw away (#2727): how many scenes have a "who was there"
+    list the DM saved (None: it could not be read, so the question warns anyway) and whether a
+    finished recap stands (which the DM is asked about anyway)."""
+
+    count: int | None
+    finished: bool
+
+
 class RecapStore:
     def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
         self._db = db
@@ -1071,6 +1081,26 @@ class RecapStore:
                 int(r["session_at"]): (r["state"], r["status"], bool(r["approved"]))
                 for r in await cur.fetchall()
             }
+
+    async def saved_lists(
+        self, guild_id: int, campaign_id: str, session_at: int
+    ) -> SavedLists | None:
+        """For the question before a recap is made again (#2727): how many scenes of the session's
+        recap have a "who was there" list the DM saved (#2684), and whether a finished recap
+        stands (one the DM is asked about anyway). None when the session has no recap job. A count
+        only: no name and no word of the recap leaves the database."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT (SELECT count(*) FROM jsonb_array_elements("
+                "          CASE WHEN jsonb_typeof(beats) = 'array' THEN beats ELSE '[]'::jsonb END"
+                "        ) AS b WHERE jsonb_typeof(b) = 'object'"
+                "          AND (b -> 'saved') = 'true'::jsonb) AS lists,"
+                " state = 'ready' AND status IN ('draft', 'posted') AS finished"
+                " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
+                (guild_id, campaign_id, session_at),
+            )
+            row = await cur.fetchone()
+        return None if row is None else SavedLists(int(row["lists"]), bool(row["finished"]))
 
     async def others_working(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """Whether another recap of the campaign is being written, so this one waits its turn: the

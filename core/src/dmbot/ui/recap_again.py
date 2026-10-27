@@ -20,6 +20,7 @@ from typing import Any
 
 import discord
 
+from dmbot.recaps.store import SavedLists
 from dmbot.ui.dmbot_commands import NOT_IN_SERVER, _bot, _tell, dmbot_group
 from dmbot.ui.recap_share import session_numbers
 
@@ -35,6 +36,13 @@ ASK = (
     "The old one stays until you approve the new one."
 )
 KEPT_OLD = "👍 Nothing was changed. The recap stays as it is."
+LISTS_ONE = "You saved who was in 1 scene of this recap. Making it again deletes that list."
+LISTS_MANY = "You saved who was in {n} scenes of this recap. Making it again deletes those lists."
+LISTS_UNREADABLE = (
+    "I can't tell whether you saved who was in any scenes. "
+    "If you did, making it again deletes those lists."
+)
+LISTS_ASK = "Make it again anyway?"
 QUEUED = (
     "📜 Writing the recap of this session. It's on your recap page when it's ready. "
     "Nothing goes to the table until you say so."
@@ -105,11 +113,40 @@ async def _campaign(interaction: discord.Interaction, campaign_id: str) -> Any |
     return campaign
 
 
+def lists_warning(lists: int | None) -> str:
+    """The warning before a recap is made again over scenes whose "who was there" lists the DM
+    saved (#2727): said before the button works, in plain words and how many. `None`: it could not
+    be read, so it warns anyway."""
+    if lists is None:
+        return LISTS_UNREADABLE
+    return LISTS_ONE if lists == 1 else LISTS_MANY.format(n=lists)
+
+
 async def start(
-    interaction: discord.Interaction, campaign: Any, session_at: int, *, replace_ok: bool = False
+    interaction: discord.Interaction,
+    campaign: Any,
+    session_at: int,
+    *,
+    replace_ok: bool = False,
+    lists_ok: bool = False,
 ) -> None:
-    """Ask for the recap and say what happened, privately. An existing one is asked about first."""
+    """Ask for the recap and say what happened, privately. An existing one is asked about first,
+    and so is a recap whose saved "who was there" lists would be deleted (#2727): that question
+    comes before anything is started, and "no" changes nothing."""
     bot = _bot(interaction)
+    if not lists_ok:
+        try:
+            found = await bot.recap_saved_lists(campaign, session_at, interaction.user.id)
+        except Exception:
+            log.exception("Make the recap again: couldn't ask what is saved")
+            found = SavedLists(None, False)
+        if found is not None and (found.count is None or found.count > 0):
+            await _tell(
+                interaction,
+                lists_warning(found.count) + "\n" + LISTS_ASK,
+                view=ConfirmView(campaign.id, session_at, lists=True, finished=found.finished),
+            )
+            return
     try:
         outcome = await bot.recap_again(
             campaign, session_at, interaction.user.id, replace_ok=replace_ok
@@ -201,17 +238,29 @@ def again_view(campaign_id: str, session_at: int, *, keep: bool = False) -> disc
 
 
 class ConfirmView(discord.ui.View):
-    """Asked once before an existing recap is started over."""
+    """Asked once before an existing recap is started over, or before saved "who was there" lists
+    are deleted (#2727). `lists`: the question is the lists one, so a yes does not ask again;
+    `finished`: a finished recap stands too, which the same yes may replace (the old one stays
+    until the new one is approved)."""
 
-    def __init__(self, campaign_id: str, session_at: int) -> None:
+    def __init__(
+        self, campaign_id: str, session_at: int, *, lists: bool = False, finished: bool = True
+    ) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id, self.session_at = campaign_id, session_at
+        self.lists, self.finished = lists, finished
 
     @discord.ui.button(label="Make a new one", style=discord.ButtonStyle.primary)
     async def yes(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
         campaign = await _campaign(interaction, self.campaign_id)
         if campaign is not None:
-            await start(interaction, campaign, self.session_at, replace_ok=True)
+            await start(
+                interaction,
+                campaign,
+                self.session_at,
+                replace_ok=self.finished if self.lists else True,
+                lists_ok=self.lists,
+            )
 
     @discord.ui.button(label="Keep the old one", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:

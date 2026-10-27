@@ -21,8 +21,9 @@ import discord
 from discord import app_commands
 
 from dmbot.recaps import uploaded
+from dmbot.recaps.store import SavedLists
 from dmbot.ui.dmbot_commands import NOT_IN_SERVER, _bot, _tell, dmbot_group
-from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS, TIMEOUT_S, date_label
+from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS, TIMEOUT_S, date_label, lists_warning
 from dmbot.ui.recap_share import session_numbers
 
 log = logging.getLogger(__name__)
@@ -103,7 +104,23 @@ async def submit(interaction: discord.Interaction, draft: Draft) -> None:
     elif outcome == "needs_rights":
         await _tell(interaction, ASK_RIGHTS, view=AskView(held, "Yes, they said OK", rights=True))
     elif outcome == "needs_confirm":
-        await _tell(interaction, ASK_REPLACE, view=AskView(held, "Replace it", rights=False))
+        # Replacing starts the scenes afresh and so deletes the "who was there" lists the DM saved
+        # (#2727): said in the same question, as the website's is.
+        warning = ""
+        try:
+            found = await bot.recap_saved_lists(
+                draft.campaign, draft.session_at, interaction.user.id
+            )
+        except Exception:
+            log.exception("Add a recap from Discord: couldn't ask what is saved")
+            found = SavedLists(None, False)
+        if found is not None and (found.count is None or found.count > 0):
+            warning = "\n" + lists_warning(found.count)
+        await _tell(
+            interaction,
+            ASK_REPLACE + warning,
+            view=AskView(held, "Replace it", rights=False),
+        )
     else:
         await _tell(interaction, OUTCOMES.get(outcome, NOT_YOURS))
 
