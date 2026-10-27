@@ -14,6 +14,7 @@ from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.recaps import beats as bt
+from dmbot.recaps import critics as cr
 from dmbot.recaps import draft as rd
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
@@ -1100,6 +1101,36 @@ class Working(WorkerHarness):
             self.assertNotIn(gone, job.summary)
         self.assertIn("Mira counted her breaths", job.summary)
         self.assertIn("Mira lifted her blade", job.summary)
+
+    async def test_a_cut_that_takes_the_ending_off_leaves_a_note_for_the_dm(self) -> None:
+        """#2741: kept without its ending, the recap carries the note that says so."""
+        from unittest.mock import patch
+
+        last = len(rd.sentences_of(fx.SUMMARY))
+        flag = fx.facts_answer([(last, "invented"), (last - 1, "invented")])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        calls = iter([True, True])  # the two drafts end well; the draft left by the cut does not
+        with patch.object(rd, "ends_on", side_effect=lambda *a, **k: next(calls, False)):
+            job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertIn(pl.ENDING_CUT_NOTE, cr.loop_from_json(job.critics).notes)
+
+    async def test_a_fact_check_that_cannot_be_had_marks_the_recap_not_fact_checked(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=["not json at all"]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")  # it never stops a recap that passed every check
+        self.assertIn(pl.NOT_FACT_CHECKED_NOTE, cr.loop_from_json(job.critics).notes)
+
+    async def test_a_recap_that_was_fact_checked_carries_no_such_note(self) -> None:
+        await self.setUpWorker(self.happy())
+        job = await self.go()
+        self.assertEqual(cr.loop_from_json(job.critics).notes, ())
 
     async def test_a_revision_that_lost_its_ending_is_still_refused(self) -> None:
         """The critics' revision path: a better draft that has its ending is not replaced."""
