@@ -7,7 +7,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
+import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
+import LazyPanel from "./LazyPanel";
 
 /** How long between looks at the bot's answer, then the last repeats. */
 export const POLL_MS = [400, 800, 1500, 2500];
@@ -264,6 +266,13 @@ export default function CampaignSettings({
         ))}
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}
       </ul>
+      {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
+        <LazyPanel
+          load={() => import("./OptionalRules")}
+          what="the optional rules"
+          props={{ api, campaignRef }}
+        />
+      )}
     </section>
   );
 }
