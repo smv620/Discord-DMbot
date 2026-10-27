@@ -15621,6 +15621,7 @@ REPORT_ANSWER_DOOR = (
     DECLARE
         kind_ TEXT;
         had report_answers%ROWTYPE;
+        wrote INT;
         now_ BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
@@ -15667,7 +15668,7 @@ REPORT_ANSWER_DOOR = (
         SELECT * INTO had FROM report_answers
             WHERE guild_id = g AND campaign_id = c AND item_key = k;
         IF act = 'undo' THEN
-            IF NOT FOUND THEN
+            IF had.item_key IS NULL THEN
                 RETURN jsonb_build_object('status', 'gone');
             END IF;
             DELETE FROM report_answers WHERE guild_id = g AND campaign_id = c AND item_key = k;
@@ -15677,17 +15678,22 @@ REPORT_ANSWER_DOOR = (
             RETURN jsonb_build_object('status', 'ok', 'answer', CASE WHEN had.item_key IS NULL
                 THEN NULL ELSE jsonb_build_object('action', had.answer, 'at', had.answered_at) END);
         END IF;
-        IF FOUND AND had.answer <> 'remind' THEN
-            RETURN jsonb_build_object('status', 'gone');  -- already answered: a second press
-        END IF;
-        INSERT INTO report_answers (guild_id, campaign_id, item_key, item_kind, answer,
-                                    answered_by, answered_at, remind_from)
+        -- One atomic write: a first answer inserts, a "remind me" may be replaced, and anything
+        -- else (a final answer another press or another DM just made) writes nothing. Two
+        -- presses at once cannot both win: the second one's conflict finds a final answer.
+        INSERT INTO report_answers AS r (guild_id, campaign_id, item_key, item_kind, answer,
+                                         answered_by, answered_at, remind_from)
         VALUES (g, c, k, kind_, act, dmbot_current_user(), now_,
                 CASE WHEN act = 'remind' THEN at_ END)
         ON CONFLICT (guild_id, campaign_id, item_key) DO UPDATE SET
             item_kind = EXCLUDED.item_kind, answer = EXCLUDED.answer,
             answered_by = EXCLUDED.answered_by, answered_at = EXCLUDED.answered_at,
-            remind_from = EXCLUDED.remind_from;
+            remind_from = EXCLUDED.remind_from
+        WHERE r.answer = 'remind';
+        GET DIAGNOSTICS wrote = ROW_COUNT;
+        IF wrote = 0 THEN
+            RETURN jsonb_build_object('status', 'gone');  -- already answered: a second press
+        END IF;
         RETURN jsonb_build_object('status', 'ok',
                                   'answer', jsonb_build_object('action', act, 'at', now_));
     END

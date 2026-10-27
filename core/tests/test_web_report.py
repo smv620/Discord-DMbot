@@ -543,6 +543,43 @@ class TheAnswers(Reading):
         self.assertIsNone((await self.read())["contradictions"][0]["answer"])
         self.assertEqual(await self.refused_answer(key, "undo"), "gone")
 
+    async def test_two_presses_at_once_cannot_both_win(self) -> None:
+        import asyncio
+
+        key = await self.contradiction()
+        results = await asyncio.gather(
+            self.put(key, "intended"), self.put(key, "not_a_problem"), return_exceptions=True
+        )
+        won = [r for r in results if isinstance(r, dict)]
+        lost = [r for r in results if isinstance(r, RecapError)]
+        self.assertEqual((len(won), len(lost)), (1, 1))
+        self.assertEqual((await self.stored(key))["answer"], won[0]["answer"]["action"])
+
+    async def test_remind_me_again_from_a_later_session_moves_it_on(self) -> None:
+        key = await self.difference(at=S1)
+        await self.put(key, "remind")
+        await self.put(key, "remind", at=S2)  # (it came back in session 2 and is put off again)
+        self.assertEqual((await self.stored(key))["remind_from"], S2)
+
+    async def test_an_item_answered_before_the_session_is_gone_for_that_session(self) -> None:
+        key = await self.contradiction(at=S2)
+        await self.answer(key, "contradiction", "intended", when=S1 + 5)
+        self.assertEqual(await self.refused_answer(key, "undo", at=S2), "gone")
+        self.assertEqual(await self.refused_answer(key, "not_a_problem", at=S2), "gone")
+
+    async def test_the_answer_door_accepts_what_the_read_door_lists(self) -> None:
+        mine = await self.contradiction(at=S2)
+        reminded = await self.difference(at=S1)
+        await self.answer(reminded, "difference", "remind", when=S1 + 5, remind_from=S1)
+        listed = {c["id"] for c in (await self.read(S2))["contradictions"]} | {
+            d["id"] for v in (await self.read(S2))["differences"].values() for d in v
+        }
+        self.assertEqual(listed, {mine, reminded})
+        for key in listed:  # every listed item can be answered in that session
+            self.assertEqual(
+                (await self.put(key, "intended", at=S2))["answer"]["action"], "intended"
+            )
+
     async def test_a_second_final_answer_is_gone_and_changes_nothing(self) -> None:
         key = await self.contradiction()
         await self.put(key, "intended")
