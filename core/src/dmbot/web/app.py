@@ -51,6 +51,7 @@ from dmbot.web import (
     imports,
     npc_pages,
     offers,
+    optional_rules,
     past_sessions,
     relationships,
     report,
@@ -1824,6 +1825,18 @@ def create_app(
             body = None
         try:
             return {"answer": await campaign_settings.queue_setting(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/optional-rules")
+    async def me_campaign_optional_rules(ref: str, signed: Signed) -> dict[str, Any]:
+        """The optional rules that apply to the campaign's main rules and which are on (#2753), for
+        its DMs only: `{main, rules: [{id, book, name, summary, on, changed}], note, default}`.
+        A player or another campaign's DM gets 403 `not_allowed`; a bad address 404."""
+        session, _token = signed
+        try:
+            return await optional_rules.read_rules(db, session, ref)
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
