@@ -25,7 +25,8 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
-from dmbot.ai import AIOutOfFunds, Reply, max_input
+from dmbot import ai_structured
+from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds, Reply, max_input
 from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import away, fixed_lines
 from dmbot.recaps import beats as bt
@@ -226,6 +227,54 @@ Story = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[sg.Memory]]]
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
+class _Stopped(Exception):
+    """A call made for the structured-output adapter failed. `RecapWorker._call` has already put
+    the job waiting or failed, so the step only returns."""
+
+
+class _Counted:
+    """A tier for the structured-output adapter whose every call goes through the worker's `_call`:
+    counted before it is made, against the recap's call ceiling and the day's tally, with the same
+    handling of an out-of-funds or failed call (#2714)."""
+
+    def __init__(
+        self,
+        worker: RecapWorker,
+        gid: int,
+        cid: str,
+        job: Job,
+        client: Client,
+        stage: str = "split",
+    ) -> None:
+        self._worker, self._gid, self._cid, self._job, self._client = worker, gid, cid, job, client
+        self._stage = stage
+
+    async def complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        max_tokens: int = 8000,
+        schema: dict[str, Any] | None = None,
+    ) -> Reply:
+        w = self._worker
+        fresh = await w._store.get(self._gid, self._cid, self._job.session_at)
+        if fresh is not None and fresh.calls >= w._ceiling(fresh):
+            # The step may make several calls where it made one: the limit holds between them
+            await w._fail(self._gid, self._cid, self._job, CAP)
+            raise _Stopped
+        reply = await w._call(
+            self._gid, self._cid, self._job, self._client, system, text, max_tokens,
+            schema=schema, stage=self._stage,
+        )  # fmt: skip
+        if reply is None:
+            ai_structured.STATS.errors += (
+                1  # (`_call` swallows the error: the adapter cannot count it)
+            )
+            raise _Stopped
+        return reply
+
+
 class RecapWorker:
     def __init__(
         self,
@@ -249,6 +298,8 @@ class RecapWorker:
         story: Story | None = None,
         critics: bool = False,
         reads: str = rd.BEATS,
+        structured_split: bool = False,
+        structured_beats: bool = False,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
@@ -258,6 +309,9 @@ class RecapWorker:
         # guide. A recap that is too long for the writer's model falls back to the beats, once,
         # remembered here for the job until it ends.
         self._reads = reads
+        # The opening's split by a draft and a form (#2714, RECAP_STRUCTURED_OUTPUT_SPLIT).
+        self._structured_split = structured_split
+        self._structured_beats = structured_beats
         self._beats_instead: set[tuple[int, str, int]] = set()
         self._heard: dict[tuple[int, str, int], str] = {}  # the transcript the writer was shown
         self._critics = critics  # the critics loop after the prose (#2255); off for small tools
@@ -596,33 +650,52 @@ class RecapWorker:
             text += (
                 "\nYour last sheet was rejected: " + "; ".join(job.problems) + ". Write it again."
             )
-        raw = await self._call(
-            gid,
-            cid,
-            job,
-            self._client(job),
-            bt.system(k + 1, len(parts)),
-            text,
-            bt.room(job.attempt),
-        )
-        if raw is None:
-            return await self._store.get(gid, cid, job.session_at)
-        if raw.cut:  # never read half a sheet: once more with twice the room, then say so (#2341)
-            log.info(
-                "Recap: the beat sheet was cut off at %d tokens (try %d)",
-                bt.room(job.attempt),
-                job.attempt + 1,
-            )
-            self._annotate(gid, cid, job, "beats", checks=["cut off"])
-            return await self._retry_or_fail(
-                gid, cid, job, ["the answer was cut off: write it again"], cut_off=True
-            )
         # (everyone whose words went to an AI for this recap: the play, the retelling, and the
         # catching up the housekeeping step reads; the talk went nowhere)
         sent = {s.user_id for s in sp.pick(said, split, sp.PLAY, sp.RECAP, sp.CATCHUP)}
-        if not sent <= set(await consenting()):  # again, after the answer
-            return await self._restart(gid, cid, job)
-        parsed = bt.parse(raw.text)
+        parsed = None
+        if self._structured_beats:
+            # A strong model drafts the sheet, a fast one puts it in the schema, and `bt.parse`
+            # decides, as below. When that gives nothing the one call below is made, as before: the
+            # new way only ever adds a try (#2714).
+            try:
+                tried = await ai_structured.structured(
+                    bt.draft_system(k + 1, len(parts)),
+                    text,
+                    bt.SCHEMA,
+                    bt.parse,
+                    draft=_Counted(self, gid, cid, job, self._careful, "beats"),
+                    fmt=_Counted(self, gid, cid, job, self._fast, "beats"),
+                    escalate=_Counted(self, gid, cid, job, self._careful, "beats"),
+                    # (the floor, doubled on a retry after a cut, as `bt.room` does)
+                    draft_tokens=OUTPUT_FLOOR << min(job.attempt, 2),
+                    format_tokens=OUTPUT_FLOOR << min(job.attempt, 2),
+                    stage="beats",
+                )
+            except _Stopped:  # a call failed: `_call` has put the job waiting or failed
+                return await self._store.get(gid, cid, job.session_at)
+            if not sent <= set(await consenting()):  # after it
+                return await self._restart(gid, cid, job)
+            if tried.status == ai_structured.CUT:
+                return await self._beats_cut(gid, cid, job, OUTPUT_FLOOR << min(job.attempt, 2))
+            parsed = tried.value
+        if parsed is None:
+            raw = await self._call(
+                gid,
+                cid,
+                job,
+                self._client(job),
+                bt.system(k + 1, len(parts)),
+                text,
+                bt.room(job.attempt),
+            )
+            if raw is None:
+                return await self._store.get(gid, cid, job.session_at)
+            if raw.cut:  # never read half a sheet: once more with twice the room (#2341)
+                return await self._beats_cut(gid, cid, job, bt.room(job.attempt))
+            if not sent <= set(await consenting()):  # again, after the answer
+                return await self._restart(gid, cid, job)
+            parsed = bt.parse(raw.text)
         if parsed is None:
             self._annotate(gid, cid, job, "beats", checks=["shape"])
             return await self._retry_or_fail(gid, cid, job, ["answer in the JSON form asked for"])
@@ -641,6 +714,14 @@ class RecapWorker:
             last_error="",
         )
         return await self._store.get(gid, cid, job.session_at)
+
+    async def _beats_cut(self, gid: int, cid: str, job: Job, room: int) -> Job | None:
+        """The beat sheet was cut off: once more with twice the room, then say so (#2341)."""
+        log.info("Recap: the beat sheet was cut off at %d tokens (try %d)", room, job.attempt + 1)
+        self._annotate(gid, cid, job, "beats", checks=["cut off"])
+        return await self._retry_or_fail(
+            gid, cid, job, ["the answer was cut off: write it again"], cut_off=True
+        )
 
     async def _split(
         self,
@@ -668,22 +749,47 @@ class RecapWorker:
                 (str(s.number), "DM" if s.user_id in inputs.dm_ids else "Player", s.text)
                 for s in region
             ]
-            raw = await self._call(
-                gid,
-                cid,
-                job,
-                self._fast,
-                sp.system(),
-                sp.message(rows, earlier, inputs.previous),
-                SPLIT_TOKENS,
-                schema=sp.SCHEMA,
-                stage="split",
-            )
-            if raw is None:
-                return await self._store.get(gid, cid, job.session_at)
-            if not {s.user_id for s in region} <= set(await consenting()):  # after it
-                return await self._restart(gid, cid, job)
-            labelled = None if unusable(raw) else sp.parse(raw.text)
+            message = sp.message(rows, earlier, inputs.previous)
+            labelled = None
+            if self._structured_split:
+                # A strong model drafts the labels, a fast one puts them in the schema, and the same
+                # check as below decides. When that gives nothing the one call below is made, as
+                # before: the new way only ever adds a try (#2714). A try is usually one more call,
+                # two when the form is redone on the stronger tier, three when the one call
+                # follows both.
+                try:
+                    tried = await ai_structured.structured(
+                        sp.draft_system(),
+                        message,
+                        sp.SCHEMA,
+                        sp.parse,
+                        draft=_Counted(self, gid, cid, job, self._careful),
+                        fmt=_Counted(self, gid, cid, job, self._fast),
+                        escalate=_Counted(self, gid, cid, job, self._careful),
+                        stage="split",
+                    )
+                except _Stopped:  # a call failed: `_call` has put the job waiting or failed
+                    return await self._store.get(gid, cid, job.session_at)
+                labelled = tried.value
+                if not {s.user_id for s in region} <= set(await consenting()):  # after it
+                    return await self._restart(gid, cid, job)
+            if labelled is None:
+                raw = await self._call(
+                    gid,
+                    cid,
+                    job,
+                    self._fast,
+                    sp.system(),
+                    message,
+                    SPLIT_TOKENS,
+                    schema=sp.SCHEMA,
+                    stage="split",
+                )
+                if raw is None:
+                    return await self._store.get(gid, cid, job.session_at)
+                if not {s.user_id for s in region} <= set(await consenting()):  # after it
+                    return await self._restart(gid, cid, job)
+                labelled = None if unusable(raw) else sp.parse(raw.text)
             if labelled is None:
                 split = sp.without_ai(said, earlier, inputs.previous)
             else:

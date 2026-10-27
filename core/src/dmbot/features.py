@@ -66,6 +66,22 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on", "elevenlabs_key", "elevenlabs_voice_id", "recap_voice_tags"),
     ),
     Feature(
+        "structured split",
+        "Recap opening split in two steps",
+        "",
+        lambda s: s.recap_structured_output_split,
+        ("recap_structured_output_split",),
+        for_dms=False,  # how the work is done, not something a DM sees (#2714)
+    ),
+    Feature(
+        "structured beats",
+        "Recap beat sheet in two steps",
+        "",
+        lambda s: s.recap_structured_output_beats,
+        ("recap_structured_output_beats",),
+        for_dms=False,  # how the work is done, not something a DM sees (#2714)
+    ),
+    Feature(
         "sidebar",
         "Quick questions",
         "Ask DMbot a question in the game and get a short private answer.",

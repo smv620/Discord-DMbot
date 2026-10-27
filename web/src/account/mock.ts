@@ -893,6 +893,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // The recap's names to check (#2114 part 3): an answered name shows "answering" on the next look
   // and is gone on the one after, as the bot's queue would. `Garrick` answers with a failure.
   const nameLooks = new Map<string, number>();
+  const nameChanges = new Map<string, { words: string; error: string; looks: number }>();
   const nameFailed = new Set<string>();
   // The Plot check (#2124): the recap text last checked, the questions, and how many "checking" looks are left.
   const plotText = new Map<string, string>();
@@ -1998,8 +1999,24 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
         { id: "c".repeat(32), name: "Garrick", note: "" },
-      ].flatMap((n) => {
-        const key = `${ref}:${n.id}`;
+      ].flatMap((card) => {
+        const key = `${ref}:${card.id}`;
+        // Change the words (#2593): one look "answering" under the old words, then the same card with the new ones.
+        const changed = nameChanges.get(key);
+        const places =
+          card.id === "a".repeat(32)
+            ? [
+                { session: 12, available: true, lines: [{ speaker: "Mira", at: 1840, text: "…we rode to Brannoch's forge before dark…" }, { removed: true as const }] },
+                { session: 9, available: false, lines: [] },
+              ]
+            : [];
+        let n = { ...card, places, morePlaces: places.length > 0 ? 3 : 0, longerNames: card.id === "a".repeat(32) ? ["Brannoch's Forge", "Brannoch the smith"] : [] };
+        if (changed) {
+          changed.looks += 1;
+          if (changed.looks === 1) return [{ ...n, answering: true, error: "" }];
+          n = { ...n, name: changed.error === "" ? changed.words : n.name };
+          return [{ ...n, answering: false, error: changed.error }];
+        }
         const looks = nameLooks.get(key); // undefined: not answered yet
         if (looks === undefined) return [{ ...n, answering: false, error: "" }];
         nameLooks.set(key, looks + 1);
@@ -2144,6 +2161,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       await reachable();
       signedIn();
       if (answer.action === "respell" && answer.text.trim() === "") throw new ApiError("bad-text");
+      if (answer.action === "change_words") {
+        const w = answer.words.trim();
+        const error = w === "" ? "empty" : w.length > 100 ? "too_long" : w === "Veshla" ? "already_known" : w === "Zeta" ? "secret_clash" : w === "Odd" ? "odd_code" : "";
+        nameChanges.set(`${ref}:${id}`, { words: w, error, looks: 0 });
+        return;
+      }
       if (id === "c".repeat(32)) nameFailed.add(`${ref}:${id}`);
       nameLooks.set(`${ref}:${id}`, 0);
     },

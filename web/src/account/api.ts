@@ -755,6 +755,21 @@ export interface NameCheck {
   note: string;
   answering: boolean;
   error: string;
+  /** Up to three longer names DMbot read from the quotes ("Harrow's keep"), for Change the words (#2593). */
+  longerNames?: string[];
+  /** Up to two short windows of the transcript around where the name was heard, for the DM only (#2403),
+   * and how many more places there are. Missing from an API older than that. */
+  places?: NamePlace[];
+  morePlaces?: number;
+}
+/** One window: lines the door only sends for speakers who agree to be recorded; a line whose words were
+ * removed after "Stop recording me" is `{ removed: true }` with no speaker, time or words. */
+export type NamePlaceLine = { removed: true } | { removed?: false; speaker: string; at: number; text: string };
+export interface NamePlace {
+  session: number;
+  /** False when nothing of the window is left to show. */
+  available: boolean;
+  lines: NamePlaceLine[];
 }
 /** The Plot check of a recap (#2124; core #2122, #2123): PlotBot's questions, shown to the DM only. */
 export type PlotAnswerKind = "fix" | "changed" | "fine" | "leave";
@@ -816,7 +831,9 @@ export type NameCheckAnswer =
   | { action: "same"; known: string }
   | { action: "respell"; text: string }
   | { action: "not_a_name" }
-  | { action: "explain"; text: string };
+  | { action: "explain"; text: string }
+  // The DM widens or corrects the name itself (#2593; core #2570). `heard` is how it was written down.
+  | { action: "change_words"; words: string; heard?: string };
 export interface VoiceResult {
   state: FixState;
   /** Only when `done`: what was heard. */

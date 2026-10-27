@@ -5,12 +5,16 @@
 // queues for the bot (the same paths as Discord's 📝 Check new names), so this page asks again about
 // every two seconds until the name leaves the list. DMbot never decides what a name is.
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
+import NamePlaces from "./NamePlaces";
+import { campaignRefOf } from "./RecapNames";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
-import { RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { NAME_MAX_LETTERS, NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
+import { NAME_CHANGE_WORDS_LIVE, NAME_PLACES_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
 import { keepFocus } from "./focus";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 30; // about a minute: the bot normally answers within seconds
@@ -23,6 +27,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [said, setSaid] = useState("");
   const looks = useRef(0);
+  const changing = useRef(new Set<string>()); // cards whose last answer was Change the words, for an unknown refusal
   const heading = useRef<HTMLHeadingElement>(null);
 
   const read = async (): Promise<NameCheckList | null> => {
@@ -45,6 +50,8 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   }, [api, refId]);
 
   const waiting = (list?.names ?? []).some((n) => n.answering) || busy.size > 0;
+  // The wait shows how long it has run and when the list last changed (the page sees no stage from the bot).
+  const seen = useObservedWait(waiting, (list?.names ?? []).map((n) => `${n.id}:${n.answering ? 1 : 0}:${n.name}`).join(","));
   useEffect(() => {
     if (!waiting) {
       looks.current = 0;
@@ -54,19 +61,29 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     if (slow) return; // gave up after about a minute; a new answer starts the watching again
     const timer = setTimeout(async () => {
       looks.current += 1;
-      const before = new Set((list?.names ?? []).map((n) => n.id));
+      const before = new Map((list?.names ?? []).map((n) => [n.id, n.name]));
+      const busyNow = new Set(busy);
       const got = await read();
       if (got) {
         const now = new Set(got.names.map((n) => n.id));
+        // Change the words keeps the card and gives it new words (#2593), which also ends its wait.
+        const renamedCard = got.names.find((n) => busyNow.has(n.id) && before.has(n.id) && before.get(n.id) !== n.name);
         // A name that left the list is answered; one that is still there with a word in `error` failed.
         setBusy((was) => {
           const next = new Set(was);
-          for (const id of was) if (!now.has(id) || (got.names.find((n) => n.id === id)?.error ?? "") !== "") next.delete(id);
+          for (const id of was) {
+            const card = got.names.find((n) => n.id === id);
+            if (!card || (card.error ?? "") !== "" || (before.has(id) && before.get(id) !== card.name)) next.delete(id);
+          }
           return next;
         });
-        if ([...before].some((id) => !now.has(id))) {
+        if ([...before.keys()].some((id) => !now.has(id))) {
           setSaid(words.done);
           keepFocus(() => heading.current);
+        } else if (renamedCard) {
+          // The card goes on under its new words: say so, and put the focus where the next answer is made.
+          setSaid(words.changed(renamedCard.name));
+          keepFocus(() => document.getElementById(`name-check-${renamedCard.id}-kind`));
         }
       }
       if (looks.current >= POLL_LIMIT) setSlow(true);
@@ -95,6 +112,8 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
   }
 
   async function send(name: NameCheck, answer: NameCheckAnswer) {
+    if (answer.action === "change_words") changing.current.add(name.id);
+    else changing.current.delete(name.id);
     setProblems((was) => ({ ...was, [name.id]: "" }));
     setBusy((was) => new Set(was).add(name.id));
     setSlow(false);
@@ -124,15 +143,31 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
             key={n.id}
             name={n}
             list={list}
+            campaignRef={campaignRefOf(refId)}
             busy={busy.has(n.id) || n.answering}
-            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? words.failedHint : "")}
+            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? (changing.current.has(n.id) ? words.changeFailed : words.failedHint) : "")}
             onSend={(answer) => void send(n, answer)}
           />
         ))}
       </ul>
-      <p class="small muted" role="status">
-        {slow ? words.slow : waiting ? words.waiting : said}
+      {/* Always mounted, so a screen reader hears the stage and then the result. */}
+      <p class="sr-only" role="status">
+        {waiting ? (slow || seen.quiet ? "" : words.waiting) : said}
       </p>
+      {waiting && seen.startedAt !== null ? (
+        <WorkProgress
+          stage={words.waiting}
+          startedAt={seen.startedAt}
+          updatedAt={seen.movedAt}
+          state={slow || seen.quiet ? "stalled" : "running"}
+          frozen={slow}
+          whatToDo={words.slow}
+        />
+      ) : (
+        <p class="small muted" aria-hidden="true">
+          {said}
+        </p>
+      )}
     </section>
   );
 }
@@ -140,12 +175,14 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
 function NameRow({
   name,
   list,
+  campaignRef,
   busy,
   problem,
   onSend,
 }: {
   name: NameCheck;
   list: NameCheckList;
+  campaignRef: string;
   busy: boolean;
   problem: string;
   onSend: (answer: NameCheckAnswer) => void;
@@ -157,6 +194,19 @@ function NameRow({
   const [spelling, setSpelling] = useState("");
   const [note, setNote] = useState("");
   const room = NOTE_MAX_LETTERS - note.length;
+  // Change the words (#2593): starts as the name itself; a longer name picked from the card fills the box.
+  const [wholeName, setWholeName] = useState(name.name);
+  const [heard, setHeard] = useState(""); // how it was written, when the DM picked a longer name (kept if they then fix it)
+  const [changing, setChanging] = useState(false);
+  const longer = (name.longerNames ?? []).slice(0, 3);
+  // The card keeps its id when its words change (here or in Discord), so the box follows the stored name.
+  const shownName = useRef(name.name);
+  useEffect(() => {
+    if (shownName.current === name.name) return; // (not on the first draw: that would undo a word typed at once)
+    shownName.current = name.name;
+    setWholeName(name.name);
+    setHeard("");
+  }, [name.name]);
   return (
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`}>
@@ -166,6 +216,7 @@ function NameRow({
             {words.noteFrom} {name.note}
           </p>
         )}
+        {NAME_PLACES_LIVE && <NamePlaces places={name.places ?? []} more={name.morePlaces ?? 0} campaignRef={campaignRef} />}
         <div class="row">
           <label for={`${id}-kind`}>{words.kind}</label>
           <select id={`${id}-kind`} value={kind} disabled={busy} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>
@@ -183,6 +234,42 @@ function NameRow({
             {words.notAName}
           </button>
         </div>
+        {NAME_CHANGE_WORDS_LIVE && (
+          <>
+            {longer.length > 0 && (
+              <div class="row" role="group" aria-label={words.longerLabel}>
+                <span class="small muted">{words.longerLabel}</span>
+                {longer.map((option) => (
+                  <button key={option} type="button" class="button secondary" disabled={busy} aria-label={words.useName(option)} onClick={() => { setWholeName(option); setHeard(option); setChanging(true); }}>
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+            <details open={changing} onToggle={(e) => setChanging((e.target as HTMLDetailsElement).open)}>
+              <summary>{words.changeUse}</summary>
+              <fieldset class="stack" disabled={busy}>
+                <legend>{words.changeLabel}</legend>
+                <p class="small muted">{words.changeHint}</p>
+                <div class="row">
+                  <label for={`${id}-words`} class="visually-hidden">
+                    {words.changeLabel}
+                  </label>
+                  <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
+                  <button
+                    type="button"
+                    class="button secondary"
+                    disabled={wholeName.trim() === "" || wholeName.trim() === name.name}
+                    aria-label={words.changeFor(name.name)}
+                    onClick={() => onSend({ action: "change_words", words: wholeName.trim(), ...(heard !== "" ? { heard } : {}) })}
+                  >
+                    {words.changeUse}
+                  </button>
+                </div>
+              </fieldset>
+            </details>
+          </>
+        )}
         <details>
           <summary>{words.more}</summary>
           <fieldset class="stack" disabled={busy}>

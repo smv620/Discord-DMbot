@@ -765,6 +765,12 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
 - **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
   sorted into disguised, misunderstood and simply false, so the DM can close plot holes before they
   grow.
+  **Built (#2661 slice 1): the differences finder.** `memory/differences.py` lists the beliefs a point of
+  view that is not The truth holds NOW (0.5 or more, not a denial) where The truth either denies that very
+  connection (0.0, False Evidence) or holds a clashing connection between the same two names that overlaps
+  it in story time. A guess The truth neither holds nor denies is not a difference, nor is the DM's own
+  doubt. Ids and numbers only (the sort into disguised, misunderstood and false is PlotBot's, a later
+  slice); each point of view and connection is reported once.
 
 Everything after a session is built on the **website first**. A Discord version is added only when
 the owner chooses it, one at a time.

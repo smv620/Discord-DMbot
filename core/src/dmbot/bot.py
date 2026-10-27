@@ -419,6 +419,7 @@ from dmbot.transcript.models import (
     line_ref,
 )
 from dmbot.transcript.name_pass_log import NamePassLog
+from dmbot.transcript.name_pass_log import undo_for_web as name_pass_undo_for_web
 from dmbot.transcript.store import TranscriptStore
 from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
@@ -1426,6 +1427,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 story=self.recap_story,
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
+                structured_split=settings.recap_structured_output_split,
+                structured_beats=settings.recap_structured_output_beats,
             )
         # PlotBot's check of each ready recap against the earlier accepted ones (#2122): advice for
         # the DM's recap page only. Off unless DMBOT_PLOT_CHECK is on (it needs the recaps).
@@ -10180,6 +10183,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self.memory is None or self.backstory_links is None:
             return None
         actions = self.name_actions
+        transcripts = self.transcripts  # (bound here so the lambda below keeps the narrowed type)
         return web_actions.Waiting(
             ClaimStore(self.memory),
             self.backstory_links,
@@ -10190,6 +10194,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             (lambda cid, answer: actions.spent(guild_id, cid, answer))
             if actions is not None
             else None,
+            name_pass_undo=(
+                (
+                    lambda cid, batch: name_pass_undo_for_web(
+                        transcripts, self.memory, guild_id, cid, batch, now=int(time.time())
+                    )
+                )
+                if transcripts is not None
+                else None
+            ),
         )
 
     async def run_name_actions(self) -> None:

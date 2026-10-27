@@ -12,6 +12,8 @@ import { PLOT_CHAT_MAX_LETTERS, PLOT_NOTE_MAX_LETTERS, plotWords as words } from
 import { PLOT_CHECK_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type PlotAnswerKind, type PlotCheck, type PlotIssue, type PlotMessage } from "./api";
 import { keepFocus } from "./focus";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 
 const POLL_MS = 2000;
 const POLL_LIMIT = 60_000; // about a minute, in milliseconds: the check is one careful AI call
@@ -86,6 +88,8 @@ export default function RecapPlotCheck({
   }, [text]);
 
   const checking = check?.state === "checking";
+  // The check gives no stage, so the wait shows what the page saw: how long it has run and when it last changed.
+  const seen = useObservedWait(checking, `${check?.state ?? ""}:${check?.issues.length ?? 0}`);
   // Look again every two seconds while the check runs. A look that fails (a dropped connection) does not
   // end the watching: the next one is still made. After about a minute the page stops and says so, and
   // Approve opens (the API still refuses an approval if a question it knows of is open).
@@ -179,10 +183,23 @@ export default function RecapPlotCheck({
         {words.heading}
       </h3>
       <p class="muted">{words.lead}</p>
-      <p role="status" aria-live="polite" class="small">
-        {checking && !gaveUp ? (changed.current ? words.checkingChange : words.checking) : said}
+      <p class="sr-only" role="status" aria-live="polite">
+        {checking ? (gaveUp || seen.quiet ? "" : changed.current ? words.checkingChange : words.checking) : said}
       </p>
-      {gaveUp && <p class="note" role="status">{words.gaveUp}</p>}
+      {checking && seen.startedAt !== null ? (
+        <WorkProgress
+          stage={changed.current ? words.checkingChange : words.checking}
+          startedAt={seen.startedAt}
+          updatedAt={seen.movedAt}
+          state={gaveUp || seen.quiet ? "stalled" : "running"}
+          frozen={gaveUp}
+          whatToDo={gaveUp ? words.gaveUp : words.checkQuiet}
+        />
+      ) : (
+        <p class="small" aria-hidden="true">
+          {said}
+        </p>
+      )}
       {check.state === "unavailable" && <p class="note" role="status">{words.unavailable}</p>}
       {check.state === "ready" && check.issues.length === 0 && <p>{words.none}</p>}
       {check.state === "ready" && (
@@ -301,6 +318,7 @@ function Issue({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [talking]);
+  const chatSeen = useObservedWait(talking && waiting, messages.map((m) => `${m.id}:${m.state}:${m.proposals.map((p) => p.state).join("")}`).join(","));
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!talking || !waiting || chatSlow) {
@@ -463,9 +481,6 @@ function Issue({
             {messages.map((m) => (
               <li key={m.id}>
                 <strong>{m.role === "dm" ? words.chatYou : words.chatBot}:</strong> {m.text}
-                {m.role === "dm" && (m.state === "waiting" || m.state === "working") && (
-                  <span class="small muted"> {words.thinking}</span>
-                )}
                 {m.state === "failed" && (
                   <span class="small warn"> {words.chatFailed[m.error] ?? words.chatFailed["failed"]}</span>
                 )}
@@ -491,7 +506,19 @@ function Issue({
               </li>
             ))}
           </ul>
-          {chatSlow && <p class="note" role="status">{words.chatSlow}</p>}
+          <p class="sr-only" role="status">
+            {waiting && !chatSlow && !chatSeen.quiet ? words.thinking : ""}
+          </p>
+          {waiting && chatSeen.startedAt !== null && (
+            <WorkProgress
+              stage={words.thinking}
+              startedAt={chatSeen.startedAt}
+              updatedAt={chatSeen.movedAt}
+              state={chatSlow || chatSeen.quiet ? "stalled" : "running"}
+              frozen={chatSlow}
+              whatToDo={chatSlow ? words.chatSlow : words.chatQuiet}
+            />
+          )}
           <label class="field">
             {words.chatLabel}
             <textarea

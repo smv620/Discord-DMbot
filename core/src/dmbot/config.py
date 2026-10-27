@@ -69,6 +69,11 @@ class Settings:
     # What the recap writer reads (#2590): the beat sheet (default) or the cleaned transcript with
     # PlotBot's guide. Apart from the provider, so each change is tested on its own.
     recap_writer_reads: str = "beats"
+    # The split of a session's opening through the three-pass structured-output adapter (#2714):
+    # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
+    recap_structured_output_split: bool = False
+    # The same for the beat sheet. Off unless RECAP_STRUCTURED_OUTPUT_BEATS.
+    recap_structured_output_beats: bool = False
     gemini_key: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
@@ -433,6 +438,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_model_notice=ai_notice,
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
+        recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
+        recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
         memory_keep_days=keep_days,
         free_users=free_users,
@@ -551,6 +558,17 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice
+
+
+def _on_off(get: Callable[[str], str], name: str) -> bool:
+    """A switch that is off unless set: 1/on/true or 0/off/false (also when empty). Anything else
+    is an error, so a typo never silently leaves a switch where it was."""
+    raw = _unquote(get(name)).lower()
+    if raw in ("", "0", "off", "false"):
+        return False
+    if raw in ("1", "on", "true"):
+        return True
+    raise ConfigError(f"{name} in .env must be 1 (on) or 0 (off).")
 
 
 def _recap_writer_reads(get: Callable[[str], str]) -> str:

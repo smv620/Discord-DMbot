@@ -37,6 +37,16 @@ export const RECAP_VOICE_LIVE = false;
 // needs the web API's names-to-check routes deployed and seen to work. It moves with the What's new
 // entry "Check a recap's new names online" and can only be true with RECAPS_LIVE.
 export const RECAP_NAME_CHECKS_LIVE = false;
+// NAME_CHANGE_WORDS_LIVE is "Change the words" on a name to check (#2593; core #2570): the DM widens or
+// corrects the name ("Harrow" is really "Harrow's Keep") before saying what it is. It needs the core
+// change_words answer and the cards' longerNames deployed and seen to work. It moves with the What's new
+// entry "Change a new name's words online" and can only be true with RECAP_NAME_CHECKS_LIVE.
+export const NAME_CHANGE_WORDS_LIVE = false;
+// NAME_PLACES_LIVE is "Where it was said" on a name to check (#2403; core #2329): two short windows of the
+// session's transcript around where DMbot heard the name, for the DM, with a placeholder for a line a
+// player had removed. It needs the names-to-check list to send `places` (deployed and seen to work) and
+// moves with the What's new entry "See where a recap's new name was said". Only true with RECAP_NAME_CHECKS_LIVE.
+export const NAME_PLACES_LIVE = false;
 // PLOT_CHECK_LIVE is the "Plot check" panel on the recap page (#2124; core #2122, #2123): PlotBot's
 // questions about a recap, the chat to talk one through, and Approve waiting until each has an answer.
 // It needs those routes deployed and seen to work. It moves with the What's new entry "Plot check on a
