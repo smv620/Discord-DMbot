@@ -980,6 +980,28 @@ class TheRolesAndDirections(unittest.TestCase):
         bg.keep_connections([[first]], names, {}, dropped=Counter(), picks=picks)
         self.assertEqual([p.words for p in picks], ["parent"])
 
+    def test_a_which_question_and_a_resolved_line_in_either_order_end_as_plain_family(self) -> None:
+        names = [
+            bg.Found(n, "npc", (), (), "") for n in ("Brother Aldric", "Mara Vale", "Mara Thorn")
+        ]
+        ask = bg.Connection("Brother Aldric", "kin_of", "Mara", "q", words="parent")
+        # "Mara Vale is the parent of Brother Aldric", the other way round from the question
+        line = bg.Connection("Mara Vale", "kin_of", "Brother Aldric", "q", words="parent")
+        for order in ([ask, line], [line, ask]):
+            picks: list[bg.Pick] = []
+            lost: Any = Counter()
+            out = bg.keep_connections([order], names, {}, dropped=lost, picks=picks)
+            self.assertEqual([(c.how, c.words) for c in out], [("kin_of", "")], order)
+            self.assertEqual([p.words for p in picks], [""], order)
+            self.assertEqual(sum(lost.values()), 1)  # (the question; the line is kept)
+        # the same way round is no contradiction: both keep the role
+        same = bg.Connection("Brother Aldric", "kin_of", "Mara Vale", "q", words="parent")
+        picks = []
+        out = bg.keep_connections([[ask, same]], names, {}, dropped=Counter(), picks=picks)
+        self.assertEqual(
+            ([c.words for c in out], [p.words for p in picks]), (["parent"], ["parent"])
+        )
+
     def test_a_role_beats_plain_family_whichever_was_said_first(self) -> None:
         for rows in (
             [row("Mira", "family", "Brother Aldric", self.quote()),
@@ -1182,3 +1204,13 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
             [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text
         )
         self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))  # (across a break)
+
+
+class TheSwornToCard(unittest.TestCase):
+    def test_the_card_reads_sworn_to_both_ways(self) -> None:
+        from dmbot.memory.link_words import CARD_BACK, back_words, link_words, predicate_for
+
+        self.assertEqual(link_words("sworn_to", ""), "is sworn to")
+        self.assertEqual(back_words("sworn_to", ""), "is owed an oath by")
+        self.assertEqual(CARD_BACK["sworn_to"], "is owed an oath by")
+        self.assertEqual(predicate_for("is sworn to"), ("sworn_to", ""))

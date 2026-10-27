@@ -806,6 +806,10 @@ def keep_connections(
                         if held is not None and held[1] and held[2] != said_as:
                             made_pick = replace(made_pick, words="")
                             kin_picks[pk] = (made_pick, bool(second.ambiguous))
+                            where = held[0]
+                            if where is not None:  # the line offered already is plain family too
+                                out[where] = replace(out[where], words="")
+                            kin_held[(min(pk[0], ck), max(pk[0], ck))] = (where, "", held[2])
                             break
                 picks.append(made_pick)
                 lost["which_waiting"] += 1
@@ -874,6 +878,26 @@ def keep_connections(
                     lost["same_pair"] += 1
                     continue
                 seen.add((ka, c.how, kb))
+            if role:
+                # A "Which X?" question asked earlier with the opposite role for one of this
+                # line's two names contradicts it the same way: both end as plain family.
+                for pk, (pick, fixed_is_a) in list(kin_picks.items()):
+                    if not pick.words:
+                        continue
+                    cands = {name_key(x) for x in pick.candidates}
+                    opposite = (
+                        (pk[0] == ka and kb in cands and not fixed_is_a)
+                        or (pk[0] == kb and ka in cands and fixed_is_a)
+                    )  # fmt: skip
+                    if opposite:
+                        plain_pick = replace(pick, words="")
+                        picks_ref = picks if picks is not None else []
+                        picks_ref[picks_ref.index(pick)] = plain_pick
+                        kin_picks[pk] = (plain_pick, fixed_is_a)
+                        made = replace(made, words="")
+                        role = ""
+                        kin_held[pair] = (None, "", (ka, kb))
+                        break
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
                 lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
