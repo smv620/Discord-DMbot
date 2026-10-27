@@ -3499,7 +3499,13 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ),
     # The recap's names to check, answered on its page (#2113): the read door and the queue door.
     ("dmbot_recap_names_read", "dmbot_recap_names_read(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_recap_name_places", "dmbot_recap_name_places(BIGINT, TEXT, BIGINT)"),
     ("dmbot_recap_names_fixed", "dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)"),  # (#2684)
+    ("dmbot_recap_present", "dmbot_recap_present(BIGINT, TEXT, BIGINT)"),  # (#2684, #2577)
+    (
+        "dmbot_recap_set_present",
+        "dmbot_recap_set_present(BIGINT, TEXT, BIGINT, INT, JSONB)",
+    ),
     (
         "dmbot_name_answer_add",
         "dmbot_name_answer_add(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT)",
@@ -14582,6 +14588,91 @@ CONTRADICTION_GRADES = """
         ON memory_contradictions (guild_id, campaign_id, second_relation_id);
     """ + _isolate("memory_contradictions")
 
+# The after-session report's storage (#2661; docs/STORY_MEMORY.md 9a, "The after-session report").
+# `memory_differences`: what the party (or a player's character) believes that differs from The
+# truth, with PlotBot's sort (disguised, misunderstood, false, or not sorted when the answer was cut
+# or unreadable: never "false") and its one-line reason. Ids and DMbot's own words only, like
+# `memory_contradictions`: no transcript word, no speaker. The DM's alone. Made again by the next
+# check, so a backup leaves it out.
+# `report_answers`: the DM's answer to each report item, kept apart from the items because an item
+# is made again (and a clash that is no longer found is dropped) while an answer is a decision the
+# DM made: "That's intended" must not come back, and a restored campaign keeps them (a backup
+# section). Keyed by a hash of the item's own ids, so a re-found item meets its answer again.
+# `memory_report_runs`: how far making one session's report has got (stage, counts, times), for
+# the website's progress line; runtime state, left out of a backup. Every key that carries the
+# server follows a campaign that moves to another one.
+REPORT_STORAGE = """
+    CREATE TABLE memory_differences (
+        guild_id           BIGINT NOT NULL,
+        campaign_id        TEXT NOT NULL,
+        perspective_id     TEXT NOT NULL,
+        relation_id        TEXT NOT NULL,
+        truth_relation_id  TEXT,
+        kind               TEXT NOT NULL CHECK (kind IN ('denied', 'clashes')),
+        sort               TEXT NOT NULL
+            CHECK (sort IN ('disguised', 'misunderstood', 'false', 'not_sorted')),
+        reason             TEXT NOT NULL DEFAULT '' CHECK (char_length(reason) <= 2000),
+        times_unknown      BOOLEAN NOT NULL DEFAULT false,
+        involves_guess     BOOLEAN NOT NULL DEFAULT false,
+        found_at           BIGINT NOT NULL,
+        session_started_at BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, perspective_id, relation_id),
+        CHECK ((kind = 'denied') = (truth_relation_id IS NULL)),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, perspective_id)
+            REFERENCES memory_perspectives (guild_id, campaign_id, id)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, relation_id)
+            REFERENCES memory_relations (guild_id, campaign_id, id)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+        FOREIGN KEY (guild_id, campaign_id, truth_relation_id)
+            REFERENCES memory_relations (guild_id, campaign_id, id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE INDEX memory_differences_by_sort
+        ON memory_differences (guild_id, campaign_id, sort);
+    -- (deleting a connection checks the keys that name it)
+    CREATE INDEX memory_differences_by_relation
+        ON memory_differences (guild_id, campaign_id, relation_id);
+    CREATE INDEX memory_differences_by_truth
+        ON memory_differences (guild_id, campaign_id, truth_relation_id);
+
+    CREATE TABLE report_answers (
+        guild_id     BIGINT NOT NULL,
+        campaign_id  TEXT NOT NULL,
+        item_key     TEXT NOT NULL CHECK (item_key ~ '^[0-9a-f]{32}$'),
+        item_kind    TEXT NOT NULL CHECK (item_kind IN ('contradiction', 'difference')),
+        answer       TEXT NOT NULL
+            CHECK (answer IN ('intended', 'not_a_problem', 'remind', 'fixed')),
+        answered_by  BIGINT NOT NULL,
+        answered_at  BIGINT NOT NULL,
+        remind_from  BIGINT,
+        PRIMARY KEY (guild_id, campaign_id, item_key),
+        CHECK ((answer = 'remind') = (remind_from IS NOT NULL)),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+
+    CREATE TABLE memory_report_runs (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        session_at  BIGINT NOT NULL,
+        state       TEXT NOT NULL CHECK (state IN ('making', 'ready', 'failed')),
+        stage       TEXT NOT NULL CHECK (stage IN ('reading', 'grading', 'sorting')),
+        done        INTEGER NOT NULL DEFAULT 0 CHECK (done >= 0),
+        total       INTEGER NOT NULL DEFAULT 0 CHECK (total >= 0),
+        started_at  BIGINT NOT NULL,
+        updated_at  BIGINT NOT NULL,
+        reason      TEXT NOT NULL DEFAULT '' CHECK (reason ~ '^[a-z_]{0,40}$'),
+        PRIMARY KEY (guild_id, campaign_id, session_at),
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    """ + "".join(
+    _isolate(t) for t in ("memory_differences", "report_answers", "memory_report_runs")
+)
+
 READING_ACTIONS = ("reading-place", "reading-no", "reading-undo")
 _READING_LIST = ", ".join(f"'{a}'" for a in READING_ACTIONS)
 _reading_door = _which_door
@@ -15023,6 +15114,280 @@ NAME_CHANGE_WORDS = (
     """
 )
 
+# The recap page's "Present: ..." for each scene (#2684, #2577): the DM's read of who was in each
+# scene and of the campaign's player characters they may pick from, and the save of one scene's
+# list. Names only, never a transcript word; for a DM of the campaign alone (the read gives NULL
+# to anyone else, the save says `not_found`). The list is kept on the beat with `saved: true`, so
+# nothing works it out again; "Make it again" clears the beats, and so the lists (the page says
+# so first). A new function pair: no row changes.
+RECAP_PRESENT_DOORS = r"""
+    -- (A scene's number `n` is its place in the stored sheet's array, as the page reads it back.
+    -- DMbot writes the sheet as objects only; anything else is skipped here and refused below.
+    -- Two characters of one campaign with the same name are listed once.)
+    CREATE FUNCTION dmbot_recap_present(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE sheet JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT r.beats INTO sheet FROM recap_jobs r
+         WHERE r.guild_id = g AND r.campaign_id = c AND r.session_at = at_;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'beats', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'n', t.ord,
+                    'present', CASE WHEN jsonb_typeof(t.b -> 'present') = 'array'
+                                    THEN t.b -> 'present' ELSE '[]'::jsonb END,
+                    'saved', COALESCE((t.b -> 'saved') = 'true'::jsonb, false))
+                    ORDER BY t.ord)
+                FROM jsonb_array_elements(
+                         CASE WHEN jsonb_typeof(sheet) = 'array' THEN sheet ELSE '[]'::jsonb END
+                     ) WITH ORDINALITY AS t(b, ord)
+                WHERE jsonb_typeof(t.b) = 'object'), '[]'::jsonb),
+            'characters', COALESCE((
+                SELECT jsonb_agg(DISTINCT e.name) FROM memory_entities e
+                WHERE e.guild_id = g AND e.campaign_id = c AND e.role = 'player_character'
+                  AND e.played_by IS NOT NULL AND e.status = 'confirmed'), '[]'::jsonb));
+    END
+    $fn$;
+    -- Save scene `n`'s list (its place in the sheet, as the read numbers it). Gives {"n",
+    -- "present" (the campaign's order), "saved": true} or {"error": not_found | not_allowed |
+    -- stale | bad_present}. Only a recap that is ready and still a draft; the DM's word wins, so
+    -- a list once saved is replaced only by the DM.
+    CREATE FUNCTION dmbot_recap_set_present(g BIGINT, c TEXT, at_ BIGINT, n INT, names JSONB)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        job recap_jobs%ROWTYPE;
+        chosen TEXT[];
+        asked INT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN jsonb_build_object('error', 'not_found');
+        END IF;
+        SELECT * INTO job FROM recap_jobs
+         WHERE guild_id = g AND campaign_id = c AND session_at = at_ FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('error', 'not_found');
+        END IF;
+        IF job.state <> 'ready' OR job.status <> 'draft' THEN
+            RETURN jsonb_build_object('error', 'not_allowed');
+        END IF;
+        IF jsonb_typeof(job.beats) IS DISTINCT FROM 'array' OR n < 1
+           OR n > jsonb_array_length(job.beats)
+           OR jsonb_typeof(job.beats -> (n - 1)) IS DISTINCT FROM 'object' THEN
+            RETURN jsonb_build_object('error', 'stale');
+        END IF;
+        IF jsonb_typeof(names) IS DISTINCT FROM 'array' OR jsonb_array_length(names) > 12
+           OR EXISTS (SELECT 1 FROM jsonb_array_elements(names) x
+                      WHERE jsonb_typeof(x) IS DISTINCT FROM 'string') THEN
+            RETURN jsonb_build_object('error', 'bad_present');
+        END IF;
+        SELECT count(DISTINCT x) INTO asked FROM jsonb_array_elements_text(names) x;
+        SELECT COALESCE(array_agg(DISTINCT e.name), '{}') INTO chosen
+          FROM memory_entities e
+         WHERE e.guild_id = g AND e.campaign_id = c AND e.role = 'player_character'
+           AND e.played_by IS NOT NULL AND e.status = 'confirmed'
+           AND e.name IN (SELECT jsonb_array_elements_text(names));
+        IF asked <> jsonb_array_length(names) OR cardinality(chosen) <> asked THEN
+            RETURN jsonb_build_object('error', 'bad_present');
+        END IF;
+        UPDATE recap_jobs SET beats = (
+            SELECT jsonb_agg(CASE WHEN t.ord = n
+                                  THEN t.b || jsonb_build_object('present', to_jsonb(chosen),
+                                                                 'saved', true)
+                                  ELSE t.b END ORDER BY t.ord)
+            FROM jsonb_array_elements(job.beats) WITH ORDINALITY AS t(b, ord))
+         WHERE guild_id = g AND campaign_id = c AND session_at = at_;
+        RETURN jsonb_build_object('n', n, 'present', to_jsonb(chosen), 'saved', true);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_present(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_set_present(BIGINT, TEXT, BIGINT, INT, JSONB)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_present(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_set_present(BIGINT, TEXT, BIGINT, INT, JSONB)
+        FROM PUBLIC;
+"""
+
+RECAP_NAME_PLACES = r"""
+    -- dmbot_recap_name_places: where each waiting name of a recap was said (#2403), for the
+    -- campaign's DMs only. Per name, up to two windows (the earliest place and, with more than two,
+    -- the middle one, as Discord's card picks them) of up to three table lines around the line the
+    -- name was heard in, and how many places are left unshown. Nothing is copied: the words are
+    -- read from transcript_lines now, and a line is kept only if its speaker has a consent row for
+    -- this server at this moment, so someone who pressed "Stop recording me" is gone from the very
+    -- next read. Such a line is `{"removed": true}` (no speaker, time or words); a window with
+    -- nothing left, or whose transcript was deleted, is `available: false` with no lines. DM
+    -- sidebar lines are never read (they are DMbot's answers), and in an imported session only
+    -- game talk is.
+    CREATE FUNCTION dmbot_recap_name_places(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        result JSONB := '{}'::jsonb;
+        ent RECORD;
+        ptr RECORD;
+        wins JSONB;
+        found JSONB;
+        total INT;
+        shown INT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        FOR ent IN
+            SELECT e.id
+            FROM recap_name_checks k
+            JOIN memory_entities e
+              ON e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id AND e.id = k.entity_id
+            WHERE k.guild_id = g AND k.campaign_id = c AND k.session_at = at_
+              AND e.status = 'proposed'
+              AND NOT EXISTS (SELECT 1 FROM memory_aliases s
+                              WHERE s.guild_id = g AND s.campaign_id = c
+                                AND s.entity_id = e.id AND s.secret)
+            ORDER BY e.id
+        LOOP
+            wins := '[]'::jsonb;
+            shown := 0;
+            SELECT count(*) INTO total FROM (
+                SELECT DISTINCT m.line_ref FROM memory_mentions m
+                JOIN transcript_sessions t
+                  ON t.guild_id = g AND t.campaign_id = c
+                 AND t.id = substring(m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$')
+                WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = ent.id
+                  AND m.line_ref ~ '^.*:[0-9]{1,18}:[0-9]{1,18}$') q;
+            FOR ptr IN
+                SELECT r.sid, r.ms, r.uid, t.started_at, t.transcripts_deleted_at AS gone,
+                       (SELECT count(*) FROM transcript_sessions e
+                         WHERE e.guild_id = g AND e.campaign_id = c
+                           AND (e.line_count > 0 OR e.transcripts_deleted_at IS NOT NULL)
+                           AND (e.started_at, e.id) <= (t.started_at, t.id)) AS number
+                FROM (
+                    SELECT q.*,
+                           row_number() OVER (
+                               ORDER BY q.at NULLS LAST, q.ms, q.sid, q.uid) AS rn,
+                           count(*) OVER () AS cnt
+                    FROM (
+                        SELECT DISTINCT ON (m.line_ref)
+                               substring(m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$') AS sid,
+                               substring(m.line_ref
+                                         from ':([0-9]{1,18}):[0-9]{1,18}$')::BIGINT AS ms,
+                               substring(m.line_ref from ':([0-9]{1,18})$')::BIGINT AS uid,
+                               m.session_started_at AS at
+                        FROM memory_mentions m
+                        WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = ent.id
+                          AND m.line_ref ~ '^.*:[0-9]{1,18}:[0-9]{1,18}$'
+                          AND EXISTS (SELECT 1 FROM transcript_sessions t0
+                                      WHERE t0.guild_id = g AND t0.campaign_id = c
+                                        AND t0.id = substring(
+                                            m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$'))
+                        ORDER BY m.line_ref, m.created_at, m.id) q) r
+                JOIN transcript_sessions t
+                  ON t.guild_id = g AND t.campaign_id = c AND t.id = r.sid
+                WHERE r.cnt <= 2 OR r.rn = 1 OR r.rn = r.cnt / 2 + 1
+                ORDER BY r.rn
+            LOOP
+                shown := shown + 1;
+                found := '[]'::jsonb;
+                IF ptr.gone IS NULL THEN
+                    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                               'ms', w.started_ms, 'uid', w.user_id::TEXT, 'hit', w.hit,
+                               'agreed', w.agreed,
+                               -- (words and name only for a speaker who agrees: the rest never
+                               -- leave the database)
+                               'text', CASE WHEN w.agreed THEN w.said ELSE '' END,
+                               'name', CASE WHEN w.agreed
+                                       THEN COALESCE(t2.speaker_names ->> w.user_id::TEXT, '')
+                                       ELSE '' END)
+                               ORDER BY w.started_ms, w.id), '[]'::jsonb)
+                    INTO found
+                    FROM (
+                        SELECT x.*, EXISTS (
+                                   SELECT 1 FROM consent n
+                                   WHERE n.guild_id = g AND n.user_id = x.user_id) AS agreed
+                        FROM (
+                            (SELECT l.id, l.started_ms, l.user_id, false AS hit,
+                                    COALESCE(l.text, l.heard) AS said
+                             FROM transcript_lines l, LATERAL (
+                                SELECT p.started_ms, p.id FROM transcript_lines p
+                                WHERE p.guild_id = g AND p.session_id = ptr.sid
+                                  AND p.started_ms = ptr.ms AND p.user_id = ptr.uid
+                                  AND p.sidebar IS NULL
+                                ORDER BY p.id LIMIT 1) here
+                             WHERE l.guild_id = g AND l.session_id = ptr.sid AND l.sidebar IS NULL
+                               AND (l.topic = 'game' OR NOT EXISTS (
+                                    SELECT 1 FROM session_imports i
+                                    WHERE i.guild_id = g AND i.session_id = ptr.sid))
+                               AND (l.started_ms, l.id) < (here.started_ms, here.id)
+                             ORDER BY l.started_ms DESC, l.id DESC LIMIT 1)
+                            UNION ALL
+                            (SELECT l.id, l.started_ms, l.user_id, true,
+                                    COALESCE(l.text, l.heard)
+                             FROM transcript_lines l
+                             WHERE l.guild_id = g AND l.session_id = ptr.sid AND l.sidebar IS NULL
+                               AND (l.topic = 'game' OR NOT EXISTS (
+                                    SELECT 1 FROM session_imports i
+                                    WHERE i.guild_id = g AND i.session_id = ptr.sid))
+                               AND l.started_ms = ptr.ms AND l.user_id = ptr.uid
+                             ORDER BY l.id LIMIT 1)
+                            UNION ALL
+                            (SELECT l.id, l.started_ms, l.user_id, false,
+                                    COALESCE(l.text, l.heard)
+                             FROM transcript_lines l, LATERAL (
+                                SELECT p.started_ms, p.id FROM transcript_lines p
+                                WHERE p.guild_id = g AND p.session_id = ptr.sid
+                                  AND p.started_ms = ptr.ms AND p.user_id = ptr.uid
+                                  AND p.sidebar IS NULL
+                                ORDER BY p.id LIMIT 1) here
+                             WHERE l.guild_id = g AND l.session_id = ptr.sid AND l.sidebar IS NULL
+                               AND (l.topic = 'game' OR NOT EXISTS (
+                                    SELECT 1 FROM session_imports i
+                                    WHERE i.guild_id = g AND i.session_id = ptr.sid))
+                               AND (l.started_ms, l.id) > (here.started_ms, here.id)
+                             ORDER BY l.started_ms, l.id LIMIT 1)) x) w
+                    JOIN transcript_sessions t2 ON t2.guild_id = g AND t2.id = ptr.sid;
+                END IF;
+                wins := wins || jsonb_build_array(jsonb_build_object(
+                    'session', ptr.number, 'startedAt', ptr.started_at, 'lines', found));
+            END LOOP;
+            result := result || jsonb_build_object(ent.id, jsonb_build_object(
+                'windows', wins, 'more', GREATEST(total - shown, 0)));
+        END LOOP;
+        RETURN result;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_name_places(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_recap_name_places(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+"""
 # The lines the names-to-check door returns (0242) were picked by server only: a mention's line is
 # now also required to be in one of THIS campaign's sessions, so nothing of another campaign's
 # transcript can come through, even by a pointer that names it (#2729). The door is rebuilt from
@@ -15333,6 +15698,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0240_names_fixed_door", NAMES_FIXED_DOOR),  # the recap page reads it (#2684)
     ("0241_names_fixed_undo", NAMES_FIXED_UNDO),  # and undoes a fix, queued for the bot (#2684)
     ("0242_name_change_words", NAME_CHANGE_WORDS),  # Change the words on names to check (#2593)
+    ("0243_recap_present", RECAP_PRESENT_DOORS),  # who was in each scene, saved by the DM (#2684)
+    ("0244_report_storage", REPORT_STORAGE),  # the after-session report's items and answers (#2661)
+    ("0245_recap_name_places", RECAP_NAME_PLACES),  # where a name to check was said (#2403)
     (
         "0246_names_read_campaign",
         NAMES_READ_CAMPAIGN,
@@ -15343,6 +15711,9 @@ MIGRATIONS: tuple[Migration, ...] = (
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "memory_differences",
+    "report_answers",
+    "memory_report_runs",
     "memory_contradictions",
     "name_pass_reports",
     "name_pass_fixes",

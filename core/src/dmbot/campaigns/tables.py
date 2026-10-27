@@ -56,6 +56,8 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
     "plot_issues": ("plot_issues",),  # PlotBot's issues and the DM's answers (#2122)
     "plot_fine": ("plot_fine",),  # what the DM said was not a problem (#2122)
     "memory_heard": ("memory_heard",),
+    # The DM's answers to the after-session report's items, which cannot be made again (#2661)
+    "report_answers": ("report_answers",),
 }
 
 # The extra files of a backup (#2552): the tables each one carries. Not registered sections: they
@@ -132,6 +134,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "themselves are in the transcript (#2684)",
     "name_pass_fixes": "the name pass's report and Undo record: a run's history, the fixes "
     "themselves are in the transcript (#2684)",
+    "memory_differences": "what the party has wrong, with PlotBot's sort: made again by the next "
+    "check (#2661); the DM's answers to them are the `report_answers` section",
+    "memory_report_runs": _RUNTIME,
     "memory_contradictions": "PlotBot's contradiction candidates and grades: made again by the "
     "next pass, nothing the DM wrote (#2660)",
     # Decided on #2552 (Supervisor, 2026-10-23):

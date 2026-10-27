@@ -1065,7 +1065,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const r = await find(recapRef);
       if (!r.canEdit) throw new ApiError("not-allowed");
       const beat = r.beats?.find((b) => b.n === n);
-      if (!beat) throw new ApiError("not-found");
+      if (!beat) throw new ApiError("stale"); // no such scene: the recap was made again since the page read it
       if (n === 3 && !staleSeen.has(recapRef)) {
         staleSeen.add(recapRef);
         beat.present = ["Brannoch", "Mira"]; // what the newer text says
@@ -1073,7 +1073,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       }
       if (present.some((name) => !(r.characters ?? []).includes(name))) throw new ApiError("bad-present");
       beat.present = [...present];
-      return { n, present: [...present] };
+      beat.saved = true;
+      return { n, present: [...present], saved: true };
     },
     async namesFixed(recapRef) {
       calls.push(`namesFixed:${recapRef}`);

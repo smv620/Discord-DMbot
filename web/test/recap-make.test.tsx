@@ -17,12 +17,21 @@ vi.mock("../src/content/recap-make", async (original) => ({
   RECAP_MAKE_LIVE: true,
 }));
 
+const present = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/present-words", async (original) => ({
+  ...(await original<typeof import("../src/content/present-words")>()),
+  get PRESENT_PER_SCENE_LIVE() {
+    return present.on;
+  },
+}));
+
 /** A label as an exact pattern (the words hold brackets). */
 const rx = (label: string): RegExp => new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
 beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
 afterEach(() => {
   cleanup();
+  present.on = false;
   vi.useRealTimers();
 });
 
@@ -66,6 +75,82 @@ describe("making a recap", () => {
     fireEvent.click(screen.getByRole("button", { name: w.keep }));
     expect(screen.queryByText(w.askAgain(true))).toBeNull();
     expect(api.calls.filter((c) => c.startsWith("makeRecap"))).toEqual(["makeRecap:100.cmp1.1791000000"]);
+  });
+
+  describe("when the DM saved who was in a scene (#2684)", () => {
+    const withBeats = async (beats: { n: number; present: string[]; saved?: boolean }[] | "unreadable") => {
+      present.on = true;
+      const api = mockApi("table");
+      const base = await api.recap!("200000000000000001.cmp1.1791000000");
+      api.recap = async () => {
+        if (beats === "unreadable") throw new ApiError("server");
+        return { ...base, beats };
+      };
+      await open("100.cmp1", api);
+      fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+      await screen.findByText(w.askAgain(true));
+      await waitFor(() => expect(screen.queryByText(w.checkingLists)).toBeNull());
+    };
+
+    it("says the lists will be cleared", async () => {
+      await withBeats([{ n: 1, present: ["Mira"], saved: true }, { n: 2, present: [] }]);
+      expect(screen.getByText(w.askAgainLists)).toBeTruthy();
+    });
+
+    it("says nothing about lists when none was saved", async () => {
+      await withBeats([{ n: 1, present: ["Mira"] }]);
+      expect(screen.queryByText(w.askAgainLists)).toBeNull();
+      expect(screen.queryByText(w.askAgainMaybeLists)).toBeNull();
+    });
+
+    it("warns anyway when the recap could not be read to check", async () => {
+      await withBeats("unreadable");
+      expect(screen.getByText(w.askAgainMaybeLists)).toBeTruthy();
+      expect(screen.queryByText(w.askAgainLists)).toBeNull();
+    });
+
+    it("holds the Yes button until it has looked, then says the lists will be deleted", async () => {
+      present.on = true;
+      const api = mockApi("table");
+      const base = await api.recap!("200000000000000001.cmp1.1791000000");
+      let release: (r: typeof base) => void = () => {};
+      api.recap = () => new Promise((resolve) => (release = resolve));
+      await open("100.cmp1", api);
+      fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+      await screen.findByText(w.askAgain(true));
+      expect(screen.getByText(w.checkingLists)).toBeTruthy();
+      expect((screen.getByRole("button", { name: w.yesAgain }) as HTMLButtonElement).disabled).toBe(true);
+      release({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
+      expect(await screen.findByText(w.askAgainLists)).toBeTruthy();
+      expect((screen.getByRole("button", { name: w.yesAgain }) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("says it too when an uploaded recap would replace the recap", async () => {
+      present.on = true;
+      const api = mockApi("table");
+      const base = await api.recap!("200000000000000001.cmp1.1791000000");
+      api.recap = async () => ({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
+      await open("100.cmp1", api);
+      fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!);
+      await screen.findByRole("heading", { name: w.form.heading });
+      fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+      fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      const right = await screen.findByLabelText(rx(w.form.right));
+      fireEvent.click(right);
+      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
+      expect(await screen.findByText(w.askAgainLists)).toBeTruthy();
+    });
+
+    it("does not look while the feature is off", async () => {
+      present.on = false;
+      const api = await open();
+      fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+      await screen.findByText(w.askAgain(true));
+      expect(api.calls.some((c) => c.startsWith("recap:"))).toBe(false);
+      expect(screen.queryByText(w.askAgainLists)).toBeNull();
+    });
   });
 
   it("sends replace after Yes", async () => {
