@@ -24,6 +24,13 @@ function open(path = DM, api = mockApi("table")) {
 const rows = () => screen.getAllByRole("listitem").filter((li) => li.classList.contains("name-row"));
 const rowOf = (name: string) => rows().find((li) => li.textContent?.includes(name)) as HTMLElement;
 const ready = async () => screen.findByRole("list", { name: w.listLabel });
+// The page shows 50 names unless asked; most of these tests are about a page of 20, as before.
+const twenty = async () => {
+  fireEvent.change(screen.getByLabelText(w.perPageLabel), { target: { value: "20" } });
+  await waitFor(() => expect(rows()).toHaveLength(20));
+};
+const types = () => screen.getByRole("group", { name: w.kindLabel });
+const tick = (label: string) => fireEvent.click(within(types()).getByLabelText(label));
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 
 describe("the address", () => {
@@ -35,16 +42,28 @@ describe("the address", () => {
 });
 
 describe("finding names", () => {
-  it("lists the first twenty, with the count and a count for each kind", async () => {
-    open();
+  it("lists the first fifty, with the count and a tick box with a count for each type", async () => {
+    const api = open();
     await ready();
-    expect(rows()).toHaveLength(20);
-    expect(screen.getByText(/^\d+ names$/)).toBeTruthy();
-    const kind = screen.getByLabelText(w.kindLabel) as HTMLSelectElement;
-    const labels = [...kind.options].map((o) => o.textContent);
-    expect(labels[0]).toMatch(/^Everything \(\d+\)$/);
-    expect(labels).toContain("NPCs (16)");
-    expect(labels).toContain("Places (9)");
+    const total = Number(/^(\d+) names$/.exec(screen.getByText(/^\d+ names$/).textContent ?? "")?.[1]);
+    expect(rows()).toHaveLength(Math.min(50, total));
+    expect(calls(api, "allNames").shift()).toContain("size=50");
+    expect(within(types()).getByLabelText("NPCs (16)")).toBeTruthy();
+    expect(within(types()).getByLabelText("Places (9)")).toBeTruthy();
+    const clear = within(types()).getByRole("button", { name: /Show all types/ });
+    expect(clear.getAttribute("aria-disabled")).toBe("true"); // (not `disabled`: focus must stay)
+  });
+
+  it("offers 20, 50, 200 and 500 a page, 50 to begin with, and starts over at page 1", async () => {
+    const api = open();
+    await ready();
+    const select = screen.getByLabelText(w.perPageLabel) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(["20", "50", "200", "500"]);
+    expect(select.value).toBe("50");
+    await twenty();
+    expect(calls(api, "allNames").pop()).toContain("page=1:size=20");
+    fireEvent.change(select, { target: { value: "200" } });
+    await waitFor(() => expect(calls(api, "allNames").pop()).toContain("size=200"));
   });
 
   it("searches as you type, in names and in other names, and says when nothing matches", async () => {
@@ -61,10 +80,25 @@ describe("finding names", () => {
   it("filters by kind and starts over at page 1", async () => {
     const api = open();
     await ready();
-    fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "place" } });
+    tick("Places (9)");
     await waitFor(() => expect(rows()).toHaveLength(9));
     expect(calls(api, "allNames:100.cmp1:q=:kind=place").pop()).toContain("page=1");
     expect(rows().every((r) => /Places/.test(r.textContent ?? ""))).toBe(true);
+  });
+
+  it("takes several types at once, and one button shows every type again", async () => {
+    const api = open();
+    await ready();
+    tick("Places (9)");
+    await waitFor(() => expect(rows()).toHaveLength(9));
+    tick("NPCs (16)");
+    await waitFor(() => expect(rows()).toHaveLength(25));
+    expect(calls(api, "allNames").pop()).toContain("kind=place,npc");
+    tick("Places (9)"); // un-ticked again
+    await waitFor(() => expect(rows()).toHaveLength(16));
+    fireEvent.click(within(types()).getByRole("button", { name: /Show all types/ }));
+    await waitFor(() => expect(rows().length).toBeGreaterThan(25));
+    expect(calls(api, "allNames").pop()).toContain("kind=:");
   });
 
   it("sorts by name or newest first", async () => {
@@ -80,16 +114,29 @@ describe("finding names", () => {
   it("moves between pages with the page bar, which says which page each button goes to", async () => {
     const api = open();
     await ready();
+    await twenty();
     const bar = screen.getByRole("navigation", { name: w.pagesNav });
     fireEvent.click(within(bar).getByRole("button", { name: "Next, page 2" }));
-    await waitFor(() => expect(calls(api, "allNames").some((c) => c.endsWith("page=2"))).toBe(true));
+    await waitFor(() => expect(calls(api, "allNames").some((c) => c.includes("page=2"))).toBe(true));
     await waitFor(() => expect(rows().length).toBeLessThan(20));
     expect(within(bar).getByRole("button", { name: "Previous, page 1" })).toBeTruthy();
+  });
+
+  it("starts over at page 1 when the page size changes while on page 2", async () => {
+    const api = open();
+    await ready();
+    await twenty();
+    const bar = screen.getByRole("navigation", { name: w.pagesNav });
+    fireEvent.click(within(bar).getByRole("button", { name: "Next, page 2" }));
+    await waitFor(() => expect(calls(api, "allNames").pop()).toContain("page=2"));
+    fireEvent.change(screen.getByLabelText(w.perPageLabel), { target: { value: "50" } });
+    await waitFor(() => expect(calls(api, "allNames").pop()).toContain("page=1:size=50"));
   });
 
   it("goes back to the first page, and says so, when the page asked for is gone", async () => {
     const api = open();
     await ready();
+    await twenty();
     const real = api.allNames!.bind(api);
     let first = true;
     api.allNames = async (ref, q) => {
@@ -115,7 +162,7 @@ describe("finding names", () => {
     expect(link.getAttribute("href")).toBe("/account/npc/100.cmp1/n4");
     expect(screen.getAllByText(w.secretWords).length).toBeGreaterThan(0);
     // A place has no NPC page.
-    fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "place" } });
+    tick("Places (9)");
     await waitFor(() => expect(rows()).toHaveLength(9));
     expect(screen.queryByRole("link", { name: /NPC page/ })).toBeNull();
   });
@@ -124,16 +171,20 @@ describe("finding names", () => {
 describe("what a DM can do", () => {
   const edit = async (name: string) => {
     const row = rowOf(name);
-    fireEvent.click(within(row).getByRole("button", { name: w.changeFor(name) }));
+    fireEvent.click(within(row).getByRole("button", { name: name }));
     return within(row);
   };
 
-  it("says the changes can be undone in Discord, and shows a Change button on every row", async () => {
+  it("says the changes can be undone in Discord, and has a name to press on every row", async () => {
     open();
     await ready();
-    expect(screen.getByText(w.undoNote)).toBeTruthy();
+    await twenty();
+    expect(screen.getByText(new RegExp(w.undoNote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))).toBeTruthy();
     expect(screen.queryByText(w.readOnly)).toBeNull();
-    expect(screen.getAllByRole("button", { name: /^Change / })).toHaveLength(20);
+    expect(document.querySelectorAll("button.name-open")).toHaveLength(20);
+    expect(screen.getByText(new RegExp(w.pressName))).toBeTruthy(); // the one cue that a name can be pressed
+    expect(document.querySelector("button.name-open")?.getAttribute("aria-describedby")).toBe("names-press-hint");
+    expect(document.getElementById("names-press-hint")?.textContent).toBe(w.pressName);
   });
 
   it("fixes a name of exactly the limit", async () => {
@@ -310,7 +361,7 @@ describe("what a DM can do", () => {
     fireEvent.click(row.getByRole("button", { name: w.removeYes }));
     await waitFor(() => expect(calls(api, "changeName").pop()).toBe('changeName:100.cmp1:n7:{"action":"remove","confirm":true}'));
     expect(await screen.findByText(w.removed("Gorrak"))).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("button", { name: w.changeFor("Gorrak") })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Gorrak" })).toBeNull());
   });
 
   it("reads the list again and says so when the name is already gone", async () => {
@@ -338,13 +389,13 @@ describe("someone who can't change names", () => {
     open(MANAGER);
     await ready();
     expect(screen.getByText(w.readOnly)).toBeTruthy();
-    expect(screen.queryAllByRole("button", { name: /^Change / })).toHaveLength(0);
+    expect(document.querySelectorAll("button.name-open")).toHaveLength(0);
+    expect(screen.queryByText(new RegExp(w.pressName))).toBeNull();
     expect(screen.queryByText(w.secretWords)).toBeNull();
     expect(screen.queryByText(w.secretMark)).toBeNull();
-    expect(screen.queryByText(w.undoNote)).toBeNull();
+    expect(screen.queryByText(new RegExp(w.pressName))).toBeNull();
     // The counts leave the secret names out too.
     const total = Number(/^(\d+) names$/.exec(screen.getByText(/^\d+ names$/).textContent ?? "")?.[1]);
-    fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "" } });
     expect(total).toBeLessThan(50);
   });
 
@@ -414,7 +465,7 @@ describe("only the newest read counts", () => {
 describe("follow-ups from the first review (#2299)", () => {
   const edit = async (name: string) => {
     const row = rowOf(name);
-    fireEvent.click(within(row).getByRole("button", { name: w.changeFor(name) }));
+    fireEvent.click(within(row).getByRole("button", { name: name }));
     return within(row);
   };
 
@@ -499,14 +550,13 @@ describe("follow-ups from the first review (#2299)", () => {
     open();
     await ready();
     await edit("Gorrak");
-    expect(screen.getByRole("button", { name: w.doneFor("Gorrak") })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Gorrak" }).getAttribute("aria-expanded")).toBe("true");
     const search = screen.getByLabelText(w.searchLabel);
     fireEvent.input(search, { target: { value: "Dunmar" } });
     await waitFor(() => expect(screen.queryByText("Gorrak")).toBeNull());
     fireEvent.input(search, { target: { value: "" } });
     await waitFor(() => expect(screen.getByText("Gorrak")).toBeTruthy());
-    expect(screen.getByRole("button", { name: w.changeFor("Gorrak") })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: w.doneFor("Gorrak") })).toBeNull();
+    expect(screen.getByRole("button", { name: "Gorrak" }).getAttribute("aria-expanded")).toBe("false");
   });
 
   it("says so when the merge search fails, rather than 'no other name matches'", async () => {

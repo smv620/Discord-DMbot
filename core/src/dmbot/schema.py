@@ -10789,6 +10789,19 @@ _MENTIONS_OF = """'hidden', p.hidden,
                                    AND m.entity_id = p.id),"""
 assert ALL_NAMES_SPEED.count("'hidden', p.hidden,") == 1
 ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF, 1)
+# The Names page's type filter takes several kinds at once (owner request, 2026-10-27): the
+# door's `k` is a comma-separated list of kinds, and a name is kept when its kind is any of them.
+# A one-kind list is what it took before, so every caller keeps working. (A redefined function loses
+# its pinned settings, so the copy of the door's tail that sets them again comes with it.)
+assert ALL_NAMES_MENTIONS.count("(kind_ IS NULL OR v.kind = kind_)") == 1
+# The door also bounds the page itself (no website route asks for more than 500, but a door is
+# asked by whoever holds the role): `LEAST(GREATEST(size, 1), 500)` wherever the size is used.
+assert ALL_NAMES_MENTIONS.count("GREATEST(size, 1)") == 2
+ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
+    "(kind_ IS NULL OR v.kind = kind_)",
+    "(kind_ IS NULL OR v.kind = ANY (string_to_array(kind_, ',')))",
+    1,
+).replace("GREATEST(size, 1)", "LEAST(GREATEST(size, 1), 500)")
 
 
 TRANSCRIPT_SPEAKER_NAMES = """
@@ -16005,6 +16018,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0246_names_read_campaign",
         NAMES_READ_CAMPAIGN,
     ),  # the lines it returns are this campaign's (#2729)
+    ("0247_all_names_kinds", ALL_NAMES_KINDS),  # the Names page's type filter takes several kinds
     ("0249_report_read_door", REPORT_READ_DOOR),  # a session's after-session report (#2661)
     ("0250_report_answer_door", REPORT_ANSWER_DOOR),  # the DM's answer to one item (#2661)
 )
