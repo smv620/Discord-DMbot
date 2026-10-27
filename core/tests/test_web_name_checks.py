@@ -14,8 +14,11 @@ from dmbot import bot as bot_module
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED
 from dmbot.memory.store import MemoryStore
 from dmbot.recaps import name_answers as na
+from dmbot.transcript.models import Line, line_ref
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import name_checks as web
 from dmbot.web import sessions
+from dmbot.web.discord import DiscordUser
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
 from tests.test_web_api import ALICE, THURSDAY
@@ -113,7 +116,7 @@ class TheList(WithChecks):
         self.assertEqual(
             got["names"],
             [{"id": mira, "name": "Mirelle", "note": "Used in a recap", "answering": False,
-              "error": ""}],
+              "error": "", "longerNames": []}],
         )  # fmt: skip
         self.assertEqual([k["name"] for k in got["known"]], ["Oakmere"])
         self.assertNotIn("player_character", [k["key"] for k in got["kinds"]])
@@ -464,6 +467,177 @@ class TheBot(WithChecks):
         self.assertEqual(await self.answers.sweep(GUILD), 0)
         later = na.AnswerStore(self.db, clock=lambda: 10**10)
         self.assertEqual(await later.sweep(GUILD), 1)
+
+
+class TheChangedWords(WithChecks):
+    """✏️ Change the words on the page (#2593, #2570): the very call Discord's form makes."""
+
+    async def aliases(self, entity: str) -> dict[str, str]:
+        found = await self.memory.aliases(GUILD, self.one.id, entity_id=entity)
+        return {a.text: a.kind for a in found}
+
+    async def says(self, entity: str, words: list[tuple[int, str]]) -> None:
+        """Lines of table speech that say the name, each pointed at by a mention (as the scan
+        leaves them); a speaker agrees now only when listed in `consent`."""
+        sid = await TranscriptStore(self.db).open_session(GUILD, self.one.id, AT)
+        for n, (user, text) in enumerate(words, start=1):
+            line = Line(n * 1000, user, text, text)
+            await TranscriptStore(self.db).add_lines(GUILD, sid, [line])
+            at = text.lower().index("harrow")
+            await self.memory.add_mention(
+                GUILD,
+                self.one.id,
+                entity,
+                line_ref=line_ref(sid, line.started_ms, user),
+                span=(at, at + 6),
+                confidence=1.0,
+                method="exact",
+                source="scan",
+                session_started_at=AT,
+            )
+
+    async def agree(self, *users: int, leave: tuple[int, ...] = ()) -> None:
+        async with self.db.guild(GUILD) as conn:
+            for user in users:
+                await conn.execute(
+                    "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, 0)"
+                    " ON CONFLICT DO NOTHING",
+                    (GUILD, user),
+                )
+            for user in leave:
+                await conn.execute(
+                    "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (GUILD, user)
+                )
+
+    async def test_the_longer_names_are_worked_out_from_the_lines_that_say_the_name(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.says(
+            harrow, [(ALICE.id, "We rode to Harrow's keep"), (ALICE.id, "ask Harrow's keep again")]
+        )
+        await self.agree(ALICE.id)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual((card["id"], card["longerNames"]), (harrow, ["Harrow's keep"]))
+        self.assertNotIn("lines", card)  # the words themselves are not passed to the page
+
+    async def test_a_speaker_who_stops_being_recorded_drops_out_at_once(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.says(
+            harrow,
+            [
+                (ALICE.id, "We rode to Harrow's keep"),
+                (ALICE.id, "ask Harrow's keep again"),
+                (BOB.id, "We rode to Harrow's keep"),
+                (BOB.id, "ask Harrow's keep again"),
+            ],
+        )
+        await self.agree(ALICE.id, BOB.id)
+        self.assertIn("Harrow's keep", (await self.listed())["names"][0]["longerNames"])
+        await self.agree(leave=(ALICE.id, BOB.id))  # both stop: nothing of theirs is read
+        self.assertEqual((await self.listed())["names"][0]["longerNames"], [])
+        await self.agree(BOB.id)  # one agrees again: only their line is read, and it is enough
+        self.assertIn("Harrow's keep", (await self.listed())["names"][0]["longerNames"])
+        await self.agree(leave=(BOB.id,))
+        self.assertNotIn("keep", str(await self.listed()))
+
+    async def test_the_words_change_in_one_change_and_the_card_stays(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.ask(harrow, action="change_words", words="Harrow's Keep", heard="Harrow's car")
+        self.assertTrue((await self.listed())["names"][0]["answering"])
+        self.assertEqual(await self.apply_next(), "")
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(
+            (card["id"], card["name"], card["answering"]), (harrow, "Harrow's Keep", False)
+        )
+        entity = await self.memory.entity(GUILD, self.one.id, harrow)
+        assert entity is not None
+        self.assertEqual(
+            (entity.name, entity.status), ("Harrow's Keep", PROPOSED)
+        )  # still to answer
+        names = await self.aliases(harrow)
+        self.assertEqual(names.get("Harrow's car"), "old")  # how it was heard: the Cleaner fixes it
+        self.assertNotIn("Harrow", names)  # the short word is part of the new name: not kept
+
+    async def test_a_name_that_is_not_part_of_the_new_one_is_kept_as_an_old_spelling(self) -> None:
+        mira = await self.suggest("Mirele")
+        await self.ask(mira, action="change_words", words="Mirelle")
+        self.assertEqual(await self.apply_next(), "")
+        self.assertEqual((await self.aliases(mira)).get("Mirele"), "old")
+
+    async def test_no_words_or_too_many_are_refused_before_anything_is_queued(self) -> None:
+        mira = await self.suggest("Mirelle")
+        for body, code in (
+            ({"action": "change_words", "words": ""}, "empty"),
+            ({"action": "change_words"}, "empty"),
+            ({"action": "change_words", "words": "  "}, "empty"),
+            ({"action": "change_words", "words": "x" * 101}, "too_long"),
+            ({"action": "change_words", "words": "Ok", "heard": "y" * 101}, "too_long"),
+            ({"action": "change_words", "words": "Mi\x00"}, "bad_text"),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(await self.code(self.ask(mira, **body)), code)
+        self.assertIsNone(await self.answers.claim_next(GUILD))
+
+    async def test_a_name_already_known_is_refused_by_the_bot(self) -> None:
+        await self.known("Oakmere")
+        mira = await self.suggest("Oak")
+        await self.ask(mira, action="change_words", words="oakmere")
+        self.assertEqual(await self.apply_next(), na.ALREADY_KNOWN)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual((card["name"], card["error"]), ("Oak", "already_known"))
+
+    async def test_another_entrys_secret_name_is_refused_without_saying_whose(self) -> None:
+        await self.known("Vael", "place", secret=True)
+        mira = await self.suggest("Vae")
+        await self.ask(mira, action="change_words", words="Vael")
+        self.assertEqual(await self.apply_next(), na.SECRET_CLASH)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(card["error"], "secret_clash")
+        self.assertNotIn("Vael", str(await self.listed()))  # (the secret name is not listed at all)
+
+    async def test_a_player_gets_not_found_and_a_changed_dm_is_refused_by_the_bot(self) -> None:
+        mira = await self.suggest("Mirelle")
+        bob = await sessions.sign_in(
+            self.web,
+            DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email),
+            [THURSDAY],
+            now=NOW,
+            days=30,
+        )
+        player = await sessions.find(self.web, bob, now=NOW)
+        assert player is not None
+        with self.assertRaises(RecapError) as err:
+            await web.answer(
+                self.web, player, self.ref, mira, {"action": "change_words", "words": "Mirelle X"}
+            )
+        self.assertEqual(err.exception.code, "not_found")
+        await self.ask(mira, action="change_words", words="Mirelle X")
+        self.assertEqual(await self.apply_next(dms=set()), na.NOT_ALLOWED)  # no longer a DM
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None
+        self.assertEqual(entity.name, "Mirelle")
+
+    async def test_another_campaigns_name_cannot_be_changed_from_this_recap(self) -> None:
+        other = (await self.campaigns.create(GUILD, "Elsewhere", ALICE.id)).id
+        stray = await self.suggest("Strayfolk", campaign=other)
+        self.assertEqual(
+            await self.code(self.ask(stray, action="change_words", words="Strayfolk Hall")),
+            "not_found",
+        )
+
+    async def test_it_is_one_change_with_one_undo(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.ask(harrow, action="change_words", words="Harrow's Keep", heard="Harrow's keep")
+        self.assertEqual(await self.apply_next(), "")
+        async with self.db.guild(GUILD) as conn:  # the rename is the last change made
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes WHERE campaign_id = %s", (self.one.id,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        await self.memory.undo(GUILD, self.one.id, int(row["b"]), source="dm")
+        entity = await self.memory.entity(GUILD, self.one.id, harrow)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
 
 
 class TheLoop(WithChecks):
