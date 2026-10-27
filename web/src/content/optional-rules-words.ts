@@ -13,13 +13,14 @@ export const optionalWords = {
   off: "Off",
   followsDefault: "Follows the campaign's setting",
   chosen: "You chose this",
-  turnOn: (name: string): string => `Turn on ${name}`,
-  turnOff: (name: string): string => `Turn off ${name}`,
-  saving: "Saving…",
-  slow: "This is taking a little longer than usual.",
-  offline: "DMbot hasn't answered yet. Your choice is waiting and will be saved when it does.",
+  // The wait for the bot's answer (#2564): DMbot's stage, how long, when it last moved.
+  stage: {
+    waiting: "Waiting for DMbot to pick it up.",
+    working: "DMbot is saving it.",
+  } as Record<string, string>,
+  quiet: "DMbot hasn't answered yet. Your choice is waiting and will be saved when it does. You can leave this page and come back later to see where it stands.",
+  gaveUp: "DMbot hasn't answered in an hour. Your choice may still be saved: reload the page later to see where it stands, or press the switch to try again.",
   saved: (name: string, on: boolean): string => `${name} is now ${on ? "on" : "off"}.`,
-  timedOut: "DMbot hasn't answered yet. Your choice may still be saved: reload the page later to see where it stands.",
   problems: {
     "not-allowed": "Only a game master of this campaign can change its rules.",
     "not-found": "That campaign isn't here any more.",

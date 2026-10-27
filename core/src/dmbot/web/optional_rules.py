@@ -16,26 +16,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from dmbot.campaigns import RULESETS
 from dmbot.db import Database
 from dmbot.rules import optional
-from dmbot.ui import logic
+from dmbot.rules.optional import covered_note, main_rules
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
-
-
-def _main_rules(target: str) -> str:
-    """The main rules' name without "(newest)", which reads oddly mid-sentence, as in Discord."""
-    return f"{target} rules" if target in RULESETS else logic.ruleset_label(target)
-
-
-def covered_note(target: str) -> str:
-    """The rules left out because the main rules have their own version, built from the catalog."""
-    names = [r.name[0].lower() + r.name[1:] for r in optional.covered_by(target)]
-    if target != "2024" or not names:
-        return ""
-    return "Not listed, because the 2024 rules have their own version: " + ", ".join(names) + "."
 
 
 def shape(found: dict[str, Any]) -> dict[str, Any]:
@@ -56,7 +42,7 @@ def shape(found: dict[str, Any]) -> dict[str, Any]:
         for r in optional.applying(target)
     ]
     return {
-        "main": _main_rules(target),
+        "main": main_rules(target),
         "rules": rules,
         "note": covered_note(target),
         "default": default,
