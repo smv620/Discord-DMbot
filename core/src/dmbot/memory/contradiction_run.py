@@ -57,6 +57,7 @@ async def run(
     session_started_at: int | None,
     max_calls: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
+    on_progress: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> Report:
     report = Report()
     found = await Contradictions(memory).find(guild_id, campaign_id)
@@ -73,7 +74,7 @@ async def run(
     items = await grader.describe(memory, guild_id, campaign_id, todo)
     result = await grader.grade(
         client, items, session_started_at=session_started_at, count_call=count_call,
-        max_calls=max_calls,
+        max_calls=max_calls, on_progress=on_progress,
     )  # fmt: skip
     await grades.save(guild_id, campaign_id, result.graded)
     report.asked, report.calls, report.failed, report.cut = (
