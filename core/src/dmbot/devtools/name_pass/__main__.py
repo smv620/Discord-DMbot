@@ -119,8 +119,8 @@ async def main_async(args: argparse.Namespace) -> int:
             now = int(time.time())
             report = await name_pass_run.run(
                 transcripts, lookup, ask, args.guild, session.campaign_id, args.session,
-                people=people, agreed=agreed, now=now,
-                forget_before=now - int(memory.keep_days * 86400),
+                people=people, known=await memory.known_keys(args.guild, session.campaign_id),
+                agreed=agreed, now=now, forget_before=now - int(memory.keep_days * 86400),
                 dry_run=args.dry_run, game_only=args.game_only,
             )  # fmt: skip
         finally:
