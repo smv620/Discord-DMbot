@@ -755,6 +755,8 @@ export interface NameCheck {
   note: string;
   answering: boolean;
   error: string;
+  /** Up to three longer names DMbot read from the quotes ("Harrow's keep"), for Change the words (#2593). */
+  longerNames?: string[];
 }
 /** The Plot check of a recap (#2124; core #2122, #2123): PlotBot's questions, shown to the DM only. */
 export type PlotAnswerKind = "fix" | "changed" | "fine" | "leave";
@@ -816,7 +818,9 @@ export type NameCheckAnswer =
   | { action: "same"; known: string }
   | { action: "respell"; text: string }
   | { action: "not_a_name" }
-  | { action: "explain"; text: string };
+  | { action: "explain"; text: string }
+  // The DM widens or corrects the name itself (#2593; core #2570). `heard` is how it was written down.
+  | { action: "change_words"; words: string; heard?: string };
 export interface VoiceResult {
   state: FixState;
   /** Only when `done`: what was heard. */

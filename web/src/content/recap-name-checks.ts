@@ -4,6 +4,7 @@
 // Shown only while RECAP_NAME_CHECKS_LIVE is true (recap-words.ts).
 export const NOTE_MAX_LETTERS = 300; // core's limit for a note kept with a name (name_answers.NOTE_MAX)
 export const SPELLING_MAX_LETTERS = 80;
+export const NAME_MAX_LETTERS = 100; // core's NAME_MAX; the door still checks
 
 export const nameCheckWords = {
   heading: "Names to check",
@@ -28,9 +29,19 @@ export const nameCheckWords = {
   explainSend: "Send note",
   explainFor: (name: string): string => `Send note: ${name}`,
   left: (n: number): string => `${n} letters left`,
+  // Change the words (#2593): "Harrow" is often "Harrow's Keep".
+  changeLabel: "What is the whole name?",
+  changeHint: "Add the words around it. For example, Harrow becomes Harrow's Keep.",
+  useName: (name: string): string => `Use this name: ${name}`,
+  changeUse: "Change the words",
+  changeFor: (name: string): string => `Change the words: ${name}`,
+  longerLabel: "Maybe the whole name is:",
+  changed: (name: string): string => `Now called ${name}. Pick what it is.`,
   noteFrom: "From the recap:",
   waiting: "DMbot is saving your answer…",
   slow: "Still saving. Your answer is kept, and the name will leave this list when it is done.",
+  // An unknown refusal of Change the words (#2593): the words did not change, and nothing else did either.
+  changeFailed: "Couldn't change the words. Your answer is kept as it was.",
   failedHint: "That didn't save. Press the button again.",
   done: "Saved.",
   allDone: "All the names are answered.",
@@ -42,6 +53,12 @@ export const nameCheckWords = {
     "bad-action": "That didn't work. Try again.",
     "too-soon": "Try again in a minute.",
     "not-allowed": "Only this campaign's DM can answer these names.",
+    // Change the words refusals (core #2570), by code with the underscore as a hyphen. Which other name
+    // clashes is never said, because it may be a secret one.
+    empty: "Type the name first.",
+    "too-long": `That name is too long. Keep it to ${NAME_MAX_LETTERS} letters or fewer.`,
+    "already-known": "A name like that is already on your list. Pick it under \"It's the same as…\" instead.",
+    "secret-clash": "That name can't be used here. Try different words, or leave it as it is.",
     // What the bot writes when it could not apply an answer (core/.../recaps/name_answers.py), by its code
     // with the underscore as a hyphen. A test reads the codes from core so a new one needs words here.
     gone: "That name was already answered, here or in Discord. The list is up to date now.",
