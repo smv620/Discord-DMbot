@@ -9,6 +9,14 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export DMBOT_ENV_FILE="$work/.env" DMBOT_ENV_EXAMPLE="$work/.env.example"
 export DMBOT_TEST_NO_TERMINAL=1
+# A stand-in for config.py: the names DMbot reads (#1970).
+export DMBOT_CONFIG_SOURCE="$work/config.py"
+cat >"$DMBOT_CONFIG_SOURCE" <<'EOF'
+get("DMBOT_SWITCH")
+get("DMBOT_OTHER_SWITCH")
+get("SOME_COMMENTED_TOKEN")
+get("TRANSCRIBER")
+EOF
 
 # The docker stand-in logs every call, and "ps" lists the services in $FAKE_RUNNING.
 export DMBOT_DOCKER="$work/docker" FAKE_LOG="$work/docker.log" FAKE_RUNNING=""
@@ -40,6 +48,15 @@ LOG_LEVEL=INFO
 SHARD_COUNT=1
 FOO_PASSWORD_FILE=
 SECRET_NAME=
+# DMBOT_SWITCH=0
+# DMBOT_OTHER_SWITCH=5
+# COMPOSE_PROFILES=web. Discord prose that happens to start with a name
+# DMBOT_NOT_READ=1
+# SOME_COMMENTED_TOKEN=
+#DMBOT_NO_SPACE=1
+#  DMBOT_TWO_SPACES=1
+TRANSCRIBER_SHADOW=x
+# TRANSCRIBER=whisper-local
 EOF
   printf '%s' "$original" >"$DMBOT_ENV_FILE"
   chmod 644 "$DMBOT_ENV_FILE"
@@ -329,6 +346,96 @@ reset
 FAKE_RUNNING=$'core\nears'
 run $'\n' MAIL_ALERTS_FROM
 check "nothing changed means no restart" not_restarted
+
+# Settings written as "# NAME=value" (#1970)
+reset
+run $'\n' DMBOT_SWITCH
+check "a commented setting the code reads can be reached by name" ok
+check "it shows the example's value as the default" says "DMbot uses its own default: 0"
+reset
+run $'1\n' DMBOT_SWITCH
+check "setting it appends NAME=value to .env" has_line "DMBOT_SWITCH=1"
+check "it is added once" test "$(count_lines DMBOT_SWITCH)" -eq 1
+check "the old lines stay" has_line "TRANSCRIBER=deepgram"
+check "a backup is made first" test "$(backups)" -eq 1
+check "the backup is the old .env" test "$(cat "$work"/.env.backup-*)" = "${original%$'\n'}"
+check ".env stays private" mode_is 600
+run $'\n' DMBOT_SWITCH
+check "now it is in .env, with its value" says "Now: 1"
+# The menu lists it as not in .env, and leaves out the rest
+reset
+run $'\n'
+check "the menu lists a commented setting" says "DMBOT_SWITCH (not in .env)"
+check "and another one" says "DMBOT_OTHER_SWITCH (not in .env)"
+check "a prose comment is not listed" never_says "COMPOSE_PROFILES"
+check "a commented name the code doesn't read is not listed" never_says "DMBOT_NOT_READ"
+check "a commented secret is not listed" never_says "SOME_COMMENTED_TOKEN"
+check "# with no space or two spaces is not a setting" never_says "DMBOT_NO_SPACE"
+check "two spaces is not a setting either" never_says "DMBOT_TWO_SPACES"
+check "an active setting is not listed twice" test "$(grep -c ') TRANSCRIBER ' <<<"$out")" -le 1
+check "a commented setting missing from .env says so" says "DMBOT_SWITCH (not in .env)"
+printf '%s\nDMBOT_OTHER_SWITCH=7\n' "$original" >"$DMBOT_ENV_FILE"
+run $'\n'
+check "once in .env it shows set" says "DMBOT_OTHER_SWITCH (set)"
+# By name: what isn't a setting is refused, a commented secret too
+reset
+run $'1\n' DMBOT_NOT_READ
+check "a commented name the code doesn't read is refused" refused
+check "and says it is not a setting" says "isn't one of DMbot's settings"
+check "and changes nothing" unchanged
+reset
+run $'1\n' SOME_COMMENTED_TOKEN
+check "a commented secret is sent to set-key" says "scripts/set-key SOME_COMMENTED_TOKEN"
+check "and changes nothing" unchanged
+reset
+run $'1\n' COMPOSE_PROFILES
+check "a prose comment's name is refused" refused
+# Without config.py to check against, a commented setting is not offered
+reset
+DMBOT_CONFIG_SOURCE="$work/missing.py" run $'1\n' DMBOT_SWITCH
+check "no config.py to check: a commented setting is refused" refused
+
+# Descriptions (#2181): the list says what each setting is, and picking one explains it before the
+# value is asked for, without printing the current value in the description.
+descriptions_file="$work/descriptions"
+printf '%s\n' '# comment' 'TRANSCRIBER|Which service writes the text|Long text about the transcriber. Needs a restart.' >"$descriptions_file"
+export DMBOT_SETTING_DESCRIPTIONS="$descriptions_file"
+reset
+run $'\n'
+check "the list shows a short description" says "TRANSCRIBER (set) - Which service writes the text"
+check "a setting with no description is still listed" says "LOG_LEVEL (empty)"
+check "no stray dash for a setting with no description" never_says "LOG_LEVEL (empty) -"
+reset
+run $'\n' TRANSCRIBER
+check "picking a setting shows its detail" says "Long text about the transcriber. Needs a restart."
+check "the detail comes before the current value" test "$(grep -n 'Long text' <<<"$out" | cut -d: -f1)" -lt "$(grep -n 'Now:' <<<"$out" | cut -d: -f1)"
+check "the detail does not print the value" never_says "Long text about the transcriber. Needs a restart. deepgram"
+reset
+run $'\n' LOG_LEVEL
+check "a setting with no description still works" says "Now:"
+unset DMBOT_SETTING_DESCRIPTIONS
+
+# Every setting the real menu lists has a description, so a new setting cannot appear without one.
+real_root=$(cd "$(dirname "$script")/.." && pwd)
+real_out=$(printf '\n' | DMBOT_ENV_FILE="$work/real.env" DMBOT_ENV_EXAMPLE="$real_root/.env.example" \
+  DMBOT_CONFIG_SOURCE="$real_root/core/src/dmbot/config.py" \
+  DMBOT_SETTING_DESCRIPTIONS="$real_root/scripts/setting-descriptions" "$script" 2>&1 || true)
+listed_names=$(sed -nE 's/^ +[0-9]+\) ([A-Z][A-Z0-9_]*) .*/\1/p' <<<"$real_out")
+missing=""
+for name in $listed_names; do
+  grep -q "^$name|[^|]\+|[^|]\+$" "$real_root/scripts/setting-descriptions" || missing+=" $name"
+done
+code=0
+out="no description for:$missing"
+check "the real menu lists settings" test "$(wc -l <<<"$listed_names")" -gt 50
+check "every listed setting has a short and a detailed description" test -z "$missing"
+stale=""
+while IFS='|' read -r name _; do
+  [[ $name == \#* || -z $name ]] && continue
+  grep -qx "$name" <<<"$listed_names" || stale+=" $name"
+done <"$real_root/scripts/setting-descriptions"
+out="described but not in the menu:$stale"
+check "no description is left for a setting the menu does not list" test -z "$stale"
 
 printf '%d passed, %d failed\n' "$passed" "$failed"
 [[ $failed -eq 0 ]]

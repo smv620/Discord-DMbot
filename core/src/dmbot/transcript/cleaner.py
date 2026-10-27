@@ -49,6 +49,7 @@ from dmbot.memory.ontology import is_dm_word
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
+from dmbot.secrets_match import names_a_secret
 from dmbot.transcript.close_calls import CloseCalls
 
 log = logging.getLogger(__name__)
@@ -83,6 +84,9 @@ SPELLING, DM_FIX, SOUND = "spelling", "dm", "sound"
 # A whole line the DM rewrote by hand (#1499): shown with Undo like a fix, but it is not a name, so
 # Undo saves no "keep as heard" rule for it.
 DM_EDIT = "edit"
+# The words in a picture of text, corrected by its poster or a DM (#2450): the same, but it is a
+# described picture's line, which is kept apart from speech.
+IMAGE_EDIT = "image_edit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +96,7 @@ class Fix:
     heard: str
     written: str
     entity_id: str
-    how: str  # SPELLING, DM_FIX, SOUND or DM_EDIT
+    how: str  # SPELLING, DM_FIX, SOUND, DM_EDIT or IMAGE_EDIT
     # False: from a name DMbot only suggested, or a close look-alike of a confirmed name
     # (#573): the fix is made and the DM screen shows it with Undo (#296)
     sure: bool = True
@@ -321,6 +325,14 @@ def safe_answer(
     return answer in kept and not near.ran_out
 
 
+def matcher_names(lookup: CampaignLookup) -> tuple[list[str], list[str]]:
+    """The campaign's secret names, and its confirmed names that are not secret and not someone at
+    the table, for the shared whole-name matcher (#2087)."""
+    secrets = [n.text for n in lookup.names if n.secret]
+    allowed = [n.text for n in lookup.names if n.confirmed and not n.secret and not n.person]
+    return secrets, allowed
+
+
 def text_names_a_secret(lookup: CampaignLookup, text: str) -> bool:
     """Whether free text (a player's suggested words, #1491) is, holds, or sounds like a secret
     name, anywhere in it: word for word, or a run of words about as long as a secret name that
@@ -329,6 +341,9 @@ def text_names_a_secret(lookup: CampaignLookup, text: str) -> bool:
     server."""
     if not lookup.secret_lengths:
         return False
+    secrets, allowed = matcher_names(lookup)
+    if names_a_secret(text, secrets, allowed):  # the shared matcher: titles, plurals, run together
+        return True
     words = list(WORD.finditer(text))
     if _secret_spans(lookup, words):
         return True
@@ -383,6 +398,13 @@ def _without_secrets(
             if any(begin < b and a < end for a, b in secret)
             or _near_secret(lookup, words, begin, end, checks)
         }
+        if not bad:  # the shared matcher, on the line as written: a fix that made one is taken back
+            secrets, allowed = matcher_names(lookup)
+            if names_a_secret(text, secrets, allowed) and any(
+                names_a_secret(text, [s], allowed) and not names_a_secret(heard, [s], allowed)
+                for s in secrets
+            ):  # secret by secret: a different one in the heard line doesn't excuse a new one
+                bad = set(range(len(fixes)))
         left, near.ran_out = checks.left, near.ran_out or checks.ran_out
         if not bad:
             return text, fixes

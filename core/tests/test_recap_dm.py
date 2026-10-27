@@ -42,7 +42,7 @@ def job(**kw: Any) -> Any:
     base = dict(
         state="ready", status="draft", title="The Silver Lock", game_day=4, session_at=AT,
         summary="《Tense》 Mira drew her blade.", housekeeping=("Mira has 4 HP.",),
-        last_error="", guild_id=GUILD,
+        last_error="", guild_id=GUILD, approved=True,
     )  # fmt: skip
     return SimpleNamespace(**{**base, **kw})
 
@@ -63,7 +63,7 @@ def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool 
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=recaps,
-        settings=SimpleNamespace(site_url="https://site.example.com"),
+        settings=SimpleNamespace(site_url="https://site.example.com", plot_check_on=False),
         post_recaps=AsyncMock(),
         _recap_audio_files=AsyncMock(return_value=([], "")),
         user=SimpleNamespace(id=BOT_ID),
@@ -127,6 +127,64 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(len(part) <= 2000 for part in sent))
         bot.recaps.decide.assert_not_awaited()  # reading decides nothing
 
+    async def test_approve_waits_for_plotbots_open_points_and_says_where_to_answer(self) -> None:
+        button, bot, interaction = press("approve")
+        bot.settings.plot_check_on = True
+        bot.recap_approval_problems = AsyncMock(return_value=[])
+        bot.recaps.plot_open = AsyncMock(return_value=True)
+        await button.callback(interaction)
+        said = told(interaction)
+        self.assertIn("PlotBot has points", said)
+        self.assertIn("https://site.example.com", said)  # the recap page
+        self.assertIn("Leave it as is", said)  # the DM can always answer
+        bot.recaps.decide.assert_not_awaited()
+
+    async def test_yes_on_a_draft_that_is_not_approved_approves_it_first(self) -> None:
+        """Posting an unapproved draft counts as approving it (#2122): the same approval door."""
+        button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recap_approval_problems = AsyncMock(return_value=[])
+        bot.recaps.approve = AsyncMock(return_value=True)
+        bot.settings.plot_check_on = True
+        bot.recaps.get = AsyncMock(
+            side_effect=[job(approved=False), job(status="posted", approved=True)]
+        )
+        await button.callback(interaction)
+        bot.recaps.approve.assert_awaited_once()
+        kwargs = bot.recaps.approve.await_args.kwargs
+        self.assertEqual((kwargs["post"], kwargs["plot_gate"]), (True, True))
+        bot.recaps.decide.assert_not_awaited()  # it did not post around the approval
+
+    async def test_yes_on_an_unapproved_draft_with_open_points_posts_nothing(self) -> None:
+        button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recap_approval_problems = AsyncMock(return_value=[])
+        bot.recaps.approve = AsyncMock(return_value=False)
+        bot.recaps.plot_open = AsyncMock(return_value=True)
+        bot.settings.plot_check_on = True
+        await button.callback(interaction)
+        self.assertIn("PlotBot has points", told(interaction))
+        self.assertIn("https://site.example.com", told(interaction))
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_yes_on_an_unapproved_draft_checks_the_cues_and_names_first(self) -> None:
+        """The same checks as the Approve buttons (one helper): nothing is approved or posted."""
+        button, bot, interaction = press("yes", found=job(approved=False))
+        bot.recap_approval_problems = AsyncMock(return_value=["Cue 《Gloomy》 is not allowed."])
+        bot.recaps.approve = AsyncMock()
+        await button.callback(interaction)
+        bot.recap_approval_problems.assert_awaited_once()
+        self.assertIn("Gloomy", told(interaction))
+        bot.recaps.approve.assert_not_awaited()
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
+
+    async def test_yes_on_an_already_approved_draft_posts_it_as_before(self) -> None:
+        button, bot, interaction = press("yes", found=job(approved=True))
+        bot.recaps.approve = AsyncMock()
+        await button.callback(interaction)
+        bot.recaps.approve.assert_not_awaited()
+        bot.recaps.decide.assert_awaited_once()
+
     async def test_read_it_attaches_the_narration_to_the_last_message_when_there_is_some(
         self,
     ) -> None:
@@ -181,7 +239,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         button, bot, interaction = press("yes")
         bot.recaps.get = AsyncMock(side_effect=[job(), job(status="posted")])
         await button.callback(interaction)
-        bot.recaps.decide.assert_awaited_once_with(GUILD, CID, AT, "post")
+        bot.recaps.decide.assert_awaited_once_with(GUILD, CID, AT, "post", require_current=True)
         bot.post_recaps.assert_awaited_once_with(GUILD)  # plan, consent, secret names run there
         self.assertEqual(interaction.followup.send.await_args.args[0], POSTED)
 
@@ -269,8 +327,25 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         interaction.response.edit_message.assert_not_awaited()
 
     def test_the_views_carry_ids_that_survive_a_restart(self) -> None:
-        ids = [cast(Any, i).custom_id for i in ready_view(CID, AT).children]
-        self.assertEqual(ids, [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "post", "drop")])
+        old = [RecapButton(a, CID, AT) for a in ("read", "approve", "post", "drop", "tell")]
+        self.assertEqual(  # the old buttons still answer on messages already sent (#2118)
+            [b.item.custom_id for b in old],
+            [f"dmbot:recap:{a}:{CID}:{AT}" for a in ("read", "approve", "post", "drop", "tell")],
+        )
+        # (#2420) a new line: the three ways to approve, then Read it with no website address, or
+        # the review link and Share a recap with one
+        self.assertEqual(len(ready_view(CID, AT).children), 4)
+        new = ready_view(CID, AT, "https://site.example.com").children
+        self.assertEqual(
+            [(getattr(getattr(c, "item", c), "label", ""), getattr(c, "url", None)) for c in new][
+                3:
+            ],
+            [
+                ("Review the recap", "https://site.example.com/account/recaps"),
+                ("Share a recap", None),
+            ],
+        )
+        self.assertEqual(cast(Any, new[4]).item.custom_id, f"dmbot:recapshare:{CID}")
         self.assertEqual(len(confirm_view(CID, AT).children), 2)
         longest = f"dmbot:recap:post:{CID}:{10**11}"
         self.assertLessEqual(len(longest), 100)
@@ -280,9 +355,9 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
     def test_the_words(self) -> None:
         text = ready_text("The *Silver* Lock", "https://site.example.com/r")
         self.assertIn("Recap ready: **The \\*Silver\\* Lock**", text)
-        self.assertIn("Nothing goes to the players until you press Post.", text)
-        self.assertIn("Edit it here: https://site.example.com/r", text)
-        self.assertNotIn("Edit it here", ready_text("T", ""))
+        self.assertIn("Nothing goes to the players until you post it.", text)
+        self.assertIn("post it on your recap page: https://site.example.com/r", text)
+        self.assertNotIn("recap page", ready_text("T", ""))
         self.assertIn("Post it to the table now?", ASK)
         reading = reading_text(job(), "")
         self.assertNotIn("posted by your DM", reading)
@@ -324,6 +399,51 @@ class TheStoresMove(Base):
         later = await self.store.get(1, self.one.id, 200)
         assert other is not None and later is not None
         self.assertEqual((other.status, later.status), ("draft", "draft"))
+
+    async def test_approve_and_post_hands_it_over_in_the_one_statement(self) -> None:
+        # (#2420) the page's "Approve and post text only": approved and 'posting' together
+        from dmbot.recaps.approval import text_hash
+
+        await self.store.update(1, self.one.id, AT, state="ready", title="T", summary="S")
+        got = await self.store.approve(
+            1, self.one.id, AT, fx.DM, "text", expected=text_hash("T", "S"), post=True
+        )
+        self.assertTrue(got)
+        job = await self.store.get(1, self.one.id, AT)
+        assert job is not None
+        self.assertEqual((job.status, job.approved, job.audio_choice), ("posting", True, "text"))
+
+    async def test_a_changed_text_approves_and_posts_nothing(self) -> None:
+        from dmbot.recaps.approval import text_hash
+
+        await self.store.update(1, self.one.id, AT, state="ready", title="T", summary="S")
+        self.assertFalse(
+            await self.store.approve(
+                1, self.one.id, AT, fx.DM, "text", expected=text_hash("T", "old"), post=True
+            )
+        )
+        job = await self.store.get(1, self.one.id, AT)
+        assert job is not None
+        self.assertEqual((job.status, job.approved), ("draft", False))
+
+    async def test_only_text_only_can_be_posted_on_the_spot(self) -> None:
+        with self.assertRaises(ValueError):
+            await self.store.approve(1, self.one.id, AT, fx.DM, "voice", expected="x", post=True)
+
+    async def test_approve_but_dont_post_leaves_it_a_draft_the_page_shows_as_approved(self) -> None:
+        # The page and Discord share this one store path: what Discord's "Approve but don't post"
+        # records is exactly what the page reads as "Approved. Not posted".
+        from dmbot.recaps.approval import text_hash
+
+        await self.store.update(1, self.one.id, AT, state="ready", title="T", summary="S")
+        self.assertTrue(
+            await self.store.approve(
+                1, self.one.id, AT, fx.DM, "text", expected=text_hash("T", "S")
+            )
+        )
+        job = await self.store.get(1, self.one.id, AT)
+        assert job is not None
+        self.assertEqual((job.status, job.approved, job.approved_by), ("draft", True, fx.DM))
 
     async def test_an_unknown_action_is_refused(self) -> None:
         with self.assertRaises(ValueError):

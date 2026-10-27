@@ -274,6 +274,7 @@ class Building(unittest.TestCase):
             classes=False,
             items_pages=False,
             origins_pages=False,
+            rules_pages=False,
         )
         for data in files.values():
             self.assertEqual(
@@ -292,6 +293,7 @@ class Building(unittest.TestCase):
             classes=False,
             items_pages=False,
             origins_pages=False,
+            rules_pages=False,
         )
         self.assertEqual(build.folder_for(files), build.OUT_51)
         self.assertEqual(build.folder_for({"spells.json": {"edition": "2024"}}), build.OUT)

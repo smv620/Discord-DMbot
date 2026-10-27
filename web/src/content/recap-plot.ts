@@ -1,0 +1,110 @@
+// The words for the "Plot check" on a recap's page (#2124; core #2122, #2123): PlotBot reads the recap
+// against the campaign's earlier sessions and facts and raises questions. DMbot advises and the DM
+// decides, so every question has an answer that leaves the recap exactly as it is. Shown only while
+// PLOT_CHECK_LIVE is true (recap-words.ts), to the campaign's DM, never on the public recap link.
+export const PLOT_NOTE_MAX_LETTERS = 200;
+export const PLOT_CHAT_MAX_LETTERS = 300;
+
+export type PlotAnswerWord = "fix" | "changed" | "fine" | "leave";
+
+export const plotWords = {
+  heading: "Plot check",
+  lead: "DMbot compared this recap with your earlier sessions. These are questions, not rulings. You decide, and you can leave any question as it is.",
+  checking: "Checking the recap…",
+  checkingChange: "Checking the change…",
+  checkQuiet: "The check is still running. Approve opens when it finishes.",
+  gaveUp: "You can approve now without it, or open this page again in a minute to see its questions.",
+  none: "Nothing to ask. DMbot found no mismatch.",
+  loadFailed: "We couldn't load the plot check. Nothing was changed. Open this page again in a minute.",
+  level: { likely: "Worth a look", probable: "Maybe", possible: "Small" } as Record<string, string>,
+  kind: {
+    contradiction: "Doesn't match earlier",
+    dead_acts: "Someone who had left or died",
+    item_twice: "An item in two places",
+    place: "A place that doesn't fit",
+    timeline: "Order of events",
+    dropped_thread: "A story thread left open",
+    promise: "A promise not followed up",
+    secret: "A secret told early",
+  } as Record<string, string>,
+  recapSays: "The recap says:",
+  earlier: (title: string): string => (title ? `Earlier, in “${title}”:` : "Earlier:"),
+  answers: {
+    fix: "Fix the recap",
+    talk: "Talk it through",
+    fine: "Not a problem",
+    leave: "Leave it as is",
+  },
+  // (the spoken name starts with the words on the button, so voice control finds it)
+  answerFor: (label: string, n: number): string => `${label}, question ${n}`,
+  fixPrefill: (sentence: string, title: string): string =>
+    title ? `Check this line against “${title}”: “${sentence}”` : `Check this line: “${sentence}”`,
+  fixed: "Added to the box under “Tell DMbot what to fix”. Say what should change there and send it. This question stays open until you answer it or the recap is checked again.",
+  yourAnswer: {
+    fix: "You chose: fix the recap.",
+    changed: "You chose: the story changed.",
+    fine: "You chose: not a problem.",
+    leave: "You chose: leave it as is.",
+  } as Record<string, string>,
+  change: "Change my answer",
+  noteLabel: "Why it's fine (a few words, if you like)",
+  noteSave: "Save: not a problem",
+  noteLeft: (n: number): string => `${n} letters left`,
+  saved: (left: number): string => (left === 0 ? "Saved. You can approve now." : `Saved. ${left} left.`),
+  chatHeading: "Talk it through",
+  chatLead: "Say what happened. DMbot may suggest a note to keep. Nothing is saved unless you press Save.",
+  chatLabel: "Your message",
+  chatSend: "Send",
+  chatSending: "Sending…",
+  chatBot: "DMbot",
+  chatYou: "You",
+  proposal: "Suggested note:",
+  save: "Save",
+  notThat: "Not that",
+  proposalSaved: "Saved as your note.",
+  proposalDeclined: "Not saved.",
+  chatClose: "Close the chat",
+  thinking: "DMbot is thinking…",
+  chatSlow: "Your message is kept. Come back to this page in a minute.",
+  chatQuiet: "DMbot is still working on your message. It will show here when it is ready.",
+  // Why DMbot could not answer a message (the short codes the bot writes), so the DM can send it again.
+  chatFailed: {
+    bad_answer: "DMbot's answer didn't pass its checks, so it was thrown away. Send your message again, in other words.",
+    no_answer: "DMbot had no answer to that. Send it again, in other words.",
+    stale: "The recap changed while DMbot was answering. Read the questions again.",
+    unavailable: "DMbot couldn't answer just now. Send your message again in a minute.",
+    failed: "That didn't work. Send your message again.",
+    timed_out: "DMbot didn't answer in time. Send it again.",
+  } as Record<string, string>,
+  proposalState: {
+    open: "",
+    saving: "Saving…",
+    saved: "Saved as your note.",
+    declined: "Not saved.",
+    failed: "That couldn't be saved. Nothing was changed.",
+  } as Record<string, string>,
+  unavailable: "The plot check isn't available right now. You can approve without it.",
+  versions: "Earlier approved versions",
+  // (formatted here, not with content/account.ts: that module is a big one, and importing it would put
+  // the whole My Account wording on the recaps page's weight)
+  versionWhen: (epochSeconds: number): string =>
+    new Date(epochSeconds * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+  versionLine: (version: number, when: string): string => `Version ${version}, approved on ${when}`,
+  noVersions: "No version has been approved yet.",
+  waitingOn: (n: number): string =>
+    (n === 1 ? "Answer the question in the Plot check before you approve." : `Answer the ${n} questions in the Plot check before you approve.`) +
+    " Leave it as is counts as an answer.",
+  waitingCheck: "The Plot check is still running. You can approve when it is done.",
+  problem: {
+    "too-soon": "You've talked with DMbot enough for now. Answer the question, or leave it as it is.",
+    "not-found": "That question is already gone. The list is up to date now.",
+    "bad-text": "That message is empty or too long. Shorten it and try again.",
+    "bad-answer": "That answer can't be used. Reload the page and try again.",
+    stale: "The recap changed, so DMbot checked it again. The questions below are the new ones.",
+    // (the API's `busy` reaches the page as "slow-down": DMbot is still answering the last message)
+    "slow-down": "DMbot is still answering your last message, or is busy. Wait a moment, then send again.",
+    "not-allowed": "That can't be done now: the plot check is switched off, or that note was already answered. Reload the page to see where it is.",
+    network: "We couldn't reach DMbot. Nothing was changed. Try again in a moment.",
+    server: "That didn't work, and nothing was changed. Try again in a moment.",
+  } as Record<string, string>,
+};

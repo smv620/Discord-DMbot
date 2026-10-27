@@ -98,6 +98,27 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.engine.calls), 1)
         self.assertEqual(self.delivered, [])
 
+    async def test_a_pause_starting_during_transcription_discards_the_text(self) -> None:
+        """Off the record (#2466): a line already being transcribed when the person pauses is
+        dropped, never delivered; the consent checks are the real store's."""
+        from typing import Any, cast
+
+        from dmbot.consent import ConsentStore
+
+        real = ConsentStore(cast(Any, None))
+        real._store(1, frozenset({7}))
+        self.pipeline._consent = real
+        self.engine.during_call.append(lambda: real.pause(1, 7, 300))
+        await self.pipeline.process(utt())
+        self.assertEqual(len(self.engine.calls), 1)
+        self.assertEqual(self.delivered, [])
+        self.engine.during_call.clear()
+        await self.pipeline.process(utt())  # still paused: not even transcribed
+        self.assertEqual(len(self.engine.calls), 1)
+        real.resume(1, 7)
+        await self.pipeline.process(utt())
+        self.assertEqual(self.delivered[0][1], "I cast Shield")
+
     async def test_table_ending_during_transcription_discards_text(self) -> None:
         self.engine.during_call.append(self.active.clear)
         await self.pipeline.process(utt())

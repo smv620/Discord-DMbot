@@ -4,12 +4,14 @@
 // (the email), campaigns/store.py (a recap goes with its campaign). It renders nothing until recaps
 // are live (content/recap-words.ts), and the narration part nothing until audio is.
 import { aiTrainingSentence } from "../content/legal";
+import { RECAP_VOICE_LIVE } from "../content/recap-words";
 
 interface Props {
   live: boolean;
   audio: boolean;
+  share?: boolean;
 }
-const { live, audio } = Astro.props;
+const { live, audio, share = false } = Astro.props;
 ---
 
 {
@@ -24,8 +26,9 @@ const { live, audio } = Astro.props;
         <li>
           <strong>Who writes it.</strong> The AI company named above (Anthropic). It gets the text of
           what people who said yes said in that session (marked only "DM" or "Player"), the names
-          the game master confirmed (never the ones marked secret), the game's last posted recap and
-          the day in the story. It does not get sound. {aiTrainingSentence}
+          the game master confirmed (never the ones marked secret), the game's last posted recap, the
+          day in the story, and anything the game master wrote for recaps: example recaps, style
+          notes, and corrections typed for that recap. It does not get sound. {aiTrainingSentence}
         </li>
         <li>
           <strong>Who sees it.</strong> Only the game masters of that campaign, until one of them
@@ -38,10 +41,31 @@ const { live, audio } = Astro.props;
         <li>
           <strong>How long it is kept.</strong> A recap, and the list of what happened that it was
           made from, are kept with the campaign and deleted when the campaign is deleted. Trying
-          again replaces the old text, and Don't post keeps the draft saved. We keep a short note
+          again replaces the old text, and a recap you don't post stays saved. We keep a short note
           that the email was sent, with no words in it, and delete it after 90 days. The email
           itself holds the recap's title and goes through Google, like our other email.
         </li>
+        {RECAP_VOICE_LIVE && (
+          <li>
+            <strong>A note you speak.</strong> On a recap's page a game master can speak a note
+            instead of typing it. The sound goes to Deepgram, the company that turns speech into text, to be turned into
+            text, and is deleted as soon as the words are ready; we keep only the words. It is
+            only for a game master who has agreed to be recorded, and it counts toward the
+            listening time.
+          </li>
+        )}
+        {share && (
+          <li>
+            <strong>A shared link.</strong> A game master can share a recap by a link. Anyone who
+            has it can read the recap{audio ? " and play its voice and music" : ""} without signing
+            in, even people outside your Discord server, and they can pass it on. We ask search
+            engines not to list it, but that is only a request: treat the link like a password. A
+            game master can turn a link off or make a new one. The old link then no longer opens
+            the recap, though anyone who already saw it may keep a copy. A posted recap is already
+            in the table's chat channel for everyone there. A recap that is not posted can be read
+            only by the game masters of its campaign.
+          </li>
+        )}
         {audio && (
           <li>
             <strong>Narrated recaps.</strong> To make the voice and the music, the words to be read

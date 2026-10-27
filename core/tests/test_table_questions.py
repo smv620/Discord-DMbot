@@ -162,7 +162,7 @@ class TheRestatedQuestion(unittest.TestCase):
         from dmbot.sidebar import answer
 
         self.assertIn("QUESTION:", answer.SYSTEM)
-        self.assertEqual(answer.PROMPT_VERSION, "sidebar-11")
+        self.assertEqual(answer.PROMPT_VERSION, "sidebar-13")
 
 
 class LinkAllowlist(unittest.TestCase):

@@ -115,14 +115,30 @@ class Stopped(unittest.TestCase):
     def test_the_stop_message_says_how_to_delete(self) -> None:
         text = c.stopped_text("Dragon Club")
         self.assertIn(c.ALREADY_RECORDED, text)
-        self.assertIn("Want it gone? Press ⚙️ Menu, then **🗑 Delete my transcripts**.", text)
+        self.assertIn("Want it gone? Press 🗂️ Menu, then **🗑 Delete my transcripts**.", text)
         self.assertIn(c.DELETE_LABEL, c.HOW_TO_DELETE)  # the message and the button can't drift
 
     def test_the_labels_fit_a_phone_and_the_menu_has_room(self) -> None:
         for label in (c.DELETE_LABEL, c.DELETE_YES_LABEL, c.DELETE_NO_LABEL):
             self.assertLessEqual(len(label), 25, label)
-        full = c.options_view(GUILD, None, recording=True, sheets=True, test_voice="saving")
-        self.assertLessEqual(len(full.children), 5)  # a row holds five; a sixth would wrap
+        for test_voice in (None, "saving", "ask"):
+            menu = c.options_view(
+                GUILD, None, recording=True, sheets=True, test_voice=test_voice, paused=False
+            )
+            rows: dict[int, int] = {}
+            for child in menu.children:
+                row = child.row if child.row is not None else 0
+                rows[row] = rows.get(row, 0) + 1
+            self.assertLessEqual(max(rows.values()), 5, (test_voice, rows))  # a row holds five
+            ids = [getattr(child, "custom_id", "") for child in menu.children]
+            self.assertTrue(any("pause" in i for i in ids), (test_voice, ids))  # Pause stays
+            back = c.options_view(
+                GUILD, None, recording=True, sheets=True, test_voice=test_voice, paused=True
+            )
+            self.assertTrue(
+                any("resume" in str(getattr(x, "custom_id", "")) for x in back.children),
+                test_voice,
+            )  # and so does Resume
 
     def test_the_buttons_are_registered_so_they_survive_a_restart(self) -> None:
         for button in (c.DeleteButton, c.DeleteYesButton, c.DeleteNoButton):

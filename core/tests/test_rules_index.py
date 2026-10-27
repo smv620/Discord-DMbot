@@ -35,7 +35,9 @@ FILES = (
     "items.json",
     "monsters.json",
     "origins.json",
+    "rules.json",
     "spells.json",
+    "toolbox.json",
 )
 FILES_52 = (
     "ATTRIBUTION.md",
@@ -703,6 +705,171 @@ class ClassFeatures(unittest.TestCase):
         for edition, other in (("2024", "2014"), ("2014", "2024")):
             names = [n for n, _ in listed("hor", edition, other)]
             self.assertEqual(len(names), len(set(index.normalize(n) for n in names)))
+
+    def test_the_5_1_core_rules_are_the_2014_text_and_the_2024_glossary_wins_in_2024(self) -> None:
+        srd = index.srd()
+
+        def found(name: str, target: str, fallback: str) -> tuple[str, str, str]:
+            hit = srd.lookup(name, target, fallback, kind="rule")
+            assert hit is not None, name
+            return hit.entry.name, hit.entry.edition, hit.tag
+
+        for name in ("Grappling", "Cover", "Short Rest", "Dash", "Concentration", "Falling"):
+            self.assertEqual(found(name, "2024", "2014"), (name, "2024", ""), name)
+            self.assertEqual(found(name, "2014", "2024"), (name, "2014", "[Legacy 2014]"), name)
+        # a 5.1 title the glossary spells another way is the 2024 entry in a 2024 campaign
+        self.assertEqual(found("suffocating", "2024", "2014"), ("Suffocation", "2024", ""))
+        self.assertEqual(found("use an object", "2024", "2014"), ("Utilize", "2024", ""))
+        self.assertEqual(
+            found("suffocating", "2014", "2024"), ("Suffocating", "2014", "[Legacy 2014]")
+        )
+        # a rule only the 5.1 has is found, tagged, in a 2024 campaign
+        self.assertEqual(
+            found("Underwater Combat", "2024", "2014"),
+            ("Underwater Combat", "2014", "[Legacy 2014]"),
+        )
+        grappling = srd.lookup("grappling", "2014", "2024", kind="rule")
+        assert grappling is not None
+        self.assertIn("no more than one size larger", grappling.entry.text)
+        self.assertEqual(grappling.entry.citation, "SRD 5.1, Rules, p. 95")
+
+    def test_the_5_1_game_master_chapters_follow_the_per_name_fallback(self) -> None:
+        srd = index.srd()
+
+        def found(name: str, target: str, fallback: str, kind: str) -> tuple[str, str, str]:
+            hit = srd.lookup(name, target, fallback, kind=kind)
+            assert hit is not None, name
+            return hit.entry.name, hit.entry.edition, hit.tag
+
+        # in both: the 2024 entry alone in 2024, the 5.1's first in a 2014 campaign
+        self.assertEqual(found("Hidden Pit", "2024", "2014", "trap"), ("Hidden Pit", "2024", ""))
+        self.assertEqual(
+            found("Hidden Pit", "2014", "2024", "trap"), ("Hidden Pit", "2014", "[Legacy 2014]")
+        )
+        self.assertEqual(
+            found("Purple Worm Poison", "2024", "2014", "poison"),
+            ("Purple Worm Poison", "2024", ""),
+        )
+        # only in the 5.1: found, tagged, in a 2024 campaign
+        self.assertEqual(
+            found("Drow Poison", "2024", "2014", "poison"),
+            ("Drow Poison", "2014", "[Legacy 2014]"),
+        )
+        self.assertEqual(
+            found("Sight Rot", "2024", "2014", "disease"), ("Sight Rot", "2014", "[Legacy 2014]")
+        )
+        self.assertIsNone(srd.lookup("Drow Poison", "2024", kind="poison"))  # no fallback, no hit
+        # a renamed sample trap: the 2024 name finds the 5.1 trap in 2014, and the old one the 2024
+        self.assertEqual(
+            found("Poison Darts", "2024", "2014", "trap"), ("Poisoned Darts", "2024", "")
+        )
+        self.assertEqual(
+            found("Poisoned Darts", "2014", "2024", "trap"),
+            ("Poison Darts", "2014", "[Legacy 2014]"),
+        )
+        for entry in srd.entries:
+            if entry.edition == "2014" and entry.section == "Gameplay Toolbox":
+                self.assertTrue(entry.dm_side, entry.name)
+
+    def test_the_name_list_never_offers_both_editions_of_a_core_rule(self) -> None:
+        srd = index.srd()
+        for target, fallback, edition in (("2024", "2014", "2024"), ("2014", "2024", "2014")):
+            offered = srd.asked_names("grappl", target, fallback, kinds=(index.RULE,))
+            self.assertEqual([(e.name, e.edition) for e in offered], [("Grappling", edition)])
+            offered = srd.asked_names("hidden pi", target, fallback, kinds=index.HAZARD_KINDS)
+            self.assertEqual([(e.name, e.edition) for e in offered], [("Hidden Pit", edition)])
+            offered = srd.asked_names("suffocat", target, fallback, kinds=(index.RULE,))
+            self.assertEqual(len(offered), 1, (target, [e.name for e in offered]))
+
+    def test_a_2014_rule_never_hides_the_targets_own_entry_of_another_kind(self) -> None:
+        srd = index.srd()
+        feat = srd.lookup("Two-Weapon Fighting", "2024", "2014", kind="feat")
+        assert feat is not None
+        self.assertTrue(srd.has_asked_for("Two-Weapon Fighting", "2024"))
+        self.assertFalse(srd.has_asked_for("Underwater Combat", "2024"))
+        from dmbot.ui import rule_lookup
+
+        found = rule_lookup._asked_for(srd, "Two-Weapon Fighting", "2024", "2014")
+        assert found is not None
+        self.assertEqual((found.entry.kind, found.entry.edition), ("feat", "2024"))
+        # in a 2014 campaign the 2014 rule is its own
+        own = rule_lookup._asked_for(srd, "Two-Weapon Fighting", "2014", "2024")
+        assert own is not None
+        self.assertEqual((own.entry.kind, own.entry.edition), ("rule", "2014"))
+
+    def test_the_5_2_1s_spelling_finds_the_5_1_rule_in_a_2014_campaign(self) -> None:
+        srd = index.srd()
+        for typed, name in (("stable", "Stabilizing a Creature"), ("reaction", "Reactions"),
+                            ("cantrip", "Cantrips"), ("attack roll", "Attack Rolls")):  # fmt: skip
+            hit = srd.lookup(typed, "2014", "2024", kind="rule")
+            assert hit is not None, typed
+            self.assertEqual((hit.entry.name, hit.entry.edition), (name, "2014"), typed)
+        # a plural is a spelling, not a rename: no "is now called" note
+        plural = srd.lookup("cantrips", "2024", "2014", kind="rule")
+        rename = srd.lookup("suffocating", "2024", "2014", kind="rule")
+        assert plural is not None and rename is not None
+        self.assertFalse(plural.renamed)
+        self.assertTrue(rename.renamed)
+
+    def test_every_rule_alias_points_at_a_glossary_rule_and_a_5_1_title(self) -> None:
+        from dmbot.rules import aliases
+
+        srd = index.srd()
+        for older, current in aliases.RULE_ALIASES:
+            for name, edition in ((current, "2024"), (older, "2014")):
+                found = [srd.lookup(name, edition, kind=k) for k in ("rule", "trap")]
+                self.assertTrue(any(found), name)
+
+    def test_a_direct_lookup_of_the_short_name_gives_the_2024_piece_not_its_2014_twin(self) -> None:
+        srd = index.srd()
+
+        def found(name: str, target: str, fallback: str, kind: str) -> tuple[str, str, str]:
+            hit = srd.lookup(name, target, fallback, kind=kind)
+            assert hit is not None, name
+            return hit.entry.name, hit.entry.edition, hit.tag
+
+        # (#1937) "plate" is the 5.1's name for the 5.2.1's Plate Armor
+        self.assertEqual(found("plate", "2024", "2014", "armor"), ("Plate Armor", "2024", ""))
+        self.assertEqual(found("leather", "2024", "2014", "armor"), ("Leather Armor", "2024", ""))
+        self.assertEqual(
+            found("studded leather", "2024", "2014", "armor"), ("Studded Leather Armor", "2024", "")
+        )
+        self.assertEqual(found("hide", "2024", "2014", "armor"), ("Hide Armor", "2024", ""))
+        # in a 2014 campaign the 2014 piece is its own, whichever name is typed
+        self.assertEqual(
+            found("plate armor", "2014", "2024", "armor"), ("Plate", "2014", "[Legacy 2014]")
+        )
+        self.assertEqual(
+            found("plate", "2014", "2024", "armor"), ("Plate", "2014", "[Legacy 2014]")
+        )
+        # the same piece of gear under the 5.1's longer name (same price and weight)
+        for typed, name in (
+            ("robes", "Robe"),
+            ("steel mirror", "Mirror"),
+            ("mirror, steel", "Mirror"),
+            ("clothes, costume", "Costume"),
+            ("flask or tankard", "Flask"),
+            ("jug or pitcher", "Jug"),
+            ("donkey or mule", "Mule"),
+        ):
+            self.assertEqual(found(typed, "2024", "2014", "gear"), (name, "2024", ""), typed)
+        # a piece that only looks alike stays the 2014 one, tagged
+        self.assertEqual(
+            found("hammer, sledge", "2024", "2014", "gear"),
+            ("Hammer, Sledge", "2014", "[Legacy 2014]"),
+        )
+        self.assertEqual(found("chain mail", "2024", "2014", "armor")[1], "2024")
+
+    def test_the_names_the_list_offers_are_the_same_with_the_short_keys(self) -> None:
+        srd = index.srd()
+        found = srd.asked_names("leather", "2024", "2014", kinds=index.EQUIPMENT_KINDS)
+        self.assertEqual(
+            [(e.name, e.edition) for e in found if e.kind == "armor"],
+            [("Leather Armor", "2024"), ("Studded Leather Armor", "2024")],
+        )
+        again = srd.asked_names("leather", "2024", "2014", kinds=index.EQUIPMENT_KINDS)
+        self.assertEqual(found, again)  # (the sets behind it are worked out once)
+        self.assertIn(("2024", "2014", tuple(index.EQUIPMENT_KINDS)), srd._newer_cache)
 
     def test_a_2014_tool_label_says_its_price_not_its_group(self) -> None:
         from dmbot.ui import rule_card
@@ -1396,3 +1563,43 @@ class TheLegacyData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuleSingulars(unittest.TestCase):
+    """The singular of a plural rule title is another name for it (#1956)."""
+
+    def test_a_plural_last_word_gives_the_singular_only_for_two_words_or_more(self) -> None:
+        self.assertEqual(index.rule_keys("Opportunity Attacks"), ["opportunity attack"])
+        self.assertEqual(index.rule_keys("Temporary Hit Points"), ["temporary hit point"])
+        for name in ("Attacks", "Darkness", "Fire Bolt", "Difficult Terrain", "Bonus Actions Us"):
+            self.assertEqual(index.rule_keys(name), [], name)
+
+    def test_the_index_finds_the_rule_by_the_singular_in_both_editions(self) -> None:
+        for target, fallback in (("2024", "2014"), ("2014", "2024")):
+            hit = index.srd().lookup("opportunity attack", target, fallback, kind="rule")
+            assert hit is not None
+            self.assertEqual((hit.entry.name, hit.entry.edition), ("Opportunity Attacks", target))
+
+    def test_a_singular_never_takes_the_name_another_entry_has(self) -> None:
+        # "Bonus Actions" (the combat rule) must not be found as "bonus action": that is the
+        # spellcasting rule's own name in the 2014 rules.
+        spell = index.srd().lookup("Bonus Action", "2014", "2024", kind="rule")
+        assert spell is not None
+        self.assertEqual(
+            (spell.entry.name, spell.entry.section), ("Bonus Action", spell.entry.section)
+        )
+        combat = index.srd().lookup("bonus actions", "2014", "2024", kind="rule")
+        assert combat is not None
+        self.assertEqual(combat.entry.name, "Bonus Actions")
+
+    def test_no_rule_key_is_the_own_name_of_another_entry(self) -> None:
+        # The entry that owns a name is the first one found by it, in both editions.
+        own = {(e.edition, index.normalize(e.name)): e for e in index.srd().entries}
+        for entry in index.srd().entries:
+            if entry.kind != index.RULE:
+                continue
+            for key in index.rule_keys(entry.name):
+                holder = own.get((entry.edition, key))
+                if holder is not None:
+                    found = index.srd()._by_edition[entry.edition][key]
+                    self.assertIs(found[0], holder, f"{entry.name} took {key}")

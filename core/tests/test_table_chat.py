@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
+from dmbot import bot as bot_module
 from dmbot import table_chat
 from dmbot.audio.segmenter import Segmenter
 from dmbot.bot import Table
@@ -76,6 +77,7 @@ def message(
         webhook_id=webhook,
         type=kind,
         interaction_metadata=interaction,
+        attachments=[],
         created_at=dt.datetime(2026, 10, 13, 12, 0, tzinfo=dt.UTC),
     )
 
@@ -347,19 +349,24 @@ class AtTheTableTyped(AtTheTable):
         await self.hear(keep)
         await self.hear(gone)
         await self.bot.on_raw_message_delete(
-            SimpleNamespace(guild_id=GUILD_A, message_id=12, channel_id=VOICE)  # type: ignore[arg-type]
+            SimpleNamespace(cached_message=None, guild_id=GUILD_A, message_id=12, channel_id=VOICE)  # type: ignore[arg-type]
         )
         lines = self.live.unsaved.take(lambda _u: True)
         self.assertEqual([x.heard for x in lines], ["stays"])
         await self.bot.on_raw_message_delete(
-            SimpleNamespace(guild_id=None, message_id=1, channel_id=1)  # type: ignore[arg-type]
+            SimpleNamespace(cached_message=None, guild_id=None, message_id=1, channel_id=1)  # type: ignore[arg-type]
         )  # a private message: nothing to do
 
     async def test_the_chat_channel_hears_about_it_once(self) -> None:
         posts: list[tuple[int, str]] = []
 
         async def post(
-            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+            channel_id: int,
+            text: str,
+            view: Any = None,
+            *,
+            remember: Any = None,
+            secret_of: Any = None,
         ) -> bool:
             posts.append((channel_id, text))
             return True
@@ -377,7 +384,12 @@ class AtTheTableTyped(AtTheTable):
         posts: list[tuple[int, str]] = []
 
         async def post(
-            channel_id: int, text: str, view: Any = None, *, remember: Any = None
+            channel_id: int,
+            text: str,
+            view: Any = None,
+            *,
+            remember: Any = None,
+            secret_of: Any = None,
         ) -> bool:
             posts.append((channel_id, text))
             return True
@@ -403,6 +415,65 @@ class AtTheTableTyped(AtTheTable):
         await asyncio.gather(*list(self.bot._asking))
         self.assertEqual(len(posts), 2)
 
+    async def test_typed_chat_goes_through_the_off_topic_filter_but_its_words_are_not_held(
+        self,
+    ) -> None:
+        """#2447, item 6: a typed line not plainly about the game waits for a label like talk; the
+        label is saved on the line, and nothing is held back from the names scan or the words."""
+        self.bot.topic_ai = cast(Any, object())
+        reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+        with patch.object(bot_module, "classify", AsyncMock(return_value=(["off_topic"], reply))):
+            await self.hear(message("my cat knocked a mug off the shelf yesterday", author=PLAYER))
+            self.assertEqual(self.live.held, {})  # (its words already reached the scan, once)
+            await asyncio.gather(*list(self.live.topic_timers), *list(self.live.topic_tasks))
+        (saved,) = [x for x in self.live.unsaved.lines() if x.typed]
+        self.assertEqual((saved.topic, saved.user_id), ("off_topic", PLAYER))
+        cleaned = export.render(
+            "Alpha", self.session(), [saved], {PLAYER: "Mia"}, version=export.CLEANED
+        )
+        self.assertNotIn("my cat", cleaned)
+
+    async def test_putting_back_typed_chat_does_not_count_its_words_twice(self) -> None:
+        """#2447: a typed line's words reached the names scan and the word list when it was
+        typed; "Put it back" gives it its place in the cleaned transcript and nothing more."""
+        self.bot.topic_ai = cast(Any, object())
+        reply = SimpleNamespace(input_tokens=0, output_tokens=0)
+        text = "my cat knocked a mug off the shelf yesterday"
+        with patch.object(bot_module, "classify", AsyncMock(return_value=(["off_topic"], reply))):
+            await self.hear(message(text, author=PLAYER))
+            await asyncio.gather(*list(self.live.topic_timers), *list(self.live.topic_tasks))
+        (run,) = self.live.left_out.runs
+        heard_before = len(self.live.heard)
+        self.live.dm_user_ids = frozenset({DM, OTHER_DM})
+        await self.bot.put_back(GUILD_A, run.id, DM)
+        self.assertEqual(len(self.live.heard), heard_before)  # not fed to the names scan again
+        (saved,) = [x for x in self.live.unsaved.lines() if x.typed]
+        self.assertEqual(saved.topic, "game")  # but it is in the cleaned transcript again
+
+    async def test_a_typed_and_a_spoken_line_in_one_millisecond_are_told_apart(self) -> None:
+        from dmbot.transcript.models import Line
+
+        spoken = Line(5_000, PLAYER, "hello there", "hello there", 1000)
+        typed = Line(5_000, PLAYER, "my cat", "my cat", typed=True)
+        self.live.unsaved.add(spoken)
+        self.live.unsaved.add(typed)
+        self.assertTrue(self.live.unsaved.set_topic(PLAYER, 5_000, "off_topic", typed=True))
+        by = {x.typed: x.topic for x in self.live.unsaved.lines()}
+        self.assertEqual(by, {False: "game", True: "off_topic"})
+
+    async def test_typed_chat_plainly_about_the_game_is_never_held_for_a_label(self) -> None:
+        self.bot.topic_ai = cast(Any, object())
+        await self.hear(message("I roll a d20 for initiative", author=PLAYER))
+        self.assertEqual((list(self.live.topics.lines), len(self.live.topic_timers)), ([], 0))
+
+    def session(self) -> Any:
+        session = MagicMock(spec=TranscriptSession)
+        session.started_at = 1_000
+        session.ended_at = None
+        session.number = 1
+        session.engines = []
+        return session
+
     async def test_a_purge_takes_back_the_unsaved_lines_it_deletes(self) -> None:
         msgs = [message(f"line {i}", author=PLAYER) for i in range(4)]
         for m in msgs:
@@ -411,7 +482,10 @@ class AtTheTableTyped(AtTheTable):
             cast(
                 Any,
                 SimpleNamespace(
-                    guild_id=GUILD_A, message_ids={msgs[0].id, msgs[2].id}, channel_id=VOICE
+                    cached_messages=[],
+                    guild_id=GUILD_A,
+                    message_ids={msgs[0].id, msgs[2].id},
+                    channel_id=VOICE,
                 ),
             )
         )
@@ -437,7 +511,7 @@ class AtTheTableTyped(AtTheTable):
 
 
 class Transcript(unittest.TestCase):
-    def test_typed_lines_are_tagged_in_the_raw_transcript_and_absent_from_the_cleaned(self) -> None:
+    def test_typed_lines_are_tagged_in_both_transcripts(self) -> None:
         session = MagicMock(spec=TranscriptSession)
         session.started_at = 1_000
         session.ended_at = None
@@ -452,8 +526,7 @@ class Transcript(unittest.TestCase):
         cleaned = export.render("Alpha", session, lines, names, version=export.CLEANED)
         self.assertIn("(Dee) (typed): we take a long rest", raw)
         self.assertIn("Hello there", raw)
-        self.assertNotIn("we take a long rest", cleaned)
-        self.assertNotIn("(typed)", cleaned.split("\n\n", 1)[1])
+        self.assertIn("(Dee) (typed): we take a long rest", cleaned)  # #2447, item 6
         self.assertIn("Hello there", cleaned)
 
 

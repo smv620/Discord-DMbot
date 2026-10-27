@@ -18,7 +18,7 @@ from dmbot.web.payments import FakeProvider
 from dmbot.web.recap_choices import read_choices, set_choice
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 
 class Choices(Base):
@@ -65,7 +65,9 @@ class Choices(Base):
     async def test_a_dm_sees_the_three_choices_on_by_default(self) -> None:
         got = await self.read()
         self.assertEqual((got["text"], got["audio"], got["email"]), (True, True, True))
-        self.assertEqual(set(got), {"text", "audio", "email", "canAudio", "audioHow"})
+        self.assertEqual(
+            set(got), {"text", "audio", "email", "canAudio", "audioHow", "audioUnavailable"}
+        )
 
     async def test_anyone_who_is_not_a_dm_of_it_gets_not_found(self) -> None:
         bob = await self.session_of(BOB)
@@ -169,6 +171,48 @@ class Choices(Base):
         )
         self.assertTrue(got["audio"])
 
+    async def test_the_page_is_told_why_the_narration_cannot_be_made(self) -> None:
+        """(#2419) The greyed 🎙️ button gives the reason: set-up first, then plan, then allowance."""
+
+        async def why(**more: Any) -> str:
+            got = await read_choices(
+                self.web, self.session, self.cref, now=NOW, enforce_plans=True, **more
+            )
+            return str(got["audioUnavailable"])
+
+        await self.give_plan(ALICE.id, "guild")
+        self.assertEqual(await why(), "")
+        self.assertEqual(await why(audio_on=False), "not_set_up")
+        self.assertEqual(await why(audio_allowed=0), "allowance")  # none left this month
+        self.assertEqual(await why(audio_allowed=8), "")
+        await self.give_plan(ALICE.id, "table")  # no narration in this plan
+        self.assertEqual(await why(audio_allowed=8), "plan")
+        # Plans not enforced (the test server): the bot holds nobody to the allowance either.
+        got = await read_choices(
+            self.web, self.session, self.cref, now=NOW, enforce_plans=False, audio_allowed=0
+        )
+        self.assertEqual(got["audioUnavailable"], "")
+
+    async def test_a_co_dm_is_never_told_the_owners_plan_or_allowance(self) -> None:
+        """(#2419) The owner gets the exact reason; a co-DM gets only "unavailable" (or the
+        server-wide "not_set_up"), so the plan stays the owner's to know."""
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
+        bob = await self.session_of(BOB)
+
+        async def why(who: Any, **more: Any) -> str:
+            got = await read_choices(self.web, who, self.cref, now=NOW, enforce_plans=True, **more)
+            return str(got["audioUnavailable"])
+
+        await self.give_plan(ALICE.id, "table")  # no narration in this plan
+        self.assertEqual(await why(self.session, audio_allowed=8), "plan")
+        self.assertEqual(await why(bob, audio_allowed=8), "unavailable")
+        await self.give_plan(ALICE.id, "guild")
+        self.assertEqual(await why(self.session, audio_allowed=0), "allowance")
+        self.assertEqual(await why(bob, audio_allowed=0), "unavailable")
+        self.assertEqual(await why(bob, audio_allowed=8), "")
+        for who in (self.session, bob):  # set-up is the same for everyone
+            self.assertEqual(await why(who, audio_on=False), "not_set_up")
+
     async def test_a_plan_that_does_not_work_does_not_offer_the_narration(self) -> None:
         await self.give_plan(ALICE.id, "guild")
         async with self.db.plan_writer(ALICE.id) as conn:
@@ -213,7 +257,11 @@ class Choices(Base):
         bob = await self.session_of(BOB)
         await self.give_plan(ALICE.id, "guild")
         got = await self.read(bob)
-        self.assertEqual(set(got), {"text", "audio", "email", "canAudio", "audioHow"})
+        self.assertEqual(
+            set(got), {"text", "audio", "email", "canAudio", "audioHow", "audioUnavailable"}
+        )
+        # Only these may leave for a co-DM: never "plan" or "allowance", which are the owner's.
+        self.assertIn(got["audioUnavailable"], {"", "unavailable", "not_set_up"})
         shown = repr(got).casefold()
         for secret in (str(ALICE.id), "guild", "sub_1", "active", "fake"):
             self.assertNotIn(secret, shown.replace("part of your plan", ""))
@@ -273,12 +321,16 @@ class TheRoutes(Choices):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(self.client.aclose)
         self.anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(self.anonymous.aclose)
 

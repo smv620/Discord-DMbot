@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 from dmbot import retention_channels as rc
 from dmbot.campaigns import Campaign, CampaignError, CampaignStore
 from dmbot.dm_screen import delete_campaign as dc
-from dmbot.dm_screen.settings import settings_view
+from dmbot.dm_screen.settings import management_view
 from tests import test_retention_channels as rcs
 from tests.answer_first import Timeline
 from tests.pg import DatabaseTest
@@ -32,7 +32,9 @@ class Words(unittest.TestCase):
         self.assertTrue(dc.holder_may(self.campaign(dms=both), OWNER))
         self.assertFalse(dc.holder_may(self.campaign(dms=both), OTHER_DM))
         self.assertFalse(dc.holder_may(self.campaign(dms=frozenset({OTHER_DM})), OWNER))
-        self.assertFalse(dc.holder_may(self.campaign(owner=None), OWNER))
+        # no owner yet (#2556): any game master may, and still only a game master
+        self.assertTrue(dc.holder_may(self.campaign(owner=None, dms=both), OTHER_DM))
+        self.assertFalse(dc.holder_may(self.campaign(owner=None, dms=frozenset({OTHER_DM})), OWNER))
 
     def test_the_typed_name_ignores_case_and_extra_spaces(self) -> None:
         c = self.campaign()
@@ -50,7 +52,7 @@ class Words(unittest.TestCase):
         from tests import test_dm_screen_settings as st
 
         def has_it(viewer: int) -> bool:
-            children: list[Any] = list(settings_view(st.campaign(), None, viewer).children)
+            children: list[Any] = list(management_view(st.campaign(), None, viewer).children)
             ids = [str(getattr(i, "item", i).custom_id) for i in children]
             return any(i.startswith("dmbot:delcampaign:") for i in ids)
 
@@ -156,6 +158,48 @@ class Deleting(DatabaseTest):
         self.assertIn("press 💾 Back up first", text)
         labels = [str(b.label) for b in kwargs["view"].children]
         self.assertEqual(labels, ["Delete it", "Back up first", "Keep it"])
+
+    async def no_owner(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE id = %s", (self.campaign.id,)
+            )
+
+    async def test_with_no_owner_any_game_master_may_delete_and_the_warning_says_why(self) -> None:
+        await self.no_owner()
+        it = await self.press(OTHER_DM)
+        text = it.followup.send.await_args.args[0]
+        self.assertIn("This campaign has no owner, so any of its game masters may delete it.", text)
+        done = self.interaction(OTHER_DM)
+        self.assertTrue(await dc.delete_now(done, self.campaign.id, "Curse of Strahd"))
+        self.assertIsNone(await self.exists())
+
+    async def test_with_an_owner_a_co_dm_is_still_refused_with_the_owners_name(self) -> None:
+        it = await self.press(OTHER_DM)
+        self.assertEqual(self.said(it), dc.NOT_YOURS.format(who="Mira"))
+        self.assertIsNotNone(await self.exists())
+
+    async def test_with_no_owner_someone_who_is_not_a_game_master_is_refused(self) -> None:
+        await self.no_owner()
+        it = await self.press(555)
+        self.assertEqual(self.said(it), dc.ONLY_GMS)
+        self.assertIsNotNone(await self.exists())
+
+    async def test_with_no_owner_a_running_session_still_stops_it(self) -> None:
+        await self.no_owner()
+        self.client.playing.add(self.campaign.id)
+        it = await self.press(OTHER_DM)
+        self.assertIn("is being played right now", self.said(it))
+        self.assertIsNotNone(await self.exists())
+
+    async def test_the_delete_checks_again_under_the_lock_for_a_campaign_with_no_owner(
+        self,
+    ) -> None:
+        await self.no_owner()
+        with self.assertRaisesRegex(CampaignError, "changed just now"):
+            await self.store.delete(GUILD, self.campaign.id, only_if_owner=555)
+        await self.store.delete(GUILD, self.campaign.id, only_if_owner=OTHER_DM)
+        self.assertIsNone(await self.exists())
 
     async def test_the_warning_answers_discord_before_the_database(self) -> None:
         line = Timeline()

@@ -16,6 +16,7 @@ from psycopg import errors as pg_errors
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
+from dmbot.memory import evidence
 from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
@@ -135,6 +136,12 @@ class Isolation(MemoryTest):
         )
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
+        known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        clue = await self.add("A map", type="clue")
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
+            await evidence.add_in(
+                w, kind=evidence.CLUE, target_id=clue, relation_id=known.value[0].id
+            )
         await self.memory.add_mention(
             GUILD_A,
             self.c,
@@ -152,6 +159,14 @@ class Isolation(MemoryTest):
 
         await self.memory.add_session_heard(GUILD_A, self.c, 1_000, [Heard(a, DM, 1)])
         await self.memory.set_condition(GUILD_A, self.c, a, "missing", source="dm")
+        # and PlotBot's grade of a clash one point of view holds (#2660)
+        from dmbot.memory.contradiction_grades import MAJOR, Graded, GradeStore
+        from dmbot.memory.contradictions import Contradictions
+
+        await self.relate(a, "ally_of", b, status="confirmed")
+        await self.relate(a, "enemy_of", b, status="confirmed")
+        clash = (await Contradictions(self.memory).find(GUILD_A, self.c))[0]
+        await GradeStore(self.db).save(GUILD_A, self.c, [Graded(clash, MAJOR, "Both at once.")])
         from dmbot.memory.claims import ClaimStore, Extracted
 
         await ClaimStore(self.memory).propose(
@@ -1601,8 +1616,9 @@ class Lists(MemoryTest):
         with patch.object(AsyncConnection, "execute", counting):
             await self.memory.undo_names(GUILD_A, self.c, written.batch)  # still one Undo
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
-        # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this.
-        self.assertLess(statements, 30)
+        # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
+        # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
+        self.assertLess(statements, 34)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:
@@ -1860,6 +1876,10 @@ class Renaming(MemoryTest):
         aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=entity, include_secret=True)
         return {x.key: x.status for x in aliases}
 
+    async def kinds(self, entity: str) -> dict[str, str]:
+        aliases = await self.memory.aliases(GUILD_A, self.c, entity_id=entity, include_secret=True)
+        return {x.key: x.kind for x in aliases}
+
     async def test_fix_spelling_and_undo_it(self) -> None:
         a = await self.add("Beleros", status=CONFIRMED)
         await self.memory.add_alias(
@@ -1867,7 +1887,9 @@ class Renaming(MemoryTest):
         )
         written = await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
         self.assertEqual(written.value.name, "Belleros")
-        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+        # The old spelling stays, as an "old spelling" other name (#2170).
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED, "beleros": CONFIRMED})
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "old"})
         assert written.batch is not None
         await self.memory.undo(GUILD_A, self.c, written.batch)  # one change, one undo
         entity = await self.memory.entity(GUILD_A, self.c, a)
@@ -1881,7 +1903,85 @@ class Renaming(MemoryTest):
                 GUILD_A, self.c, a, text, kind="full", source="dm", status=CONFIRMED
             )
         await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
-        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # misspelling dropped
+        # The misspelling is no longer listened for, but it stays as an old spelling (#2170).
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED, "beleros": CONFIRMED})
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "old"})
+
+    async def test_an_old_spelling_another_entry_has_is_not_kept(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        b = await self.add("Beleros the Younger", status=CONFIRMED)
+        for entity, text in ((a, "Beleros"), (b, "Beleros the Younger")):
+            await self.memory.add_alias(
+                GUILD_A, self.c, entity, text, kind="full", source="dm", status=CONFIRMED
+            )
+        await self.memory.add_alias(
+            GUILD_A, self.c, b, "Beleros", kind="nickname", source="dm", status=CONFIRMED
+        )  # the other entry is also called that
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})  # dropped, as before
+
+    async def test_an_old_spelling_that_is_a_secret_name_is_not_kept(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        b = await self.add("Dread Lord", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.add_alias(
+            GUILD_A, self.c, b, "Beleros", kind="nickname", source="dm", status=CONFIRMED,
+            secret=True,
+        )  # fmt: skip
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+
+    async def test_a_spelling_that_only_differs_in_case_leaves_no_old_name(self) -> None:
+        a = await self.add("belleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "belleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
+
+    async def test_renaming_back_makes_the_name_listened_for_again(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Beleros", source="dm")
+        self.assertEqual(await self.kinds(a), {"beleros": "full", "belleros": "old"})
+
+    async def test_adding_an_old_spelling_as_a_name_makes_it_listened_for(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="nickname", source="dm", status=CONFIRMED
+        )
+        self.assertEqual(await self.kinds(a), {"belleros": "full", "beleros": "nickname"})
+
+    async def test_making_an_old_spelling_the_main_name_listens_for_it_again(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        old = next(x for x in await self.memory.aliases(GUILD_A, self.c) if x.key == "beleros")
+        await self.memory.set_main_name(GUILD_A, self.c, a, old.id, source="dm")
+        self.assertEqual(await self.kinds(a), {"beleros": "full", "belleros": "full"})
+        self.assertFalse(old.secret)
+
+    async def test_fixing_it_again_keeps_each_old_spelling(self) -> None:
+        a = await self.add("Beleros", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, a, "Beleros", kind="full", source="dm", status=CONFIRMED
+        )
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
+        await self.memory.rename_entity(GUILD_A, self.c, a, "Bellerous", source="dm")
+        self.assertEqual(
+            await self.kinds(a), {"bellerous": "full", "belleros": "old", "beleros": "old"}
+        )
 
     async def test_another_name_becomes_the_main_name(self) -> None:
         a = await self.add("Belleros", status=CONFIRMED)
@@ -2159,13 +2259,37 @@ class MergeMatchesTheOldWalk(MemoryTest):
         return keep, gone
 
     async def logged(self, campaign: str, batch: int | None) -> list[str]:
+        """The batch's log rows, as strings. A belief or perspective row is shown by what it says,
+        not by its own id or sequence (those follow the order the two walks happen to write in,
+        which is not what this test compares; #2409)."""
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
                 "SELECT table_name, row_id, op, before, after FROM memory_changes"
                 " WHERE campaign_id = %s AND batch = %s",
                 (campaign, batch),
             )
-            return sorted(json.dumps(dict(r), sort_keys=True) for r in await cur.fetchall())
+            rows = [dict(r) for r in await cur.fetchall()]
+        out = []
+        for r in rows:
+            if r["table_name"] == "memory_beliefs":
+                shown = r["after"] or r["before"]
+                r = {"table_name": r["table_name"], "op": r["op"], "row": [
+                    shown["relation_id"], shown["confidence"], shown["status"]]}  # fmt: skip
+            elif r["table_name"] == "memory_perspectives":
+                r = {"table_name": r["table_name"], "op": r["op"]}
+            out.append(json.dumps(r, sort_keys=True))
+        return sorted(out)
+
+    async def shot(self, campaign: str) -> dict[str, Any]:
+        """A snapshot with the beliefs shown by what they say (see `logged`)."""
+        snap = await self.snapshot(GUILD_A, campaign)
+        kinds = {p["id"]: p["kind"] for p in snap.pop("memory_perspectives")}
+        snap["memory_perspectives"] = sorted(kinds.values())
+        snap["memory_beliefs"] = sorted(
+            (kinds[b["perspective_id"]], b["relation_id"], b["confidence"], b["status"])
+            for b in snap.pop("memory_beliefs")
+        )
+        return snap
 
     async def test_facts_come_back_in_id_order_whatever_the_disk_order(self) -> None:
         """#476: the facts a check reads (and so the flags it makes) come in id order,
@@ -2194,9 +2318,7 @@ class MergeMatchesTheOldWalk(MemoryTest):
                 new = (await self.campaigns.create(GUILD_A, f"New {seed}", DM)).id
                 keep, gone = await self.build(old, seed)
                 self.assertEqual(await self.build(new, seed), (keep, gone))
-                self.assertEqual(
-                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
-                )
+                self.assertEqual(await self.shot(old), await self.shot(new))
                 start = seed * 1_000_000 + 900_000
                 with patch("dmbot.memory.store.new_id", side_effect=(
                     f"{n:032x}" for n in itertools.count(start)
@@ -2211,19 +2333,17 @@ class MergeMatchesTheOldWalk(MemoryTest):
                     f"{n:032x}" for n in itertools.count(start)
                 ).__next__):  # fmt: skip
                     if old_batch is None:  # refused before: refused now, nothing changed
-                        snap = await self.snapshot(GUILD_A, new)
+                        snap = await self.shot(new)
                         with self.assertRaises(MemoryRuleError):
                             await self.memory.merge(
                                 GUILD_A, new, keep, gone, source="dm", dm_said_same=True
                             )
-                        self.assertEqual(await self.snapshot(GUILD_A, new), snap)
+                        self.assertEqual(await self.shot(new), snap)
                         continue
                     merged = await self.memory.merge(
                         GUILD_A, new, keep, gone, source="dm", dm_said_same=True
                     )
-                self.assertEqual(
-                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
-                )
+                self.assertEqual(await self.shot(old), await self.shot(new))
                 self.assertEqual(
                     await self.logged(old, old_batch), await self.logged(new, merged.batch)
                 )
@@ -2232,9 +2352,7 @@ class MergeMatchesTheOldWalk(MemoryTest):
                 with patch("dmbot.memory._changes._undo_run_or_not", AsyncMock(return_value=False)):
                     row_by_row = await self.memory.undo(GUILD_A, old, old_batch, source="dm")
                 bulk = await self.memory.undo(GUILD_A, new, merged.batch, source="dm")
-                self.assertEqual(
-                    await self.snapshot(GUILD_A, old), await self.snapshot(GUILD_A, new)
-                )
+                self.assertEqual(await self.shot(old), await self.shot(new))
                 self.assertEqual(
                     await self.logged(old, row_by_row.batch), await self.logged(new, bulk.batch)
                 )

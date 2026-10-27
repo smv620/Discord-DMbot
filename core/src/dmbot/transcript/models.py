@@ -3,7 +3,7 @@ Discord, no database."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 
 ENTITY_MAX = 120  # the database refuses a longer entity, which would stick a whole batch
@@ -22,6 +22,9 @@ class TranscriptSession:
     number: int = 0  # Session 1, 2, … in its campaign (only sessions with lines count)
     engines: tuple[str, ...] = ()  # "engine model host" of each speech-to-text used
     deleted_at: int | None = None  # the retention job deleted its transcript (#1533)
+    # Each speaker's Discord display name when DMbot kept it (#2337: at the session, or for an older
+    # session when it was filled in); "" when they were not in the server. Only people with lines.
+    speaker_names: Mapping[int, str] = field(default_factory=dict)
 
 
 def line_ref(session_id: str, started_ms: int, user_id: int) -> str:
@@ -38,6 +41,12 @@ SIDEBAR_QUESTION, SIDEBAR_ANSWER = "question", "answer"
 # transcript. DMbot's answer to either is a SIDEBAR_ANSWER line.
 SIDEBAR_TABLE_QUESTION = "table_question"
 QUESTION_KINDS = (SIDEBAR_QUESTION, SIDEBAR_TABLE_QUESTION)
+# A stretch where someone was off the record (#2466): the marker line "(Mia was off the record,
+# nothing recorded, 20:14-20:19 UTC)" in both versions, so a reader sees the gap is on purpose.
+# Stored with the sidebar kinds so it needs no new table; it holds no speech (nothing was
+# captured), only when it began (`started_ms`) and how long it lasted (`duration_ms`).
+OFF_RECORD = "off_record"
+OFF_RECORD_WORDS = "off the record"
 VIA_VOICE, VIA_TYPED, VIA_TABLE = "voice-memo", "typed", "table-trigger"
 # Typed in the table's chat (#1118): not speech, so no speech-to-text in its lineage.
 VIA_TABLE_CHAT = "table-chat"
@@ -92,15 +101,25 @@ class Line:
     # NARRATING, or the confirmed, non-secret name of an NPC the DM was voicing. Never a
     # secret name: whatever sets it checks (the transcript is open to the whole server).
     entity: str = ""
-    # Typed in the table's chat rather than said (#1118): only in the as-heard transcript,
-    # tagged "(typed)", never the cleaned one.
+    # Typed in the table's chat rather than said (#1118): tagged "(typed)", in both versions; the
+    # cleaned one leaves out typing the off-topic filter labelled off_topic (#2447).
     typed: bool = False
+    # A line that describes an image someone posted in the table chat (#2450): a typed line (so it
+    # is kept apart from speech the same way) tagged "(image)" instead. Only ever with `typed`.
+    image: bool = False
     # The Discord message a typed line came from, so deleting it takes the line back while it
     # is still unsaved (#1118). 0 for speech. Never stored.
     message_id: int = 0
 
     def __post_init__(self) -> None:
-        if self.sidebar not in ("", SIDEBAR_ANSWER, *QUESTION_KINDS):  # not at the database
+        if self.image and not self.typed:
+            raise ValueError("an image line is a typed line")
+        if self.sidebar not in (
+            "",
+            SIDEBAR_ANSWER,
+            OFF_RECORD,
+            *QUESTION_KINDS,
+        ):  # not at the database
             raise ValueError(f"unknown sidebar kind {self.sidebar!r}")
         tidy = " ".join(self.entity.split())[:ENTITY_MAX].strip()
         if tidy != self.entity:  # one line, never blank, never too long for the database
@@ -140,6 +159,13 @@ class TranscriptBuffer:
     def drop_speaker(self, user_id: int) -> None:
         self._waiting = [w for w in self._waiting if w.user_id != user_id]
 
+    def drop_since(self, user_id: int, started_ms: int) -> None:
+        """ "Hey DMbot, off the record": what this person said from the moment they said it, which
+        may already have arrived (a later clip can be written down before the earlier one)."""
+        self._waiting = [
+            w for w in self._waiting if not (w.user_id == user_id and w.started_ms >= started_ms)
+        ]
+
     def take(self, allowed: Callable[[int], bool]) -> list[Line]:
         """Everything waiting from people still allowed; nothing is left behind."""
         batch = [w for w in self._waiting if allowed(w.user_id)]
@@ -150,25 +176,28 @@ class TranscriptBuffer:
         """The lines waiting now (a copy), for a re-check of the session after an answer."""
         return list(self._waiting)
 
-    def relabel(self, user_id: int, started_ms: int, text: str) -> bool:
+    def relabel(self, user_id: int, started_ms: int, text: str, *, image: bool = False) -> bool:
         """A waiting line's cleaned words changed (an Undo or an answer, #296, #503);
-        True if it was here."""
+        True if it was here. `image`: the line is a described picture (#2450), not speech."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (
-                user_id,
-                started_ms,
-            ) and not waiting.sidebar:
+            if (
+                (waiting.user_id, waiting.started_ms) == (user_id, started_ms)
+                and not waiting.sidebar
+                and waiting.image == image
+            ):
                 self._waiting[i] = replace(waiting, text=text)
                 return True
         return False
 
-    def set_topic(self, user_id: int, started_ms: int, topic: str) -> bool:
-        """A waiting line's topic, from the off-topic filter (#52); True if it was here."""
+    def set_topic(self, user_id: int, started_ms: int, topic: str, *, typed: bool = False) -> bool:
+        """A waiting line's topic, from the off-topic filter (#52); True if it was here. `typed`:
+        a typed line and a spoken one of the same person can share a millisecond (#2447)."""
         for i, waiting in enumerate(self._waiting):
-            if (waiting.user_id, waiting.started_ms) == (
-                user_id,
-                started_ms,
-            ) and not waiting.sidebar:
+            if (
+                (waiting.user_id, waiting.started_ms) == (user_id, started_ms)
+                and not waiting.sidebar
+                and waiting.typed == typed
+            ):
                 self._waiting[i] = replace(waiting, topic=topic)
                 return True
         return False

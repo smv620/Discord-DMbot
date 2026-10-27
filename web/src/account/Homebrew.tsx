@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindOrder, problem, text } from "../content/homebrew";
+import { sharingCard } from "../content/sharing";
 import {
   ApiError,
   type AccountApi,
@@ -13,6 +14,7 @@ import {
   type HomebrewEntry,
   type HomebrewPage,
 } from "./api";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign in the address: `/account/homebrew/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -56,11 +58,9 @@ function useRead<T>(read: (() => Promise<T>) | null, deps: unknown[]): Load<T> {
 }
 
 function Shell<T>({
-  api,
   load,
   children,
 }: {
-  api: AccountApi;
   load: Load<T>;
   children: (value: T) => preact.ComponentChildren;
 }) {
@@ -74,9 +74,6 @@ function Shell<T>({
     return (
       <div class="panel" role="status">
         <p>{text.signedOut}</p>
-        <a class="button" href={api.signInUrl()}>
-          {text.signIn}
-        </a>
       </div>
     );
   if (load.kind === "error")
@@ -100,6 +97,8 @@ export default function HomebrewPageView({
     <div class="stack">
       <p>
         <a href="/account">{text.account}</a>
+        {" · "}
+        <a href="/account/sharing">{sharingCard.link}</a>
       </p>
       {ref === null ? (
         <Campaigns api={api} />
@@ -116,7 +115,7 @@ function Campaigns({ api }: { api: AccountApi }) {
     [api],
   );
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(campaigns: HomebrewCampaign[]) =>
         campaigns.length === 0 ? (
           <p class="panel" role="status">
@@ -226,7 +225,7 @@ function Entries({
     campaignRef,
   ]);
   return (
-    <Shell api={api} load={load}>
+    <Shell load={load}>
       {(found: HomebrewPage) => {
         const packs = found.packs ?? []; // an older API has none
         return (
@@ -234,6 +233,7 @@ function Entries({
             <p>
               <a href="/account/homebrew">{text.allCampaigns}</a>
             </p>
+            <CampaignNav api={api} campaignRef={campaignRef} page="homebrew" name={found.name} />
             <h2>{found.name}</h2>
             <p class="small">
               {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>

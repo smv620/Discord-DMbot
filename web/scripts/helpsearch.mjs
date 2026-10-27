@@ -2,7 +2,7 @@
 // sent anywhere or kept: the box filters the steps already on the page. The matching and the
 // show-and-hide are plain functions so the vitest can run them on a rendered page.
 
-// Emoji and joiners carry no word, so "stop recording" finds a step that says "⚙️ Menu … Stop recording me".
+// Emoji and joiners carry no word, so "stop recording" finds a step that says "🗂️ Menu … Stop recording me".
 // (Written as escapes so an editor can't strip the invisible ones. ©, ® and ™ count as emoji here too,
 // which is harmless: no step turns on them.)
 const emoji = /[\p{Extended_Pictographic}\uFE0F\u200D]/gu;

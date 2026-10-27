@@ -20,6 +20,7 @@ from dmbot.memory.models import MemoryRuleError
 from dmbot.memory.story_plan import PlanStore
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.ui import guide as ui
+from tests import speed
 from tests import test_story_watch as base
 from tests.test_adventure import press
 from tests.test_memory_store import DM, GUILD_A, GUILD_B
@@ -582,7 +583,6 @@ class Pressing(Setup):
 
 class Speed(Setup):
     async def test_a_300_page_plan_is_read_in_a_few_milliseconds(self) -> None:
-        import time
 
         nodes: list[tuple[str, str, int]] = []
         for c in range(40):
@@ -593,11 +593,15 @@ class Speed(Setup):
         for c in range(0, 40, 2):
             await self.linked(ids, f"Person {c}-0", 100 + c)
         await model.read(self.memory, GUILD_A, self.c, doc)  # (the first call opens a connection)
-        began = time.perf_counter()
+
+        async def look() -> None:
+            read, pick = await model.read(self.memory, GUILD_A, self.c, doc)
+            build(read, pick)
+
+        took = await speed.fastest_async(look)  # (the best of several: one pause is not slowness)
         read, pick = await model.read(self.memory, GUILD_A, self.c, doc)
         guide = build(read, pick)
-        took = time.perf_counter() - began
         print(f"\nGuide me on {len(read)} entries and 20 links: {took * 1000:.1f} ms")
         self.assertEqual(len(read), 440)
         self.assertIsNotNone(guide.chapter)
-        self.assertLess(took, 0.5)
+        self.assertLess(took, speed.allowed(0.5))

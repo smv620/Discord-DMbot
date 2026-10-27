@@ -47,6 +47,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   since the PR's last CI run, RepoManager merges `development` into the PR's branch and
   waits for green CI on that head; Supervisor's approval stands for a merge-of-development
   push that changes nothing else.
+  **The Cloudflare Pages check is a preview, not CI** (Supervisor, 2026-10-21, after it sat "in
+  progress" for over 20 minutes on #2267 and #2269): when every CI job (`core`, `ears`, `web`,
+  `scripts`, `docker images`) is green on the exact head and Cloudflare Pages has been in progress for
+  more than 20 minutes without failing, RepoManager merges without it. A Cloudflare Pages failure
+  still blocks.
   **RepoManager does that refresh itself** (2026-10-08, #516): when the merge of
   `development` into an approved PR's branch is clean and the PR's own change is unchanged
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
@@ -58,7 +63,15 @@ CI runs all of the above on every pull request. Never merge red CI.
   where its permissions allow a push to the PR's branch; where they refuse, the author merges
   `development` and keeps both entries. Either way the approval carries over as a merge-only
   refresh (`git log --no-merges OLD..NEW ^origin/development` empty and the merge commit writes
-  no new line). A conflict in any other file goes to the author and needs a fresh "approved".
+  no new line). **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
+  were held by it): when both sides only add entries to `web/src/content/whats-new.ts` (`entries` or
+  `held`) and its test's expected lists, RepoManager resolves it as the union, keeping every entry
+  whole in the file's order, and the approval carries over the same way. Since #2469 (2026-10-23)
+  each entry is its own file in `web/src/content/whats-new/`, so two new entries no longer conflict;
+  a branch from before it moves its entry into a file, word for word, at its next merge of
+  `development`, and that move carries the approval over too. An edit to an existing entry
+  on either side is not a union. A conflict in any other file goes to the author and needs a fresh
+  "approved".
   **A tests-only push keeps the approval** (Supervisor, 2026-10-16, #1526 onward): a push after
   "approved" that changes only files under `tests/` (a CI fix, a typing fix in a stand-in) needs
   no new design review; Supervisor records the approval again as a review on the new head so the
@@ -118,7 +131,7 @@ CI runs all of the above on every pull request. Never merge red CI.
   ux-critic, perf-qa) on the diff and address their findings or explain why not.
 - Update `docs/PLAN.md` when a decision changes scope or architecture.
 - A PR that ships something users can see adds its line to the site's What's new page
-  (`web/src/content/whats-new.ts`), or to its `held` list with the reason while something known
+  (one file per entry in `web/src/content/whats-new/`, #2469), or marks it `held` with the reason while something known
   stops it working (Supervisor, 2026-10-15; docs/PLAN.md, "What's new page").
 
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
@@ -202,7 +215,7 @@ On the server that copy is the one in Docker Compose, run by dev1.
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
-session of a role works from this file and GitHub alone. **Each session is woken four times an hour
+session of a role works from this file and GitHub alone. **Each session is woken four times an hour (Supervisor once and dev1 twice, owner 2026-10-24)
 by scheduled tasks** (a scheduled task fires at most hourly, so four make the 15 minutes). The minutes
 are staggered so each role finds the others' work done:
 
@@ -210,9 +223,9 @@ are staggered so each role finds the others' work done:
 |---|---|---|
 | CloudDev | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
 | WebDev | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
-| Supervisor | :04 (hourly summary), :19, :34, :49 | long-lived cloud session |
+| Supervisor | :04 (hourly summary; once an hour, owner 2026-10-24) | long-lived cloud session |
 | RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
-| dev1 | :12 (hourly check), :27, :42, :57 | long-lived, on the server |
+| dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
 last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
@@ -307,10 +320,18 @@ terminal output or Discord screenshots copied to it.
   not opted in. Bots are never captured. This is enforced in ears (allowlist) and
   re-checked in core, including after every async step. Consent is given with a DM
   button (slash command as fallback), carries over per server, and every join triggers
-  a reminder with the consent date and a **⚙️ Menu** button whose menu holds **Stop
-  recording me** (owner decision, 2026-10-08). Stopping shows one short, factual warning
+  a reminder with the consent date and a **🗂️ Menu** button whose menu holds **Stop
+  recording me** (owner decision, 2026-10-08; the icon changed from ⚙️ at the owner's Test K
+  on 2026-10-18, #1966, so it no longer looks like ⚙️ Settings). Stopping shows one short, factual warning
   and one confirmation, never more. See docs/PLAN.md.
 - **One voice channel:** the bot listens only to the configured table channel.
+- **Every wait shows that DMbot is still working** (owner, 2026-10-23, #2564): whenever someone waits
+  for DMbot to process something, on the website or in Discord (an import, a long document, a recap, a
+  backup, a move, an AI answer that takes more than a few seconds), DMbot shows **what stage it is at**,
+  **how far along** where it knows (part 1 of 2, 3 of 10), **how long it has been running**, and **when it
+  last moved forward**, updated while it runs. A wait that stops making progress says so, and a failure
+  says what happened and what to do next. Progress shows counts and stages only, never the words of a
+  transcript or document. A new feature with a wait ships with this, or the reviewer sends it back.
 - **Quick, short and on topic** (owner, 2026-10-09): DMbot is there to help the game move
   quickly, never to bog it down or distract. AI answers to the DM are as short as possible
   ("yes" when yes answers it), elaborate only when asked, and stay on the campaign, the
@@ -398,10 +419,27 @@ terminal output or Discord screenshots copied to it.
   a table holding rows. Open **every** table the statement reads, not only the one it
   writes (a `FROM` or join on a hidden table matches nothing; found in #781's 0029, whose
   backfill would have deleted every row it meant to fill).
-- **Claim the migration number on the issue before pushing** (Supervisor, 2026-10-16, after
-  three collisions in one night: #1430, #1452, #1453): comment "Claiming migration NNNN_name" on
-  your issue, taking the lowest number no open PR or issue has claimed, then push. A collision
-  found at review is renumbered by the later claimant. Names order the list, so a gap is fine.
+- **A foreign key that carries `guild_id` is `ON UPDATE CASCADE`** (Supervisor, 2026-10-23, #2550):
+  moving a campaign to another server changes its `guild_id` in one statement and lets the database
+  carry the change into every row that hangs off it. A new table whose foreign key includes
+  `guild_id` declares `ON UPDATE CASCADE`, or the catalog test (`test_campaign_move_cascade`) fails.
+  A new table with a `campaign_id` also goes on the list in `campaigns/tables.py`, in a backup
+  section or on the written "not in a backup, because…" list (#2552).
+- **Claim the migration number on #2475 before pushing** (Supervisor, 2026-10-16; one place since
+  2026-10-23, after four more collisions in one night when claims sat on separate issues): read
+  #2475's last comment, post `NNNN_name, #<issue>, <session>` with the next number, then push. If two
+  comments claim the same number, the earlier keeps it and the later renumbers. Names order the
+  list, so a gap is fine.
+- **AI output limits are generous** (owner, 2026-10-24, #2596, after #2086, #2341, #2345, #2365,
+  #2454, #2563 and #2594 were all answers cut off at a hand-sized `max_tokens`): background calls
+  never send less than the tier's floor in `ai.py` (about 16,000 tokens); the service charges for
+  what is written, not the limit. Only live table answers keep short caps, at least 4 times what they
+  need. A cut answer (`reply.cut`) is retried in smaller parts or reported as stopped early, never
+  as "nothing found". Bring limits down later only with logged numbers.
+  **Lengths are targets in the instructions, never checks** (owner, 2026-10-24, #2597): whatever
+  comes back is used in full. Never fail, retry, rewrite or cut an answer for being longer or shorter
+  than a target; only an empty or unreadable one is retried, and a platform's hard limit (Discord's
+  2,000 characters) splits a message into parts.
 - **Database-backed tests run only where Postgres is:** core's session and store tests
   are skipped when no database is available, so a green local `pytest` proves little
   for that code. Read the CI core job on the PR's head commit before writing "tests

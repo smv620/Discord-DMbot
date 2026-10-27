@@ -23,7 +23,7 @@ export function labelsInPython(text) {
   return found;
 }
 
-/** Drop leading emoji and symbols and fold spacing, so "⚙️ Menu" and "Menu" compare equal. */
+/** Drop leading emoji and symbols and fold spacing, so "🗂️ Menu" and "Menu" compare equal. */
 export function plain(s) {
   return s
     // ℹ️ is a lowercase letter to Unicode, so emoji are stripped by their own class first.
@@ -95,7 +95,9 @@ export function labelProblems(items, labels, allowed = []) {
  * checks the text is still there, so a renamed button can't hide behind this list.
  */
 export const hiddenBotLabels = [
-  { label: "My buttons", file: "dm_screen/dm_bot_panel.py" },
+  { label: "DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
+  { label: "Transcript retention", file: "dm_screen/transcript_keep.py" },
+  { label: "Transcripts", file: "dm_screen/dm_bot_panel.py" },
   { label: "Species", file: "ui/homebrew.py" },
   { label: "Start a timer", file: "dm_screen/clock.py" },
   { label: "Rejoin the party", file: "dm_screen/clock.py" },
@@ -114,13 +116,43 @@ export const hiddenBotLabels = [
   { label: "Off", file: "dm_screen/story_mode.py" },
   { label: "Watch the story", file: "dm_screen/story_mode.py" },
   { label: "Helped them", file: "memory/standing.py" },
-  { label: "Secret: no", file: "ui/name_card.py" },
+  { label: "Next one is public", file: "ui/name_card.py" },
+  { label: "Next one is secret", file: "ui/name_card.py" },
   { label: "Due soon", file: "memory/threads.py" },
   { label: "Post to the table", file: "ui/recap_dm.py" },
 ];
 
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
-export const siteButtons = ["Cleaned", "House rules", "Session transcripts", "Forgot your password"];
+export const siteButtons = [
+  "Cleaned",
+  "House rules",
+  "Session transcripts",
+  "Forgot your password",
+  "Merge selected", // the All names page (#2427), on the website, not in Discord
+  "Change", // the recap page (#2577): changes who was in a scene, on the website, not in Discord
+  "Save list", // the same panel: saves the scene's list (#2577)
+  "Keep as a belief", // the Story graph's What people believe (#2412): keeps a reading as a belief, on the website, not in Discord
+  "Drop it", // the same panel: says a reading is not wanted
+  "Rewrite with these", // the recap page (#2114), on the website, not in Discord
+  "Speak instead", // the recap page (#2114), on the website, not in Discord
+  "Send", // the same page: sends the typed or spoken note
+  // The recap page's share controls (#2119), on the website, not in Discord.
+  // The recap maker for past sessions (#2610), on the website, not in Discord.
+  "Make the recap",
+  "Add a recap someone wrote",
+  "Make a link",
+  "Turn the link off",
+  "Make a new link",
+  "Remake the voice", // the recap page's audio part (#2630), on the website, not in Discord
+  "Remake voice and music",
+  "Replace everywhere", // "Fix a name everywhere" in the recap editor (#2630)
+  "Save how to say it", // the Names page row editor (#2317), on the website, not in Discord
+];
+
+/** Buttons the site names before the bot has them: a held Help step written ahead of the code that
+ * ships the button (#1958 for #1957). The test fails once core has the label, so the entry is
+ * removed in the same change that sees it, and a typo here can't hide a wrong name for long. */
+export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([]);
 
 /** Discord's own controls, which the bot doesn't label. */
 export const discordControls = ["Save Changes", "Reset Token"];

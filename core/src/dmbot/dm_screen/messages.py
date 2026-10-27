@@ -73,6 +73,7 @@ HIDE_IS_DM = "You're a DM of this campaign, so the DM screen stays visible to yo
 HIDE_OPEN = "The DM screen is open to everyone, so it can't be hidden just for you."
 PLAYER_FAILED = "Sorry, DMbot couldn't change the DM screen for you. Let your DM know."
 STOP_LISTENING_LABEL = "Stop listening"
+PAUSE_TABLE_LABEL = "Pause the table"  # with ⏸️: the DM's off the record (#2466)
 NOT_LISTENING_NOW = (
     "DMbot isn't listening to this campaign right now. To start, run `/dmbot start`."
 )
@@ -88,7 +89,7 @@ STOP_STALE = (
 )
 STOPPING = "Stopping…"
 ONLY_DM_STOPS = (
-    "Only the DM can stop the session. To stop recording *you*, press **⚙️ Menu** in "
+    "Only the DM can stop the session. To stop recording *you*, press **🗂️ Menu** in "
     "DMbot's private message, then **Stop recording me**, then **Yes**, or type "
     "`/consent revoke`."
 )
@@ -164,7 +165,8 @@ def help_card(campaign_name: str, visibility: str, dm_bot_channel_id: int | None
     # Settings and options live in the DM Bot channel (#1666); /dmbot settings still works.
     where = f"in <#{dm_bot_channel_id}>" if dm_bot_channel_id else "with `/dmbot settings`"
     lines.append(
-        f"**DM:** who can see this and how much DMbot says are in ⚙️ **Settings**, {where}."
+        f"**DM:** who can see this and how much DMbot says are in ⚙️ **Settings** (under 👤 "
+        f"**DMbot Main Menu**), {where}."
     )
     if visibility == "peek":
         lines.append(f"**Peeking?** Press 🙈 **{HIDE_LABEL}** below to stop.")
@@ -264,7 +266,7 @@ def transcript_card(campaign_name: str) -> str:
             "Chat that's clearly not about the game may be shortened to a note like \"[8s of "
             'off-topic chat skipped]"; every word is still saved in the "As heard" transcript.',
             "**Who is recorded:** only people who said yes in DMbot's private message. "
-            "Changed your mind? Press **⚙️ Menu** in that message, then **Stop recording me**, "
+            "Changed your mind? Press **🗂️ Menu** in that message, then **Stop recording me**, "
             "then **Yes**, "
             "or type `/consent revoke` here or in any channel. Only you see the answer. "
             "What's already here stays.",
@@ -466,10 +468,14 @@ def joined_not_recorded_message(name: str) -> str:
     return f"✉️ **{_who(name)}** joined. Not recorded unless they say yes."
 
 
+def joined_off_the_record_message(name: str) -> str:
+    return f"⏸️ **{_who(name)}** joined and is off the record."
+
+
 # A test server (#1019): said once at /dmbot start, in the DM screen.
 TEST_SESSION = (
     '🧪 Test session. Only players who chose "Save my voice for tests" have their voice kept. '
-    "Everyone else is still written down as usual. Players can stop any time in ⚙️ Menu."
+    "Everyone else is still written down as usual. Players can stop any time in 🗂️ Menu."
 )
 
 

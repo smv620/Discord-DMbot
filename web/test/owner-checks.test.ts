@@ -19,6 +19,7 @@ describe("the owner's checks and the held What's new entries", () => {
     const titles = ownerWaiting(held).map((h) => h.title);
     expect(titles).not.toContain("New names from what was said"); // the story extractor
     expect(titles).not.toContain("Narrated recaps with music"); // the ElevenLabs account
+    expect(titles).not.toContain("Play a recap's voice and music");
     expect(titles).toContain("Watch the story");
   });
 

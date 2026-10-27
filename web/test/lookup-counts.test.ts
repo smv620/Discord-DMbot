@@ -65,6 +65,19 @@ describe("lookup counts", () => {
     }
   });
 
+  it("names the game master's kinds: poisons, traps, curses and diseases (#1935, #1944)", () => {
+    const files = [
+      { kind: "toolbox", entries: [{ kind: "poison" }, { kind: "trap" }, { kind: "trap" }, { kind: "curse" }, { kind: "disease" }] },
+    ];
+    expect(unnamedKinds(files)).toEqual([]);
+    expect(lookupList(files)).toEqual([
+      { label: "Poisons", count: 1 },
+      { label: "Traps", count: 2 },
+      { label: "Curses", count: 1 },
+      { label: "Diseases", count: 1 },
+    ]);
+  });
+
   it("names gear and tool entries from a made-up file, whatever the data holds today", () => {
     const files = [{ kind: "equipment", entries: [{ kind: "gear" }, { kind: "gear" }, { kind: "tool" }] }];
     expect(lookupList(files)).toEqual([

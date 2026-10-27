@@ -316,7 +316,12 @@ class SaveAndResume(SessionTests):
         self.posts: list[tuple[int, str]] = []
 
         async def fake_post(
-            channel_id: int, text: str, view: object = None, *, remember: object = None
+            channel_id: int,
+            text: str,
+            view: object = None,
+            *,
+            remember: object = None,
+            secret_of: object = None,
         ) -> bool:
             self.posts.append((channel_id, text))
             return True
@@ -358,6 +363,30 @@ class SaveAndResume(SessionTests):
 
     def screen_posts(self) -> list[str]:
         return [t for cid, t in self.posts if cid == SCREEN]
+
+    async def test_a_pause_is_saved_with_the_session_and_a_restart_keeps_it(self) -> None:
+        """Off the record (#2466): after a restart the person is still not recorded, before their
+        audio is let in, and a stop or a new session clears it."""
+        await self.consent.grant(GUILD, PLAYER)
+        await self.consent.grant(GUILD, DM)
+        await self.start()
+        self.bot.tables[GUILD].dmbchat_channel_id = 555
+        done = await self.bot.pause_recording(GUILD, PLAYER, 15)
+        assert done.ok
+        saved = await self.sessions.get(GUILD)
+        assert saved is not None
+        self.assertEqual(list(saved.paused["people"]), [str(PLAYER)])
+        bot = await self.restart()
+        await bot.resume_sessions()
+        self.assertFalse(bot.consent.has_consent(GUILD, PLAYER))  # still off the record
+        self.assertTrue(bot.consent.has_consent(GUILD, DM))
+        allowlists = [json.loads(m)["userIds"] for m in self.ears.sent if '"allowlist"' in m]
+        self.assertNotIn(str(PLAYER), allowlists[0])  # the first list ears gets leaves them out
+        self.assertIn(str(DM), allowlists[0])
+        await self.sessions.save(saved)  # a new session in its place starts with no pauses
+        again = await self.sessions.get(GUILD)
+        assert again is not None
+        self.assertEqual(again.paused, {})
 
     async def test_start_saves_and_stop_forgets(self) -> None:
         await self.start()
@@ -686,7 +715,8 @@ class SaveAndResume(SessionTests):
         await bot._on_status(bot.tables[GUILD], Status("joined", guild_id=GUILD))
         (ids,) = [ids for text, ids in views if "listening again" in text]
         cid = self.campaign.id
-        self.assertEqual(ids, [f"dmbot:stop:{cid}"])  # Settings moved to the DM Bot channel (#1666)
+        # Settings moved to the DM Bot channel (#1666); the table pause is the other control (#2466)
+        self.assertEqual(ids, [f"dmbot:tablepause:{cid}", f"dmbot:stop:{cid}"])
 
     async def test_quick_repeat_restarts_stay_quiet(self) -> None:
         from dmbot.ears.protocol import Status
@@ -1162,7 +1192,8 @@ class SaveAndResume(SessionTests):
         self.assertIn("✉️ Not recorded yet: Dee. DMbot is asking privately", text)
         self.assertNotIn("0 player", text)
         # #108: the DM stops with one press; the button comes off at the end.
-        (button,) = call.args[2].children  # only the in-game control (Settings moved, #1666)
+        pause, button = call.args[2].children  # the in-game controls (Settings moved, #1666)
+        self.assertEqual(pause.custom_id, f"dmbot:tablepause:{self.campaign.id}")  # #2466
         self.assertEqual(button.custom_id, f"dmbot:stop:{self.campaign.id}")
         await self.bot.stop_table(GUILD, "test")
         await asyncio.gather(*self.bot._finishing)
@@ -1521,6 +1552,107 @@ class SaveAndResume(SessionTests):
         for _ in range(10):
             await asyncio.sleep(0)
 
+    def fixing(self, table: Any) -> list[Any]:
+        """Every line is cleaned with one sure fix by sound; the counts are collected."""
+        from dmbot.transcript.cleaner import SOUND, Cleaned, Fix
+
+        counted: list[Any] = []
+        table.name_lookup = object()
+        patcher = patch("dmbot.bot.find_mentions", return_value=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.bot._clean = lambda t, text, **_: Cleaned(  # type: ignore[method-assign]
+            text, (Fix(0, 4, "Kerr", "Cerric", "e1", SOUND),)
+        )
+        self.bot._count_heard_forms = lambda t, user, fixes: counted.append((user, len(fixes)))  # type: ignore[method-assign,assignment]
+        return counted
+
+    async def test_a_game_talk_line_is_counted_for_the_say_it_this_way_offers(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        counted = self.fixing(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Kerr sneaks past the guards")
+        self.assertEqual(counted, [(PLAYER, 1)])
+
+    async def test_a_held_line_is_not_counted_whatever_its_label(self) -> None:
+        for answer in ("1 other\n2 other", "1 game\n2 game"):
+            table = await self.filtered(answer)
+            counted = self.fixing(table)
+            self.said(table, "Kerr called about the spreadsheet")
+            self.said(table, "Kerr sneaks past the guards", at_ms=5_000)
+            await self.settle()
+            self.assertEqual(counted, [], answer)
+
+    def pronounced_calls(self, table: Any) -> list[Any]:
+        """Every line is looked at for a name said with its pronunciation; the calls are kept."""
+        calls: list[Any] = []
+        self.fixing(table)
+        self.bot._note_pronounced = lambda t, user, line, found, raw, **kw: calls.append(  # type: ignore[method-assign]
+            (user, kw.get("held_key"))
+        )
+        return calls
+
+    async def test_a_game_talk_line_is_looked_at_for_a_pronunciation_at_once(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None  # no filter: the line is not held
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [(PLAYER, None)])
+
+    async def test_a_held_line_is_looked_at_with_its_key_so_it_waits_for_its_label(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.said(table, "Kerr called about the spreadsheet")
+        self.said(table, "Cerric is pronounced Seh-rick", at_ms=5_000)
+        await self.settle()
+        self.assertEqual([c[0] for c in calls], [PLAYER, PLAYER])
+        self.assertTrue(all(key is not None for _, key in calls))  # both are held
+
+    async def test_a_held_pronunciation_is_counted_for_the_name_it_followed_through_labelling(
+        self,
+    ) -> None:
+        """#2231, the whole way: a named line, then a held "pronounced" line, then a line naming
+        someone else before the label arrives. The sound goes to the first name."""
+        from dmbot.memory.lookup import CampaignLookup, LookupData
+        from dmbot.memory.models import CONFIRMED, Alias, Entity
+
+        table = await self.filtered("1 game\n2 game")
+        cerric, kael = "c" * 32, "d" * 32
+        names = ((cerric, "Cerric"), (kael, "Kael"))
+        table.name_lookup = CampaignLookup.build(
+            LookupData(
+                1,
+                tuple(Entity(e, "npc", n, "", CONFIRMED, None, "dm", 0) for e, n in names),
+                tuple(
+                    Alias(
+                        e[:16] + "0" * 16, e, n, n.lower(), "full", None, False, CONFIRMED,
+                        (), "dm", 0,
+                    )
+                    for e, n in names
+                ),
+                (),
+                (),
+            )
+        )  # fmt: skip
+        self.said(table, "we ask Cerric")
+        self.said(
+            table, "it's pronounced Seh-rick", at_ms=5_000
+        )  # held, with the window's call out
+        self.said(table, "and Kael is there too", at_ms=10_000)  # a second name before the label
+        # A second held line fills the window, so both are labelled.
+        self.said(table, "Kerr called about the spreadsheet", at_ms=15_000)
+        await self.settle()
+        self.assertEqual(list(table.pronounced), [(cerric, "sehrick", PLAYER)])
+
+    async def test_a_table_that_is_only_finishing_is_not_looked_at(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        calls = self.pronounced_calls(table)
+        self.bot.topic_ai = None
+        self.bot.tables.pop(GUILD, None)  # the session has ended, but is still finishing
+        self.bot._ending[GUILD] = [table]
+        self.said(table, "Cerric is pronounced Seh-rick")
+        self.assertEqual(calls, [])
+
     async def test_off_topic_lines_never_reach_the_names_scan(self) -> None:
         table = await self.filtered("1 other\n2 game")
         self.said(table, "my boss called again")
@@ -1593,6 +1725,47 @@ class SaveAndResume(SessionTests):
         await self.settle()
         self.assertTrue(table.vocabulary.is_word("spreadsheet"))  # when unsure, keep
         self.assertTrue(table.vocabulary.is_word("sneak"))
+
+    async def spelled_through_the_gate(self, answer: str) -> Any:
+        """#2168: the find is held with the line, not skipped, until the line is labelled."""
+        table = await self.filtered(answer)
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        self.assertEqual(table.spelled, [])  # held: not recorded yet
+        self.assertIn((PLAYER, 5_000), table.held_spelled)
+        await self.settle()
+        self.assertEqual(table.held_spelled, {})
+        return table
+
+    async def test_a_spelled_line_labelled_game_talk_is_recorded(self) -> None:
+        table = await self.spelled_through_the_gate("1 game\n2 game")
+        self.assertEqual([w for w, _, _ in table.spelled], ["Brannoch"])
+
+    async def test_a_spelled_line_labelled_off_topic_is_dropped(self) -> None:
+        table = await self.spelled_through_the_gate("1 other\n2 other")
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_drops_a_held_spelling_and_what_was_kept(self) -> None:
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "how do you spell that")
+        self.said(table, "B R A N N O C H", at_ms=5_000)
+        table.spelled.append(("Kael", PLAYER, ""))  # already kept, and hinted
+        table.spelled_hints = ("Kael",)
+        self.bot.stop_recording(GUILD, PLAYER)
+        self.assertEqual((table.held_spelled, table.spelled, table.spelled_hints), ({}, [], ()))
+        await self.settle()
+        self.assertEqual(table.spelled, [])
+
+    async def test_stopping_recording_forgets_their_ask_and_the_words_before_it(self) -> None:
+        import time
+
+        table = await self.filtered("1 game\n2 game")
+        self.said(table, "We were sent by Brannoch")
+        self.said(table, "how do you spell that", at_ms=2_000)
+        self.bot.stop_recording(GUILD, PLAYER)
+        # Right now, inside the windows: their ask is gone, so another's letters don't count.
+        later = table.spelling.note(DM, "B R A N N O C H", time.monotonic())
+        self.assertEqual(later, [])
 
     async def test_a_line_plainly_about_the_game_adds_its_words_at_once(self) -> None:
         table = await self.filtered("1 other\n2 game")
@@ -2060,7 +2233,7 @@ class SaveAndResume(SessionTests):
         self.assertNotIn("my boss called again", [text for _, text in table.heard])
         answer = await self.bot.put_back(GUILD, run.id, DM)
         self.assertIn("Put back", answer)
-        store.set_topics.assert_awaited_with(GUILD, "s5", PLAYER, [0], "game")
+        store.set_topics.assert_awaited_with(GUILD, "s5", PLAYER, [0], "game", typed=False)
 
     async def test_only_the_dm_can_put_a_line_back(self) -> None:
         table, posted, _ = await self.left_out_line()
@@ -2143,7 +2316,7 @@ class SaveAndResume(SessionTests):
         table.transcript_session_id = "s5"
         edits = posted.edit.await_count
 
-        async def stop_meanwhile(*_: Any) -> int:
+        async def stop_meanwhile(*_: Any, **__: Any) -> int:
             self.bot.stop_recording(GUILD, PLAYER)
             return 1
 
@@ -2190,7 +2363,7 @@ class SaveAndResume(SessionTests):
         table.transcript_session_id = "s5"
         edits = posted.edit.await_count
 
-        async def stop_meanwhile(*_: Any) -> int:
+        async def stop_meanwhile(*_: Any, **__: Any) -> int:
             await self.bot.stop_table(GUILD, "test")
             return 1
 
@@ -2307,7 +2480,7 @@ class SaveAndResume(SessionTests):
         table.transcript_session_id = "s5"
         table.save_lock.release()
         self.assertIn("Put back", await press)
-        store.set_topics.assert_awaited_once_with(GUILD, "s5", PLAYER, [0], "game")
+        store.set_topics.assert_awaited_once_with(GUILD, "s5", PLAYER, [0], "game", typed=False)
 
     async def test_lines_labelled_after_the_stop_arent_listed(self) -> None:
         table = await self.filtered("1 other")
@@ -2340,8 +2513,13 @@ class SaveAndResume(SessionTests):
         table = await self.filtered("1 other")
         table.topics.window_lines, table.topics.window_s = 6, 0.01
         self.said(table, "my boss called again")
-        await asyncio.sleep(0.05)
-        await self.settle()
+        # wait for the window to close rather than a fixed 50 ms: on a loaded runner the 10 ms
+        # timer can fire late, and the question is then asked a moment after the sleep ended
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            await self.settle()
+            if self.ai_calls:
+                break
         self.assertEqual(len(self.ai_calls), 1)
         self.assertEqual(table.heard, [])
 

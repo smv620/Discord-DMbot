@@ -1,5 +1,5 @@
 """A finished recap the DM never decided on is said once at the next session start (#1474), with the
-same three buttons (#1457): only a ready draft, at most two, newest first; never a posted, skipped
+same buttons (#1457): only a ready draft, at most two, newest first; never a posted, skipped
 or unfinished one; nothing when the campaign's recaps are off or the session resumed."""
 
 from __future__ import annotations
@@ -53,10 +53,11 @@ def fake_bot(drafts: list[tuple[int, str]], *, on: bool = True, text: bool = Tru
     )
     bot = SimpleNamespace(
         recaps=SimpleNamespace(waiting_drafts=AsyncMock(return_value=drafts)),
-        settings=SimpleNamespace(recaps_on=on),
+        settings=SimpleNamespace(recaps_on=on, site_url="https://site.example.com"),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(recaps_text=text))),
         tables={GUILD: table},
         post=AsyncMock(return_value=True),
+        recap_audio_why=AsyncMock(return_value=""),
     )
     return bot, table
 
@@ -66,7 +67,7 @@ async def run(bot: Any, table: Any) -> None:
 
 
 class TheStartLines(unittest.IsolatedAsyncioTestCase):
-    async def test_a_waiting_draft_is_said_once_with_the_three_buttons(self) -> None:
+    async def test_a_waiting_draft_is_said_once_with_its_buttons(self) -> None:
         bot, table = fake_bot([(300, "The Silver Lock")])
         await run(bot, table)
         ((channel, line), kwargs) = bot.post.await_args.args, bot.post.await_args.kwargs
@@ -76,8 +77,13 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
             "📜 Last session's recap is still waiting: **The Silver Lock**. "
             "Nothing has gone to the players.",
         )
-        ids = [cast(Any, i).custom_id for i in kwargs["view"].children]
-        self.assertEqual(ids, [f"dmbot:recap:{a}:{'c' * 32}:300" for a in ("read", "post", "drop")])
+        # the three ways to approve (#2420), the website link, then Share a recap (#2118)
+        children = kwargs["view"].children
+        self.assertEqual(
+            [cast(Any, c).item.custom_id.split(":")[2] for c in children[:3]], ["ap", "aa", "ak"]
+        )
+        self.assertTrue(children[3].url.startswith("https://site.example.com/account/recaps"))
+        self.assertEqual(cast(Any, children[4]).item.custom_id, f"dmbot:recapshare:{'c' * 32}")
         self.assertEqual(bot.post.await_count, 1)
 
     async def test_at_most_two_one_line_each_newest_first(self) -> None:

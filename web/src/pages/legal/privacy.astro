@@ -3,11 +3,12 @@ import LegalPage from "../../components/LegalPage.astro";
 import { SUPPORT_AI_LIVE, anthropicAddition, privacyParagraph } from "../../content/support-words";
 import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
-import { RECAP_AUDIO_LIVE, RECAPS_LIVE } from "../../content/recap-words";
+import { RECAP_AUDIO_LIVE, RECAP_SHARE_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
 import { initiativeLine, peopleListLine, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
+  geminiPrivacy,
   keepAfterStopPaying,
   minimumAge,
   operator,
@@ -112,7 +113,7 @@ import {
     <li>
       <strong>Names at the table.</strong> DMbot notices what people are called at the table,
       like "Mike", only from people who said yes to being recorded. The game master checks those names. If you
-      press ⚙️ Menu, then Stop recording me, DMbot forgets the names it picked up about you. Names
+      press 🗂️ Menu, then Stop recording me, DMbot forgets the names it picked up about you. Names
       your game master typed in themselves stay.
     </li>
     {
@@ -131,7 +132,7 @@ import {
     }
     <li>
       <strong>Deleting transcripts.</strong> Anyone who said yes can delete every line they said
-      in a server, from every past game: press ⚙️ Menu in DMbot's private message to you, then
+      in a server, from every past game: press 🗂️ Menu in DMbot's private message to you, then
       🗑 Delete my transcripts. This can't be undone. It does not remove other people's lines, the story notes
       your game master kept, or copies someone already downloaded. A game master can also choose how long a campaign keeps its transcripts:
       forever, 1 year, 90 days or 30 days. Older ones are deleted within a day. A session whose
@@ -144,6 +145,18 @@ import {
       only some test servers ask.
     </li>
   </ul>
+
+  <h3>When you write notes on a name</h3>
+  <p>
+    Each name in the NPC list has its own page on this website (the 📖 Open button in Discord opens
+    it). It shows only what the table already sees in the NPC list, never the DM's secrets; the DM's
+    own note on a name is shown to the DM only. The page also has a box called My notes. What you
+    write there is for you alone: no other player and no DM can see it on DMbot. DMbot never uses
+    it, and it is never put in a transcript, a backup or the campaign's story memory. You can
+    download all your notes in a campaign, or delete them, from the NPC page. If a name is taken
+    off the NPC list, your note on it is kept for 30 days, then deleted. Your notes are deleted when
+    the campaign is.
+  </p>
 
   <h3>When you use the Say hello page</h3>
   <p>
@@ -162,8 +175,9 @@ import {
         team, privately, and is not posted anywhere public. The team replies by email to the
         address on your account, if it has one. We keep it for 12 months, then delete it.
         After you send it, your account page shows you its subject, when you sent it and whether it
-        was answered, never the message itself. If you delete your account, we delete your messages
-        too.
+        was answered. You can open it there to read the whole conversation: your message and the
+        replies. On our website, only you and the team can read it. If you delete your account, we delete your
+        messages too.
       </p>
     )
   }
@@ -246,7 +260,7 @@ import {
     DMbot uses transcripts and what people type in the table's chat to get better. You can turn
     this off in <a href="/account">My Account</a>. It covers every server. DMbot still runs your
     games as usual. It just won't use your words to get better. Turning it off does not stop
-    recording, which is separate: to stop being recorded, press ⚙️ Menu in DMbot's private message
+    recording, which is separate: to stop being recorded, press 🗂️ Menu in DMbot's private message
     to you, then "Stop recording me".
   </p>
   <p>
@@ -264,6 +278,24 @@ import {
         SUPPORT_AI_LIVE ? anthropicAddition : ""
       }
     </li>
+    <li>
+      <strong>{geminiPrivacy.name}</strong>: {geminiPrivacy.lead} {geminiPrivacy.body}
+      {geminiPrivacy.country} <a href={geminiPrivacy.termsUrl} rel="noopener noreferrer">{geminiPrivacy.termsText}</a>.
+    </li>
+    <li>
+      <strong>ElevenLabs</strong>: turns the words of a recap into a spoken voice, and makes its
+      music, only when you choose a voice or music for a recap. It gets only the recap's text and
+      short descriptions of the music, never anyone's voice.
+    </li>
+    <li>
+      <strong>Voyage AI (part of MongoDB, Inc.)</strong>: helps DMbot find the story notes that are
+      most like what you ask about, for example to remind the DM of a character from an earlier
+      session. It gets the campaign's own text: story notes, names, DM notes and the lines of a
+      session's transcript. It gets text only, never sound. Voyage AI does not use your campaign's
+      text to train its models. DMbot keeps what Voyage AI sends back (a list of numbers that
+      stands for the meaning of the text) only while it keeps that text, and deletes it when the
+      text, or the campaign, is deleted.
+    </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
     <li>
@@ -276,7 +308,7 @@ import {
     </li>
   </ul>
   <p>
-    Deepgram, Anthropic, OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
+    Deepgram, Anthropic, ElevenLabs, Voyage AI (MongoDB), OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
     United States, so if you are in the EU or the UK, your information goes there when you use
     DMbot. {paymentProvider} is the seller of record and handles withdrawal rights, invoices and
     tax.
@@ -288,7 +320,7 @@ import {
   </p>
 
   <QabotPrivacy live={QABOT_LIVE} />
-  <RecapsPrivacy live={RECAPS_LIVE} audio={RECAP_AUDIO_LIVE} />
+  <RecapsPrivacy live={RECAPS_LIVE} audio={RECAP_AUDIO_LIVE} share={RECAP_SHARE_LIVE} />
 
   <h2>How long we keep it</h2>
   <p>A campaign is deleted this long after its last game:</p>
@@ -337,7 +369,7 @@ import {
   <h2>Your choices</h2>
   <ul>
     <li>
-      <strong>Stop being recorded</strong> at any time: press ⚙️ Menu in DMbot's
+      <strong>Stop being recorded</strong> at any time: press 🗂️ Menu in DMbot's
       private message to you, then "Stop recording me", then "Yes". Or type
       <code>/consent revoke</code> in Discord. DMbot stops recording you and removes what this
       page says it removes. What DMbot already made from sessions you took part in, such as a

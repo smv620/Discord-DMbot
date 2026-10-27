@@ -298,11 +298,11 @@ Discord sign-in isn't set, because the API won't start without it):**
    so the tunnel needs one more route like the one above with the Path `^/mail/inbound$` (same
    service and URL). That route is signed (the service's signing secret is `MAIL_INBOUND_SECRET`
    in `.env`, set with `scripts/set-key`) and answers 404 while the secret is empty. The
-   senders are `MAIL_SUPPORT_FROM` (info@) and `MAIL_ALERTS_FROM` (jarvis@); the helper needs
+   senders are `MAIL_SUPPORT_FROM` (info@) and `MAIL_ALERTS_FROM` (the `<dmbot private>` email, docs/EMAIL.md); the helper needs
    `ANTHROPIC_API_KEY` too. Until all of it is set, tickets are still kept and the team still
    replies from the admin page.
 
-   **Replies go to a subdomain (#1717).** The main domain's mail (info@, support@, jarvis@ and the
+   **Replies go to a subdomain (#1717).** The main domain's mail (info@, support@, the `<dmbot private>` email and the
    rest) goes to the team's inboxes through Cloudflare Email Routing, so the mail service must
    not take it over. People's replies go to `reply.getdmbot.com`, which only the mail service
    receives:
@@ -317,6 +317,58 @@ Discord sign-in isn't set, because the API won't start without it):**
       tunnel route `^/mail/inbound$` (as above, only now, not before) and restarts the web API.
    An older email's reply address (on the main domain) still reads, if it ever arrives: the
    token proves the ticket, not the domain.
+
+   **Recap audio (#2616, #2625; added by the owner on 2026-10-24).** The recap page's audio player
+   and the Discord Listen link fetch the files from `https://api.getdmbot.com/recap-audio/…`, so the
+   tunnel has one more route like the ones above, with this Path, copied exactly:
+
+       ^/recap-audio/
+
+   It is safe to leave open: every audio link is signed and runs out, and the route checks that
+   signature and nothing else. Without this route, Cloudflare answers an empty 404 and the player
+   stays silent.
+   To check it from outside, run
+   `curl -s https://api.getdmbot.com/recap-audio/x/full`.
+   It must answer the app's own `{"detail":"not_found"}`, not an empty page.
+
+   **The routes the tunnel has today** (all Subdomain `api`, Domain `getdmbot.com`, Service type HTTP,
+   URL `web-api:8080`). Keep this list in step with Cloudflare:
+
+   | Path | What it is for | Added |
+   |---|---|---|
+   | `^/admin(/\|$)` | the admin page | at setup (#836) |
+   | `^/(webhooks/stripe$\|auth/\|me(/\|$)\|billing/)` | Stripe's events and the signed-in site | #1096 |
+   | `^/mail/inbound$` | people's emailed replies, from Resend (docs/EMAIL.md) | #1431, #1717 |
+   | `^/support(/\|$)` | the website's support pages (dev1 read it on 2026-10-24; the owner confirms it in the dashboard) | #1431 |
+   | `^/recap-audio/` | the recap audio player and the Discord Listen link | 2026-10-24 |
+
+   Any other path gets an empty 404 from Cloudflare before it reaches DMbot. #2625 replaces this
+   list with one route, `^/`, and a tested list of open paths in the code. Until dev1 deploys that,
+   a new public path needs its own route here (see the next paragraph for the change to one route).
+
+   **One route for the whole API (#2625; Supervisor's decision, 2026-10-24).** The routes above
+   (`^/admin…`, the Stripe, sign-in, `/me`, billing and support route, and `^/mail/inbound$`)
+   were the list of paths the outside world may reach, kept in the Cloudflare dashboard. That
+   list now lives in the code (`core/src/dmbot/web/public_paths.py`): a request that comes through
+   the tunnel to any other path gets the same empty 404 from the app itself, and a test fails
+   when a route has not been sorted. So the tunnel needs only **one** route. **Do this only after
+   dev1 has deployed this change and says so** (until then the old routes stay exactly as they
+   are, or the closed paths open up):
+   1. dev1 deploys, then runs `scripts/check-public-paths` from a computer outside the server.
+      Every line must say `ok`.
+   2. The owner adds one route as above (Subdomain `api`, Domain `getdmbot.com`, Service type
+      HTTP, URL `web-api:8080`) with the Path `^/` (copied exactly).
+   3. dev1 runs `scripts/check-public-paths` again. Every line must still say `ok`, and the three
+      "stays closed" lines (`/health`, `/personal`, a path that doesn't exist) must still be the
+      empty 404. If one of them isn't, the owner deletes the new route at once and tells dev1.
+   4. The owner removes the old routes one by one: every route in the table "The routes the tunnel
+      has today" except the new `^/` one. Nothing changes: the app now keeps what they kept.
+      dev1 then adds `^/` as the table's last row and removes the rows that are gone.
+   **Interim:** the owner added one route, Path `^/recap-audio/`, to `web-api:8080` on 2026-10-24,
+   so recap audio plays on the website until the single route is in. Don't ask for it again. It
+   is safe: each audio link is signed and expires.
+   A new public route is added in `public_paths.py` (with its reason) in the same change that
+   adds the route: no dashboard step.
 
 **You (the owner), on the server, once dev1 says the update is in:**
 

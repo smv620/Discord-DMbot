@@ -89,7 +89,9 @@ class WebApi(DatabaseTest):
         self.discord = FakeDiscord()
         self.app = create_app(settings(), self.db, self.discord, clock=lambda: self.now)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
 
     async def asyncTearDown(self) -> None:
@@ -119,6 +121,48 @@ class WebApi(DatabaseTest):
         self.assertEqual(self.discord.revoked, ["discord-access-token"])
         self.assertNotIn("discord-access-token", str(done.headers))
 
+    async def sign_in_returning_to(self, wanted: str | None) -> httpx.Response:
+        params = {} if wanted is None else {"next": wanted}
+        start = await self.client.get("/auth/discord/start", params=params)
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        return await self.client.get(
+            "/auth/discord/callback", params={"state": state, "code": "good-code"}
+        )
+
+    async def test_sign_in_comes_back_to_the_account_page_that_was_asked_for(self) -> None:
+        done = await self.sign_in_returning_to("/account/import/100.cmp1")
+        self.assertEqual(done.headers["location"], f"{SITE}/account/import/100.cmp1")
+
+    async def test_sign_in_never_goes_back_to_an_address_outside_the_account_pages(self) -> None:
+        for wanted in ("https://evil.example/account", "//evil.example", "/admin", "/account/../x"):
+            done = await self.sign_in_returning_to(wanted)
+            self.assertEqual(done.headers["location"], f"{SITE}/account", wanted)
+
+    def clears_the_return_cookie(self, response: httpx.Response) -> bool:
+        return any(
+            h.startswith("__Host-dmbot_signin_next=") and "max-age=0" in h.lower()
+            for h in response.headers.get_list("set-cookie")
+        )
+
+    async def test_the_return_cookie_is_cleared_when_sign_in_works(self) -> None:
+        done = await self.sign_in_returning_to("/account/recaps")
+        self.assertTrue(self.clears_the_return_cookie(done))
+
+    async def test_the_return_cookie_is_cleared_when_sign_in_fails(self) -> None:
+        start = await self.client.get("/auth/discord/start", params={"next": "/account/recaps"})
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        self.client.cookies.clear()  # a different browser: the state does not match
+        done = await self.client.get(
+            "/auth/discord/callback", params={"state": state, "code": "good-code"}
+        )
+        self.assertEqual(done.headers["location"], f"{SITE}/account?signin=failed")
+        self.assertTrue(self.clears_the_return_cookie(done))
+
+    async def test_the_asked_for_page_is_forgotten_after_one_sign_in(self) -> None:
+        await self.sign_in_returning_to("/account/recaps")
+        again = await self.sign_in_returning_to(None)
+        self.assertEqual(again.headers["location"], f"{SITE}/account")
+
     async def test_start_asks_discord_for_the_sign_in_with_a_browser_bound_state(self) -> None:
         start = await self.client.get("/auth/discord/start")
         self.assertEqual(start.status_code, 302)
@@ -147,7 +191,7 @@ class WebApi(DatabaseTest):
         # fails, because the code was spent, and starts no second session.
         self.assertIsNone(first.cookies.get("__Host-dmbot_signin"))
         self.client.cookies.clear()
-        self.client.cookies.set("__Host-dmbot_signin", state, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_signin", state, domain="web-api.internal.test")
         again = await self.client.get("/auth/discord/callback", params=params)
         self.assertEqual(again.headers["location"], f"{SITE}/account?signin=failed")
         self.assertIsNone(again.cookies.get("__Host-dmbot_session"))
@@ -159,7 +203,7 @@ class WebApi(DatabaseTest):
 
     async def test_a_forged_or_expired_state_is_refused(self) -> None:
         forged = sessions.new_state(b"x" * 40, self.now)
-        self.client.cookies.set("__Host-dmbot_signin", forged, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_signin", forged, domain="web-api.internal.test")
         done = await self.client.get(
             "/auth/discord/callback", params={"state": forged, "code": "good-code"}
         )
@@ -175,7 +219,7 @@ class WebApi(DatabaseTest):
             ("", ""),
             ("n.1.@@@", "n.1.@@@"),
         ):
-            self.client.cookies.set("__Host-dmbot_signin", cookie, domain="api.dmbot.example")
+            self.client.cookies.set("__Host-dmbot_signin", cookie, domain="web-api.internal.test")
             done = await self.client.get(
                 "/auth/discord/callback", params={"state": bad, "code": "good-code"}
             )
@@ -218,15 +262,20 @@ class WebApi(DatabaseTest):
         store = CampaignStore(self.db, clock=lambda: self.now)
         mine = await store.create(THURSDAY.id, "The Brynwater Crossing", ALICE.id)
         await store.create(THURSDAY.id, "Someone Else's Game", 9999)
-        await store.create(444, "Not In My Servers", ALICE.id)  # Alice isn't in server 444
+        lost = await store.create(444, "Not In My Servers", ALICE.id)  # Alice isn't in server 444
         await self.sign_in()
         me = (await self.client.get("/me")).json()
         self.assertEqual(me["user"], {"id": "1001", "name": "Belleros"})
         self.assertIsNone(me["plan"])
         self.assertEqual(
             [(c["id"], c["name"], c["serverName"]) for c in me["campaigns"]],
-            [(mine.id, "The Brynwater Crossing", "Thursday Table")],
+            [
+                (mine.id, "The Brynwater Crossing", "Thursday Table"),
+                # (the owner's campaign in a server Alice's list lacks: listed, as unreachable)
+                (lost.id, "Not In My Servers", ""),
+            ],
         )
+        self.assertEqual([c["serverReachable"] for c in me["campaigns"]], [True, False])
         # Servers Alice manages; Gorrak's Hall isn't one. DMbot is in Thursday Table.
         self.assertEqual(
             me["servers"],
@@ -269,7 +318,7 @@ class WebApi(DatabaseTest):
         bob_me = (await self.client.get("/me")).json()
         self.client.cookies.clear()
         for name, value in alice_cookies.items():
-            self.client.cookies.set(name, value, domain="api.dmbot.example")
+            self.client.cookies.set(name, value, domain="web-api.internal.test")
         alice_me = (await self.client.get("/me")).json()
         self.assertEqual([c["name"] for c in alice_me["campaigns"]], ["Alice's Game"])
         self.assertIsNone(alice_me["plan"])
@@ -332,7 +381,7 @@ class WebApi(DatabaseTest):
         self.client.cookies.clear()
         await self.sign_in()
         await self.client.post("/auth/logout", headers={"X-DMbot-Request": "1"})
-        self.client.cookies.set("__Host-dmbot_session", first, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", first, domain="web-api.internal.test")
         self.assertEqual((await self.client.get("/me")).status_code, 200)
 
     async def test_signing_out_always_works(self) -> None:
@@ -356,7 +405,7 @@ class WebApi(DatabaseTest):
         assert token is not None
         out = await self.client.post("/auth/logout", headers={"X-DMbot-Request": "1"})
         self.assertEqual(out.status_code, 204)
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.assertEqual((await self.client.get("/me")).status_code, 401)
 
     async def test_the_database_keeps_only_the_cookies_hash(self) -> None:
@@ -431,6 +480,17 @@ class Settings(unittest.TestCase):
         "WEB_SITE_URL": "https://dmbot.example/",
         "WEB_API_URL": "https://api.dmbot.example",
     }
+
+    def test_narration_is_on_only_with_recaps_on_and_a_voice_set(self) -> None:
+        """(#2419) Compose passes whether the speech key and voice are set ("1"), never the key."""
+        on = {**self.ENV, "DMBOT_RECAPS": "1"}
+        both = {"RECAP_AUDIO_KEY_SET": "1", "RECAP_AUDIO_VOICE_SET": "1"}
+        self.assertFalse(load_web_settings(self.ENV).recap_audio_on)
+        self.assertFalse(load_web_settings({**on}).recap_audio_on)  # recaps on, no voice
+        self.assertFalse(load_web_settings({**on, "RECAP_AUDIO_KEY_SET": "1"}).recap_audio_on)
+        self.assertFalse(load_web_settings({**on, "RECAP_AUDIO_VOICE_SET": "1"}).recap_audio_on)
+        self.assertFalse(load_web_settings({**self.ENV, **both}).recap_audio_on)  # recaps off
+        self.assertTrue(load_web_settings({**on, **both}).recap_audio_on)
 
     def test_reads_the_settings(self) -> None:
         loaded = load_web_settings(self.ENV)

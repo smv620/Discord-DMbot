@@ -104,7 +104,7 @@ class Words(unittest.TestCase):
         self.assertIsNone(ui.card_line(None, link=True))
 
     def test_the_menu_carries_the_button(self) -> None:
-        # In the ⚙️ Menu now (#807), for that session's campaign or any of the server's.
+        # In the 🗂️ Menu now (#807), for that session's campaign or any of the server's.
         for campaign in (None, CAMPAIGN):
             view = options_view(GUILD, campaign, recording=True, sheets=True)
             ids = [getattr(i, "custom_id", "") for i in view.children]

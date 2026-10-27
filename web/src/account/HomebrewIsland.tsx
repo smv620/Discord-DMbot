@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { text } from "../content/homebrew";
 import { httpApi, type AccountApi } from "./api";
+import SignedInLine from "./SignedInLine";
 import HomebrewPage from "./Homebrew";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
@@ -25,5 +26,10 @@ export default function HomebrewIsland() {
         {text.loading}
       </p>
     );
-  return <HomebrewPage api={api} path={window.location.pathname} />;
+  return (
+    <>
+      <SignedInLine api={api} />
+      <HomebrewPage api={api} path={window.location.pathname} />
+    </>
+  );
 }

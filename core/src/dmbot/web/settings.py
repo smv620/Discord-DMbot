@@ -8,9 +8,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from dmbot import imports_switch
 from dmbot.config import MODEL_NAME, ConfigError
 from dmbot.entitlements import parse_free_users
 from dmbot.mail import MailConfigError, MailSettings, load_mail_settings, one_address
+from dmbot.transcription.config import OUTSIDE_ENGINES
 from dmbot.web.admin_hash import decode_hash
 from dmbot.web.payments import paid_plan_ids
 from dmbot.web.stripe import StripeConfig
@@ -76,6 +78,9 @@ class WebSettings:
     # Where the bot keeps recap audio on disk, read here only (the volume is mounted read-only).
     # Empty: the page shows no players and the file route answers not_found (#1418).
     recap_audio_dir: str = ""
+    # The outside speech-to-text company the bot sends voices to (deepgram, cloud), or None: only
+    # consent given for it counts, as in the bot. From TRANSCRIBER, the bot's own setting.
+    outside_engine: str | None = None
     # Cloudflare Turnstile's secret key, the check that a person sent the form. Needed
     # whenever the forms are on, except when testing on localhost.
     turnstile_secret: str = field(default="", repr=False)
@@ -102,6 +107,32 @@ class WebSettings:
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
+    # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
+    # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
+    imports_on: bool = False
+    # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
+    handover_email_on: bool = False
+    # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
+    # logged or shown.
+    imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
+    # The same DMBOT_RECAPS as the bot's: off, nothing makes a recap's narration, so "make it
+    # again" is refused instead of promising it (#2183).
+    recaps_on: bool = False
+    # Whether the bot can make narration at all: DMBOT_RECAPS is on and the bot has a voice (the
+    # same rule as `Settings.recap_audio_on`). The web container is never given the speech key, so
+    # compose passes only whether each is set ("1" or empty), never the key itself (#2419).
+    recap_audio_on: bool = False
+    # PlotBot's check of each recap (#2122): the same DMBOT_PLOT_CHECK as the bot's, and only with
+    # recaps on. Off, the plot routes say "unavailable" and Approve waits for nothing.
+    plot_check_on: bool = False
+    # The bot's DMBOT_RECAP_VOICE_TAGS, to work out which paragraphs a change to the words would
+    # speak again (#2630): the tags are part of what the voice is sent. It changes nothing the
+    # bot does.
+    recap_voice_tags: bool = True
+
+    def imports_enabled_for(self, guild_id: int) -> bool:
+        """Whether importing is on for this server (#2259)."""
+        return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
 
     @property
     def site_origin(self) -> str:
@@ -259,9 +290,36 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     enforce_raw = (get("DMBOT_ENFORCE_PLANS") or "0").lower()
     if enforce_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_ENFORCE_PLANS must be 1 (on) or 0 (off), got "{enforce_raw}".')
+    imports_raw = (get("DMBOT_IMPORTS") or "0").lower()
+    if imports_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_IMPORTS must be 1 (on) or 0 (off), got "{imports_raw}".')
+    try:
+        imports_servers = imports_switch.parse_servers(get("DMBOT_IMPORTS_SERVERS"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    recaps_raw = (get("DMBOT_RECAPS") or "0").lower()
+    if recaps_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_RECAPS must be 1 (on) or 0 (off), got "{recaps_raw}".')
+    handover_email_raw = (get("DMBOT_HANDOVER_EMAIL") or "0").lower()
+    if handover_email_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        handover_email_on=handover_email_raw in ("1", "true", "on"),
+        recaps_on=recaps_raw in ("1", "true", "on"),
+        plot_check_on=recaps_raw in ("1", "true", "on")
+        and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
+        recap_audio_on=(
+            recaps_raw in ("1", "true", "on")
+            and get("RECAP_AUDIO_KEY_SET") == "1"
+            and get("RECAP_AUDIO_VOICE_SET") == "1"
+        ),
+        recap_voice_tags=(get("DMBOT_RECAP_VOICE_TAGS") or "1").lower() in ("1", "true", "on"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
+        imports_on=imports_raw in ("1", "true", "on"),
+        imports_servers=imports_servers,
         discord_client_id=get("DISCORD_CLIENT_ID"),
         discord_client_secret=get("DISCORD_CLIENT_SECRET"),
         secret_key=secret.encode("utf-8"),
@@ -287,6 +345,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
+        outside_engine=get("TRANSCRIBER").lower()
+        if get("TRANSCRIBER").lower() in OUTSIDE_ENGINES
+        else None,
         turnstile_secret=turnstile_secret,
         client_ip_header=client_ip_header,
         admin_emails=admin_emails,

@@ -6,10 +6,13 @@ the DM screen's access re-applied, and a running table's DM set following at onc
 from __future__ import annotations
 
 import asyncio
+import time
+import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import discord
 
 from dmbot.audio.segmenter import Segmenter
@@ -20,7 +23,7 @@ from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.dm_screen import game_masters as gm
 from dmbot.dm_screen.channel import DMScreenError
-from dmbot.dm_screen.settings import settings_view
+from dmbot.dm_screen.settings import management_view
 from dmbot.sessions import SessionStore
 from tests.pg import DatabaseTest
 
@@ -141,7 +144,7 @@ class GameMasters(DatabaseTest):
         campaign = await self.campaigns.get(GUILD, self.campaign.id)
         assert campaign is not None
         for viewer, expected in ((OWNER, True), (CO, True), (MANAGER, False), (PLAYER, False)):
-            view = settings_view(campaign, None, viewer)
+            view = management_view(campaign, None, viewer)
             has = any(isinstance(c, gm.GameMastersButton) for c in view.children)
             self.assertEqual(has, expected, viewer)
 
@@ -233,7 +236,9 @@ class GameMasters(DatabaseTest):
     async def pick_remove(self, who: int, *, by: int = OWNER) -> Any:
         campaign = await self.campaigns.get(GUILD, self.campaign.id)
         assert campaign is not None
-        picker = gm.RemovePicker(campaign, cast(Any, self.guild))
+        picker = gm.RemovePicker(
+            campaign, await gm.names_of(cast(Any, self.guild), campaign.dm_user_ids)
+        )
         picker.pick = SimpleNamespace(values=[str(who)])  # type: ignore[assignment]
         it = self.it(by)
         await picker._picked(it)
@@ -376,3 +381,75 @@ class GameMasters(DatabaseTest):
         with patch.object(gm, "setup_gametime_channel", AsyncMock()) as gametime:
             await self.add()
         gametime.assert_awaited_once()
+
+
+class Names(unittest.IsolatedAsyncioTestCase):
+    """A game master is "someone who left the server" only when Discord says so (#2556)."""
+
+    def guild(self, *, cached: dict[int, Any], fetch: Any) -> Any:
+        return SimpleNamespace(get_member=cached.get, fetch_member=fetch)
+
+    async def test_a_member_missing_from_the_cache_is_asked_for(self) -> None:
+        mira = SimpleNamespace(display_name="Mira")
+        fetch = AsyncMock(return_value=mira)
+        names = await gm.names_of(self.guild(cached={}, fetch=fetch), [5])
+        self.assertEqual(names, {5: "Mira"})
+        fetch.assert_awaited_once_with(5)
+
+    async def test_the_cache_is_used_first(self) -> None:
+        fetch = AsyncMock()
+        guild = self.guild(cached={5: SimpleNamespace(display_name="Mira")}, fetch=fetch)
+        self.assertEqual(await gm.names_of(guild, [5]), {5: "Mira"})
+        fetch.assert_not_awaited()
+
+    async def test_not_found_means_they_left(self) -> None:
+        fetch = AsyncMock(side_effect=discord.NotFound(MagicMock(status=404), "gone"))
+        names = await gm.names_of(self.guild(cached={}, fetch=fetch), [5])
+        self.assertEqual(names, {5: "someone who left the server"})
+
+    async def test_discord_not_answering_makes_no_claim_either_way(self) -> None:
+        fetch = AsyncMock(side_effect=discord.HTTPException(MagicMock(status=500), "down"))
+        names = await gm.names_of(self.guild(cached={}, fetch=fetch), [5])
+        self.assertEqual(names, {5: "a game master"})
+
+    async def test_a_lookup_that_never_answers_gives_a_game_master_within_the_limit(self) -> None:
+        async def hangs(uid: int) -> Any:
+            await asyncio.Event().wait()
+
+        started = time.monotonic()
+        with patch.object(gm, "LOOKUP_S", 0.05):
+            names = await gm.names_of(self.guild(cached={}, fetch=hangs), [5])
+        self.assertEqual(names, {5: "a game master"})
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    async def test_a_network_error_is_a_game_master_not_a_failed_card(self) -> None:
+        fetch = AsyncMock(side_effect=aiohttp.ClientError("reset"))
+        self.assertEqual(
+            await gm.names_of(self.guild(cached={}, fetch=fetch), [5]), {5: "a game master"}
+        )
+        fetch = AsyncMock(side_effect=TimeoutError())
+        self.assertEqual(
+            await gm.names_of(self.guild(cached={}, fetch=fetch), [5]), {5: "a game master"}
+        )
+
+    async def test_one_slow_name_does_not_cost_the_others(self) -> None:
+        async def fetch(uid: int) -> Any:
+            if uid == 6:
+                await asyncio.Event().wait()
+            return SimpleNamespace(display_name=f"DM{uid}")
+
+        with patch.object(gm, "LOOKUP_S", 0.05):
+            names = await gm.names_of(self.guild(cached={}, fetch=fetch), [5, 6])
+        self.assertEqual(names, {5: "DM5", 6: "a game master"})
+
+    async def test_no_server_at_all_is_a_game_master_too(self) -> None:
+        self.assertEqual(await gm.names_of(None, [5]), {5: "a game master"})
+
+    async def test_everyone_is_asked_at_once_and_each_gets_their_own_answer(self) -> None:
+        async def fetch(uid: int) -> Any:
+            if uid == 6:
+                raise discord.NotFound(MagicMock(status=404), "gone")
+            return SimpleNamespace(display_name=f"DM{uid}")
+
+        names = await gm.names_of(self.guild(cached={}, fetch=fetch), [7, 5, 6])
+        self.assertEqual(names, {5: "DM5", 6: "someone who left the server", 7: "DM7"})

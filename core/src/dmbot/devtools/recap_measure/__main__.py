@@ -22,10 +22,12 @@ from dataclasses import dataclass, field
 
 from dmbot.ai import AIError, AIModels, AIModelTier, AnthropicClient
 from dmbot.config import ConfigError, parse_ai_models
+from dmbot.devtools.common import add_fast_model_arg, with_fast_model
 from dmbot.devtools.recap_measure.golden import GoldenError, Session, load_golden
-from dmbot.memory.extractor import Client, readable
+from dmbot.memory.extractor import readable
 from dmbot.recaps import beats as bt
 from dmbot.recaps import draft as rd
+from dmbot.recaps.pipeline import Client
 from dmbot.recaps.text import names_a_secret, narration_of, words
 
 
@@ -119,11 +121,13 @@ async def run_one(fast: Client, session: Session) -> Score:
         secret_names=session.secret,
     )
     prose: rd.Prose | None = None
+    length = rd.length_for(rd.session_hours(readable(session.lines), None))
     if len(kept) >= bt.MIN_BEATS:
         written = await fast.complete(
-            rd.prose_system(None),
-            rd.prose_message(kept, "", session.names, None),
-            max_tokens=rd.MAX_TOKENS,
+            rd.prose_system(None, length),
+            rd.prose_message(rd.pick_beats(kept, length.beats), "", session.names, None),
+            max_tokens=length.max_tokens,
+            schema=rd.prose_schema(),
         )
         prose = rd.parse_prose(written.text)
     return score_session(session, raw, prose, session.title)
@@ -144,7 +148,9 @@ async def main_async(args: argparse.Namespace) -> int:
         print("recap_measure: ANTHROPIC_API_KEY isn't set", file=sys.stderr)
         return 2
     try:
-        models = parse_ai_models(lambda name: os.environ.get(name, ""))[0]
+        models = with_fast_model(
+            parse_ai_models(lambda name: os.environ.get(name, ""))[0], args.fast_model
+        )
     except ConfigError as exc:
         print(f"recap_measure: {exc}", file=sys.stderr)
         return 2
@@ -166,6 +172,7 @@ async def main_async(args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="recap_measure", description=__doc__)
     parser.add_argument("--writer", choices=("none", "anthropic"), default="none")
+    add_fast_model_arg(parser)
     return asyncio.run(main_async(parser.parse_args(argv)))
 
 

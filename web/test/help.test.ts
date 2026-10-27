@@ -11,7 +11,8 @@ import { parsePage } from "./dom";
 
 import { entries, held } from "../src/content/whats-new";
 import { storyStatesLine } from "../src/content/privacy-channels";
-import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, RULE_KINDS_LIVE, ruleKindSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
+import { featureSteps, isLive, knownTitle, liveFeatureSteps } from "../src/content/help-features";
+import { WHATS_ON_LIVE, whatsOnSteps, TIME_SUGGESTIONS_LIVE, timeSuggestionSteps, RULES_CHANNEL_LIVE, rulesChannelSteps, INITIATIVE_STYLE_LIVE, initiativeStyleSteps, initiativeStyleDmSteps, NPCS_CHANNEL_LIVE, npcsChannelSteps, DEEDS_LIVE, deedSteps, WHERE_ARE_WE_LIVE, whereAreWeSteps, SHARED_STORY_LIVE, sharedStorySteps, STANDING_LIVE, standingSteps, HOMEBREW_KINDS_LIVE, homebrewKindSteps, STORY_THREADS_LIVE, storyThreadSteps, DM_BOT_CHANNEL_LIVE, dmBotChannelSteps, NAMES_BUTTON_LIVE, SIDEBAR_SOURCES_LIVE, namesButtonSteps, QUIET_STOP_LIVE, quietStopSteps, sidebarSourceSteps, settingsOnDmScreenSteps, HOMEBREW_LINKS_LIVE, SECRET_CLUES_LIVE, PRESESSION_NOTE_LIVE, SECRET_SAID_LIVE, SECRET_REVEAL_LIVE, presessionNoteSteps, secretSaidSteps, secretRevealSteps, RULE_KINDS_LIVE, ruleKindSteps, ruleKindDmSteps, FIGHT_AND_ITEM_RULES_LIVE, fightRuleSteps, magicItemRuleSteps, accountSteps, dmSteps, homebrewLinkSteps, secretClueSteps, emailSteps, recapSteps, quickAnswers, quickAnswersHeading, gettingHelp, playerSteps, snags, snagsHeading, onThisPage, onThisPageHeading, backToTop, STORY_STATES_LIVE, storyStateSteps } from "../src/content/help";
 import Help from "../src/pages/help.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
@@ -34,7 +35,7 @@ describe("Help", () => {
 
   it("says what DMbot knows when the game master asks it a quick question (#1379)", () => {
     expect(help.querySelector("#quick-heading")?.textContent).toBe(quickAnswersHeading);
-    const items = [...help.querySelectorAll("#quick-heading ~ ul li")].map((li) => li.textContent);
+    const items = [...help.querySelectorAll("#quick-heading + ul li")].map((li) => li.textContent);
     expect(items).toEqual(quickAnswers.map((s) => s.text));
     const all = items.join(" ");
     expect(all).toContain("the story facts you have confirmed about the names in your question");
@@ -56,7 +57,7 @@ describe("Help", () => {
   });
 
   it("names only buttons and commands that are in the bot's code", () => {
-    for (const step of [...dmSteps, ...dmBotChannelSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps]) {
+    for (const step of [...dmSteps, ...dmBotChannelSteps, ...namesButtonSteps, ...quietStopSteps, ...settingsOnDmScreenSteps, ...storyThreadSteps, ...sharedStorySteps, ...standingSteps, ...homebrewKindSteps, ...homebrewLinkSteps, ...secretClueSteps, ...presessionNoteSteps, ...secretSaidSteps, ...secretRevealSteps, ...recapSteps, ...quickAnswers, ...playerSteps, ...snags, ...accountSteps, ...emailSteps, ...featureSteps]) {
       for (const { name, file } of step.names ?? []) {
         expect(step.text, `${name} is in its step`).toContain(name);
         const source = readFileSync(join(botDir, file), "utf8");
@@ -233,10 +234,10 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("On your DM screen, press ⚙️ Settings")).toBe(!DM_BOT_CHANNEL_LIVE);
     // Mirrors who gets which button in core/src/dmbot/dm_screen/dm_bot_panel.py (_BUTTONS).
     const words = dmBotChannelSteps.map((x) => x.text).join(" ");
-    expect(words).toContain("👤 My buttons");
+    expect(words).toContain("👤 DMbot Main Menu");
     expect(words).toContain("Everyone also gets 📖 Look up a rule and 📜 Transcripts.");
     expect(words).toContain("Press 📖 Look up a rule to check a rule. Only you see the answer.");
-    expect(words).toContain("you get ⚙️ Menu, where you can stop being recorded.");
+    expect(words).toContain("you get 🗂️ Menu, where you can stop being recorded.");
     expect(words).toContain("Players also get 📜 My character sheet.");
     expect(words).toContain("Game masters get ⚙️ Settings too.");
     expect(words).toContain("/dmbot settings");
@@ -246,8 +247,51 @@ describe("Help: the website's read-only pages (#1588)", () => {
     if (DM_BOT_CHANNEL_LIVE) {
       expect(shown).not.toMatch(/(?:on|from) (?:your|the) DM screen, press ⚙️ Settings|⚙️ Settings[^.]*on (?:your|the) DM screen|pinned card/);
     } else {
-      for (const phrase of ["dmb-dm-bot", "DMbot channel", "My buttons"]) expect(shown).not.toContain(phrase);
+      for (const phrase of ["dmb-dm-bot", "DMbot channel", "DMbot Main Menu"]) expect(shown).not.toContain(phrase);
     }
+  });
+
+  it("holds the 📇 Names button step with its held What's new entry, and flips them together (#2002)", () => {
+    expect(held.map((h) => h.title).includes("A 📇 Names button")).toBe(!NAMES_BUTTON_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("📇 Names")).toBe(NAMES_BUTTON_LIVE);
+    const words = namesButtonSteps.map((x) => x.text).join(" ");
+    expect(words).toContain("search the names and fix one");
+    expect(words).toContain("Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there.");
+    expect(words).toContain("/dmbot names");
+    expect(words).not.toMatch(/entit|knowledge graph/i);
+    // The place named matches the channel's own switch: never "the DMbot channel" before it is live.
+    expect(words.includes("DMbot channel")).toBe(DM_BOT_CHANNEL_LIVE);
+    for (const step of namesButtonSteps) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+  });
+
+  it("holds the automatic stop step with its held What's new entry, and flips them together (#2041)", () => {
+    expect(held.map((h) => h.title).includes("Stops listening when no one's there")).toBe(!QUIET_STOP_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Keep listening")).toBe(QUIET_STOP_LIVE);
+    const words = quietStopSteps.map((x) => x.text).join(" ");
+    // The numbers mirror the bot (idle_stop.py, QUIET_STOP_CHOICES); the choices are the DM's alone.
+    for (const phrase of ["5 minutes", "10 minutes", "15, 30 and 5", "there is no Off", "bot never counts as a person", "private message"]) {
+      expect(words).toContain(phrase);
+    }
+    expect(words).not.toMatch(/idle|timeout|session id|heartbeat/i);
+    for (const step of quietStopSteps) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+  });
+
+  it("holds the fight and magic item steps with their held What's new entry, and flips them together (#2023)", () => {
+    expect(held.map((h) => h.title).includes("Look up fight difficulty rules")).toBe(!FIGHT_AND_ITEM_RULES_LIVE);
+    const gm = dmSteps.map((x) => x.text).join(" ");
+    const players = playerSteps.map((x) => x.text).join(" ");
+    expect(gm.includes("XP budget")).toBe(FIGHT_AND_ITEM_RULES_LIVE);
+    expect(players.includes("attunement")).toBe(FIGHT_AND_ITEM_RULES_LIVE);
+    const fight = fightRuleSteps.map((x) => x.text).join(" ");
+    // DMbot reads the rule and does no sum and no ruling (sidebar/context.py ENCOUNTER_NOTE): the words promise neither.
+    expect(fight).toContain("It doesn't add up the monsters or say if the fight is easy or deadly: that's your call.");
+    expect(fight).toContain("That's one for your DM.");
+    expect(fight).not.toMatch(/calculat|encounter|budget math/i);
+    // The fight step is the game master's alone; the magic item step is for everyone.
+    expect(players).not.toContain("XP budget");
+    for (const step of [...fightRuleSteps, ...magicItemRuleSteps]) expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
   });
 
   it("holds the story-thread steps with the held What's new entries, and flips them together (#1694)", () => {
@@ -366,6 +410,17 @@ describe("Help: the website's read-only pages (#1588)", () => {
     }
   });
 
+  it("holds the sidebar sources step with its held What's new entry (#1958)", () => {
+    expect(held.map((h) => h.title).includes("See what DMbot looked at")).toBe(!SIDEBAR_SOURCES_LIVE);
+    const shown = quickAnswers.map((x) => x.text).join(" ");
+    expect(shown.includes("Where did that come from?")).toBe(SIDEBAR_SOURCES_LIVE);
+    for (const step of sidebarSourceSteps) {
+      expect(step.text.split(/[.?!] /).length).toBeLessThanOrEqual(5);
+      expect(step.text).toContain("📖 What I looked at");
+    }
+    expect(held.find((h) => h.title === "See what DMbot looked at")?.reason).toContain("#1957");
+  });
+
   it("holds the time suggestion step with its held What's new entry (#1765)", () => {
     expect(held.map((h) => h.title).includes("A time suggestion from your narration")).toBe(!TIME_SUGGESTIONS_LIVE);
     const shown = dmSteps.map((x) => x.text).join(" ");
@@ -454,6 +509,21 @@ describe("Help: the website's read-only pages (#1588)", () => {
     }
   });
 
+  it("explains the 2014 mark and the game master's own entries, only while the rule kinds are live (#1961)", () => {
+    const player = playerSteps.map((x) => x.text).join(" ");
+    const dm = dmSteps.map((x) => x.text).join(" ");
+    expect(player.includes("marked [Legacy 2014].")).toBe(RULE_KINDS_LIVE);
+    expect(player.includes("That's one for your DM.")).toBe(RULE_KINDS_LIVE);
+    expect(dm.includes("things for you alone, like traps, poisons, curses and diseases")).toBe(RULE_KINDS_LIVE);
+    const words = [...ruleKindSteps, ...ruleKindDmSteps].map((x) => x.text).join(" ");
+    expect(words).not.toMatch(/fallback|index|SRD 5\.1/i); // the source line on each answer names the book
+    // The entry says the same three things, so the held entry and the steps flip together.
+    const entry = held.find((h) => h.title === "Look up any rule")?.what ?? "";
+    for (const part of ["[Legacy 2014]", "like traps, poisons, curses and diseases", "That's one for your DM"]) {
+      expect(entry, part).toContain(part);
+    }
+  });
+
   it("holds the secrets step with the held What's new entry, and flips them together (#1659)", () => {
     const heldTitle = held.map((h) => h.title).includes("Secrets only some people know");
     expect(heldTitle).toBe(!SECRET_CLUES_LIVE);
@@ -461,5 +531,84 @@ describe("Help: the website's read-only pages (#1588)", () => {
     expect(shown.includes("Only some know this")).toBe(SECRET_CLUES_LIVE);
     const words = secretClueSteps.map((x) => x.text).join(" ");
     expect(words).toContain("DMbot never decides who learned it. You do.");
+  });
+
+  it("holds the note-before-a-session step with its held What's new entry, and flips them together (#2069)", () => {
+    const heldTitle = held.map((h) => h.title).includes("A note before tonight's session");
+    expect(heldTitle).toBe(!PRESESSION_NOTE_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("read it before you begin")).toBe(PRESESSION_NOTE_LIVE);
+    // Hidden while the switch is false, but the step itself is still checked.
+    const words = presessionNoteSteps.map((x) => x.text).join(" ");
+    for (const part of ["last time's recap", "wait for your check", "DMbot never sends it to players", "If there is nothing to say, there is no note"]) expect(words).toContain(part);
+    // Only what the built note holds: no button, no story-thread or guide line behind another switch.
+    expect(words).not.toMatch(/\bpress\b|thread|promise|What's next/i);
+    const entry = held.find((h) => h.title === "A note before tonight's session")?.what ?? "";
+    for (const part of ["last time's recap", "anything lost or ended", "wait for your check"]) {
+      expect(entry, part).toContain(part);
+    }
+  });
+
+  it("holds the secret-name question step with its held What's new entry, and flips them together (#2069)", () => {
+    const heldTitle = held.map((h) => h.title).includes("When a player says a secret name");
+    expect(heldTitle).toBe(!SECRET_SAID_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Press Not secret any more")).toBe(SECRET_SAID_LIVE);
+    const words = secretSaidSteps.map((x) => x.text).join(" ");
+    for (const part of ["five at most", "make it secret again from the name's card", "covers every copy", "Only the campaign's DMs can answer", "DMbot never decides for you"]) expect(words).toContain(part);
+    // The buttons are named as the code labels them, with the file the label check reads.
+    expect(secretSaidSteps.flatMap((x) => x.names ?? []).map((n) => n.name)).toEqual(["Keep it secret", "Not secret any more"]);
+    const entry = held.find((h) => h.title === "When a player says a secret name")?.what ?? "";
+    for (const part of ["one name at a time (up to five)", "never decides for you"]) {
+      expect(entry, part).toContain(part);
+    }
+  });
+
+  it("holds the question about a secret name the game master says with its held What's new entry (#2102)", () => {
+    const heldTitle = held.map((h) => h.title).includes("When you say a secret name");
+    expect(heldTitle).toBe(!SECRET_REVEAL_LIVE);
+    const shown = dmSteps.map((x) => x.text).join(" ");
+    expect(shown.includes("Press Yes, players know now")).toBe(SECRET_REVEAL_LIVE);
+    const words = secretRevealSteps.map((x) => x.text).join(" ");
+    for (const part of ["make it secret again from the name's card", "sent to you as a private message instead", "this session", "never when a player does", "covers every copy", "never decides for you", "Only the campaign's DMs can answer"]) expect(words).toContain(part);
+    expect(secretRevealSteps.flatMap((x) => x.names ?? []).map((n) => n.name)).toEqual(["Yes, players know now", "No, keep it secret"]);
+  });
+});
+
+describe("Help for the features of 2026-10-22/23 (#2498)", () => {
+  it("is tied to real What's new entries, so a rename can't hide a step for ever", () => {
+    for (const s of featureSteps) expect(knownTitle(s.whatsNew), s.whatsNew).toBe(true);
+  });
+
+  it("shows a step only once its What's new entry is out of `held`", () => {
+    for (const audience of ["gameMaster", "player", "account"] as const) {
+      const shown = liveFeatureSteps(audience).map((x) => x.text);
+      for (const s of featureSteps.filter((f) => f.audience === audience))
+        expect(shown.includes(s.text), s.whatsNew).toBe(isLive(s.whatsNew));
+    }
+  });
+
+  it("says plainly that nothing is recorded while paused and that it isn't added afterwards", () => {
+    const off = featureSteps.filter((s) => s.whatsNew === "Go off the record for a while").map((s) => s.text).join(" ");
+    expect(off).toContain("nothing you say is recorded");
+    expect(off).toContain("does not remove what you said before you paused");
+    expect(off).toContain("nothing anyone says is recorded");
+    expect(off).toContain("What was said before the pause stays recorded");
+    expect(off).toContain("when the session ends");
+  });
+
+  it("uses no technical words", () => {
+    for (const s of featureSteps) expect(s.text, s.whatsNew).not.toMatch(/entit|knowledge graph|API|queue|endpoint/i);
+  });
+});
+
+describe("Help renders no held text (#2498)", () => {
+  it("none of the held features' steps is in the sections Help draws", () => {
+    const drawn = [...dmSteps, ...playerSteps, ...accountSteps].map((x) => x.text);
+    for (const s of featureSteps.filter((f) => !isLive(f.whatsNew))) expect(drawn, s.whatsNew).not.toContain(s.text);
+  });
+
+  it("every step of the new file ends with a full stop", () => {
+    for (const s of featureSteps) expect(s.text.endsWith("."), s.whatsNew).toBe(true);
   });
 });

@@ -11,3 +11,24 @@
 # The transcript pages (#1501): one page for the list, a campaign and a session; it reads which
 # from the address.
 /account/transcripts/*  /account/transcripts  200
+
+# The Import sessions page (#2107): one page for every campaign; it reads which from the address.
+/account/import/*  /account/import  200
+
+# The Names page (#2295): one page for every campaign; it reads which from the address.
+/account/names/*  /account/names  200
+/account/web/*  /account/web  200
+
+# The Story timeline (#2462): one page for every campaign; it reads which from the address.
+/account/timeline/*  /account/timeline  200
+
+# An NPC's page (#2266), at the address Discord's 📖 Open button links to (core's dm_screen/npc_pages.py):
+# one page for every NPC; it reads the campaign and the NPC from the address.
+/account/npc/*  /account/npc  200
+
+# A campaign's own page (#2416): one page for every campaign; it reads which from the address.
+/account/campaigns/*  /account/campaigns  200
+
+# A shared recap (#2119): one page for every link; it reads the secret from the address.
+# /r/ itself and /r/<secret> both get the page; the page reads the secret from the address.
+/r/*  /r  200

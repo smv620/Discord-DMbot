@@ -14,7 +14,7 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, Relation, name_key
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import dmbot_commands, logic, name_card, name_lists, names
+from dmbot.ui import connection_edit, dmbot_commands, logic, name_card, name_lists, names
 
 GUILD, DM = 1, 7
 DISCORD_WAITS_S = 3
@@ -229,11 +229,12 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
-        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
+        memory.rename_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL], batch=None))
         memory.add_relation = self.slow(SimpleNamespace(value=(SimpleNamespace(secret=False), [])))
         knows = Relation("r" * 32, BELL, "knows", ULF, "", 1.0, CONFIRMED, "dm", (),
                          None, None, None, None, False, 0)  # fmt: skip
         memory.relations = AsyncMock(return_value=[knows])
+        memory.pinned_connections = AsyncMock(return_value=set())
         player = MagicMock(spec=discord.Member, bot=False, id=5)
 
         def picked(view: Any, select: Any, value: str) -> Any:
@@ -247,7 +248,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         kind = names.KindPicker(CAMPAIGN.id, "Kesh", [], [])
         change = name_card.KindChange(CAMPAIGN.id, BELL, "Belleros")
         one = name_card.OneName(CAMPAIGN.id, BELL, bell, secrets=True)
-        links = name_card.Connect(CAMPAIGN.id, BELL, "Belleros", [("r" * 32, "knows Ulfgar")])
+        removing = connection_edit.ConfirmRemove(CAMPAIGN.id, BELL, "r" * 32)
         # Each step, and the slow call it must reach (not an early "isn't there" reply).
         steps: dict[str, tuple[Any, str]] = {
             "KindPicker": (lambda it: picked(kind, kind.pick, "npc")._picked(it), "add_entity"),
@@ -272,10 +273,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             "OneName._main": (one._main, "set_main_name"),
             "OneName._secret": (one._secret, "update_alias"),
             "OneName._not_this": (one._not_this, "update_alias"),
-            "Connect._remove_picked": (
-                lambda it: picked(links, links.remove, "r" * 32)._remove_picked(it),
-                "update_relation",
-            ),
+            "ConfirmRemove._yes": (removing._yes, "update_relation"),
             "connect": (
                 lambda it: name_card.connect(it, CAMPAIGN.id, BELL, "knows", ULF),
                 "add_relation",
@@ -498,7 +496,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         first, second = questions.children
         assert isinstance(first, name_lists.KindSelect)
         assert isinstance(second, name_lists.KindSelect)
-        first._values, second._values = ["npc"], ["creature"]
+        first._values, second._values = ["npc"], ["place"]
         self.gate = asyncio.Event()
         saving = asyncio.create_task(questions.picked(first, self.it()))
         await asyncio.sleep(0)

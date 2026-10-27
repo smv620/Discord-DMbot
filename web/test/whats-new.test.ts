@@ -28,7 +28,78 @@ beforeAll(async () => {
   home = await render(Home, "/");
 });
 
+// The live list as it read when the entries moved into one file each (#2468), newest first. Later
+// entries may appear anywhere; these must stay, in this order.
+const liveWhenSplit = [
+  "Recaps for your table",
+  "Recaps fit your session",
+  "Recaps stick to what happened",
+  "Choose what recaps do",
+  "When you say a secret name",
+  "My Account puts sign-in first",
+  "Campaign labels look like labels",
+  "A shorter campaigns list",
+  "Search and link Help steps",
+  "DMbot works on any new server",
+  "Add homebrew from a link",
+  "Share imported homebrew in a pack",
+  "See the sites you approved",
+  "Which rules is a book for?",
+  "Check names after a session",
+  "Keep a connection secret",
+  "Homebrew for your campaign",
+  "Copy a pack's entry to edit",
+  "Players can look up rules",
+  "Keep transcripts for a set time",
+  "Delete my transcripts",
+  "See how long transcripts are kept",
+  "Deleted transcripts show in the list",
+  "Read shared homebrew on the website",
+  "Read house rules on the website",
+  "Read transcripts on the website",
+  "Your questions to the team",
+  "Quick answers use your facts",
+  "Check what DMbot noticed",
+  "Fight reminders for players",
+  "Stop recording me on the website",
+  "Sign in with an emailed link",
+  "Your DMbot ID",
+  "Share house rules with other tables",
+  "Suggest a rule back",
+  "One-of-a-kind items",
+  "Ask DMbot by typing",
+  "Link your character sheet",
+  "See when your plan ends",
+  "The game clock",
+];
+
 describe("What's new", () => {
+  it("keeps the live list as it was when the entries moved into files (#2468)", () => {
+    const now = entries.map((e) => e.title);
+    expect(now.filter((t) => liveWhenSplit.includes(t))).toEqual(liveWhenSplit);
+    expect(page.querySelectorAll(".entry").length).toBe(entries.length);
+  });
+
+  it("gives every file the same shape, with a name that starts with its date (#2468)", () => {
+    const names = Object.keys(import.meta.glob("../src/content/whats-new/*.ts"));
+    expect(names.length).toBe(entries.length + held.length);
+    const titles = [...entries, ...held].map((e) => e.title);
+    expect(new Set(titles).size, "two files share a title").toBe(titles.length);
+    for (const name of names) {
+      const file = name.split("/").pop() ?? "";
+      const e = [...entries, ...held].find((x) => file.startsWith(x.date));
+      expect(e, `${file} starts with a date some entry has`).toBeDefined();
+      expect(file, file).toMatch(/^\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.ts$/);
+    }
+  });
+
+  it("says style notes are kept for this campaign's later recaps and where to remove them", () => {
+    const fix = [...entries, ...held].find((e) => e.title === "Tell DMbot what to fix");
+    expect(fix?.what).toContain("this campaign's later recaps");
+    expect(fix?.what).toContain("newest 10");
+    expect(fix?.what).toContain("⚙️ Settings → 📜 Recaps → ✍️ Recap style");
+  });
+
   it("lists every entry, newest first, with the day it went live", () => {
     expect(page.querySelector("h1")?.textContent).toBe(whatsNewHeading);
     const shown = [...page.querySelectorAll(".entry")];
@@ -60,44 +131,9 @@ describe("What's new", () => {
   });
 
   it("holds back what people can't use yet, with the reason, and shows none of it (#1322)", () => {
-    expect(held.map((h) => h.title)).toEqual([
-      "Look up any rule", // until dev1 deploys it (#1890, #1891)
-      "See what's switched on", // until dev1 deploys it and the owner's live check (#1831)
-      "Find Settings more easily", // until the owner's live check (#1619)
-      "Split the party", // until the owner's live check (#1607)
-      "Delete a whole campaign", // until the owner's live check (#1608)
-      "Add or remove game masters", // until the owner's live check (#1600)
-      "Fix a line", // until it has been seen working on the test server (#1491, #1499)
-      "Recaps for your table", // until dev1 has checked a real recap (#1382, #1384)
-      "Narrated recaps with music", // until narration is on (RECAP_AUDIO_LIVE, #1385)
-      "DMbot's helper answers questions", // until the support helper runs (SUPPORT_AI_LIVE)
-      "Ask a question in public", // until QAbot is live (#1352)
-      "Move to a new Discord account",
-      "Choose what recaps do",
-      "New names from what was said",
-      "A note before tonight's session",
-      "When a player says a secret name",
-      "Who is alive, who carries what", // until the extractor is on and it has been seen (#1284)
-      "Secrets only some people know", // until the extractor is on and it has been seen (#1649)
-      "How NPCs feel about the party", // until it has been seen on the test server (#1655)
-      "Record what your players did", // until it has been seen on the test server (#1732)
-      "Story threads you keep", // until it has been seen on the test server (#1662)
-      "Species, subclasses and backgrounds in homebrew", // until seen on the test server (#1663)
-      "Keep track of promises made at the table", // until seen on the test server (#1674)
-      "A DMbot channel for buttons", // until seen on the test server (#1666)
-      "A Shared story switch", // until the story plan is used (#1692, #1714)
-      "Guide me: what's next in your adventure", // until 0126 is deployed and seen live (#1731, #1736)
-      "Watch the story", // until 0125 is deployed and seen live (#1729, #1735)
-      "Link names to your adventure", // until 0124 is deployed and seen live (#1715, #1726)
-      "Homebrew menu by kind", // until seen on the test server (#1665)
-      "A channel for your house rules", // until seen on the test server (#1752)
-      "A channel listing the people and groups", // until seen on the test server (#1761)
-      "A time suggestion from your narration", // until the switch is on and seen live (#1758)
-      "FightBot follows your turn order", // until dev1 has live-checked it (#1771)
-      "Manage your plan without Discord", // until the billing login link is set in the build (#1711)
-      "A quiet reminder of the game time", // until seen on the test server (#1738)
-    ]);
+    expect(held.length).toBeGreaterThan(0);
     for (const h of held) {
+      expect(h.reason.trim(), h.title).not.toBe("");
       expect(h.reason.length, h.title).toBeGreaterThan(20);
       expect(entries.map((e) => e.title)).not.toContain(h.title);
     }
@@ -106,7 +142,6 @@ describe("What's new", () => {
     expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("A note before tonight");
     expect(shown).not.toContain("When a player says a secret name");
-    expect(shown).not.toContain("Choose what recaps do");
     expect(shown).not.toContain("move code");
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");

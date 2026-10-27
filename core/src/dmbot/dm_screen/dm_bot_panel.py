@@ -39,9 +39,13 @@ class Button(StrEnum):
     HELP = "help"
     RULE = "rule"  # 📖 Look up a rule: the form and private answer of /dmbot rule (#1691)
     TRANSCRIPTS = "transcripts"  # 📜 Transcripts: a link to the website's page, no callback
-    MY_MENU = "my_menu"  # ⚙️ Menu: Stop recording me, Delete my transcripts (about the person)
+    MY_MENU = "my_menu"  # 🗂️ Menu: Stop recording me, Delete my transcripts (about the person)
     MY_CHARACTER = "my_character"  # the player's character link in this campaign
     SETTINGS = "settings"  # the campaign's Settings card, game masters only
+    NAMES = "names"  # 📇 Names: the names home card, game masters only (#1986)
+    BACKSTORY = (
+        "backstory"  # 📜 Upload campaign lore: names and connections from the DM's own story
+    )
 
 
 # Each role's buttons, in the order they are drawn. A role never gets more than the one below it
@@ -51,13 +55,20 @@ _BUTTONS: dict[Role, tuple[Button, ...]] = {
     Role.GUEST: _EVERYONE,
     Role.MEMBER: (*_EVERYONE, Button.MY_MENU),
     Role.PLAYER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER),
-    Role.GAME_MASTER: (*_EVERYONE, Button.MY_MENU, Button.MY_CHARACTER, Button.SETTINGS),
+    Role.GAME_MASTER: (
+        *_EVERYONE,
+        Button.MY_MENU,
+        Button.MY_CHARACTER,
+        Button.SETTINGS,
+        Button.NAMES,
+        Button.BACKSTORY,
+    ),
 }
 
 # Only the shared panel's own buttons are labelled here; the card's buttons are DMbot's existing
-# menus and keep the labels they have everywhere else (⚙️ Menu, 📜 My character sheet, ⚙️ Settings).
+# menus and keep the labels they have everywhere else (🗂️ Menu, 📜 My character sheet, ⚙️ Settings).
 LABELS: dict[Button, str] = {
-    Button.OPEN: "👤 My buttons",
+    Button.OPEN: "👤 DMbot Main Menu",
     Button.HELP: "❓ Help",
     Button.RULE: "📖 Look up a rule",
     Button.TRANSCRIPTS: "📜 Transcripts",
@@ -79,7 +90,7 @@ NOT_YOURS = "Only this campaign's DM can use that. Ask your DM."
 
 # The panel's own words. Short and plain; it never names a person or a secret.
 PANEL_TEXT = (
-    "**DMbot**\n👤 Press My buttons to see what you can do. Only you see the answer. "
+    "**DMbot**\n👤 Press DMbot Main Menu to see what you can do. Only you see the answer. "
     "❓ Help explains DMbot.\nRecording only starts for people who said yes."
 )
 
@@ -114,6 +125,6 @@ def may_press(role: Role, button: Button) -> bool:
 
 def shared_panel() -> tuple[Button, ...]:
     """What the one shared message shows. A message cannot differ per reader, so it holds only
-    what every role may press: 👤 My buttons, which answers privately with `buttons_for` the
+    what every role may press: 👤 DMbot Main Menu, which answers privately with `buttons_for` the
     presser's own role, and ❓ Help."""
     return (Button.OPEN, Button.HELP)

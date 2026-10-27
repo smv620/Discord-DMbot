@@ -132,7 +132,7 @@ async def _homebrew(
 
 _KIND_SUFFIX = re.compile(
     r"^(?P<name>.+) \((?P<kind>"
-    r"rule|item|feat|species|background|weapon|armor|gear|tool|poison|trap|curse|creature"
+    r"rule|item|feat|species|background|weapon|armor|gear|tool|poison|trap|curse|disease|creature"
     r")\)$"
 )
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
@@ -159,8 +159,8 @@ def _asked_for(srd: index.Index, typed: str, target: str, fallback: str) -> inde
     ("barbarian improved brutal strike 17") picks the one of that level: which is how the name
     list words them."""
     hit = srd.lookup(typed, target, fallback, kind=index.RULE)
-    if hit is not None:
-        return hit
+    if hit is not None and not (hit.from_fallback and srd.has_asked_for(typed, target)):
+        return hit  # (a 2014 rule gives way to the target's own feat, item ... of the name: #1943)
     found = _features(srd, typed, target, fallback)
     if found:
         return found[0]
@@ -564,6 +564,9 @@ async def _is_a_dm(interaction: discord.Interaction) -> bool:
         )
         return False
     return any(may_look_up(c, interaction.user.id) for c in everyone)
+
+
+choice_value = _choice_value  # (for the sidebar's "What I looked at", #1957)
 
 
 async def _rulesets(interaction: discord.Interaction) -> tuple[str, str]:

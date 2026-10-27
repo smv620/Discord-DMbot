@@ -26,6 +26,8 @@ class EphemeralStore:
 
     def __init__(self, session_at: int, dm_user_id: int) -> None:
         self.job = blank(session_at, dm_user_id, int(time.time()))
+        # Every beat sheet the checks saw, in order, so a failed run can say why (#1997).
+        self.sheets: list[list[dict[str, Any]]] = []
 
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Job:
         return self.job
@@ -45,7 +47,18 @@ class EphemeralStore:
         values: dict[str, Any] = {
             name: (tuple(value) if name in _LISTS else value) for name, value in fields.items()
         }
+        if fields.get("state") == "beats" and fields.get("beats"):
+            self.sheets.append([dict(b) for b in fields["beats"] if isinstance(b, dict)])
         self.job = replace(self.job, **{**values, "updated_at": int(time.time())})
+
+    async def update_seen(
+        self, guild_id: int, campaign_id: str, session_at: int, approval: int, **fields: Any
+    ) -> None:
+        """`update` only if the DM's approval is still what the step saw (#2305)."""
+        critics = self.job.critics
+        stored = int(critics.get("approved_at") or 0) if isinstance(critics, dict) else 0
+        if stored == approval:
+            await self.update(guild_id, campaign_id, session_at, **fields)
 
     async def reset_audio(self, guild_id: int, campaign_id: str, session_at: int) -> None:
         return None

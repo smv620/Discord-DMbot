@@ -18,6 +18,7 @@
     "check:csp": "node scripts/check-csp.mjs",
     "check:transitions": "node scripts/check-transitions.mjs",
     "check:a11y": "node scripts/check-a11y.mjs",
+    "check:phone": "node scripts/check-phone.mjs",
     "check:smoke": "node scripts/check-smoke.mjs",
     "check:weight": "node scripts/check-weight.mjs",
     "check:golive": "node scripts/check-golive.mjs"
@@ -31,7 +32,7 @@
     "@astrojs/check": "^0.9.10",
     "@testing-library/preact": "^3.2.4",
     "@types/node": "^22.20.5",
-    "axe-core": "^4.14.0",
+    "axe-core": "4.14.0",
     "happy-dom": "^20.14.5",
     "playwright-core": "1.63.0",
     "typescript": "^6.0.3",

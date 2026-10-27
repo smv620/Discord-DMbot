@@ -72,6 +72,62 @@ class Client(unittest.IsolatedAsyncioTestCase):
         await ai.tier(AIModelTier.FAST).complete("rules", "doc")
         self.assertEqual(session.sent["json"]["system"], "rules")
 
+    async def test_a_schema_is_sent_as_structured_outputs_only_when_asked(self) -> None:
+        """#2039: `output_config.format` with `type: json_schema`, no beta header."""
+        body = {"content": [{"type": "text", "text": "{}"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST)
+        self.assertNotIn("output_config", session.sent["json"])
+        schema = {"type": "object", "properties": {}, "additionalProperties": False}
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST, schema=schema)
+        self.assertEqual(
+            session.sent["json"]["output_config"],
+            {"format": {"type": "json_schema", "schema": schema}},
+        )
+        self.assertNotIn("anthropic-beta", session.sent["headers"])
+        await ai.tier(AIModelTier.CAREFUL).complete("rules", "doc", schema=schema)  # a tier client
+        self.assertEqual(session.sent["json"]["output_config"]["format"]["schema"], schema)
+
+    async def test_images_go_in_before_the_text_as_base64_and_only_when_given(self) -> None:
+        """#2450: an image block for each image, then the text; nothing changes without one."""
+        import base64
+
+        from dmbot.ai import Image
+
+        body = {"content": [{"type": "text", "text": "{}"}], "usage": {"input_tokens": 1}}
+        ai, session = self.client(200, body)
+        await ai.complete("rules", "doc", tier=AIModelTier.FAST)
+        self.assertEqual(session.sent["json"]["messages"], [{"role": "user", "content": "doc"}])
+        picture = Image("image/png", b"\x89PNG\r\n\x1a\nbytes")
+        await ai.tier(AIModelTier.FAST).complete("rules", "look", images=[picture])
+        (message,) = session.sent["json"]["messages"]
+        self.assertEqual(
+            message["content"],
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.b64encode(picture.data).decode(),
+                    },
+                },
+                {"type": "text", "text": "look"},
+            ],
+        )
+        self.assertNotIn("PNG", repr(picture))  # the bytes are never in a log line or a repr
+
+    async def test_a_refusal_is_flagged_and_a_schema_the_service_rejects_fails_in_plain_words(
+        self,
+    ) -> None:
+        body = {"content": [], "stop_reason": "refusal", "usage": {"input_tokens": 1}}
+        ai, _ = self.client(200, body)
+        reply = await ai.complete("rules", "doc", tier=AIModelTier.FAST, schema={"type": "object"})
+        self.assertTrue(reply.refused)
+        ai, _ = self.client(400, "output_config: schema not supported")
+        with self.assertRaises(AIError):  # no silent fallback to unstructured text (#2039)
+            await ai.complete("rules", "doc", tier=AIModelTier.FAST, schema={"type": "object"})
+
     async def test_cache_writes_and_reads_are_counted_for_the_spend_watch(self) -> None:
         body = {
             "content": [{"type": "text", "text": "x"}],

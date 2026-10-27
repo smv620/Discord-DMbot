@@ -143,6 +143,68 @@ class TheFormats(unittest.TestCase):
         self.assertEqual((got.skipped, got.joined), (0, 1))
         self.assertEqual(len(got.utterances), 9)
 
+    def test_craigs_cut_out_placeholders_are_dropped_and_counted_apart(self) -> None:
+        text = "\n".join(
+            [
+                "Sam: The gate stands open.",
+                "{non-game context}",
+                "Mia: Mira steps in.",
+                "{non-game context}",
+                "{non-game context}",
+                "Sam: A torch is lit.",
+            ]
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.format, tf.PLAIN)
+        self.assertEqual((got.cut_out, got.joined), (3, 0))
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances],
+            [
+                ("Sam", "The gate stands open."),
+                ("Mia", "Mira steps in."),
+                ("Sam", "A torch is lit."),
+            ],
+        )
+        self.assertNotIn("non-game", "".join(u.text for u in got.utterances))
+
+    def test_a_leading_placeholder_is_stripped_and_an_empty_utterance_dropped(self) -> None:
+        text = "\n".join(
+            [
+                "Sam: {non-game context} then, at the dawn, we ride.",
+                "Mia: {non-game context}",
+                "Sam: Onward.",
+            ]
+        )
+        got = tf.parse(text)
+        self.assertEqual(
+            [(u.speaker, u.text) for u in got.utterances],
+            [("Sam", "then, at the dawn, we ride."), ("Sam", "Onward.")],
+        )
+
+    def test_a_wrapped_line_after_an_emptied_utterance_joins_that_speaker_not_the_one_before(
+        self,
+    ) -> None:
+        text = "\n".join(
+            [f"Sam: line {n}" for n in range(8)]
+            + ["Mia: {non-game context}", "and then she spoke.", "Sam: Onward."]
+        )
+        got = tf.parse(text)
+        self.assertEqual(got.utterances[-2].speaker, "Mia")
+        self.assertEqual(got.utterances[-2].text, "and then she spoke.")
+
+    def test_many_cut_outs_do_not_count_against_the_quarter_limit(self) -> None:
+        lines: list[str] = []
+        for n in range(10):
+            lines += [f"Sam: line {n}", "{non-game context}", "{non-game context}"]
+        got = tf.parse("\n".join(lines))
+        self.assertEqual((got.cut_out, got.joined, len(got.utterances)), (20, 0, 10))
+
+    def test_a_longer_braced_note_is_not_a_cut_out(self) -> None:
+        long_note = "{" + "x" * 41 + "}"
+        text = "\n".join([*[f"Sam: line {n}" for n in range(8)], long_note])
+        got = tf.parse(text)
+        self.assertEqual((got.cut_out, got.joined), (0, 1))
+
     def test_a_header_before_the_first_utterance_is_skipped_and_counted(self) -> None:
         text = (
             "Craig recording of the Test Table\nRecorded 2026-10-01\n\n"
@@ -259,6 +321,50 @@ class TheNamesFile(unittest.TestCase):
             tf.parse_names("= Kah-zeth\n")
 
 
+class TheLength(unittest.TestCase):
+    """The recap's length follows the session's hours (#2013)."""
+
+    def read(self, text: str, *extra: str) -> tuple[str, pl.Inputs]:
+        with tempfile.TemporaryDirectory() as tmp:
+            story = Path(tmp) / "story.txt"
+            story.write_text(text, encoding="utf-8")
+            args = run.parse_args(["--transcript", str(story), "--dm", "Sam", *extra])
+            inputs, transcript, _ = run.read_transcript_inputs(args)
+        return run._length_line(args, transcript, inputs), inputs
+
+    def test_a_file_with_no_times_is_estimated_from_its_words(self) -> None:
+        line, inputs = self.read("Sam: " + " ".join(["word"] * 14_000) + "\nMia: hi.\n")
+        self.assertEqual(inputs.hours, 2.0)
+        self.assertIn("about 2 hours (estimated from the words; give --hours to set it)", line)
+        self.assertIn("about 230 words (a target, not a check)", line)
+
+    def test_a_tiny_file_is_half_an_hour_at_least(self) -> None:
+        _, inputs = self.read("Sam: hello there.\nMia: hi.\n")
+        self.assertEqual(inputs.hours, 0.5)
+
+    def test_hours_overrides_the_estimate(self) -> None:
+        line, inputs = self.read("Sam: hello.\nMia: hi.\n", "--hours", "6")
+        self.assertEqual(inputs.hours, 6)
+        self.assertIn("about 6 hours (from --hours)", line)
+        self.assertIn("about 450 words", line)
+
+    def test_a_file_with_times_uses_them(self) -> None:
+        text = "[00:00:01] Sam: hello.\n[01:00:00] Mia: hi.\n[02:00:01] Sam: bye.\n"
+        line, inputs = self.read(text)
+        self.assertIsNone(inputs.hours)  # the lines' own times are used
+        self.assertIn("from the file's times", line)
+        self.assertIn("about 2 hours", line)
+
+    def test_the_hours_flag_is_checked(self) -> None:
+        for bad in ("0", "0.1", "30", "-2"):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--hours", bad])
+            self.assertIn("--hours", err.getvalue(), bad)
+        args = run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--hours", "3.5"])
+        self.assertEqual(args.hours, 3.5)
+
+
 class TheCueMap(unittest.TestCase):
     def test_every_cue_is_listed_with_its_voice_tag_or_music_only(self) -> None:
         summary = (
@@ -270,7 +376,7 @@ class TheCueMap(unittest.TestCase):
         self.assertEqual(
             rows,
             [
-                "  《Tense》 -> music only",
+                "  《Tense》 -> [urgently]",
                 "  ((pause)) -> [short pause]",
                 "  《whisper》 -> [whispers]",
                 "  ((slow)) -> music only",
@@ -281,7 +387,7 @@ class TheCueMap(unittest.TestCase):
     def test_the_canned_recap_lists_all_its_cues(self) -> None:
         script = sc.build("The Silver Lock", 4, fx.SUMMARY)
         rows = tf.cue_map(fx.SUMMARY, script)
-        self.assertEqual(len(rows), 3)  # 《Tense》, ((slow)), 《Uneasy》
+        self.assertEqual(len(rows), 3)  # 《Tense》, ((slow)), 《Ominous》
 
 
 class TheRefusals(unittest.TestCase):
@@ -301,7 +407,9 @@ class TheRefusals(unittest.TestCase):
 
     def test_the_other_flags_go_with_a_transcript_or_audio(self) -> None:
         self.assertIn("--transcript", self.refused("--golden", "--dm", "Sam"))
-        self.assertIn("--audio", self.refused("--transcript", "f.txt", "--dm", "Sam", "--out", "d"))
+        self.assertIn("--transcript", self.refused("--golden", "--out", "d"))
+        args = run.parse_args(["--transcript", "f.txt", "--dm", "Sam", "--out", "d"])
+        self.assertEqual(args.out, "d")  # the text is saved without --audio too
 
     def test_the_flags_are_accepted_together(self) -> None:
         args = run.parse_args(
@@ -345,7 +453,8 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
             asked.append(question)
             return ask
 
-        args = run.parse_args(list(argv))
+        # The canned recap is a 3.5-hour session's length (#2013): a file this small is not.
+        args = run.parse_args([*argv, *([] if "--hours" in argv else ["--hours", "3.5"])])
         fast = fx.Canned(*(answers or []))
         out = io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -370,7 +479,7 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(asked, [tf.CONSENT_QUESTION])  # once
         self.assertIn("The Silver Lock", text)
         self.assertIn("Cues (3):", text)
-        self.assertIn("《Tense》 -> music only", text)
+        self.assertIn("《Tense》 -> [urgently]", text)
         for _, said in fx.LINES:
             self.assertNotIn(said, text)  # the report never holds the transcript itself
 
@@ -406,6 +515,16 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         )
         _, _, spoken = run.read_transcript_inputs(args)
         self.assertEqual(spoken, [SpokenName("Oskar", "Oss-kar")])
+
+    async def test_the_summary_line_counts_the_cut_out_lines_apart_from_the_joined_ones(
+        self,
+    ) -> None:
+        text = self.story().replace("\n", "\n{non-game context}\n", 2)
+        story = self.file("craig2.txt", text)
+        code, said, _ = await self.go(None, "--transcript", story, "--dm", "Sam")
+        self.assertEqual(code, 0)
+        self.assertIn("skipped 2 cut-out lines", said)
+        self.assertNotIn("joined", said.split("skipped 2 cut-out lines")[0][-40:])
 
     async def test_the_summary_line_counts_what_the_plain_reader_let_through(self) -> None:
         text = "A header\nof two lines\n" + self.story().replace(

@@ -42,6 +42,26 @@ WORDS = re.compile(
 # a fixed or deleted phrase leaves the list (the stale-entry check below).
 ALLOWED: list[tuple[str, str, str]] = [
     (
+        "recaps/pipeline.py",
+        "model",
+        "the name of an attribute read off the AI client to size the transcript (#2590): a "
+        "lookup key, never shown to a person",
+    ),
+    (
+        "rules/house_file_link.py",
+        "api",
+        "OneDrive's host name (api.onedrive.com), compared to name the site a link is on: an "
+        "address to match, never shown to a person",
+    ),
+    (
+        "recaps/draft.py",
+        "json",
+        "the instructions the recap's AI is given (what form to answer in, #2074): sent to the AI, "
+        "never shown to a person",
+    ),
+    ("recaps/draft.py", "schema", "the same AI instructions: the shape of the answer asked for"),
+    ("recaps/draft.py", "model", "the same AI instructions: 'a small model' cuts the text up"),
+    (
         "ui/logic.py",
         "json",
         "the file name of a backup the DM downloads and uploads again (.dmbot.json.gz): a name to "
@@ -66,6 +86,12 @@ ALLOWED: list[tuple[str, str, str]] = [
         "each section'): words for the model, not for a person",
     ),
     (
+        "recaps/calls.py",
+        "prompt",
+        "a phrase to find in a problem the checks wrote ('exactly one music prompt'), to sort it "
+        "under a fixed word in a test report: matched, never shown",
+    ),
+    (
         "recaps/pipeline.py",
         "json",
         "a problem listed back to the AI so it can answer again: for the model, not a person",
@@ -83,6 +109,16 @@ ALLOWED: list[tuple[str, str, str]] = [
     ),
     (
         "rules/homebrew.py",
+        "null",
+        "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
+    ),
+    (
+        "transcript/store.py",
+        "null",
+        "a piece of a database question (SQL) shared by two queries, never shown",
+    ),
+    (
+        "recaps/plot_talk_run.py",
         "null",
         "a piece of a database question (SQL) that does not begin with a SQL word, never shown",
     ),

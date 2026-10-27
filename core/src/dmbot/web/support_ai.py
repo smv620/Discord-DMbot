@@ -25,6 +25,8 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import make_msgid, parseaddr
 from typing import Protocol
 
 from dmbot.ai import AIError, AIOutOfFunds, Reply
@@ -34,6 +36,7 @@ from dmbot.web import support
 from dmbot.web.support import Open
 from dmbot.web.support import Reply as ThreadReply
 from dmbot.web.support_mail import reply_address
+from dmbot.word_end import at_word_end
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ MAX_AI_ANSWERS = 5  # one ticket's answers from the AI; the next time it goes to
 RETRY_S = 3600  # a failed AI call is tried again after an hour
 GIVE_UP_S = 86400  # ...and after a day without an answer the ticket goes to a person
 TICKETS_PER_PASS = 5
-MAX_ANSWER = 3000
+REPLY_STORED_MAX = 8000  # characters the thread keeps (support_replies.text): a storage limit
 MAX_PROMPT = 24_000  # characters of thread sent: the newest messages win
 MAX_TOKENS = 900
 # The word is real: asks_for_a_person() below hands the ticket over on it (or "human") without an
@@ -90,7 +93,6 @@ WHY: dict[support.Reason, str] = {
     "helper-down": "the AI was down for a day and could not answer.",
 }
 
-ACK_SUBJECT = "We got your question"
 WEEKLY_SUBJECT = "DMbot support this week"
 # What the thank-you says happens next: the helper answers first only if it is switched on
 # here (a model and key are configured); otherwise saying so would promise what won't come.
@@ -135,6 +137,47 @@ def _data(text: str) -> str:
 
 LABELS = {"customer": "Customer", "ai": "Helper (AI)", "person": "Team"}
 
+# The conversation every email to the person carries below its new words (#2192; docs/PLAN.md,
+# "The email chain is kept"). The fixed first line is also where support_mail cuts a reply that
+# a mail program sent back with no ">", so only the new words are kept.
+HISTORY_HEADING = "Earlier in this conversation:"
+HISTORY_MAX = 20_000  # characters: the newest parts that fit
+HISTORY_OLDER = "Older messages are on your account page."
+NO_LIMIT = 10**9  # the team's email carries it all: the 30-reply cap bounds it
+SPEAKERS = {"customer": "You", "ai": "DMbot's helper (a program)", "person": "DMbot team"}
+TEAM_SPEAKERS = {**SPEAKERS, "customer": "The customer"}
+MAX_REFERENCES = 20  # earlier Message-IDs named in a new email's References header
+
+
+def when(stamp: int) -> str:
+    """ "21 October 2026": the day, month and year, as the website writes dates."""
+    day = datetime.fromtimestamp(stamp, UTC)
+    return f"{day.day} {day:%B} {day.year}"
+
+
+def conversation(
+    first: Open,
+    replies: list[ThreadReply],
+    *,
+    speakers: dict[str, str] = SPEAKERS,
+    limit: int = HISTORY_MAX,
+) -> str:
+    """The ticket's conversation so far, newest first, each part labelled and dated, starting with
+    the fixed line. When it is long, the newest parts that fit in `limit` characters, then a line
+    saying where the older ones are."""
+    parts = [(speakers["customer"], first.created_at, first.message)]
+    parts += [(speakers[r.who], r.created_at, r.text) for r in replies]
+    kept: list[str] = []
+    size = 0
+    for label, stamp, text in reversed(parts):
+        block = f"{label}, {when(stamp)}:\n{text.strip()}"
+        if kept and size + len(block) > limit:
+            kept.append(HISTORY_OLDER)
+            break
+        kept.append(block if len(block) <= limit else block[: limit - 1].rstrip() + "…")
+        size += len(block)
+    return "\n\n".join([HISTORY_HEADING, *kept])
+
 
 def thread_text(first: Open, replies: list[ThreadReply]) -> str:
     """The conversation as the AI reads it, newest messages kept when it is long."""
@@ -174,7 +217,7 @@ def read_verdict(raw: str) -> Verdict | None:
     if not isinstance(answer, str) or not answer.strip():
         return None
     verdict = data.get("verdict")
-    return Verdict(answer.strip()[:MAX_ANSWER], verdict == "unhappy")
+    return Verdict(at_word_end(answer.strip(), REPLY_STORED_MAX), verdict == "unhappy")
 
 
 def with_ending(answer: str) -> str:
@@ -229,22 +272,50 @@ class SupportHelper:
         )
 
     async def _to_person(
-        self, ticket: Open, kind: str, subject: str, body: str, email: str | None = None
+        self,
+        ticket: Open,
+        kind: str,
+        subject: str,
+        body: str,
+        email: str | None = None,
+        *,
+        history: list[ThreadReply] | None = None,
     ) -> None:
-        """One email to the ticket's owner from the support address (never raises)."""
+        """One email to the ticket's owner from the support address (never raises). With
+        `history`, the conversation so far goes below the new words. Every email names the ones
+        before it (In-Reply-To, References) so a mail program shows one conversation, and its own
+        Message-ID is kept for the next (#2192). Nothing of the words is logged."""
         address = email if email is not None else ticket.email
         if self._mail is None or address is None:
             return
+        if history is not None:
+            body = f"{body.rstrip()}\n\n{conversation(ticket, history)}"
+        earlier: list[str] = []
+        try:
+            earlier = await support.mail_ids(self._db, ticket.id)
+        except Exception as exc:  # the email still goes, just not linked to the ones before
+            log.error("Support helper: earlier mail IDs not read (%s)", type(exc).__name__)
+        sender = self._mail.settings.support_sender
+        domain = parseaddr(sender)[1].rpartition("@")[2]
+        message_id = make_msgid(domain=domain or None)
         result = await self._mail.send(
             user_id=ticket.user_id,
             kind=kind,
             to=address,
             subject=subject,
             body=body,
-            sender=self._mail.settings.support_sender,
+            sender=sender,
             reply_to=self._reply_to(ticket.id),
+            message_id=message_id,
+            in_reply_to=earlier[-1] if earlier else None,
+            references=[*earlier[:1], *earlier[1:][-(MAX_REFERENCES - 1) :]],
         )
-        if result not in ("sent", "already_sent"):
+        if result == "sent":
+            try:
+                await support.keep_mail_id(self._db, ticket.id, message_id, now=int(self._clock()))
+            except Exception as exc:
+                log.error("Support helper: a mail ID was not kept (%s)", type(exc).__name__)
+        elif result != "already_sent":
             # The answer is kept on the ticket and shown on the admin page; counts only here.
             log.warning("Support helper: an email to a person did not go (%s)", result)
 
@@ -261,7 +332,7 @@ class SupportHelper:
         await self._to_person(
             ticket,
             f"support-ack:{ticket.id}",
-            f"{ACK_SUBJECT}: {ticket.subject}",
+            f"Re: {ticket.subject}",
             ACK_WITH_HELPER if self._ai is not None else ACK_PERSON,
         )
 
@@ -310,11 +381,30 @@ class SupportHelper:
         ticket = await support.one(self._db, ticket_id)
         if ticket is None:
             return False
+        before = await support.thread(self._db, ticket_id)  # the conversation below the new words
         added = await support.add_reply(self._db, ticket_id, "person", text, now=int(self._clock()))
         if added is None:
             return False
-        await self._to_person(ticket, f"support-reply:{added.id}", f"Re: {ticket.subject}", text)
+        await self._to_person(
+            ticket, f"support-reply:{added.id}", f"Re: {ticket.subject}", text, history=before
+        )
         return True
+
+    async def sent_emails(self, ticket_id: int) -> list[str]:
+        """The emails a person may be answering, so a reply sent back with no ">" is cut where
+        the copy starts (`support_mail.fresh_words`): the newest answer kept on the ticket and
+        the fixed notes DMbot sends. Never logged."""
+        sent = [ACK_WITH_HELPER, ACK_PERSON, ESCALATED_BODY]
+        try:
+            replies = await support.thread(self._db, ticket_id)
+        except Exception as exc:
+            log.error("Support helper: the newest answer was not read (%s)", type(exc).__name__)
+            replies = []
+        for r in reversed(replies):
+            if r.who in ("ai", "person"):
+                sent.append(r.text)
+                break
+        return sent
 
     async def customer_replied(self, ticket_id: int, text: str) -> bool:
         """The person's emailed reply, kept on the ticket. It goes back to waiting for the helper
@@ -406,7 +496,9 @@ class SupportHelper:
         if added is None:
             await support.release(self._db, ticket.id)
             return "waiting"
-        await self._to_person(ticket, f"support-reply:{added.id}", f"Re: {ticket.subject}", text)
+        await self._to_person(
+            ticket, f"support-reply:{added.id}", f"Re: {ticket.subject}", text, history=replies
+        )
         return "answered"
 
     async def _escalate(
@@ -426,16 +518,18 @@ class SupportHelper:
             f"Ticket {ticket.id}: {ticket.subject}",
             f"Plan: {ticket.plan}",
             "",
-            f"--- Customer ---\n{ticket.message}",
+            conversation(ticket, replies, speakers=TEAM_SPEAKERS, limit=NO_LIMIT),
         ]
-        for r in replies:
-            lines += ["", f"--- {LABELS[r.who]} ---", r.text]
         await self._alert_team(
             f"Support ticket {ticket.id} needs you: {ticket.subject}"[:150], "\n".join(lines)
         )
         if tell_person:
             await self._to_person(
-                ticket, f"support-escalated:{ticket.id}", f"Re: {ticket.subject}", ESCALATED_BODY
+                ticket,
+                f"support-escalated:{ticket.id}",
+                f"Re: {ticket.subject}",
+                ESCALATED_BODY,
+                history=replies,
             )
 
     async def _out_of_funds(self, now: int) -> None:

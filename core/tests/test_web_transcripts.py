@@ -29,7 +29,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
-from tests.test_web_api import ALICE, API, QUILLON, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, QUILLON, THURSDAY, FakeDiscord, settings
 
 START = 1_700_000_000
 CAROL = type(BOB)(id=3003, name="Carol", email="carol@example.com")  # in the server, no DM at all
@@ -181,6 +181,107 @@ class Transcripts(Base):
         got = await transcripts.list_campaigns(self.web, self.carol, now=NOW, enforce_plans=True)
         self.assertEqual([c["name"] for c in got], ["One", "Two"])
 
+    # ---- names kept at the session (#2337) ----------------------------------------------
+
+    async def shown_lines(self, version: str = "heard") -> Any:
+        return await read(self.web, self.carol, self.cref, 2, version)
+
+    async def test_the_names_kept_at_the_session_are_shown_and_the_dm_is_marked(self) -> None:
+        await self.store_t.record_names(
+            THURSDAY.id, self.sid, {BOB.id: "Bobby", ALICE.id: "Belleros"}
+        )
+        shown = await self.shown_lines()
+        text = "\n".join(shown["lines"])
+        self.assertIn("(Bobby)", text)
+        self.assertIn("(Belleros, DM)", text)  # Alice DMs "One"
+        self.assertNotIn("Speaker", text + "\n".join(shown["notes"]))  # no note: all are named
+
+    async def test_someone_without_a_name_is_speaker_n_counted_among_those_without(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "Bobby", ALICE.id: None})
+        shown = await self.shown_lines()
+        text = "\n".join(shown["lines"])
+        self.assertIn("(Bobby)", text)
+        self.assertIn("(Speaker 1, DM)", text)  # not found: first of those without a name
+        self.assertIn(transcripts.NAMES_NOTE, shown["notes"])
+
+    async def test_two_people_with_one_name_tell_apart(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "Sam", ALICE.id: "sam"})
+        text = "\n".join((await self.shown_lines())["lines"])
+        self.assertIn("(Sam)", text)
+        self.assertIn("(sam (2), DM)", text)
+
+    async def test_a_real_name_that_looks_like_the_stand_in_is_no_name(self) -> None:
+        await self.store_t.record_names(
+            THURSDAY.id, self.sid, {BOB.id: "Speaker 7", ALICE.id: "Belleros"}
+        )
+        shown = await self.shown_lines()
+        text = "\n".join(shown["lines"])
+        self.assertIn("(Speaker 1)", text)  # numbered among the unnamed, not taken at its word
+        self.assertNotIn("Speaker 7", text)
+        self.assertIn(transcripts.NAMES_NOTE, shown["notes"])
+
+    async def test_a_name_that_cleans_to_nothing_is_kept_as_not_found(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "\u200b\u200b"})
+        kept = (await self.store_t.session(THURSDAY.id, self.sid)).speaker_names  # type: ignore[union-attr]
+        self.assertEqual(dict(kept), {BOB.id: ""})
+
+    async def test_nobody_can_pass_as_the_dm_by_choosing_a_name(self) -> None:
+        await self.store_t.record_names(
+            THURSDAY.id, self.sid, {BOB.id: "Eve, DM", ALICE.id: "Belleros"}
+        )
+        text = "\n".join((await self.shown_lines())["lines"])
+        self.assertIn("(Eve DM)", text)
+        self.assertNotIn("(Eve, DM)", text)
+        self.assertIn("(Belleros, DM)", text)
+
+    async def test_a_name_is_kept_only_for_someone_who_spoke_and_is_not_replaced(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "Bobby", CAROL.id: "Carol"})
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "Renamed"})
+        kept = (await self.store_t.session(THURSDAY.id, self.sid)).speaker_names  # type: ignore[union-attr]
+        self.assertEqual(dict(kept), {BOB.id: "Bobby"})  # Carol has no lines here
+
+    async def test_a_person_not_found_is_kept_as_looked_for(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: None})
+        unnamed = [u for sid, ids in await self.store_t.unnamed(THURSDAY.id) if sid == self.sid
+                   for u in ids]  # fmt: skip
+        self.assertEqual(unnamed, [ALICE.id])  # Bob was looked for; Alice never was
+
+    async def test_deleting_a_persons_transcripts_takes_their_name_too(self) -> None:
+        await self.store_t.record_names(
+            THURSDAY.id, self.sid, {BOB.id: "Bobby", ALICE.id: "Belleros"}
+        )
+        await self.store_t.delete_person(THURSDAY.id, BOB.id)
+        kept = (await self.store_t.session(THURSDAY.id, self.sid)).speaker_names  # type: ignore[union-attr]
+        self.assertEqual(dict(kept), {ALICE.id: "Belleros"})
+
+    async def test_a_transcript_deleted_by_retention_loses_its_names(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "Bobby"})
+        gone = await self.store_t.delete_session_transcript(
+            THURSDAY.id, self.one.id, self.sid, START + 10**9, START + 10**9
+        )
+        self.assertGreater(gone, 0)
+        kept = (await self.store_t.session(THURSDAY.id, self.sid)).speaker_names  # type: ignore[union-attr]
+        self.assertEqual(dict(kept), {})
+
+    async def test_names_go_with_the_campaign_and_are_not_another_servers(self) -> None:
+        await self.store_t.record_names(THURSDAY.id, self.sid, {BOB.id: "Bobby"})
+        self.assertEqual(await self.store_t.unnamed(QUILLON.id), [])  # another server sees none
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("DELETE FROM campaigns WHERE id = %s", (self.one.id,))
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM transcript_sessions WHERE id = %s", (self.sid,)
+            )
+            self.assertEqual((await cur.fetchone())["n"], 0)  # type: ignore[index]
+
+    async def test_the_door_answers_only_a_member_of_the_server(self) -> None:
+        elsewhere = await self.session_of(CAROL, [QUILLON])
+        with self.assertRaises(RecapError):
+            await read(self.web, elsewhere, self.cref, 2, "heard")
+        names, dms = await transcripts._speakers(
+            self.web, elsewhere, THURSDAY.id, self.one.id, self.sid
+        )
+        self.assertEqual((names, dms), ({}, set()))
+
     # ---- what is shown -----------------------------------------------------------------
 
     def expected(self, version: str) -> str:
@@ -193,8 +294,9 @@ class Transcripts(Base):
         )  # fmt: skip
         names = transcripts.speaker_names(lines, version)
         return export.render(
-            "One", stored, lines, names, characters=self.expected_characters, version=version
-        )
+            "One", stored, lines, names, characters=self.expected_characters,
+            dms={ALICE.id}, version=version,
+        )  # fmt: skip
 
     async def test_the_heard_version_is_the_raw_transcript_as_export_makes_it(self) -> None:
         shown = await read(self.web, self.carol, self.cref, 2, "heard")
@@ -217,10 +319,40 @@ class Transcripts(Base):
         self.assertEqual(shown["lines"], body.rstrip("\n").split("\n"))
         joined = "\n".join(shown["lines"])
         self.assertIn("Ka'zeth draws his sword", joined)  # names fixed
-        for hidden in ("DM Sidebar", "is the ferryman hostile", "Probably not", "(typed)",
-                       "did you see the match", "long rest"):  # fmt: skip
+        for hidden in ("DM Sidebar", "is the ferryman hostile", "Probably not",
+                       "did you see the match"):  # fmt: skip
             self.assertNotIn(hidden, joined)
+        # typed game chat is in the cleaned version too, tagged (typed) (#2447)
+        self.assertIn("(typed)", joined)
+        self.assertIn("long rest", joined)
         self.assertIn("skipped", joined)  # the off-topic run is a note with how long it lasted
+
+    async def test_a_picture_line_is_tagged_image_not_typed_in_both_versions(self) -> None:
+        # A line that describes a picture posted in the table chat (#2450, #2507): the bot's file
+        # says "(image)", so the website's reading page does too, never "(typed)".
+        sid = await self.store_t.open_session(THURSDAY.id, self.one.id, START + 200_000)
+        base = (START + 200_000) * 1000
+        await self.store_t.add_lines(
+            THURSDAY.id,
+            sid,
+            [
+                Line(base + 1000, BOB.id, "Kazeth draws his sword", "Ka'zeth draws his sword"),
+                Line(base + 2000, BOB.id, "a map of the keep", "a map of the keep",
+                     typed=True, image=True),
+                Line(base + 3000, BOB.id, "we take a long rest", "we take a long rest",
+                     typed=True),
+            ],
+        )  # fmt: skip
+        await self.store_t.end_session(THURSDAY.id, sid, START + 203_000)
+        number = 3
+        for version in ("heard", "cleaned"):
+            shown = await read(self.web, self.carol, self.cref, number, version)
+            map_line = next(x for x in shown["lines"] if "a map of the keep" in x)
+            rest_line = next(x for x in shown["lines"] if "long rest" in x)
+            self.assertIn("(image)", map_line, version)
+            self.assertNotIn("(typed)", map_line, version)
+            self.assertIn("(typed)", rest_line, version)
+            self.assertNotIn("(image)", rest_line, version)
 
     async def test_it_says_the_names_are_numbered_and_shows_nobodys_discord_id(self) -> None:
         shown = await read(self.web, self.carol, self.cref, 2, "heard")
@@ -270,7 +402,7 @@ class Transcripts(Base):
     async def test_the_cleaned_numbering_has_no_gap_for_someone_it_hides(self) -> None:
         lines = [
             Line(1, 7, "a", "a"),
-            Line(2, 8, "typed only", "typed only", typed=True),
+            Line(2, 8, "typed only", "typed only", typed=True, topic="off_topic"),
             Line(3, 9, "b", "b"),
         ]
         self.assertEqual(
@@ -323,7 +455,14 @@ class Transcripts(Base):
             "dmbot_web_transcript_campaigns",
             "dmbot_web_transcript_characters",
         ):
-            self.assertEqual(callers(door), {"schema.py", "web/transcripts.py"}, door)
+            allowed = {"schema.py", "web/transcripts.py"}
+            if door == "dmbot_web_transcript_sessions":
+                # The recap pages ask it whether a session's transcript was deleted (#2022): the
+                # website's role has no grant on the tables, so this door is the only way in.
+                allowed.add("web/recaps.py")
+                # The recap maker's past-sessions list (#2610) shows which sessions have one.
+                allowed.add("web/past_sessions.py")
+            self.assertEqual(callers(door), allowed, door)
 
 
 class DeletedTranscripts(Transcripts):
@@ -428,7 +567,11 @@ class Characters(Transcripts):
         self.memory = MemoryStore(self.db)
         add = self.memory.add_entity
         g, c = THURSDAY.id, self.one.id
-        kw = {"source": DM_SOURCE, "status": "confirmed", "role": "player_character"}
+        kw: dict[str, Any] = {
+            "source": DM_SOURCE,
+            "status": "confirmed",
+            "role": "player_character",
+        }
         await add(g, c, type="character", name="Cerric", played_by=BOB.id, **kw)
         await add(g, c, type="character", name="Dorn", played_by=BOB.id, **kw)
         await add(g, c, type="character", name="Mira", played_by=CAROL.id, **kw)
@@ -514,7 +657,7 @@ class Characters(Transcripts):
         assert stored is not None
         expected = export.render(
             "One", stored, lines, transcripts.speaker_names(lines, export.AS_HEARD),
-            characters={BOB.id: "Dorn"}, version=export.AS_HEARD,
+            characters={BOB.id: "Dorn"}, dms={ALICE.id}, version=export.AS_HEARD,
         )  # fmt: skip
         self.assertEqual(text, expected)
         self.assertEqual(name, export.file_name("One", stored, export.AS_HEARD))
@@ -596,7 +739,7 @@ class Pages(Transcripts):
         assert stored is not None
         expected = export.render(
             "One", stored, lines, transcripts.speaker_names(lines, export.AS_HEARD),
-            version=export.AS_HEARD,
+            dms={ALICE.id}, version=export.AS_HEARD,
         )  # fmt: skip
         self.assertEqual(text, expected)
 
@@ -667,13 +810,15 @@ class TheRoutes(Base):
             clock=lambda: NOW,
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(self.client.aclose)
 
     async def sign_in(self, user: Any, guilds: Any) -> None:
         token = await sessions.sign_in(self.web, user, guilds, now=NOW, days=30)
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
 
     async def test_the_list_the_read_view_and_the_download_agree(self) -> None:
         await self.sign_in(CAROL, [THURSDAY])

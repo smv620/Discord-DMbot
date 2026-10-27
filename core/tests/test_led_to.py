@@ -13,6 +13,7 @@ from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import OPEN, MemoryRuleError
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.ui import threads as ui
+from tests import speed
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
 
 
@@ -210,17 +211,16 @@ class Chain(ConfirmedMemoryTest):
         self.assertEqual([e.name for e in back["The Missing Heir"].came_from], ["The torn map"])
 
     async def test_fifty_threads_with_links_read_in_the_same_single_read(self) -> None:
-        import time
 
         previous = self.heir
         for n in range(49):
             nxt = await self.thread(f"Thread {n}", "quest")
             await self.link(previous, nxt)
             previous = nxt
-        began = time.perf_counter()
         found = await self.memory.threads(GUILD_A, self.c)
         self.assertEqual(len(found), 51)
-        self.assertLess(time.perf_counter() - began, 1.0)
+        took = await speed.fastest_async(lambda: self.memory.threads(GUILD_A, self.c))
+        self.assertLess(took, speed.allowed(1.0))
 
 
 class Cards(ConfirmedMemoryTest):

@@ -34,7 +34,7 @@ from tests.test_support import (
     SupportBase,
 )
 from tests.test_web_admin import ADMIN, HASH, PASSWORD
-from tests.test_web_api import ALICE, API, SITE, FakeDiscord, settings
+from tests.test_web_api import ALICE, SITE, FakeDiscord, settings
 from tests.test_web_email_signin import LINK_SECRET
 
 SECRET = LINK_SECRET
@@ -42,7 +42,7 @@ ALICE_EMAIL: str = ALICE.email or ""
 WEBHOOK_KEY = b"k" * 24
 WEBHOOK_SECRET = "whsec_" + base64.b64encode(WEBHOOK_KEY).decode()
 SUPPORT_FROM = "DMbot support <info@example.org>"
-ALERTS_FROM = "DMbot alerts <jarvis@example.org>"
+ALERTS_FROM = "DMbot alerts <alerts@example.org>"
 MAIL = MailSettings(
     host="smtp.example.org",
     user="dmbot@example.org",
@@ -52,6 +52,11 @@ MAIL = MailSettings(
     alerts_from=ALERTS_FROM,
 )
 DAY = 86400
+
+
+def new_words(mail: EmailMessage) -> str:
+    """An email's own words, above the conversation it carries (#2192)."""
+    return str(mail.get_content()).split(ai.HISTORY_HEADING)[0].strip()
 
 
 def answer(text: str = "Open the menu and press Stop.", verdict: str = "satisfied") -> str:
@@ -231,7 +236,7 @@ class HelperBase(SupportBase):
     ) -> httpx.Response:
         body = json.dumps({"from": sender, "to": [to], "text": text}).encode()
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as client:
             return await client.post(
                 "/mail/inbound", content=body,
@@ -308,9 +313,11 @@ class TheThankYou(HelperBase):
     async def signed_in_client(self) -> httpx.AsyncClient:
         token = await sessions.sign_in_by_email(self.web, ALICE.id, now=self.now, days=30)
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         return client
 
@@ -332,7 +339,7 @@ class TheAnswers(HelperBase):
         self.assertEqual(await self.status(number), "answered")
         mail = self.mails(to_alice=True)[-1]
         self.assertEqual(str(mail["From"]), SUPPORT_FROM)
-        self.assertTrue(mail.get_content().strip().endswith(ai.ENDING))
+        self.assertTrue(new_words(mail).endswith(ai.ENDING))
         self.assertIn(f"Re: {SUBJECT}", str(mail["Subject"]))
         # Nothing waits for the helper any more.
         self.assertEqual(await self.helper.run_once(), 0)
@@ -377,7 +384,7 @@ class TheAnswers(HelperBase):
         self.assertIn("Still stuck 4.", text)
         self.assertIn(f"{SITE}/admin", text)
         last = self.mails(to_alice=True)[-1]
-        self.assertEqual(last.get_content().strip(), ai.ESCALATED_BODY)
+        self.assertEqual(new_words(last), ai.ESCALATED_BODY)
 
     async def test_an_unhappy_reply_goes_to_a_person_but_an_unhappy_first_message_does_not(
         self,
@@ -409,8 +416,8 @@ class TheAnswers(HelperBase):
         number = await self.ticket()
         self.fake.answers.append(answer("Open the menu."))
         await self.helper.run_once()
-        (sent,) = [m for m in self.mails(to_alice=True) if "Re:" in str(m["Subject"])]
-        self.assertTrue(sent.get_content().strip().endswith(ai.ENDING))  # in every answer
+        sent = self.mails(to_alice=True)[-1]  # (the thank-you came first)
+        self.assertTrue(new_words(sent).endswith(ai.ENDING))  # in every answer
         calls = len(self.fake.sent)
         to = str(sent["Reply-To"])
         await self.inbound(to, "PERSON")
@@ -656,7 +663,7 @@ class TheCarefulWrites(HelperBase):
         body = json.dumps({"from": ALICE_EMAIL, "to": [to], "text": "Hello"}).encode()
         headers = sign(body, at=self.now, message_id="msg_same")
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         ) as client:
             for _ in range(3):
                 got = await client.post("/mail/inbound", content=body, headers=headers)
@@ -683,7 +690,9 @@ class TheReason(HelperBase):
 
     async def listed(self) -> dict[int, str | None]:
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(client.aclose)
         signed = await client.post(
@@ -780,7 +789,9 @@ class TheHandOverIsKept(HelperBase):
 
     async def handed_over_at(self, number: int) -> int | None:
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(client.aclose)
         await client.post(
@@ -822,7 +833,9 @@ class TheHandOverIsKept(HelperBase):
 class TheTeamsReply(HelperBase):
     async def admin(self) -> tuple[httpx.AsyncClient, str]:
         client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(client.aclose)
         signed = await client.post(
@@ -842,9 +855,7 @@ class TheTeamsReply(HelperBase):
         self.assertEqual(sent.status_code, 204, sent.text)
         self.assertEqual(await self.status(number), "answered")
         mail = self.mails(to_alice=True)[-1]
-        self.assertEqual(
-            (str(mail["From"]), mail.get_content().strip()), (SUPPORT_FROM, "Hi, I fixed it.")
-        )
+        self.assertEqual((str(mail["From"]), new_words(mail)), (SUPPORT_FROM, "Hi, I fixed it."))
         listed = (await client.get("/admin/support")).json()["tickets"][0]
         self.assertEqual(
             [(r["who"], r["text"]) for r in listed["replies"]], [("person", "Hi, I fixed it.")]
@@ -853,7 +864,9 @@ class TheTeamsReply(HelperBase):
     async def test_only_a_signed_in_admin_may_reply_and_the_text_is_checked(self) -> None:
         number = await self.ticket()
         client, csrf = await self.admin()
-        plain = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url=API)
+        plain = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
+        )
         self.addAsyncCleanup(plain.aclose)
         denied = await plain.post(
             f"/admin/support/{number}/reply", json={"text": "x"}, headers=HEADERS
@@ -889,11 +902,11 @@ class TheSettings(unittest.TestCase):
             "SMTP_APP_PASSWORD": "p",
             "MAIL_FROM": "DMbot <accounts@example.org>",
             "MAIL_SUPPORT_FROM": "info@example.org",
-            "MAIL_ALERTS_FROM": "jarvis@example.org",
+            "MAIL_ALERTS_FROM": "alerts@example.org",
         }
         got = load_mail_settings(env)
         self.assertEqual(
-            (got.support_sender, got.alerts_sender), ("info@example.org", "jarvis@example.org")
+            (got.support_sender, got.alerts_sender), ("info@example.org", "alerts@example.org")
         )
         fallback = load_mail_settings({**env, "MAIL_SUPPORT_FROM": "", "MAIL_ALERTS_FROM": ""})
         self.assertEqual(fallback.support_sender, fallback.sender)

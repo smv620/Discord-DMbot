@@ -134,6 +134,8 @@ def prepare(lookup: CampaignLookup, now: float) -> HintParts:
         if entry.secret:
             secret.add(name_key(entry.text))
             continue
+        if entry.kind == "old":
+            continue  # a spelling the DM fixed (#2170): matched in lines, never listened for
         entity = entities.get(entry.entity_id)
         if entry.confirmed and entity is not None and entity.status == CONFIRMED:
             names.setdefault(entry.entity_id, []).append(entry.text)
@@ -243,6 +245,7 @@ def scene_hints(
     people: Iterable[str] = (),
     absent: Iterable[str] = (),
     sheet: Iterable[str] = (),
+    spelled: Iterable[str] = (),
     limit: int = MAX_HINTS,
 ) -> list[str]:
     """The hints for the next clip, most useful first, one per name however it's
@@ -250,7 +253,9 @@ def scene_hints(
     `people`: those at the table (in its voice channel); `absent`: people who agreed but
     aren't there, last, so a big server's members never crowd out the scene (#173).
     `sheet`: spell, feature and item names from the players' sheets, right after their
-    characters (#723); a name that is also a secret name is left out."""
+    characters (#723); a name that is also a secret name is left out. `spelled`: names someone
+    spelled out at the table this session (#2168), a hint only (nothing says they are names), right
+    after the scene and under the same secret-name rule."""
     out: dict[str, str] = {}
 
     def entries(entity_ids: Iterable[str]) -> Iterator[str]:
@@ -270,6 +275,7 @@ def scene_hints(
         (name for name in sheet if name_key(name) not in parts.secret),
         people,
         entries(in_scene),
+        (name for name in spelled if name_key(name) not in parts.secret),
         entries(connected),
         entries(tracker.earlier(now)),
         entries(parts.recent),

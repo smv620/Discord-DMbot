@@ -116,6 +116,22 @@ class RecapsPanel(discord.ui.View):
             )
             button.callback = self._toggle(which, not on)  # type: ignore[method-assign]
             self.add_item(button)
+        style: discord.ui.Button[RecapsPanel] = discord.ui.Button(
+            label="Recap style", emoji="✍️", style=discord.ButtonStyle.secondary, row=3
+        )
+        style.callback = self._style  # type: ignore[method-assign]
+        self.add_item(style)
+        from dmbot.ui.recap_share import ShareButton  # here: that module imports the bot's UI
+
+        self.add_item(ShareButton(campaign.id, row=3))  # Share a recap (#2118)
+
+    async def _style(self, interaction: discord.Interaction) -> None:
+        # Imported here: the style panel borrows this module's DM check and words.
+        from dmbot.dm_screen import recap_style
+
+        campaign = await recap_style.dm_campaign(interaction, self.campaign_id)
+        if campaign is not None:
+            await recap_style.show(interaction, campaign)
 
     def _toggle(self, which: str, to: bool) -> Any:
         async def callback(interaction: discord.Interaction) -> None:

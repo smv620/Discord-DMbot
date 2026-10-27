@@ -19,6 +19,11 @@ What each number means:
 - asked_dm: proposed claims waiting for the DM from this session, plus the "Did they mean…?" name
   questions the session closed (answered, expired or ended; the caller adds those, which live in
   memory while the session runs). Speaker questions are not counted.
+- readings_unlinked (#2412): placed readings that named a clue, event or ward but found no single
+  kept entry to link it to (no name or text: a count, so the DM can see that some are unlinked);
+- evidence, evidence_placeholders, evidence_dangling, evidence_foreign (#2662): how many evidence
+  links the campaign has, how many lost their line or claim, how many point at nothing and how
+  many at another campaign's thing (the last two should stay 0).
 """
 
 from __future__ import annotations
@@ -29,7 +34,11 @@ from dmbot.memory.store import MemoryStore
 
 RECENT_SESSIONS = 3  # "heard lately" for an orphan
 
-_LIVE = "r.status <> 'rejected' AND r.to_session_at IS NULL"
+# (not the secret proposals that only hold what someone believes, #2412: they are not connections)
+_LIVE = (
+    "r.status <> 'rejected' AND r.to_session_at IS NULL"
+    " AND NOT (r.status = 'proposed' AND r.secret AND r.source = 'extractor')"
+)
 
 COUNTS = f"""
 SELECT
@@ -81,7 +90,21 @@ SELECT
   (SELECT count(*) FROM memory_flags WHERE guild_id = %(g)s AND campaign_id = %(c)s
      AND created_at >= %(since)s) AS flags,
   (SELECT count(*) FROM memory_claims WHERE guild_id = %(g)s AND campaign_id = %(c)s
-     AND status = 'proposed' AND session_started_at >= %(since)s) AS claims
+     AND status = 'proposed' AND reading IS NULL AND session_started_at >= %(since)s) AS claims,
+  (SELECT count(*) FROM memory_claims c WHERE c.guild_id = %(g)s AND c.campaign_id = %(c)s
+     AND c.status = 'confirmed' AND c.reading IS NOT NULL
+     AND (jsonb_typeof(c.reading->'because') = 'string' AND c.reading->>'because' <> ''
+          OR jsonb_typeof(c.reading->'manipulated_by') = 'string'
+             AND c.reading->>'manipulated_by' <> '')
+     AND NOT EXISTS (
+       SELECT 1 FROM memory_evidence k
+        WHERE k.guild_id = c.guild_id AND k.campaign_id = c.campaign_id
+          AND k.kind IN ('clue', 'event')
+          AND (k.relation_id = c.fact_id OR k.belief_id IN (
+                 SELECT e.belief_id FROM memory_evidence e
+                  WHERE e.guild_id = c.guild_id AND e.campaign_id = c.campaign_id
+                    AND e.kind = 'claim' AND e.target_id = c.id AND e.belief_id IS NOT NULL)))
+  ) AS readings_unlinked
 """
 
 
@@ -95,6 +118,13 @@ class Health:
     unused_terms: int
     flags_this_session: int
     asked_dm: int
+    # the evidence links (#2662): all of them, the placeholders, and the ones that point at
+    # nothing or at another campaign's thing (both should stay 0)
+    evidence: int = 0
+    evidence_placeholders: int = 0
+    evidence_dangling: int = 0
+    evidence_foreign: int = 0
+    readings_unlinked: int = 0  # placed readings whose named clue or event found no entry
 
     def line(self) -> str:
         """Counts only: no name, no text."""
@@ -102,7 +132,10 @@ class Health:
             f"memory health: entities={self.entities} confirmed={self.confirmed} "
             f"proposed={self.proposed} duplicates={self.duplicates} orphans={self.orphans} "
             f"unused_terms={self.unused_terms} flags_this_session={self.flags_this_session} "
-            f"asked_dm={self.asked_dm}"
+            f"asked_dm={self.asked_dm} evidence={self.evidence}"
+            f" evidence_placeholders={self.evidence_placeholders}"
+            f" evidence_dangling={self.evidence_dangling} evidence_foreign={self.evidence_foreign}"
+            f" readings_unlinked={self.readings_unlinked}"
         )
 
 
@@ -120,6 +153,7 @@ async def read(
     # campaign-scoped read.
     row = await memory.health_counts(guild_id, campaign_id, since=since, recent=RECENT_SESSIONS)
     confirmed, proposed = int(row["confirmed"]), int(row["proposed"])
+    links = await memory.evidence_audit(guild_id, campaign_id)
     return Health(
         entities=confirmed + proposed,
         confirmed=confirmed,
@@ -129,4 +163,9 @@ async def read(
         unused_terms=int(row["unused_terms"]),
         flags_this_session=int(row["flags"]),
         asked_dm=int(row["claims"]) + max(0, names_asked),
+        evidence=links.links,
+        evidence_placeholders=links.placeholders,
+        evidence_dangling=links.dangling,
+        evidence_foreign=links.foreign,
+        readings_unlinked=int(row["readings_unlinked"]),
     )

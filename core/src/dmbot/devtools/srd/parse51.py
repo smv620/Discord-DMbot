@@ -107,6 +107,12 @@ def clean(text: str) -> str:
     return _HYPHEN.sub("-", text)
 
 
+# Two words the 5.1 prints side by side that make a word ("around"): the 5.2.1 data (spells and
+# conditions) never has them together, so the repair would join them. "During a round" is the
+# Combat chapter's own (#1943).
+BOOK_PAIRS = frozenset({("a", "round")})
+
+
 class Vocabulary:
     """The words the SRD uses, for putting back words that stray spaces have cut."""
 
@@ -122,7 +128,7 @@ class Vocabulary:
         self.hyphens = {w.lower() for w in known if "-" in w}
         self.freq: Counter[str] = Counter()
         self.pairs: Counter[tuple[str, str]] = Counter()  # neighbouring words in this PDF
-        self.known_pairs = frozenset(known_pairs)  # neighbouring words in the 5.2.1 data
+        self.known_pairs = frozenset(known_pairs) | BOOK_PAIRS  # neighbours in the 5.2.1 data
         self.cut = False  # whether two pieces that are not words are taken as one
         # The PDF's own words: those it uses often, counted after the first repair so that
         # the pieces of a cut word ("eature") don't count as words.

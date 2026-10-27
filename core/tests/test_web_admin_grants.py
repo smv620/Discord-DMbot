@@ -17,7 +17,7 @@ from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from tests.pg import DatabaseTest
 from tests.test_web_admin import ADMIN, HASH, HEADERS, PASSWORD
-from tests.test_web_api import API, FakeDiscord, settings
+from tests.test_web_api import FakeDiscord, settings
 
 FRIEND = "123456789012345678"
 OTHER = "223456789012345678"
@@ -44,7 +44,9 @@ class AdminGrants(DatabaseTest):
         )
         self.app = app
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(self.client.aclose)
 
@@ -96,6 +98,7 @@ class AdminGrants(DatabaseTest):
                 "note": "",
                 "grantedBy": ADMIN,
                 "grantedAt": NOW + 60,
+                "alsoFree": False,
             },
         )
         self.now += 60
@@ -174,6 +177,126 @@ class AdminGrants(DatabaseTest):
         self.assertEqual(missing.status_code, 404)
         self.assertEqual((await self.revoke(csrf, "not-an-id")).status_code, 400)
 
+    async def test_a_grant_for_someone_now_on_the_free_list_is_flagged_and_can_be_removed(
+        self,
+    ) -> None:
+        # The grant came first; the owner added the person to the server's free list later (#2196).
+        csrf = await self.sign_in()
+        await self.give(csrf)
+        await self.give(csrf, discordId=OTHER)
+        later = create_app(
+            settings(
+                admin_emails=(ADMIN,),
+                admin_password_hash=HASH,
+                client_ip_header="CF-Connecting-IP",
+                free_users=frozenset({ALWAYS, int(FRIEND)}),
+            ),
+            self.db,
+            FakeDiscord(),
+            admin_sessions=AdminSessions(clock=lambda: 0.0),
+            admin_tries=FailedTries(clock=lambda: 0.0),
+            clock=lambda: self.now,
+        )
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=later),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
+        )
+        self.addAsyncCleanup(client.aclose)
+        signed = await client.post(
+            "/admin/auth/password", json={"email": ADMIN, "password": PASSWORD}, headers=HEADERS
+        )
+        self.assertEqual(signed.status_code, 204)
+        csrf = (await client.get("/admin/me")).json()["csrf"]
+        listed = (await client.get("/admin/grants")).json()
+        self.assertEqual({f["discordId"] for f in listed["free"]}, {str(ALWAYS), FRIEND})
+        flags = {g["discordId"]: g["alsoFree"] for g in listed["grants"]}
+        self.assertEqual(flags, {FRIEND: True, OTHER: False})
+        # "Remove it" is the ordinary revoke, so it is logged and the other grant stays.
+        gone = await client.post(
+            f"/admin/grants/{FRIEND}/revoke", headers={**HEADERS, "X-Admin-CSRF": csrf}
+        )
+        self.assertEqual(gone.status_code, 204)
+        after = (await client.get("/admin/grants")).json()
+        self.assertEqual([g["discordId"] for g in after["grants"]], [OTHER])
+        self.assertEqual(after["log"][0]["action"], "revoke")
+        self.assertEqual(after["log"][0]["discordId"], FRIEND)
+
+    async def fill_log(self, csrf: str, entries: int) -> None:
+        """`entries` log lines: a grant for one person, then changes to it."""
+        await self.give(csrf)
+        for n in range(entries - 1):
+            self.now += 1
+            await self.give(csrf, note=f"change {n}")
+
+    async def test_the_first_page_of_changes_is_the_newest_twenty_with_the_page_count(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 45)
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((len(listed["log"]), listed["logPage"], listed["logPages"]), (20, 1, 3))
+        self.assertEqual(listed["log"][0]["at"], NOW + 44)  # newest first
+        second = (await self.client.get("/admin/grants/log?page=2")).json()
+        self.assertEqual((len(second["log"]), second["page"], second["pages"]), (20, 2, 3))
+        self.assertEqual(second["log"][0]["at"], NOW + 24)
+        last = (await self.client.get("/admin/grants/log?page=3")).json()
+        self.assertEqual(len(last["log"]), 5)  # the remainder
+        self.assertEqual(last["log"][-1]["action"], "grant")  # the very first change is last
+        # The pages together are every entry once, in order, with the same shape as the first.
+        times = [e["at"] for p in (listed, second, last) for e in p["log"]]
+        self.assertEqual(times, sorted(times, reverse=True))
+        self.assertEqual(len(times), 45)
+        self.assertEqual(set(last["log"][0]), set(listed["log"][0]))
+
+    async def test_an_empty_log_is_one_empty_page(self) -> None:
+        await self.sign_in()
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((listed["log"], listed["logPage"], listed["logPages"]), ([], 1, 1))
+        first = (await self.client.get("/admin/grants/log?page=1")).json()
+        self.assertEqual(first, {"log": [], "page": 1, "pages": 1})
+
+    async def test_a_page_that_is_not_there_or_not_a_number_is_a_bad_page(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 21)  # two pages
+        for bad in (
+            "0",
+            "-1",
+            "3",
+            "abc",
+            "",
+            "1.5",
+            "+2",
+            "%202",
+            "2%20",
+            "2%0A",
+            "%D9%A2",
+            "%C2%B2",
+            "999999999",
+            "99999999999999999999",
+        ):
+            answer = await self.client.get(f"/admin/grants/log?page={bad}")
+            self.assertEqual((answer.status_code, answer.json()), (400, {"error": "bad_page"}), bad)
+        self.assertEqual((await self.client.get("/admin/grants/log?page=2")).status_code, 200)
+        # Leading zeros are the same number.
+        self.assertEqual((await self.client.get("/admin/grants/log?page=002")).json()["page"], 2)
+        # No page given is page 1.
+        self.assertEqual((await self.client.get("/admin/grants/log")).json()["page"], 1)
+
+    async def test_a_full_page_has_no_empty_page_after_it(self) -> None:
+        csrf = await self.sign_in()
+        await self.fill_log(csrf, 20)
+        listed = (await self.client.get("/admin/grants")).json()
+        self.assertEqual((len(listed["log"]), listed["logPages"]), (20, 1))
+        self.assertEqual((await self.client.get("/admin/grants/log?page=2")).status_code, 400)
+        await self.give(csrf, note="the twenty-first")
+        self.assertEqual((await self.client.get("/admin/grants")).json()["logPages"], 2)
+        self.assertEqual(len((await self.client.get("/admin/grants/log?page=2")).json()["log"]), 1)
+        await self.fill_log(csrf, 19)  # 40 in all
+        self.assertEqual((await self.client.get("/admin/grants")).json()["logPages"], 2)
+        self.assertEqual((await self.client.get("/admin/grants/log?page=3")).status_code, 400)
+
+    async def test_the_log_pages_need_an_admin_sign_in(self) -> None:
+        self.assertEqual((await self.client.get("/admin/grants/log?page=1")).status_code, 401)
+
     async def test_the_server_logs_name_the_id_only(self) -> None:
         csrf = await self.sign_in()
         with self.assertLogs("dmbot.web.admin_api", level=logging.INFO) as logs:
@@ -206,7 +329,9 @@ class AdminGrants(DatabaseTest):
         await self.give(csrf, note="keep")
         before = (await grants.grants(self.db), await grants.log_entries(self.db))
         # No session, then a session with a forged token: nothing changes, either way.
-        other = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url=API)
+        other = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
+        )
         self.addAsyncCleanup(other.aclose)
         for answer in (
             await other.post(
@@ -246,7 +371,7 @@ class AdminGrants(DatabaseTest):
     async def test_every_grants_route_is_not_there_while_the_admin_page_is_off(self) -> None:
         app = create_app(settings(), self.db, FakeDiscord())
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
         ) as client:
             self.assertEqual((await client.get("/admin/grants")).status_code, 404)
             for path in ("/admin/grants", f"/admin/grants/{FRIEND}/revoke"):

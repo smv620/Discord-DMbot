@@ -22,6 +22,7 @@ export const kindNames = {
   poison: "Poisons",
   trap: "Traps",
   curse: "Curses",
+  disease: "Diseases",
 };
 
 /** Every data file of one SRD folder, parsed. */

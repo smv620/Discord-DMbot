@@ -300,6 +300,453 @@
    "see_also": []
   },
   {
+   "kind": "rule",
+   "name": "Combat Encounters",
+   "tag": "Combat Encounters",
+   "text": "The following features can make a combat encounter more interesting or challenging:\nChanges in Elevation. Terrain features that provide a change of elevation (such as stacks of empty crates, ledges, and balconies) reward clever positioning and encourage characters to jump, climb, fly, or teleport.\nDefensive Positions. Enemies in hard-to-reach locations or defensive positions force characters who normally attack at range to move around.\nMixed Monster Groups. When different types of monsters work together, they can combine their abilities—just like characters with different classes and origins. A diverse force is more powerful.\nReasons to Move. Use features that encourage characters and their enemies to move around, such as chandeliers, kegs of gunpowder or oil, and rolling stone traps.",
+   "page": 202,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Combat Encounter Difficulty",
+   "tag": "Combat Encounters",
+   "text": "Use the following guidelines to create a combat encounter of a desired level of difficulty.",
+   "page": 202,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Step 1: Choose a Difficulty",
+   "tag": "Combat Encounters",
+   "text": "Three categories describe the range of encounter difficulty:\nLow Difficulty. An encounter of low difficulty is likely to have one or two scary moments for the players, but their characters should emerge victorious with no casualties. One or more of them might need to use healing resources, however. As a rough guideline, a single monster generally presents a low-difficulty challenge for a party of four characters whose level equals the monster’s Challenge Rating.\nModerate Difficulty. Absent healing and other resources, an encounter of moderate difficulty could go badly for the adventurers. Weaker characters might get taken out of the fight, and there’s a slim chance that one or more characters might die.\nHigh Difficulty. A high-difficulty encounter could be lethal for one or more characters. To survive it, the characters will need smart tactics, quick thinking, and maybe even a little luck.",
+   "page": 202,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Step 2: Determine Your XP Budget",
+   "tag": "Combat Encounters",
+   "text": "Using the XP Budget per Character table, cross-reference the party’s level with the desired encounter difficulty. Multiply the number in the table by the number of characters in the party to get your XP budget for the encounter.\nLevel 1: Low 50, Moderate 75, High 100 XP per character\nLevel 2: Low 100, Moderate 150, High 200 XP per character\nLevel 3: Low 150, Moderate 225, High 400 XP per character\nLevel 4: Low 250, Moderate 375, High 500 XP per character\nLevel 5: Low 500, Moderate 750, High 1,100 XP per character\nLevel 6: Low 600, Moderate 1,000, High 1,400 XP per character\nLevel 7: Low 750, Moderate 1,300, High 1,700 XP per character\nLevel 8: Low 1,000, Moderate 1,700, High 2,100 XP per character\nLevel 9: Low 1,300, Moderate 2,000, High 2,600 XP per character\nLevel 10: Low 1,600, Moderate 2,300, High 3,100 XP per character\nLevel 11: Low 1,900, Moderate 2,900, High 4,100 XP per character\nLevel 12: Low 2,200, Moderate 3,700, High 4,700 XP per character\nLevel 13: Low 2,600, Moderate 4,200, High 5,400 XP per character\nLevel 14: Low 2,900, Moderate 4,900, High 6,200 XP per character\nLevel 15: Low 3,300, Moderate 5,400, High 7,800 XP per character\nLevel 16: Low 3,800, Moderate 6,100, High 9,800 XP per character\nLevel 17: Low 4,500, Moderate 7,200, High 11,700 XP per character\nLevel 18: Low 5,000, Moderate 8,700, High 14,200 XP per character\nLevel 19: Low 5,500, Moderate 10,700, High 17,200 XP per character\nLevel 20: Low 6,400, Moderate 13,200, High 22,000 XP per character",
+   "page": 202,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Step 3: Spend Your Budget",
+   "tag": "Combat Encounters",
+   "text": "Every creature has an XP value in its stat block. When you add a creature to your combat encounter, deduct its XP from your XP budget to determine how many XP you have left to spend. Spend as much of your XP budget as you can without going over. It’s OK if you have a few unspent XP left over. Examples are given below:\nExample 1. A low-difficulty encounter for four level 1 characters has an XP budget of 50 × 4, for a total of 200 XP. With that, you could build any of the following encounters:\n• 1 Bugbear Warrior (200 XP)\n• 2 Giant Wasps (100 XP each), for 200 XP total\n• 6 Giant Rats (25 XP each), for 150 XP total\nExample 2. A moderate-difficulty encounter for five level 3 characters has an XP budget of 225 × 5, for a total of 1,125 XP. With that, you could build either of these encounters:\n• 2 Druids (450 XP each) and 9 Stirges (25 XP each), for 1,125 XP total\n• 1 Wight (700 XP), 1 Warhorse Skeleton (100 XP), and 6 Skeletons (50 XP each), for 1,100 XP total\nExample 3. A high-difficulty encounter for six level 15 characters has an XP budget of 7,800 × 6, for a total of 46,800 XP. With that, you could build this encounter:\n• 2 Adult Red Dragons (18,000 XP each) and 2 Fire Giants (5,000 XP each), for 46,000 XP total",
+   "page": 202,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Troubleshooting",
+   "tag": "Combat Encounters",
+   "text": "When creating and running combat encounters, keep the following in mind.",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Many Creatures",
+   "tag": "Combat Encounters",
+   "text": "The more creatures in an encounter, the higher the risk that a lucky streak on their part could deal more damage to the characters than you expect. If your encounter includes more than two creatures per character, include fragile creatures that can be defeated quickly. This guideline is especially important for characters of level 1 or 2.",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Adjustments",
+   "tag": "Combat Encounters",
+   "text": "A player’s absence might warrant removing creatures from an encounter to keep it at the intended difficulty. Also, die rolls and other factors can result in an encounter being easier or harder than intended. You can adjust an encounter on the fly, such as by having creatures flee (making the encounter easier) or adding reinforcements (making the encounter harder).",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "CR 0 Creatures",
+   "tag": "Combat Encounters",
+   "text": "Creatures that have a CR of 0, particularly ones that are worth 0 XP, should be used sparingly. If you want to include many CR 0 critters in an encounter, use swarms instead.",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Number of Stat Blocks",
+   "tag": "Combat Encounters",
+   "text": "The best combat encounters often pair one kind of creature with another, such as fire giants paired with hell hounds. Be mindful of the number of stat blocks you need to run the encounter. Referencing more than two or three stat blocks for a single encounter can be daunting, particularly if the creatures are complex.",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Powerful Creatures",
+   "tag": "Combat Encounters",
+   "text": "If your combat encounter includes a creature whose CR is higher than the party’s level, be aware that such a creature might deal enough damage with a single action to take out one or more characters. For example, an Ogre (CR 2) can kill a level 1 Wizard with a single blow.",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Unusual Features",
+   "tag": "Combat Encounters",
+   "text": "If a monster has a feature that lower-level characters can’t easily overcome, consider not adding that monster to an encounter for characters whose level is lower than the monster’s Challenge Rating.",
+   "page": 203,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Items",
+   "tag": "Magic Items",
+   "text": "Magic items are gleaned from the hoards of felled monsters or discovered in long-lost vaults. Such items grant capabilities a character could rarely have otherwise, or they complement their owner’s capabilities in wondrous ways.",
+   "page": 204,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Item Categories",
+   "tag": "Magic Items",
+   "text": "Every magic item belongs to a category. The Magic Item Categories table lists the nine categories and provides examples. Rules for the categories appear after the table.\nArmor: +1 Leather Armor, +1 Shield\nPotions: Potion of Healing\nRings: Ring of Invisibility\nRods: Immovable Rod\nScrolls: Spell Scroll\nStaffs: Staff of Striking\nWands: Wand of Fireballs\nWeapons: +1 Ammunition, +1 Longsword\nWondrous Items: Bag of Holding, Boots of Elvenkind",
+   "page": 204,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Armor",
+   "tag": "Magic Items",
+   "text": "An item in the Armor category is typically a magical version of armor from “Equipment.” Unless an armor’s description notes otherwise, the armor must be worn for its magic to function.\nSome suits of magic armor specify the type of armor they are, such as Chain Mail or Plate Armor. If no type is specified, choose the type or determine it randomly.",
+   "page": 204,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Potions",
+   "tag": "Magic Items",
+   "text": "An item in the Potion category might be a magical brew that must be imbibed or an oil that must be applied to a creature or an object. A typical potion consists of 1 ounce of liquid in a vial.\nUsing a Potion. Potions are consumable items. Drinking a potion or administering it to another creature requires a Bonus Action. Applying an oil might take longer as specified in its description. Once used, a potion takes effect immediately, and it is used up.\nMixing Potions. A character might drink one potion while still under the effects of another or pour several potions into a single container. The strange ingredients used in creating potions can result in unpredictable interactions.\nWhen a character mixes two potions together, roll on the Potion Miscibility table. If more than two are combined, roll again for each subsequent potion, combining the results. Unless the effects are immediately obvious, reveal them only when they become evident.",
+   "page": 204,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Rings",
+   "tag": "Magic Items",
+   "text": "For its magic to function, an item in the Ring category must be worn on a finger or a similar digit unless its description notes otherwise.",
+   "page": 204,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Rods",
+   "tag": "Magic Items",
+   "text": "An item in the Rod category is a scepter usually made of metal, wood, or bone. A typical rod weighs 2 to 5 pounds.\nUnless its description notes otherwise, a rod can be used as an Arcane Focus.",
+   "page": 204,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Scrolls",
+   "tag": "Magic Items",
+   "text": "An item in the Scroll category is a roll of paper or parchment, sometimes attached to wooden rods and typically kept safe in a tube of ivory, jade, leather, metal, or wood. The most prevalent scroll is the Spell Scroll, a spell stored in written form.\nUsing a Scroll. Scrolls are consumable items. Unleashing the magic in a scroll requires the user to read the scroll. When its magic has been invoked, the scroll can’t be used again. Its words fade, or it crumbles into dust.\nAny creature that can understand a written language can read a scroll and attempt to activate it unless its description notes otherwise.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Staffs",
+   "tag": "Magic Items",
+   "text": "Items in the Staff category vary widely in appearance: some are of nearly equal diameter throughout and smooth, others are gnarled and twisted, some are made of wood, and others are composed of polished metal or crystal. A staff weighs between 2 and 7 pounds and serves well as a walking stick or cane.\nUnless its description notes otherwise, a staff can be used as a nonmagical Quarterstaff and an Arcane Focus.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Wands",
+   "tag": "Magic Items",
+   "text": "An item in the Wand category is typically 12 to 15 inches long and crafted of metal, bone, or wood. It is tipped with metal, crystal, stone, or some other material.\nUnless its description notes otherwise, a wand can be used as an Arcane Focus.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Weapons",
+   "tag": "Magic Items",
+   "text": "A magic weapon is typically a magical version of a weapon from “Equipment.” Some magic weapons specify the type of weapon they are in their descriptions, such as a Longsword or Longbow. If no weapon type is specified, you may choose the type or determine it randomly.\nAmmunition. If a magic weapon has the Ammunition property, ammunition fired from it is considered magical for the purpose of any rule that cares whether a weapon is magical or not.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Wondrous Items",
+   "tag": "Magic Items",
+   "text": "Wondrous Items include wearable items such as boots, belts, capes, amulets, brooches, and circlets. Bags, carpets, figurines, horns, musical instruments, and more also fall into this category.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Item Rules",
+   "tag": "Magic Items",
+   "text": "Rules for identifying, attuning to, and using magic items appear in “Equipment.” Additional rules are presented below.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Attunement Prerequisites",
+   "tag": "Magic Items",
+   "text": "If a magic item has a class prerequisite, a creature must be a member of that class to attune to the item. If a creature must be a spellcaster to attune to an item, the creature qualifies if it can cast at least one spell using its traits or features, not by using a magic item or the like.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Items Made for Specific Creatures",
+   "tag": "Magic Items",
+   "text": "Magic items that are meant to be worn tend to magically adjust themselves to the wearer. However, you can decide that a magic item doesn’t adjust its size to fit any wearer. For example, a particular armorer might make items usable only by folk who are sized and shaped like dwarves.",
+   "page": 205,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Unusual Anatomy",
+   "tag": "Magic Items",
+   "text": "Use your discretion to decide whether a creature can wear an item not made for its anatomy. A ring placed on a tentacle might work, but a yuan-ti with a snakelike tail instead of legs can’t wear magic boots.",
+   "page": 205,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Paired Items",
+   "tag": "Magic Items",
+   "text": "You can allow exceptions to the rule that paired items must both be worn. For example, a character with only one arm might be able to use a single Glove of Missile Snaring so long as the matching glove is on their person.",
+   "page": 205,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Item Rarity",
+   "tag": "Magic Items",
+   "text": "Every magic item has a rarity, which provides a rough measure of an item’s power relative to other magic items. The rarities are shown in the Magic Item Rarities and Values table.\nCommon magic items, such as a Potion of Healing, are the most plentiful. Artifacts, such as the Dragon Orb, are priceless, unique, and difficult to acquire.",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Item Values by Rarity",
+   "tag": "Magic Items",
+   "text": "Common magic items can often be bought in a town or city. Uncommon and Rare magic items are usually found only in cities, and rarer magic items might be sold only in wondrous locations, such as a city on another plane of existence. If you allow characters to buy and sell magic items in your campaign, rarity can help you set prices for those items. Gold Piece values are provided in the Magic Item Rarities and Values table, though a seller might ask for a service rather than coin as payment.\nIf a magic item incorporates an item that has a purchase cost in “Equipment” (such as a weapon or a suit of armor), add that item’s cost to the magic item’s value. For example, +1 Armor (Plate Armor) has a value of 5,500 GP, which is the sum of a Rare magic item’s value (4,000 GP) and the cost of Plate Armor (1,500 GP).\nCommon: 100 GP\nUncommon: 400 GP\nRare: 4,000 GP\nVery Rare: 40,000 GP\nLegendary: 200,000 GP\nArtifact: Priceless\n*Halve the value for a consumable item other than a Spell Scroll. The value of a Spell Scroll is double what it costs to scribe the scroll (as specified in the “Scribing Spell Scrolls” section of “Equipment”).",
+   "page": 205,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Activating a Magic Item",
+   "tag": "Magic Items",
+   "text": "It usually takes a Magic action to activate a magic item. The item’s user might also need to do something special. The description of each item category or individual item details how an item is activated. Certain items use the following rules for their activation.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Command Word",
+   "tag": "Magic Items",
+   "text": "A command word is a word or short phrase that must be spoken or signed for an item to work. Spoken command words must be audible and fail to work in areas where all sound is suppressed, as in the area of the Silence spell.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Consumable Items",
+   "tag": "Magic Items",
+   "text": "Some items are consumed—used up, in other words—when they are activated. A Potion of Healing must be swallowed, for example, while the writing vanishes from a scroll when it is read. Once used, a consumable item loses its magic.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Spells Cast from Items",
+   "tag": "Magic Items",
+   "text": "Some magic items allow the user to cast a spell from the item. The spell is cast at the lowest possible spell and caster level, doesn’t expend any of the user’s spell slots, and requires no components unless the item’s description notes otherwise. The spell uses its normal casting time, range, and duration, and the user of the item must concentrate if the spell requires Concentration. Many items, such as Potions, bypass the casting of a spell and confer the spell’s effects with its usual duration. Certain items make exceptions to these rules, changing the casting time, duration, or other parts of a spell.\nA magic item may require the user to use their own spellcasting ability when casting a spell from the item. If the user has more than one spellcasting ability, the user chooses which one to use with the item. If the user doesn’t have a spellcasting ability, their spellcasting ability modifier is +0 for the item, and the user’s Proficiency Bonus applies.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Item Charges",
+   "tag": "Magic Items",
+   "text": "Some magic items have charges that must be expended to activate their properties. The number of charges an item has remaining is revealed when the Identify spell is cast on it. A creature attuned to an item knows how many charges the item has and how many it regains.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "The Next Dawn",
+   "tag": "Magic Items",
+   "text": "Magic items often have charges or properties that recharge at the next dawn or some other specified time. If such an item is on a world or plane of existence where the specified event doesn’t occur, the GM determines when the item recharges.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Cursed Items",
+   "tag": "Magic Items",
+   "text": "A magic item’s description specifies whether it bears a curse. Most methods of identifying items, including the Identify spell, fail to reveal such a curse.\nAttunement to a cursed item can’t be ended voluntarily unless the curse is broken first, such as with a Remove Curse spell.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Magic Item Resilience",
+   "tag": "Magic Items",
+   "text": "A magic item is at least as durable as a nonmagical item of its kind. Most magic items, other than Potions and Scrolls, have Resistance to all damage.\nAn Artifact can be destroyed only in some special way. Otherwise, it is impervious to damage. Learning how to destroy an Artifact usually requires research or the completion of a quest.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Crafting Magic Items",
+   "tag": "Magic Items",
+   "text": "“Equipment” contains rules on brewing Potions of Healing and scribing Spell Scrolls. To create other magic items, follow the rules below. In these rules, “you” refers to the character crafting the magic item.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Crafting: Arcana Proficiency",
+   "tag": "Magic Items",
+   "text": "To craft a magic item, you and any assistants must have proficiency in the Arcana skill.",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Crafting: Tools",
+   "tag": "Magic Items",
+   "text": "The Magic Item Tools table lists which tool is required to make a magic item of each category. You must use the required tool to make an item and have proficiency with that tool. Any assistants must also have proficiency with it. For more information on the tools, see “Equipment.”\nArmor: Leatherworker’s Tools, Smith’s Tools, or Weaver’s Tools depending on the kind of armor as noted in the tools’ descriptions\nPotion: Alchemist’s Supplies or Herbalism Kit\nRing: Jeweler’s Tools\nRod: Woodcarver’s Tools\nScroll: Calligrapher’s Supplies\nStaff: Woodcarver’s Tools\nWand: Woodcarver’s Tools\nWeapon: Leatherworker’s Tools, Smith’s Tools, or Woodcarver’s Tools depending on the kind of weapon as noted in the tools’ descriptions\nWondrous Item: Tinker’s Tools or the tool required to make the nonmagical item on which the magic item is based",
+   "page": 206,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Crafting: Spells",
+   "tag": "Magic Items",
+   "text": "If a magic item allows its user to cast any spells from it, you must have all those spells prepared every day you spend crafting the item.",
+   "page": 207,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Crafting: Time and Cost",
+   "tag": "Magic Items",
+   "text": "Crafting a magic item takes an amount of time and money based on the item’s rarity as shown in the Magic Item Crafting Time and Cost table.\nWork per Day. For each day of crafting, you must work for 8 hours. If an item requires multiple days, those days needn’t be consecutive.\nAssistants. Characters can combine their efforts to shorten the crafting time. Divide the time needed to create an item by the number of characters working on it. Normally, only one other character can assist you, but the GM might allow more assistants.\nRaw Materials. The cost in the table represents the raw materials needed to make a magic item. The GM determines whether appropriate raw materials are available. In a city, there is a 75 percent chance that the materials are available, and in any other settlement, that chance is 25 percent. If materials aren’t available, you must wait at least 7 days before checking on the availability again.\nIf a magic item incorporates an item that has a purchase cost (such as a weapon or a suit of armor), you must also pay that entire cost or craft that item using the rules in “Equipment.” For example, to make +1 Armor (Plate Armor), you must pay 3,500 GP or pay 2,000 GP and craft the armor.\nCommon: 5 days, 50 GP\nUncommon: 10 days, 200 GP\nRare: 50 days, 2,000 GP\nVery Rare: 125 days, 20,000 GP\nLegendary: 250 days, 100,000 GP\n*The time and cost are halved for a consumable item other than a Spell Scroll, whose crafting time and cost are given in “Equipment.”",
+   "page": 207,
+   "section": "Magic Items",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Magic Items",
+   "tag": "Magic Items",
+   "text": "Some magic items have sentience and personality. Such an item might be possessed, haunted by the spirit of a previous owner, or self-aware thanks to the magic used to create it. A sentient item might be a cherished ally to its wielder or a continual thorn in the side.\nMost sentient items are weapons, but other kinds of items can manifest sentience. Single-use items such as potions and scrolls are never sentient.\nThe GM controls sentient magic items and their activated properties. A bearer who maintains a good relationship with the item can access those properties. If the relationship is strained, a conflict can ensue (see “Conflict” below).",
+   "page": 207,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Magic Item Traits",
+   "tag": "Magic Items",
+   "text": "When you make a sentient magic item, you create the item’s persona much as you would create an NPC, with these exceptions.",
+   "page": 207,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Item Abilities",
+   "tag": "Magic Items",
+   "text": "A sentient magic item has Intelligence, Wisdom, and Charisma scores. Choose the item’s abilities, or determine them randomly as follows: roll 4d6 for each one, dropping the lowest roll and totaling the rest.",
+   "page": 207,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Item Alignment",
+   "tag": "Magic Items",
+   "text": "A sentient magic item has an alignment. Its creator or nature might suggest an alignment. Otherwise, pick an alignment or roll on the Sentient Item’s Alignment table.",
+   "page": 207,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Item Communication",
+   "tag": "Magic Items",
+   "text": "A sentient item communicates by sharing its emotions, broadcasting its thoughts telepathically, or speaking aloud. You can choose how it communicates or roll on the Sentient Item’s Communication table.",
+   "page": 207,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Item Senses",
+   "tag": "Magic Items",
+   "text": "A sentient item can perceive its surroundings out to a limited range. You can choose its senses or roll on the Sentient Item’s Senses table.",
+   "page": 207,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Item Special Purpose",
+   "tag": "Magic Items",
+   "text": "You can give a sentient item an objective it pursues, perhaps to the exclusion of all else. As long as the wielder’s use of the item aligns with that special purpose, the item remains cooperative. Deviating from this course might cause conflict between the wielder and the item (see “Conflict” below). You can pick a special purpose or roll on the Sentient Item’s Special Purpose table.",
+   "page": 208,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
+   "kind": "rule",
+   "name": "Sentient Item Conflict",
+   "tag": "Magic Items",
+   "text": "When the bearer of a sentient item acts in a manner opposed to the item’s alignment or purpose, conflict can arise. When such a conflict occurs, the item’s bearer makes a Charisma saving throw (DC 12 plus the item’s Charisma modifier). On a failed save, the item makes one or more of the following demands:\nChase My Dreams. The item demands that its bearer pursue the item’s goals to the exclusion of all other goals.\nGet Rid of It. The item demands that its bearer dispose of anything the item finds repugnant.\nIt’s Time for a Change. The item demands to be given to someone else.\nKeep Me Close. The item insists on being carried or worn at all times.\nIf its bearer refuses to comply with the item’s demands, the item can do any of the following:\n• Make it impossible for its bearer to attune to it.\n• Suppress one or more of its activated properties.\n• Attempt to take control of its bearer, whereupon the bearer makes a Charisma saving throw (DC 12 plus the item’s Charisma modifier). On a failed save, the bearer has the Charmed condition for 1d12 hours. While Charmed in this way, the bearer must try to follow the item’s commands. If the bearer takes damage, it repeats the save, ending the effect on a success. Whether or not the attempt to control its bearer succeeds, the item can’t use this power again until the next dawn.",
+   "page": 208,
+   "section": "Gameplay Toolbox",
+   "see_also": []
+  },
+  {
    "kind": "poison",
    "name": "Assassin’s Blood",
    "type": "Ingested",

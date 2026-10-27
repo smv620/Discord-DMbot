@@ -57,12 +57,54 @@ describe("the recap pages", () => {
   });
 
   it("the review page, with the audio and the names part open, has nothing serious or critical", async () => {
-    render(<Recaps api={mockApi("table")} path={`/account/recaps/${REF}`} />);
+    const api = mockApi("table");
+    const read = api.recap!.bind(api);
+    api.recap = async (ref) => ({
+      ...(await read(ref)),
+      summary: "《Tense》 The ferry crossed. ((pause)) Nobody spoke.",
+      audio: { state: "ready", error: "", current: true, canAskAgain: true },
+    });
+    render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
     await screen.findByText(nameWords.heading);
+    // The voice and music player (#2017) is part of what axe reads here.
+    await screen.findByRole("switch", { name: "Voice" });
     const details = document.querySelector("details.names") as HTMLDetailsElement;
     details.open = true;
     fireEvent(details, new Event("toggle"));
     await screen.findByLabelText(nameWords.label("Ka'zeth"));
+    expect(await serious()).toEqual([]);
+  });
+
+  it("the progress panel while a recap goes out, and after it is posted with a link, has nothing serious or critical", async () => {
+    const api = mockApi("table");
+    const now = Math.floor(Date.now() / 1000);
+    const first = await api.recap!(REF);
+    api.recap = async () => ({
+      ...first,
+      status: "posting",
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      canDrop: false,
+      postingSince: now - 42,
+      postingStep: "post",
+      serverNow: now,
+    });
+    render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
+    await screen.findByRole("timer");
+    expect(await serious()).toEqual([]);
+    cleanup();
+    api.recap = async () => ({
+      ...first,
+      status: "posted",
+      canEdit: false,
+      canPost: false,
+      canTryAgain: false,
+      canDrop: false,
+      postedUrl: "https://discord.com/channels/1/2/3",
+    });
+    render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
+    await screen.findByRole("link", { name: /Open it in Discord/ });
     expect(await serious()).toEqual([]);
   });
 
@@ -74,7 +116,7 @@ describe("the recap pages", () => {
     fireEvent(details, new Event("toggle"));
     const box = await screen.findByLabelText(nameWords.label("Ka'zeth"));
     fireEvent.input(box, { target: { value: "Kah-zeth" } });
-    const save = box.parentElement!.querySelector("button")!;
+    const save = box.parentElement!.querySelector<HTMLButtonElement>("button[id^='save-said-as']")!;
     save.focus();
     fireEvent.click(save);
     // A live region (role=status), so a screen reader hears "Saved." without moving focus.
@@ -112,8 +154,8 @@ describe("My Account's Your questions", () => {
     // One list item reads as a whole: the subject, then where it stands, then the last reply.
     const items = screen.getAllByRole("listitem");
     expect(items).toHaveLength(5);
-    expect(items[1]!.textContent).toMatch(/^Helped.*Answered by DMbot's AI helper.*Last reply: Try the Billing page\.$/);
-    expect(items[3]!.textContent).toMatch(/^With the team.*· With the team.*Last reply: Not sure\.$/);
+    expect(items[1]!.textContent).toMatch(/^Helped.*Answered by DMbot's AI helper.*Last reply: Try the Billing page\.Read the conversation$/);
+    expect(items[3]!.textContent).toMatch(/^With the team.*· With the team.*Last reply: Not sure\.Read the conversation$/);
   });
 });
 
@@ -211,25 +253,24 @@ describe("focus after a button was pressed", () => {
     fireEvent(details, new Event("toggle"));
     const box = await screen.findByLabelText(nameWords.label("Ka'zeth"));
     fireEvent.input(box, { target: { value: "Kah-zeth" } });
-    const save = box.parentElement!.querySelector("button")!;
+    const save = box.parentElement!.querySelector<HTMLButtonElement>("button[id^='save-said-as']")!;
     save.focus();
     fireEvent.click(save);
     await within(details).findByText("Saved.");
     await waitFor(() => expect(document.activeElement).toBe(save));
   });
 
-  it("goes to the recap's heading after Post to the table (the button is gone)", async () => {
+  it("goes to the recap's heading after Approve and post (the buttons are gone)", async () => {
     const base = mockApi("table");
     const api = {
       ...base,
-      decideRecap: async (ref: string, action: "post" | "again" | "drop") => {
+      approveRecap: async (ref: string, choice: "text", options?: { post?: boolean }) => {
         (document.activeElement as HTMLElement | null)?.blur();
-        const done = await base.decideRecap!(ref, action);
-        return done;
+        return base.approveRecap!(ref, choice, options);
       },
     } as unknown as AccountApi;
     render(<Recaps api={api} path={`/account/recaps/${REF}`} />);
-    const post = await screen.findByRole("button", { name: /Post to the table/ });
+    const post = await screen.findByRole("button", { name: /Approve and post text only/ });
     post.focus();
     fireEvent.click(post);
     await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));

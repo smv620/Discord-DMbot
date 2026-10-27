@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
-import Transcripts, { placeFromPath } from "../src/account/Transcripts";
+import Transcripts, { lineAtMoment, lineOffsetSeconds, momentFromHash, placeFromPath } from "../src/account/Transcripts";
 import { cleanedNote, heardNote, problem, text } from "../src/content/transcripts";
 
 afterEach(cleanup);
@@ -51,7 +51,8 @@ describe("the campaigns", () => {
     } as AccountApi;
     page(api, "/account/transcripts");
     expect(await screen.findByText(text.signedOut)).toBeTruthy();
-    expect(screen.getByRole("link", { name: text.signIn })).toBeTruthy();
+    // The page's own panel only says it; the one Sign in button is the shared line's (#2301).
+    expect(screen.queryByRole("link", { name: text.signIn })).toBeNull();
   });
 
   it("says it did not load, in plain words, when the API is down", async () => {
@@ -152,7 +153,8 @@ describe("reading a session", () => {
 
   it("shows each line as the export wrote it, nothing added", async () => {
     page(mockApi("table"), `/account/transcripts/${REF}/2`);
-    const lines = (await screen.findAllByRole("listitem")).map((li) => li.textContent);
+    await screen.findByText("[0:00:12] (Speaker 1) {Cerric}: We cross the river at dusk.");
+    const lines = screen.getAllByRole("listitem").map((li) => li.textContent);
     expect(lines).toContain("[0:00:12] (Speaker 1) {Cerric}: We cross the river at dusk.");
   });
 
@@ -352,5 +354,131 @@ describe("character labels and Show more (#1512)", () => {
     } as AccountApi;
     page(api, `/account/transcripts/${REF}/2`);
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", text.tooBig);
+  });
+});
+
+describe("opening at a moment (#2402)", () => {
+  const lines = (from: number, to: number) =>
+    Array.from({ length: to - from }, (_, i) => `[0:${String(Math.floor((from + i) / 60)).padStart(2, "0")}:${String((from + i) % 60).padStart(2, "0")}] line at ${from + i}s`);
+
+  afterEach(() => {
+    window.location.hash = "";
+  });
+
+  it("reads the moment from the address, and nothing that is not a plain number", () => {
+    expect(momentFromHash("#t=65000")).toBe(65000);
+    expect(momentFromHash("#t=0")).toBe(0);
+    for (const bad of ["", "#", "#t=", "#t=-5", "#t=1.5", "#t=abc", "#t=1&x=2", "#x=5", "#t=12345678901"])
+      expect(momentFromHash(bad), bad).toBeNull();
+  });
+
+  it("reads a line's start, or none for a note", () => {
+    expect(lineOffsetSeconds("[0:00:12] (Speaker 1): hello")).toBe(12);
+    expect(lineOffsetSeconds("[1:02:03] (Speaker 1): hello")).toBe(3723);
+    expect(lineOffsetSeconds("Started 2026-10-02 19:30 UTC")).toBeNull();
+  });
+
+  it("finds the line that began at or just before the moment", () => {
+    const all = lines(10, 20);
+    expect(lineAtMoment(all, 14_000, false)).toBe(4); // begins exactly then
+    expect(lineAtMoment(all, 14_900, false)).toBe(4); // just after: still that line
+    expect(lineAtMoment(all, 9_000, false)).toBe(0); // before the first line: the first line
+    expect(lineAtMoment(all, 0, true)).toBe(0); // even with more pages to come: no need to load them
+    expect(lineAtMoment(all, 99_000, false)).toBe(9); // past the end, nothing more to load: the last line
+    expect(lineAtMoment(all, 99_000, true)).toBeNull(); // past the end of what is loaded, more to load: ask again
+    expect(lineAtMoment(["a note", ...all], 11_500, false)).toBe(2); // a line with no start is skipped
+  });
+
+  it("marks and scrolls to the line, and an address without a moment changes nothing", async () => {
+    window.location.hash = "#t=40000";
+    const scroll = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scroll;
+    page(mockApi("table"), `/account/transcripts/${REF}/2`);
+    const marked = await screen.findByText("[0:00:40] (Speaker 2): Ka'zeth draws his sword.");
+    expect(marked.getAttribute("aria-current")).toBe("location");
+    expect(marked.className).toBe("moment");
+    expect(document.querySelectorAll(".transcript-lines [aria-current='location']")).toHaveLength(1);
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+    cleanup();
+    window.location.hash = "";
+    scroll.mockClear();
+    page(mockApi("table"), `/account/transcripts/${REF}/2`);
+    await screen.findByText("[0:00:40] (Speaker 2): Ka'zeth draws his sword.");
+    expect(document.querySelectorAll(".transcript-lines [aria-current='location']")).toHaveLength(0);
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it("takes the last of the lines that share a start (the clock counts whole seconds)", () => {
+    const same = ["[0:00:05] a", "[0:00:10] b", "[0:00:10] c", "[0:00:10] d", "[0:00:15] e"];
+    expect(lineAtMoment(same, 10_000, false)).toBe(3);
+    expect(lineAtMoment(same, 12_000, false)).toBe(3);
+  });
+
+  it("follows a second moment link on the same page, and focuses the line so it is read out", async () => {
+    window.location.hash = "#t=14000";
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    page(mockApi("table"), `/account/transcripts/${REF}/2`);
+    await screen.findByText("[0:00:40] (Speaker 2): Ka'zeth draws his sword.");
+    await waitFor(() => expect(document.activeElement).toBe(document.querySelector(".moment")));
+    expect(document.querySelector(".moment")?.getAttribute("tabindex")).toBe("-1");
+    window.location.hash = "#t=0";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await waitFor(() => expect(document.querySelectorAll(".moment")).toHaveLength(1));
+    const now = document.querySelector(".moment") as HTMLElement;
+    await waitFor(() => expect(document.activeElement).toBe(now));
+    window.location.hash = "";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    await waitFor(() => expect(document.querySelectorAll(".moment")).toHaveLength(0));
+  });
+
+  it("loads the next pages until it reaches the moment", async () => {
+    window.location.hash = "#t=125000"; // 2:05, on the third page
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const api = mockApi("table");
+    const first = await api.transcript!(REF, 1, "cleaned");
+    const pages = [lines(0, 50), lines(50, 100), lines(100, 150)];
+    const asked: number[] = [];
+    api.transcript = async (_r, number, version, offset = 0) => {
+      asked.push(offset);
+      const i = Math.floor(offset / 50);
+      return { ...first, number, version, lines: pages[i] ?? [], next: i < 2 ? (i + 1) * 50 : null };
+    };
+    page(api, `/account/transcripts/${REF}/1`);
+    const marked = await screen.findByText("[0:02:05] line at 125s");
+    expect(marked.getAttribute("aria-current")).toBe("location");
+    expect(asked).toEqual([0, 50, 100]);
+  });
+
+  it("marks the first line for a moment before it, and loads only the first page", async () => {
+    window.location.hash = "#t=0";
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const api = mockApi("table");
+    const first = await api.transcript!(REF, 1, "cleaned");
+    const asked: number[] = [];
+    api.transcript = async (_r, number, version, offset = 0) => {
+      asked.push(offset);
+      return { ...first, number, version, lines: lines(10 + offset, 20 + offset), next: offset < 20 ? offset + 10 : null };
+    };
+    page(api, `/account/transcripts/${REF}/1`);
+    const marked = await screen.findByText("[0:00:10] line at 10s");
+    expect(marked.getAttribute("aria-current")).toBe("location");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(asked).toEqual([0]); // the rest was never fetched
+  });
+
+  it("stops loading when the moment is past the end", async () => {
+    window.location.hash = "#t=900000";
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const api = mockApi("table");
+    const first = await api.transcript!(REF, 1, "cleaned");
+    const asked: number[] = [];
+    api.transcript = async (_r, number, version, offset = 0) => {
+      asked.push(offset);
+      return { ...first, number, version, lines: lines(offset, offset + 10), next: offset < 20 ? offset + 10 : null };
+    };
+    page(api, `/account/transcripts/${REF}/1`);
+    const last = await screen.findByText("[0:00:29] line at 29s");
+    expect(last.getAttribute("aria-current")).toBe("location");
+    expect(asked).toEqual([0, 10, 20]);
   });
 });

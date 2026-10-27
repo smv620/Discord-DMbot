@@ -339,6 +339,7 @@ class Building(unittest.TestCase):
             classes=False,
             items_pages=False,
             origins_pages=False,
+            rules_pages=False,
         )
         self.assertEqual(set(files), {"spells.json", "conditions.json", "monsters.json"})
         creatures = files["monsters.json"]
@@ -361,6 +362,7 @@ class Building(unittest.TestCase):
             classes=False,
             items_pages=False,
             origins_pages=False,
+            rules_pages=False,
         )
         self.assertEqual(set(files), {"spells.json", "conditions.json"})
 

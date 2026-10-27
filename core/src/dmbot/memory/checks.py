@@ -2,6 +2,35 @@
 
 Pure functions, no database. A failed check never blocks or changes the fact: it
 becomes a flag for review, because only the DM decides what's true in their story.
+
+Every rule about the story's memory is one of two kinds, and a new rule says which (#2663;
+docs/STORY_MEMORY.md, "Hard rules and warnings"):
+
+**Structural: never broken, so the write is refused.** These protect the data's shape, not the
+story, so no reading of the story can excuse them:
+- a connection joins two different names (`MemoryStore.add_relation_in`, and a database check);
+- every row, and both ends of every connection or belief, belong to the one campaign the write is
+  for: composite keys on `(guild_id, campaign_id, ...)` in the database, never a check in code;
+- a "led to" link, when it is made, joins confirmed names and does not close a loop
+  (`threads.would_loop`). Confirming a rejected link, merging two names and restoring a backup do
+  not run this check yet (follow-up issue);
+- a confidence is 0 to 1, a status is a known one and a session span ends after it starts (checked
+  in code before the write, `store._check_span` and the like; the span has no database check), and
+  a campaign has one "truth" view and one "party" view (unique indexes).
+
+**A warning: flagged for the DM, never refused.** The story may be right and the data odd: the
+`FLAG_KINDS` below. A one-of-a-kind item in two holders' hands may be a handoff, a theft or a
+mistaken belief; a dead name acting may be a flashback. The fact is stored as given, a flag asks
+the DM, and the DM decides.
+
+**Safe when two writes race.** A structural rule that reads before it writes (the loop check, the
+"already known" check) is only safe if no other write to the campaign slips in between. Every
+rule-checked write goes through `MemoryStore._write`, which takes the campaign's row lock
+(`SELECT ... FOR NO KEY UPDATE` on `campaigns`) and holds it to the end of the transaction, so one
+campaign's writes run one at a time. A path that reads and writes memory outside `_write` must lock
+the same campaign row (an advisory lock would not keep `_write` out), or lean on a database
+constraint. Every check stays inside one campaign: no query here or in the store reads another
+campaign's items, so a same-named item elsewhere raises nothing.
 """
 
 from __future__ import annotations
@@ -10,7 +39,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from dmbot.memory.models import REJECTED, Relation
+from dmbot.memory import kin
+from dmbot.memory.models import PROPOSED, REJECTED, Relation
 from dmbot.memory.ontology import Ontology, PredicateTerm
 
 WRONG_SUBJECT, WRONG_OBJECT = "wrong_subject", "wrong_object"
@@ -67,12 +97,36 @@ def conflicts(onto: Ontology, p: PredicateTerm, other_key: str) -> bool:
     return other_key in p.conflicts_with or (other is not None and p.key in other.conflicts_with)
 
 
-def ordered(p: PredicateTerm, subject_id: str, object_id: str) -> tuple[str, str]:
+def ordered(
+    p: PredicateTerm, subject_id: str, object_id: str, detail: str = "", directional: bool = False
+) -> tuple[str, str]:
     """Two-way relationships are stored once, smaller ID first, so "A ally B" and
-    "B ally A" are the same fact (inverse consistency by construction)."""
+    "B ally A" are the same fact (inverse consistency by construction). Not a family connection
+    with a role true of one name only ("Mira is the niece of Aldric"): there the order is the
+    meaning (#2457)."""
+    if p.key == "kin_of" and directional and kin.directional(detail):
+        return subject_id, object_id
     if p.symmetric and object_id < subject_id:
         return object_id, subject_id
     return subject_id, object_id
+
+
+def _same_order(old: Relation, new: Relation) -> bool:
+    """Do the two say it between the same names in the same order? A family role the DM gave a
+    direction to ("Mira is the niece of Aldric") is twin to a plain one with that role in either
+    order: the plain one has no direction, so the DM's word on it wins (#2457). Two with a
+    direction must agree on it."""
+    if (old.subject_id, old.object_id) == (new.subject_id, new.object_id):
+        return True
+    if new.predicate == "kin_of" and not (old.directional and new.directional):
+        return (old.subject_id, old.object_id) == (new.object_id, new.subject_id)
+    return False
+
+
+def waiting_guess(r: Relation) -> bool:
+    """A connection made only to hold what someone believes (`placing.py`): proposed, secret and
+    the extractor's. No other proposal is one (the speaker scan's are not secret)."""
+    return r.status == PROPOSED and r.secret and r.source == "extractor"
 
 
 def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None:
@@ -83,7 +137,7 @@ def duplicate_of(new: Relation, existing: Iterable[Relation]) -> Relation | None
         for old in existing
         if old.id != new.id
         and old.predicate == new.predicate
-        and (old.subject_id, old.object_id) == (new.subject_id, new.object_id)
+        and _same_order(old, new)
         and old.detail.casefold() == new.detail.casefold()
         and same_time(old, new)
     ]
@@ -172,7 +226,14 @@ def check_relation(
         problems.append(Problem(WRONG_SUBJECT))
     if not onto.is_any(object_type, p.object_types):
         problems.append(Problem(WRONG_OBJECT))
-    live = [r for r in existing if r.status != REJECTED and r.id != new.id and same_time(r, new)]
+    # A secret proposal is a place to hang a guess (#2412), not a claim about the story: it is
+    # neither judged against facts nor are facts judged against it. Every other proposal is.
+    if waiting_guess(new):
+        return problems
+    live = [
+        r for r in existing
+        if r.status != REJECTED and not waiting_guess(r) and r.id != new.id and same_time(r, new)
+    ]  # fmt: skip
     if p.max_per_subject is not None:
         # Two-way facts are stored smaller ID first, so count each side either way.
         ends = (new.subject_id, new.object_id) if p.symmetric else (new.subject_id,)

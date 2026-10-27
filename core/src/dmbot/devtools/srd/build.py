@@ -31,6 +31,7 @@ from dmbot.devtools.srd import (
     equipment,
     equipment51,
     gear,
+    gm51,
     items,
     items51,
     monsters,
@@ -39,6 +40,7 @@ from dmbot.devtools.srd import (
     origins51,
     parse,
     parse51,
+    rules51,
     toolbox,
 )
 from dmbot.devtools.srd.pdf import Line, read_pages
@@ -106,7 +108,7 @@ CONTENTS_PAGES = 10  # the table of contents names every heading too: look after
 SPELLS_HEADING = "Spell Descriptions"
 GLOSSARY_HEADING = "Rules Glossary"
 AFTER_GLOSSARY_HEADING = "Gameplay Toolbox"
-AFTER_TOOLBOX_HEADING = "Combat Encounters"  # the encounter advice and magic item rules: left out
+AFTER_TOOLBOX_HEADING = "Magic Items A–Z"  # the Magic Items rules end where the items begin
 TOOLBOX_SECTION = "Gameplay Toolbox"
 CLASSES_HEADING = "Classes"
 AFTER_CLASSES_HEADING = "Character Origins"
@@ -302,6 +304,8 @@ def build_files(
             **header("toolbox", TOOLBOX_SECTION),
             "entries": [
                 *({"kind": "rule", **asdict(r) | {"see_also": []}} for r in gameplay.rules),
+                # The Magic Items rules say their own section (the players' are not the DM's).
+                *({"kind": "rule", **asdict(m) | {"see_also": []}} for m in gameplay.magic),
                 *({"kind": "poison", **asdict(p)} for p in gameplay.poisons),
                 *({"kind": "trap", **asdict(t)} for t in gameplay.traps),
                 *({"kind": "curse", **asdict(c)} for c in gameplay.curses),
@@ -528,6 +532,12 @@ def item_lines_51(lines: Sequence[Line]) -> list[Line]:
     raise parse.SrdError(f"Can't find the heading {SENTIENT_HEADING_51!r} after the items.")
 
 
+GM_HEADING_51 = "Traps"
+AFTER_GM_HEADING_51 = "Magic Items"
+RULES_HEADING_51 = "Using Ability"  # (the chapter's title wraps; its first line starts the page)
+AFTER_RULES_HEADING_51 = "Spell Lists"
+
+
 def title_position(lines: Sequence[Line], title: str, start: int = 0) -> int:
     """The index of the first title line with exactly these words, at or after `start`."""
     for i in range(start, len(lines)):
@@ -577,6 +587,51 @@ def origin_files_51(
             **header("feat", "Feats"),
             "entries": [{"category": "", **asdict(feat)}],
         },
+    }
+
+
+def rules_files_51(
+    pages: Sequence[Sequence[Line]], header: Any, vocab: parse51.Vocabulary
+) -> dict[str, dict[str, Any]]:
+    """The 5.1's core rules chapters (Using Ability Scores, Adventuring, Combat and Spellcasting up
+    to the spell lists) as `rules.json`, in the shape of the 5.2.1's glossary (#1943)."""
+    first = first_page_of(pages, RULES_HEADING_51, after=CONTENTS_PAGES)
+    last = first_page_of(pages, AFTER_RULES_HEADING_51, after=first)
+    lines = lines_between(pages, first, last)
+    found = rules51.parse_rules(lines, vocab)
+    dropped = rules51.left_out(lines)
+    if dropped != rules51.EXPECTED_LEFT_OUT:
+        raise parse.SrdError(f"The 5.1's rules chapters leave out something new: {dropped}")
+    return {
+        "rules.json": {
+            **header("rule", rules51.SECTION),
+            "entries": [asdict(r) | {"see_also": []} for r in found],
+        }
+    }
+
+
+def gm_files_51(
+    pages: Sequence[Sequence[Line]], header: Any, vocab: parse51.Vocabulary
+) -> dict[str, dict[str, Any]]:
+    """The 5.1's game master chapters (Traps, Diseases, Madness, Objects, Poisons) as
+    `toolbox.json`, in the kinds and section of the 5.2.1's (#1944)."""
+    first = first_page_of(pages, GM_HEADING_51, after=CONTENTS_PAGES)
+    last = first_page_of(pages, AFTER_GM_HEADING_51, after=first)
+    lines = lines_between(pages, first, last)
+    found = gm51.parse_gm(lines, vocab)
+    dropped = gm51.left_out(lines)
+    if dropped != gm51.EXPECTED_LEFT_OUT:
+        raise parse.SrdError(f"The 5.1's game master chapters leave out something new: {dropped}")
+    return {
+        "toolbox.json": {
+            **header("toolbox", gm51.SECTION),
+            "entries": [
+                *({"kind": "rule", **asdict(r) | {"see_also": []}} for r in found.rules),
+                *({"kind": "trap", **asdict(t)} for t in found.traps),
+                *({"kind": "disease", **asdict(d)} for d in found.diseases),
+                *({"kind": "poison", **asdict(p)} for p in found.poisons),
+            ],
+        }
     }
 
 
@@ -669,10 +724,12 @@ def build_files_51(
     classes: bool = True,
     items_pages: bool = True,
     origins_pages: bool = True,
+    rules_pages: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """The 2014 SRD 5.1's files from pages already read. `classes=False`, `items_pages=False` and
-    `origins_pages=False` leave out the class features, the magic items and the races, background
-    and feat, for tests whose pages hold no such chapter."""
+    `origins_pages=False` and `rules_pages=False` leave out the class features, the magic items,
+    the races, background and feat, and the core rules, for tests whose pages hold no such
+    chapter."""
     spells_at = first_page_of(pages, SPELLS_HEADING_51, after=CONTENTS_PAGES)
     traps_at = first_page_of(pages, AFTER_SPELLS_HEADING_51, after=spells_at)
     conditions_at = first_page_of(pages, CONDITIONS_HEADING_51, after=traps_at)
@@ -725,6 +782,9 @@ def build_files_51(
     if origins_pages:
         files.update(origin_files_51(pages, header, vocab))
         files.update(equipment_files_51(pages, header, vocab))
+    if rules_pages:
+        files.update(rules_files_51(pages, header, vocab))
+        files.update(gm_files_51(pages, header, vocab))
     if monster_input is not None:
         monster_document, monster_known, monster_pairs = monster_input
         everything = [line for page in pages for line in page]

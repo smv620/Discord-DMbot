@@ -5,14 +5,17 @@ import type { ComponentChildren, JSX } from "preact";
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 
+import { recapCard } from "../content/account-cards";
+import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
-import { text as homebrewText } from "../content/homebrew";
-import { text as houseRulesText } from "../content/house-rules";
-import { text as recapText } from "../content/recaps";
-import { text as transcriptText } from "../content/transcripts";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
-import { hoursLeftLine, hoursUsedLine, planName, text } from "../content/account";
+import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-delete";
+import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
+import { handoverToken } from "./Handover";
+import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
+import { keepFocus } from "./focus";
+import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
 import { formatPrice, plans as paidPlans, type PlanId } from "../content/pricing";
 import {
@@ -20,11 +23,18 @@ import {
   type AccountApi,
   type Campaign,
   type Character,
+  type DiscordAccount,
   type Me,
+  type MyEmail,
+  type MyPlan,
   type Offer,
   type Person,
   type RecordingEntry,
 } from "./api";
+import CampaignDelete from "./CampaignDelete";
+import { campaignHref } from "./campaignLinks";
+import { foldCampaigns } from "./campaign-fold";
+import CampaignFacts from "./CampaignFacts";
 import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
 import { MyQuestions } from "./MyQuestions";
@@ -50,10 +60,42 @@ interface Props {
   siteKey?: string;
 }
 
+/** The code in `#email-confirm=...` (a change of the email DMbot uses, #2349), or null. */
+function emailConfirmToken(hash: string): string | null {
+  const found = /^#email-confirm=([\w-]{1,200})$/.exec(hash);
+  return found ? (found[1] ?? null) : null;
+}
+
 /** The code in `#email-link=...`, or null. */
 function emailLinkToken(hash: string): string | null {
   const found = /^#email-link=([\w-]{1,200})$/.exec(hash);
   return found ? (found[1] ?? null) : null;
+}
+
+/** A change-of-email code survives the Discord sign-in round trip in this tab's session storage, because
+ * the address's `#...` does not (#2349). It is removed once the API has answered it. */
+const CONFIRM_KEY = "dmbot:email-confirm";
+function rememberConfirm(token: string): void {
+  try {
+    sessionStorage.setItem(CONFIRM_KEY, token);
+  } catch {
+    // Storage may be blocked; the code is then still in the address until sign-in.
+  }
+}
+function recalledConfirm(): string | null {
+  try {
+    const found = sessionStorage.getItem(CONFIRM_KEY);
+    return found && /^[\w-]{1,200}$/.test(found) ? found : null;
+  } catch {
+    return null;
+  }
+}
+function forgetConfirm(): void {
+  try {
+    sessionStorage.removeItem(CONFIRM_KEY);
+  } catch {
+    // Nothing to remove.
+  }
 }
 
 /** Take the code out of the address bar, so a reload or a shared screen can't use it again. */
@@ -152,16 +194,19 @@ function ActionButton({
   busy,
   onClick,
   kind = "primary",
+  label,
   children,
 }: {
   busy: boolean;
   onClick: () => void;
   kind?: "primary" | "secondary" | "danger";
+  /** A spoken name that starts with the visible words but says which thing, when there are several. */
+  label?: string;
   children: ComponentChildren;
 }) {
   const classes = kind === "primary" ? "button" : `button ${kind}`;
   return (
-    <button type="button" class={classes} disabled={busy} aria-busy={busy} onClick={onClick}>
+    <button type="button" class={classes} disabled={busy} aria-busy={busy} aria-label={busy ? undefined : label} onClick={onClick}>
       {busy ? text.busy : children}
     </button>
   );
@@ -201,6 +246,14 @@ export default function Account({
       const me = await api.me();
       if (!me && linkNotice) {
         setState({ kind: "signed-out", notice: linkNotice });
+        return;
+      }
+      // A change-of-email link only works for the account that asked, and its code stays in the
+      // address while the person signs in, so say so instead of showing a plain sign-in page.
+      const waiting = emailConfirmToken(hash);
+      if (!me && waiting) {
+        rememberConfirm(waiting);
+        setState({ kind: "signed-out", notice: text.emailConfirmSignIn });
         return;
       }
       const params = new URLSearchParams(search);
@@ -289,6 +342,8 @@ export default function Account({
       body = (
         <SignedIn
           installResult={installResult(search)}
+          discordNews={DISCORD_ACCOUNTS_LIVE ? discordResult(search) : null}
+          hash={hash}
           me={state.me}
           onDeleted={() => setState({ kind: "deleted" })}
           onSignedOutByChoice={() => setState({ kind: "signed-out", notice: null })}
@@ -302,15 +357,26 @@ export default function Account({
 function SignedOut({ notice }: { notice: string | null }) {
   const { api } = useShared();
   const signIn = api.signInUrl();
+  // Sign-in comes first (#2003): on a phone this page used to open on the plans, and the plain
+  // Sign in button sat below all of them, so a returning DM thought they could only buy.
   return (
     <div class="stack">
-      {notice && (
-        <p class="warn" role="alert">
-          {notice}
-        </p>
-      )}
-      <p class="lead">{text.signInLead}</p>
-      <div class="panel">
+      <section class="panel" aria-labelledby="signed-out-heading">
+        {notice && (
+          <p class="warn" role="alert">
+            {notice}
+          </p>
+        )}
+        <h2 id="signed-out-heading">{text.signedOutHeading}</h2>
+        <p>{text.signedOutLead}</p>
+        <a class="button" href={signIn}>
+          {text.signIn}
+        </a>
+        <p class="muted small">{text.signInNote}</p>
+        <EmailSignIn />
+      </section>
+      <section class="panel" aria-labelledby="new-heading">
+        <h2 id="new-heading">{text.newHeading}</h2>
         <a class="button" href={signIn}>
           {text.startTryItFree}
         </a>
@@ -322,15 +388,7 @@ function SignedOut({ notice }: { notice: string | null }) {
             </a>
           )}
         />
-      </div>
-      <div class="panel">
-        <p>{text.haveAccount}</p>
-        <a class="button secondary" href={signIn}>
-          {text.signIn}
-        </a>
-        <p class="muted small">{text.signInNote}</p>
-      </div>
-      <EmailSignIn />
+      </section>
     </div>
   );
 }
@@ -365,8 +423,8 @@ function EmailSignIn() {
     }
   };
   return (
-    <form class="panel" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
-      <h2 id="email-heading">{text.emailHeading}</h2>
+    <form class="email-sign-in" aria-labelledby="email-heading" onSubmit={(e) => void send(e)}>
+      <h3 id="email-heading">{text.emailHeading}</h3>
       <label for="email-address">{text.emailLabel}</label>
       <input
         id="email-address"
@@ -413,12 +471,18 @@ function forgetInstallResult(): void {
 
 function SignedIn({
   me,
+  hash,
   installResult: installMessage,
+  discordNews,
   onDeleted,
   onSignedOutByChoice,
 }: {
   me: Me;
+  /** The page's `#...`, for the change-of-email link (#2349). */
+  hash: string;
   installResult: string | null;
+  /** What coming back from adding a Discord account says (?discord=...), or null (#2534). */
+  discordNews: string | null;
   onDeleted: () => void;
   onSignedOutByChoice: () => void;
 }) {
@@ -462,6 +526,12 @@ function SignedIn({
         <p class="muted small">{text.signOutEverywhereNote}</p>
       </div>
       <Notice message={notice} />
+      {HANDOVER_LIVE && handoverToken("") !== null && (
+        // An offer link was opened before signing in: its code was kept, so the way back is here.
+        <p class="note" role="status">
+          {handoverWords.waitingOnAccount} <a href="/handover">{handoverWords.waitingLink}</a>
+        </p>
+      )}
       {installMessage && <ForgetInstallResult />}
       {installMessage && (
         <p class={installMessage === text.install["done"] ? "ok" : "warn"} role="status">
@@ -480,17 +550,20 @@ function SignedIn({
           onNews={setOfferNews}
         />
       )}
+      <CampaignsSection me={me} />
+      <CharactersSection />
+      <SharedRulesSection me={me} />
       <PlanSection me={me} />
+      <h2 id="my-account-heading">{text.myAccountHeading}</h2>
       {me.dmbotId !== undefined && <IdSection me={me} />}
+      {DISCORD_ACCOUNTS_LIVE && me.discordAccounts && api.addDiscordUrl && api.removeDiscordAccount && (
+        <DiscordAccountsSection accounts={me.discordAccounts} resultText={discordNews} />
+      )}
+      {api.myEmail && <EmailSection hash={hash} />}
+      <ServersSection me={me} />
       {me.canMove === true && api.getMoveCode && <MoveSection />}
       <SupportOrQuestions me={me} />
-      <CampaignsSection me={me} />
-      {api.houseRuleCampaigns && <HouseRulesSection />}
-      {api.homebrewCampaigns && <HomebrewSection />}
-      {api.transcriptCampaigns && <TranscriptsSection />}
-      <ServersSection me={me} />
       <Improvement api={api} />
-      <CharactersSection />
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
       <DeleteSection
@@ -520,6 +593,27 @@ function PlanList({ choose }: { choose: (id: PlanId) => JSX.Element }) {
       <a href="/pricing">{text.seePrices}</a>
     </div>
   );
+}
+
+/** What a paid plan is doing. An API older than #2165 gives no state: a cancel date means ending. */
+function planState(plan: MyPlan): NonNullable<MyPlan["state"]> {
+  if (plan.state) return plan.state;
+  if (plan.status === "lapsed") return "expired";
+  return plan.endsOn ? "ending" : "active";
+}
+
+/** The plan line (#2165): the name, and what the plan is doing, in the site's date words. Try It
+ * and a payment still being fixed keep the plain name. */
+function planLine(plan: MyPlan): string {
+  const name = planName(plan.id);
+  if (plan.id === "try-it" || plan.status === "grace") return name;
+  const state = planState(plan);
+  if (state === "expired")
+    return plan.endedOn ? text.planExpired(name, plan.endedOn) : text.planExpiredNoDate(name);
+  if (state === "ending" && plan.endsOn) return text.planEndsLine(name, plan.endsOn);
+  if (state === "changing" && plan.nextPlan && plan.nextPlanOn)
+    return text.planChanging(name, planName(plan.nextPlan), plan.nextPlanOn);
+  return plan.renewsOn ? text.planRenews(name, plan.renewsOn) : name;
 }
 
 function PlanSection({ me }: { me: Me }) {
@@ -552,10 +646,40 @@ function PlanSection({ me }: { me: Me }) {
         return null;
       },
     );
-  const portalUrl = portalLoginUrl();
-  const portal = (): void =>
+  // Renew (#2165): undo a cancellation, after one plain question.
+  const [renewAsk, setRenewAsk] = useState(false);
+  const [renewed, setRenewed] = useState(false);
+  const askRef = useRef<HTMLParagraphElement>(null);
+  const renewBoxRef = useRef<HTMLDivElement>(null);
+  const renewedRef = useRef<HTMLParagraphElement>(null);
+  // The question takes focus when it opens, so a keyboard or screen-reader user lands on it.
+  useEffect(() => {
+    if (renewAsk) askRef.current?.focus();
+  }, [renewAsk]);
+  const renew = (): void =>
     void run(
-      async () => go(await api.billingPortalUrl()),
+      async () => {
+        if (!api.renewPlan) throw new ApiError("server");
+        await api.renewPlan();
+        setRenewAsk(false);
+        setRenewed(true);
+        await refresh();
+        keepFocus(() => renewedRef.current);
+      },
+      (error) => {
+        // Already renewed elsewhere, or the paid time ran out: show what's true now.
+        if (error.kind === "not-ending") {
+          setRenewAsk(false);
+          void refresh();
+        }
+        return null;
+      },
+    );
+  const portalUrl = portalLoginUrl();
+  // Change plan opens on the plans to choose from; Fix my payment and Stop paying want the ordinary page.
+  const portal = (flow?: "plans"): void =>
+    void run(
+      async () => go(await api.billingPortalUrl(flow)),
       (error) => {
         // The page is out of date (the plan stopped, or was never paid through the
         // company): show what's true now, with the plans to pick from.
@@ -622,7 +746,7 @@ function PlanSection({ me }: { me: Me }) {
         {access.stillPaying && (
           <>
             <p>{text.stillPaying(paying, plan?.renewsOn ?? null)}</p>
-            <ActionButton busy={busy} kind="secondary" onClick={portal}>
+            <ActionButton busy={busy} kind="secondary" onClick={() => portal()}>
               {text.stopPaying}
             </ActionButton>
             {portalUrl && (
@@ -664,11 +788,15 @@ function PlanSection({ me }: { me: Me }) {
         </>
       ) : (
         <>
-          <p class="plan-name">{planName(plan.id)}</p>
+          <p class="plan-name">{planLine(plan)}</p>
+          {/* Always on the page, so the news is announced when it is filled in. */}
+          <p role="status" tabIndex={-1} ref={renewedRef} class="small">
+            {renewed ? text.renewed(planName(plan.id), plan.renewsOn) : ""}
+          </p>
           {plan.status === "grace" && (
             <div class="warn-box" role="alert">
               <p>{text.grace(plan.graceEndsOn)}</p>
-              <ActionButton busy={busy} onClick={portal}>
+              <ActionButton busy={busy} onClick={() => portal()}>
                 {text.fixPayment}
               </ActionButton>
             </div>
@@ -689,9 +817,15 @@ function PlanSection({ me }: { me: Me }) {
                 />
               )}
               <p class="muted small">
-                {hoursLeftLine(plan.hoursUsed, plan.hoursCap, plan.renewsOn, plan.id)}
+                {hoursLeftLine(
+                  plan.hoursUsed,
+                  plan.hoursCap,
+                  // The hours don't start again on a plan that is ending.
+                  planState(plan) === "ending" ? null : plan.renewsOn,
+                  plan.id,
+                )}
               </p>
-              {plan.endsOn && <p>{text.planEnds(planName(plan.id), plan.endsOn)}</p>}
+              {planState(plan) === "ending" && <p class="muted small">{text.endingNote}</p>}
               {plan.id === "try-it" ? (
                 choices(text.pickPlan)
               ) : (
@@ -702,9 +836,52 @@ function PlanSection({ me }: { me: Me }) {
                     {text.addHours}
                   </ActionButton>
                   <p class="muted small">{text.addHoursNote}</p>
-                  <ActionButton busy={busy} kind="secondary" onClick={portal}>
+                  <ActionButton busy={busy} kind="secondary" onClick={() => portal("plans")}>
                     {text.changePlan}
                   </ActionButton>
+                  <p class="muted small">{text.changePlanNote}</p>
+                  {/* A cancelled plan that still works can be renewed (#2165): one question, then
+                      the cancellation is undone and nothing is charged before the renewal date. */}
+                  {plan.state === "ending" && api.renewPlan && (
+                    <div ref={renewBoxRef}>
+                      {renewAsk ? (
+                        <div role="group" aria-label={text.renew} aria-describedby="renew-ask">
+                          <p id="renew-ask" tabIndex={-1} ref={askRef}>
+                            {plan.endsOn
+                              ? text.renewAsk(planName(plan.id), plan.endsOn)
+                              : text.renewAskNoDate(planName(plan.id))}
+                          </p>
+                          <ActionButton busy={busy} onClick={renew}>
+                            {text.renewYes}
+                          </ActionButton>
+                          <ActionButton
+                            busy={busy}
+                            kind="secondary"
+                            onClick={() => {
+                              setRenewAsk(false);
+                              // The question goes away, so focus goes back to Renew.
+                              requestAnimationFrame(() =>
+                                renewBoxRef.current?.querySelector("button")?.focus(),
+                              );
+                            }}
+                          >
+                            {text.renewNo}
+                          </ActionButton>
+                        </div>
+                      ) : (
+                        <ActionButton
+                          busy={busy}
+                          kind="secondary"
+                          onClick={() => {
+                            setRenewed(false);
+                            setRenewAsk(true);
+                          }}
+                        >
+                          {text.renew}
+                        </ActionButton>
+                      )}
+                    </div>
+                  )}
                   {RECAP_AUDIO_LIVE && me.recapAudio && (
                     <div class="addon" aria-labelledby="recap-audio-heading">
                       <h3 id="recap-audio-heading">{audioWords.heading}</h3>
@@ -836,9 +1013,29 @@ function OfferRow({
 function CampaignsSection({ me }: { me: Me }) {
   const { refresh } = useShared();
   const [done, setDone] = useState<string | null>(null);
+  // Long lists fold (#1991): the newest few, and the rest behind one button. Not an inner scroll bar,
+  // which is hard on phones and for keyboard and screen-reader users.
+  const [all, setAll] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const offeredIds = new Set(me.offers.outgoing.map((o) => o.campaignId));
+  // A campaign on a server DMbot can't reach is listed only once the website can delete it (#2555).
+  const listed = CAMPAIGN_DELETE_LIVE ? me.campaigns : me.campaigns.filter((c) => c.serverReachable !== false);
+  const { first, older } = foldCampaigns(listed, offeredIds);
+  // After a hand-over the older ones can all be gone while the list is open: the button goes with
+  // them, so the list closes too (and a later fold starts closed).
+  const open = all && older.length > 0;
+  useEffect(() => {
+    if (all && older.length === 0) {
+      setAll(false);
+      heading.current?.focus();
+    }
+  }, [all, older.length]);
+  const shown = open ? [...first, ...older] : first;
   return (
     <section aria-labelledby="campaigns-heading" class="panel" id="campaigns">
-      <h2 id="campaigns-heading">{text.campaignsHeading}</h2>
+      <h2 id="campaigns-heading" ref={heading} tabIndex={-1}>
+        {text.campaignsHeading}
+      </h2>
       {done && (
         <p class="ok" role="status">
           {done}
@@ -847,11 +1044,12 @@ function CampaignsSection({ me }: { me: Me }) {
       {me.campaigns.length === 0 ? (
         <p>{text.noCampaigns}</p>
       ) : (
-        <ul class="campaigns">
-          {me.campaigns.map((c) => (
+        <ul class="campaigns" id="campaigns-list">
+          {shown.map((c) => (
             <CampaignRow
               key={c.id}
               campaign={c}
+              tryIt={me.plan?.id === "try-it"}
               offer={me.offers.outgoing.find((o) => o.campaignId === c.id) ?? null}
               onWithdrawn={async (person) => {
                 setDone(text.withdrawn(person));
@@ -861,47 +1059,34 @@ function CampaignsSection({ me }: { me: Me }) {
                 setDone(text.handOverDone(person.name));
                 await refresh();
               }}
+              onGone={async () => {
+                setDone(campaignDeleteWords.problem["not-found"] ?? null);
+                await refresh();
+              }}
+              onDeleted={async (name, channelsLeft) => {
+                setDone(CAMPAIGN_DELETE_LIVE ? `${campaignDeleteWords.deleted(name)}${channelsLeft ? ` ${campaignDeleteWords.channelsLeft}` : ""}` : "");
+                await refresh();
+              }}
             />
           ))}
         </ul>
       )}
-      {RECAPS_LIVE && me.campaigns.length > 0 && <a href="/account/recaps">{recapText.linkToList}</a>}
-    </section>
-  );
-}
-
-/** A link to the house rules (#1521): for anyone in a server, not only a DM, so it is not part of
- * the campaigns list. Hidden on an API older than the house-rules pages. */
-function HouseRulesSection() {
-  return (
-    <section aria-labelledby="house-rules-heading" class="panel">
-      <h2 id="house-rules-heading">{houseRulesText.heading}</h2>
-      <p>{houseRulesText.lead}</p>
-      <a href="/account/house-rules">{houseRulesText.link}</a>
-    </section>
-  );
-}
-
-/** A link to the homebrew the DM shared (#1525): for anyone in a server, not only a DM. Hidden on
- * an API older than the homebrew pages. */
-function HomebrewSection() {
-  return (
-    <section aria-labelledby="homebrew-heading" class="panel">
-      <h2 id="homebrew-heading">{homebrewText.heading}</h2>
-      <p>{homebrewText.lead}</p>
-      <a href="/account/homebrew">{homebrewText.link}</a>
-    </section>
-  );
-}
-
-/** A link to the session transcripts (#1501): for anyone in a server, not only a DM, so it is not
- * part of the campaigns list. Hidden on an API older than the transcript pages. */
-function TranscriptsSection() {
-  return (
-    <section aria-labelledby="transcripts-heading" class="panel">
-      <h2 id="transcripts-heading">{transcriptText.heading}</h2>
-      <p>{transcriptText.lead}</p>
-      <a href="/account/transcripts">{transcriptText.link}</a>
+      {older.length > 0 && (
+        <button
+          type="button"
+          class="button secondary"
+          aria-expanded={open}
+          aria-controls="campaigns-list"
+          onClick={() => {
+            setAll(!all);
+            // Folding the list away would leave focus on a button that has moved: go back to the heading.
+            if (all) heading.current?.focus();
+          }}
+        >
+          {open ? text.showFewer : text.showOlder(older.length)}
+        </button>
+      )}
+      {RECAPS_LIVE && me.campaigns.some((c) => c.role !== "player") && <a href="/account/recaps">{recapCard.linkToList}</a>}
     </section>
   );
 }
@@ -911,6 +1096,9 @@ function CampaignRow({
   offer,
   onWithdrawn,
   onHandedOver,
+  onDeleted,
+  onGone,
+  tryIt = false,
 }: {
   campaign: Campaign;
   /** A hand-over of this campaign you offered and nobody has answered yet. */
@@ -918,6 +1106,11 @@ function CampaignRow({
   /** Gets the name of the person the offer was for, to say they'll be told. */
   onWithdrawn: (person: string) => Promise<void>;
   onHandedOver: (person: Person) => Promise<void>;
+  /** The campaign was deleted from this card (#2555). */
+  onDeleted: (name: string, channelsLeft: boolean) => Promise<void>;
+  onGone: () => Promise<void>;
+  /** A Try It account: a Try It campaign can't be handed over (#2534). */
+  tryIt?: boolean;
 }) {
   const { api, refresh, noLimits } = useShared();
   const { busy, notice, run } = useAction();
@@ -927,23 +1120,15 @@ function CampaignRow({
 
   return (
     <li data-campaign={campaign.id}>
-      <p class="campaign-name">{campaign.name}</p>
+      <p class="campaign-name">
+        {/* Linked only when the API sends the campaign's address (#2416). */}
+        {campaign.ref ? <a href={campaignHref(campaign.ref)}>{campaign.name}</a> : campaign.name}
+      </p>
       <p class="muted small">
-        {campaign.serverName} ·{" "}
-        {campaign.lastPlayedAt ? text.lastPlayed(campaign.lastPlayedAt) : text.notPlayed}
+        {CAMPAIGN_DELETE_LIVE && campaign.serverReachable === false && !campaign.serverName ? campaignDeleteWords.unknownServer : campaign.serverName}
       </p>
-      <p class="tags">
-        <span class={`tag ${campaign.status}`}>
-          {campaign.status === "active" ? text.active : text.paused}
-        </span>
-        <span class="tag">
-          {campaign.role === "owner"
-            ? noLimits
-              ? text.youRunItFree
-              : text.youRunIt
-            : text.youHelp}
-        </span>
-      </p>
+      {CAMPAIGN_DELETE_LIVE && campaign.serverReachable === false && <p class="note small">{campaignDeleteWords.unreachable}</p>}
+      <CampaignFacts campaign={campaign} />
       <Notice message={notice} />
       {offer && (
         <>
@@ -971,7 +1156,22 @@ function CampaignRow({
           </div>
         </>
       )}
-      {api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
+      {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
+        <EmailHandover campaign={campaign} refId={campaign.ref} />
+      )}
+      {/* Only the plan holder is offered Delete: the API says so with `canDelete` (a campaign with no owner yet
+          can be deleted by its game masters); an API without it falls back to the owner. */}
+      {CAMPAIGN_DELETE_LIVE && (campaign.canDelete ?? campaign.role === "owner") && campaign.ref && api.deleteCampaign && (
+        <CampaignDelete
+          api={api}
+          refId={campaign.ref}
+          name={campaign.name}
+          tryIt={tryIt}
+          onDeleted={(channelsLeft) => void onDeleted(campaign.name, channelsLeft)}
+          onGone={() => void onGone()}
+        />
+      )}
+      {!HANDOVER_LIVE && api.handoverCandidates && campaign.role === "owner" && !offer && people === null && (
         <ActionButton
           busy={busy}
           kind="secondary"
@@ -984,7 +1184,7 @@ function CampaignRow({
           {text.handOver}
         </ActionButton>
       )}
-      {people !== null && (
+      {!HANDOVER_LIVE && people !== null && (
         <form
           id={formId}
           class="handover"
@@ -1060,11 +1260,150 @@ function CampaignRow({
   );
 }
 
+/** Hand a campaign over by email (#2534; core #2532): the owner types the new owner's address, and sees only
+ * "We've emailed the offer". While an offer is open it shows when it ends and a Take back button. The
+ * answer never says whether the address has an account or a plan (#437). */
+function EmailHandover({ campaign, refId }: { campaign: Campaign; refId: string }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [asking, setAsking] = useState(false);
+  const [email, setEmail] = useState("");
+  const [said, setSaid] = useState<string | null>(null);
+  const saidRef = useRef<HTMLParagraphElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const [badEmail, setBadEmail] = useState(false);
+  const words = handoverOwnerWords;
+  const open = campaign.handover ?? null;
+  const errorId = `handover-email-error-${campaign.id}`;
+  const explain = (error: ApiError): string | null => {
+    if (error.kind === "not-found") void refresh();
+    setBadEmail(error.kind === "bad-email");
+    if (error.kind === "bad-email") keepFocus(() => emailRef.current);
+    return words.problem[error.kind] ?? words.problem["server"] ?? null;
+  };
+  return (
+    <div class="stack">
+      <div id={errorId}>
+        <Notice message={notice} />
+      </div>
+      {/* One status line: what was just done, or the open offer once there is one. */}
+      <p class="small" role="status" tabIndex={-1} ref={saidRef}>
+        {open ? words.waiting(shortDateTime(open.sentAt), shortDateTime(open.expiresAt)) : said}
+      </p>
+      {open && !asking ? (
+        <>
+          <p class="muted small">{words.elsewhere}</p>
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            label={words.takeBackFor(campaign.name)}
+            onClick={() =>
+              void run(async () => {
+                await api.takeBackHandover!(refId);
+                setSaid(words.takenBack);
+                await refresh();
+                keepFocus(() => saidRef.current);
+              }, explain)
+            }
+          >
+            {words.takeBack}
+          </ActionButton>
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setAsking(true);
+              keepFocus(() => emailRef.current);
+            }}
+          >
+            {words.sendElsewhere}
+          </button>
+        </>
+      ) : asking ? (
+        <form
+          class="handover"
+          noValidate // the API checks the address and our own plain words say what is wrong
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (email.trim() === "") return;
+            void run(async () => {
+              // A light check first, so an obvious slip doesn't use one of the day's five offers.
+              if (!/^\S+@\S+\.\S+$/.test(email.trim())) throw new ApiError("bad-email");
+              await api.offerHandover!(refId, email.trim());
+              setAsking(false);
+              setEmail("");
+              setSaid(words.emailed);
+              await refresh();
+              keepFocus(() => saidRef.current);
+            }, explain);
+          }}
+        >
+          <fieldset disabled={busy}>
+            <legend>{words.question(campaign.name)}</legend>
+            <label class="field">
+              {words.label}
+              <input
+                ref={emailRef}
+                type="email"
+                inputMode="email"
+                autocomplete="off"
+                autoCapitalize="none"
+                spellcheck={false}
+                aria-invalid={badEmail}
+                aria-describedby={badEmail ? errorId : undefined}
+                value={email}
+                onInput={(e) => {
+                  setEmail((e.target as HTMLInputElement).value);
+                  setBadEmail(false);
+                }}
+              />
+            </label>
+            <p class="muted small">{words.note}</p>
+            {open && <p class="muted small">{words.replaces}</p>}
+          </fieldset>
+          <div class="row">
+            <button type="submit" class="button" disabled={busy || email.trim() === ""} aria-busy={busy}>
+              {busy ? words.sending : words.send}
+            </button>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy}
+              onClick={() => {
+                setAsking(false);
+                setBadEmail(false);
+                keepFocus(() => startRef.current);
+              }}
+            >
+              {words.cancel}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          type="button"
+          class="button secondary"
+          ref={startRef}
+          aria-label={words.buttonFor(campaign.name)}
+          onClick={() => {
+            setAsking(true);
+            setSaid(null);
+            keepFocus(() => emailRef.current);
+          }}
+        >
+          {words.button}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ServersSection({ me }: { me: Me }) {
   const { api } = useShared();
   return (
     <section aria-labelledby="servers-heading" class="panel">
-      <h2 id="servers-heading">{text.serversHeading}</h2>
+      <h3 id="servers-heading">{text.serversHeading}</h3>
       {me.servers.length === 0 ? (
         <p>{text.noServers}</p>
       ) : (
@@ -1112,6 +1451,22 @@ function ServerRow({ server: s, api }: { server: Me["servers"][number]; api: Acc
       {s.hasDmbot && s.canLink && <p class="muted small row-note">{text.linkNote}</p>}
       <Notice message={notice} />
     </li>
+  );
+}
+
+/** The way in to the Shared rules page (#2460). Only a person who runs a campaign has rules to
+ * share or use, and only an API that can say what they share has the page. */
+function SharedRulesSection({ me }: { me: Me }) {
+  const { api } = useShared();
+  if (!api.sharedRules || !me.campaigns.some((c) => c.role !== "player")) return null;
+  return (
+    <section aria-labelledby="shared-rules-heading" class="panel">
+      <h2 id="shared-rules-heading">{sharingCard.heading}</h2>
+      <p>{sharingCard.lead}</p>
+      <p>
+        <a href="/account/sharing">{sharingCard.link}</a>
+      </p>
+    </section>
   );
 }
 
@@ -1184,11 +1539,129 @@ function CharactersSection() {
   );
 }
 
+/** The message for coming back from adding a Discord account (?discord=added etc.), or null (#2534). */
+function discordResult(search: string): string | null {
+  const result = new URLSearchParams(search).get("discord");
+  return result === null ? null : (discordAccountsWords.result[result] ?? discordAccountsWords.result["failed"] ?? null);
+}
+
+/** Your Discord accounts (#2534): the list by name, "Add a Discord account" (Discord's own sign-in,
+ * never a typed number) and Remove with one confirmation, never for the last one. The list is the API's;
+ * after a removal it is read again from `me`. */
+function DiscordAccountsSection({ accounts, resultText }: { accounts: DiscordAccount[]; resultText: string | null }) {
+  const { api, refresh } = useShared();
+  const { busy, notice, run } = useAction();
+  const [asking, setAsking] = useState<string | null>(null);
+  const [said, setSaid] = useState<string | null>(null);
+  const saidRef = useRef<HTMLParagraphElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const words = discordAccountsWords;
+  useEffect(forgetDiscordResult, []); // show the result once: a reload must not repeat it
+  const last = accounts.length <= 1;
+  return (
+    <section aria-labelledby="discord-accounts-heading" class="panel">
+      <h3 id="discord-accounts-heading">{words.heading}</h3>
+      <p>{words.lead}</p>
+      {resultText && (
+        <p class={resultText === words.result["added"] ? "ok" : "warn"} role="status">
+          {resultText}
+        </p>
+      )}
+      <Notice message={notice} />
+      <p class="ok" role="status" tabIndex={-1} ref={saidRef}>
+        {said}
+      </p>
+      <ul class="stack">
+        {accounts.map((a) => (
+          <li key={a.key} class="stack">
+            <p>
+              <strong>{a.name}</strong> {a.current && <span class="muted small">{words.you}</span>}
+            </p>
+            {a.canRemove && !last && !a.current && asking !== a.key && (
+              <button
+                type="button"
+                class="button secondary"
+                aria-label={words.removeFor(a.name)}
+                disabled={busy}
+                onClick={() => {
+                  setAsking(a.key);
+                  setSaid(null);
+                  keepFocus(() => keepRef.current); // the safe choice first
+                }}
+              >
+                {words.remove}
+              </button>
+            )}
+            {asking === a.key && (
+              <div class="stack" role="group" aria-label={words.removeFor(a.name)}>
+                <p>{words.confirmFor(a.name)}</p>
+                <div class="row">
+                  <button
+                    type="button"
+                    class="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(
+                        async () => {
+                          try {
+                            await api.removeDiscordAccount!(a.key);
+                          } catch (error) {
+                            // Already gone (removed in another tab): say so, and read the list again so
+                            // the page matches what is true.
+                            if (error instanceof ApiError && error.kind === "not-found") {
+                              setAsking(null);
+                              await refresh();
+                            }
+                            throw error;
+                          }
+                          setAsking(null);
+                          setSaid(words.removed);
+                          await refresh();
+                          keepFocus(() => saidRef.current);
+                        },
+                        (error) => words.problem[error.kind] ?? words.problem["default"] ?? null,
+                      )
+                    }
+                  >
+                    {busy ? words.removing : words.confirmYes}
+                  </button>
+                  <button type="button" class="button secondary" ref={keepRef} disabled={busy} onClick={() => setAsking(null)}>
+                    {words.keep}
+                  </button>
+                </div>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {last ? (
+        <p class="muted small">{words.lastOne}</p>
+      ) : (
+        accounts.some((a) => a.current && a.canRemove) && <p class="muted small">{words.cantRemoveNow}</p>
+      )}
+      <p>
+        <a class="button" href={api.addDiscordUrl!()}>
+          {words.add}
+        </a>
+      </p>
+      <p class="muted small">{words.addNote}</p>
+    </section>
+  );
+}
+
+/** Take ?discord= out of the address once its result is shown (as for ?install=). */
+function forgetDiscordResult(): void {
+  if (typeof window === "undefined" || !window.location.search.includes("discord=")) return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("discord");
+  window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+}
+
 /** Your DMbot ID and experience points (#1231). The ID is an account number, not a secret. */
 function IdSection({ me }: { me: Me }) {
   return (
     <section aria-labelledby="id-heading" class="panel">
-      <h2 id="id-heading">{text.idHeading}</h2>
+      <h3 id="id-heading">{text.idHeading}</h3>
       <p>{text.idLine(me.dmbotId ?? "")}</p>
       <p class="muted small">{text.idNote}</p>
       {me.experiencePoints !== undefined && (
@@ -1224,6 +1697,247 @@ function SupportOrQuestions({ me }: { me: Me }) {
   );
 }
 
+/** The email DMbot uses, for recap emails (#2349). A payment email is changed with the payment company
+ * (its page is asked for only on a press); any other is changed here, but only after a link sent to
+ * the new address is opened. The link works only in the same signed-in account that asked (the API
+ * checks it; signed out, the page asks for a sign-in first), so a typo or a stranger's address never
+ * takes over. Its code is in the address bar's `#...`, is used once and is taken out of the bar at once.
+ * Only the person's own address is ever shown. */
+function EmailSection({ hash }: { hash: string }) {
+  const { api, go } = useShared();
+  const { busy, notice, run, clear } = useAction();
+  const [mine, setMine] = useState<MyEmail | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [address, setAddress] = useState("");
+  const [sent, setSent] = useState(false);
+  // The API answered with nothing waiting: the address is the one already in use, so no link was sent.
+  const [nothingSent, setNothingSent] = useState(false);
+  const [typeFirst, setTypeFirst] = useState(false);
+  const [portalOff, setPortalOff] = useState(false);
+  const box = useRef<HTMLInputElement>(null);
+
+  const read = useCallback(async (): Promise<MyEmail | null> => {
+    try {
+      const now = (await api.myEmail?.()) ?? null;
+      setMine(now);
+      setLoadFailed(false);
+      return now;
+    } catch (error) {
+      // An API that doesn't have the route yet (the site deploys on its own): no section, no alarm.
+      if (error instanceof ApiError && error.kind === "not-found") {
+        setMine(null);
+        setLoadFailed(false);
+        return null;
+      }
+      // A 401 already ends the session for the whole page (SIGNED_OUT_EVENT); this only says it did not load.
+      setLoadFailed(true);
+      return null;
+    }
+  }, [api]);
+  // The emailed link, opened once: the code leaves the address bar before it is sent.
+  const confirmed = useRef(false);
+  const [result, setResult] = useState<string | null>(null);
+  useEffect(() => {
+    // From the address, or kept across the sign-in that was needed first.
+    const token = emailConfirmToken(hash) ?? recalledConfirm();
+    if (token && api.confirmEmail && !confirmed.current) {
+      confirmed.current = true;
+      void (async () => {
+        let worked = false;
+        let answered = false;
+        await run(
+          async () => {
+            await api.confirmEmail?.(token);
+            worked = true;
+          },
+          (error) => {
+            // Any answer from the API spends the code (a bad link, or an address another account took
+            // while it waited); only a connection that failed or a server fault keeps it to try again.
+            if (error.kind === "network" || error.kind === "server") return null;
+            answered = true;
+            return error.kind === "bad-link" ? text.emailConfirmBad : (text.errors[error.kind] ?? null);
+          },
+        );
+        // The code goes only once the API has answered it; a network failure leaves it to try again.
+        if (worked || answered) {
+          forgetConfirm();
+          forgetEmailLink();
+        }
+        const now = await read();
+        if (worked) setResult(now?.address ? text.emailConfirmed(now.address) : null);
+      })();
+      return;
+    }
+    void read();
+    // `run` is stable per section; only the page and its address start this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [read, hash]);
+
+  if (loadFailed && !mine)
+    return (
+      <section aria-labelledby="email-section-heading" class="panel" id="email">
+        <h3 id="email-section-heading">{text.myEmailHeading}</h3>
+        <p class="warn" role="alert">
+          {text.emailLoadFailed}
+        </p>
+      </section>
+    );
+  if (!mine) return null;
+
+  const payment = mine.source === "payment";
+  const stripe = (): void =>
+    void run(
+      async () => {
+        const url = await api.billingPortalUrl();
+        if (!isSafeRedirect(url)) throw new ApiError("server");
+        go(url);
+      },
+      (error) => {
+        if (error.kind !== "payments-off") return null;
+        setPortalOff(true);
+        return "";
+      },
+    );
+  const submit = (event: Event): void => {
+    event.preventDefault();
+    if (address.trim() === "") {
+      setTypeFirst(true);
+      box.current?.focus();
+      return;
+    }
+    setTypeFirst(false);
+    void run(
+      async () => {
+        const answer = await api.changeEmail?.(address.trim());
+        setNothingSent(answer?.pending === null);
+        setSent(true);
+        setEditing(false);
+        setAddress("");
+        await read();
+      },
+      (error) => (error.kind === "email-failed" ? text.emailSendFailed : null),
+    );
+  };
+
+  return (
+    <section aria-labelledby="email-section-heading" class="panel" id="email">
+      <h3 id="email-section-heading">{text.myEmailHeading}</h3>
+      <p>{mine.address ? text.emailNow(mine.address) : text.emailNone}</p>
+      {payment && <p class="small">{text.emailPayment}</p>}
+      {mine.pending && (
+        <p class="small" role="status">
+          {text.emailPending(mine.pending, mine.address)}
+        </p>
+      )}
+      {mine.pending && !editing && api.cancelEmailChange && (
+        <div class="row">
+          <ActionButton
+            busy={busy}
+            kind="secondary"
+            onClick={() =>
+              void run(async () => {
+                await api.cancelEmailChange?.();
+                setSent(false);
+                setResult(text.emailCancelled);
+                await read();
+              })
+            }
+          >
+            {text.emailCancel}
+          </ActionButton>
+        </div>
+      )}
+      {result && (
+        <p class="ok" role="status">
+          {result}
+        </p>
+      )}
+      {sent && !mine.pending && !editing && (
+        <p class="ok" role="status">
+          {nothingSent ? text.emailAlready : text.emailSaved}
+        </p>
+      )}
+      <Notice message={notice} />
+      {payment ? (
+        <>
+          {portalOff ? (
+            <p class="small">{text.emailPortalOff}</p>
+          ) : (
+            <>
+              <div class="row">
+                <ActionButton busy={busy} kind="secondary" onClick={stripe}>
+                  {text.emailPaymentButton}
+                </ActionButton>
+              </div>
+              <p class="small muted">{text.emailPaymentHelp}</p>
+            </>
+          )}
+        </>
+      ) : editing ? (
+        <form class="stack" noValidate onSubmit={submit}>
+          <label class="field">
+            {text.emailNewLabel}
+            <input
+              ref={box}
+              type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              autoComplete="email"
+              aria-describedby="email-link-note"
+              value={address}
+              maxLength={254}
+              onInput={(e) => {
+                setAddress((e.target as HTMLInputElement).value);
+                setTypeFirst(false);
+                clear();
+              }}
+            />
+          </label>
+          <p id="email-link-note" class="small muted">
+            {text.emailLinkNote}
+          </p>
+          {typeFirst && (
+            <p class="warn" role="alert">
+              {text.emailTypeFirst}
+            </p>
+          )}
+          <div class="row">
+            <button type="submit" class="button" disabled={busy}>
+              {busy ? text.busy : mine.pending ? text.emailSendAgain : text.emailSend}
+            </button>
+            <button
+              type="button"
+              class="button secondary"
+              onClick={() => {
+                setEditing(false);
+                setTypeFirst(false);
+                clear();
+              }}
+            >
+              {text.cancel}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div class="row">
+          <button
+            type="button"
+            class="button secondary"
+            onClick={() => {
+              setEditing(true);
+              setSent(false);
+              setTimeout(() => box.current?.focus(), 0);
+            }}
+          >
+            {mine.pending ? text.emailSendAgain : mine.address ? text.emailChange : text.emailAdd}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Moving to a new Discord account (#1231): paid plans get a move code by email, never on screen.
  * The steps for using it show only after it has been sent. */
 function MoveSection() {
@@ -1232,7 +1946,7 @@ function MoveSection() {
   const [sent, setSent] = useState(false);
   return (
     <section aria-labelledby="move-heading" class="panel">
-      <h2 id="move-heading">{text.moveHeading}</h2>
+      <h3 id="move-heading">{text.moveHeading}</h3>
       <p>{text.moveText}</p>
       <Notice message={notice} />
       {sent && (
@@ -1274,7 +1988,7 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
   if (entries.length === 0 && done.length === 0) return null;
   return (
     <section aria-labelledby="recording-heading" class="panel">
-      <h2 id="recording-heading">{text.recordingHeading}</h2>
+      <h3 id="recording-heading">{text.recordingHeading}</h3>
       {done.map((line) => (
         <p key={line} class="ok" role="status">
           {line}
@@ -1364,7 +2078,7 @@ function ExportSection() {
   const { busy, notice, run } = useAction();
   return (
     <section aria-labelledby="export-heading" class="panel">
-      <h2 id="export-heading">{text.exportHeading}</h2>
+      <h3 id="export-heading">{text.exportHeading}</h3>
       <p>{text.exportWhat}</p>
       <ActionButton
         busy={busy}
@@ -1407,7 +2121,7 @@ function DeleteSection({
 
   return (
     <section aria-labelledby="delete-heading" class="panel danger">
-      <h2 id="delete-heading">{text.deleteHeading}</h2>
+      <h3 id="delete-heading">{text.deleteHeading}</h3>
       <Notice message={notice} />
       {step === 0 && (
         <button

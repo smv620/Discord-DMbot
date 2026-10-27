@@ -21,11 +21,11 @@ from dmbot.account_id import to_dmbot_id
 from dmbot.config import ConfigError
 from dmbot.web import entitlements_writer
 from dmbot.web.app import create_app
-from dmbot.web.payments import PaymentError
+from dmbot.web.payments import NotResumable, PaymentError, ResumeRefused
 from dmbot.web.settings import load_web_settings
 from dmbot.web.stripe import API_VERSION, HttpTransport, StripeConfig, StripeProvider
 from tests.pg import DatabaseTest
-from tests.test_web_api import ALICE, API, FakeDiscord, settings
+from tests.test_web_api import ALICE, FakeDiscord, settings
 from tests.test_web_payments import PaymentSettings
 
 SECRET = b"w" * 32
@@ -867,6 +867,180 @@ class Provider(unittest.IsolatedAsyncioTestCase):
             form, {"customer": "cus_777", "return_url": "https://dmbot.example/account"}
         )
 
+    async def test_change_plan_opens_on_the_plan_list_with_a_subscription_update_flow(self) -> None:
+        # #2165: the portal opens straight on choosing a plan, not on Stripe's overview.
+        self.http.answers[("POST", "/v1/billing_portal/sessions")] = (200, {"url": PORTAL_URL})
+        got = await self.provider.billing_url(
+            customer_id="cus_777",
+            return_url="https://dmbot.example/account",
+            subscription_id="sub_55",
+        )
+        self.assertEqual(got, PORTAL_URL)
+        self.assertEqual(len(self.http.calls), 1)
+        self.assertEqual(
+            self.http.calls[0][2],
+            {
+                "customer": "cus_777",
+                "return_url": "https://dmbot.example/account",
+                "flow_data[type]": "subscription_update",
+                "flow_data[subscription_update][subscription]": "sub_55",
+            },
+        )
+
+    async def test_if_stripe_refuses_the_plan_flow_the_ordinary_page_opens(self) -> None:
+        answers = [(400, {"error": {"message": "flow not allowed"}}), (200, {"url": PORTAL_URL})]
+        # An outage or a rate limit is not that refusal: it is an error, and no second call is made.
+        self.http.answers[("POST", "/v1/billing_portal/sessions")] = (503, None)
+        for status in (401, 429, 503):
+            self.http.answers[("POST", "/v1/billing_portal/sessions")] = (status, None)
+            self.http.calls.clear()
+            with self.assertRaises(PaymentError):
+                await self.provider.billing_url(
+                    customer_id="cus_777", return_url="https://x.example", subscription_id="sub_55"
+                )
+            self.assertEqual(len(self.http.calls), 1, status)
+        self.http.calls.clear()
+
+        class Queue(Fake):
+            async def __call__(
+                self, method: str, path: str, form: Any, idempotency_key: str | None = None
+            ) -> tuple[int, Any]:
+                await super().__call__(method, path, form, idempotency_key)
+                return answers[len(self.calls) - 1]
+
+        self.http = Queue()
+        provider = StripeProvider(CONFIG, SECRET, transport=self.http, clock=lambda: NOW)
+        got = await provider.billing_url(
+            customer_id="cus_777", return_url="https://x.example", subscription_id="sub_55"
+        )
+        self.assertEqual(got, PORTAL_URL)
+        self.assertIn("flow_data[type]", self.http.calls[0][2])
+        self.assertNotIn("flow_data[type]", self.http.calls[1][2])
+
+    async def test_resume_clears_a_cancellation_and_does_nothing_if_there_is_none(self) -> None:
+        path = ("GET", "/v1/subscriptions/sub_55")
+        self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (200, {})
+        await self.provider.resume(subscription_id="sub_55")
+        self.assertEqual(self.http.calls[1][2], {"cancel_at_period_end": "false"})
+        # A cancel date (the other way the portal cancels) is cleared too.
+        self.http.calls.clear()
+        self.http.answers[path] = (200, {"status": "active", "cancel_at": T0 + 99})
+        await self.provider.resume(subscription_id="sub_55")
+        self.assertEqual(self.http.calls[1][2], {"cancel_at_period_end": "false", "cancel_at": ""})
+        # Not cancelled: no write.
+        self.http.calls.clear()
+        self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": False})
+        await self.provider.resume(subscription_id="sub_55")
+        self.assertEqual([c[0] for c in self.http.calls], ["GET"])
+
+    async def test_resume_fails_for_an_ended_subscription_and_a_refusal(self) -> None:
+        path = ("GET", "/v1/subscriptions/sub_55")
+        # Ended, or overdue (its failed invoice would be retried): never resumed.
+        for status in ("canceled", "incomplete_expired", "past_due", "unpaid", "incomplete"):
+            self.http.answers[path] = (200, {"status": status, "cancel_at_period_end": True})
+            with self.assertRaises(NotResumable, msg=status):
+                await self.provider.resume(subscription_id="sub_55")
+        self.assertEqual([c[0] for c in self.http.calls], ["GET"] * 5)  # no write
+        self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (400, None)
+        with self.assertRaises(ResumeRefused):  # a scheduled change can refuse a direct update
+            await self.provider.resume(subscription_id="sub_55")
+        # Only a 400 is that refusal: a 401, 403, 429 or 5xx is an error.
+        for code in (401, 403, 429, 500):
+            self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (code, None)
+            with self.assertRaises(PaymentError) as caught:
+                await self.provider.resume(subscription_id="sub_55")
+            self.assertNotIsInstance(caught.exception, ResumeRefused, code)
+        self.http.answers[path] = (200, {"status": "canceled"})
+        self.http.answers[path] = (200, {"status": "active", "cancel_at_period_end": True})
+        self.http.answers[("POST", "/v1/subscriptions/sub_55")] = (500, None)
+        with self.assertRaises(PaymentError):
+            await self.provider.resume(subscription_id="sub_55")
+        with self.assertRaises(PaymentError):
+            await self.provider.resume(subscription_id="../x")
+
+    async def test_the_owner_of_a_subscription_is_its_metadata_unless_it_is_the_add_on(
+        self,
+    ) -> None:
+        path = ("GET", "/v1/subscriptions/sub_55")
+        self.http.answers[path] = (200, {"metadata": {"user_id": str(USER)}})
+        self.assertEqual(await self.provider.subscription_owner(subscription_id="sub_55"), USER)
+        self.http.answers[path] = (200, {"metadata": {"user_id": str(USER), "item": "recap_audio"}})
+        self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
+        self.http.answers[path] = (200, {"metadata": {}})
+        self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
+        self.http.answers[path] = (200, {"metadata": {"user_id": "not-a-number"}})
+        self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
+        self.http.answers[path] = (404, None)  # gone at the company: not ours
+        self.assertIsNone(await self.provider.subscription_owner(subscription_id="sub_55"))
+        self.http.answers[path] = (500, None)
+        with self.assertRaises(PaymentError):
+            await self.provider.subscription_owner(subscription_id="sub_55")
+
+    # A plan change set for the end of the period (#2165)
+
+    def _schedule(self, **changes: Any) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "id": "sub_sched_1",
+            "object": "subscription_schedule",
+            "status": "active",
+            "customer": "cus_777",
+            "subscription": "sub_55",
+            "current_phase": {"start_date": T0, "end_date": PERIOD_END},
+            "phases": [
+                {"start_date": T0, "end_date": PERIOD_END, "items": [{"price": "price_guild"}]},
+                {"start_date": PERIOD_END, "items": [{"price": "price_table"}]},
+            ],
+        }
+        body.update(changes)
+        return body
+
+    def test_a_schedule_with_a_later_phase_on_another_plan_is_a_plan_change_set_for_the_end(
+        self,
+    ) -> None:
+        for name in ("subscription_schedule.created", "subscription_schedule.updated"):
+            got = self.provider.parse(event(name, self._schedule()))
+            assert got is not None
+            self.assertEqual(
+                (got.kind, got.plan, got.period_start, got.subscription_id, got.user_id),
+                ("plan_scheduled", "table", PERIOD_END, "sub_55", 0),
+            )
+
+    def test_a_schedule_that_ends_or_is_undone_clears_the_pending_plan(self) -> None:
+        for name in (
+            "subscription_schedule.released",
+            "subscription_schedule.canceled",
+            "subscription_schedule.completed",
+            "subscription_schedule.aborted",
+        ):
+            got = self.provider.parse(event(name, self._schedule(status="released")))
+            assert got is not None
+            self.assertEqual((got.kind, got.subscription_id), ("plan_unscheduled", "sub_55"), name)
+        # An update that no longer has a later phase, or a schedule that is not running, clears too.
+        one = self._schedule()
+        one["phases"] = one["phases"][:1]
+        got = self.provider.parse(event("subscription_schedule.updated", one))
+        assert got is not None
+        self.assertEqual(got.kind, "plan_unscheduled")
+        got = self.provider.parse(
+            event("subscription_schedule.updated", self._schedule(status="canceled"))
+        )
+        assert got is not None
+        self.assertEqual(got.kind, "plan_unscheduled")
+
+    def test_a_schedule_on_a_price_dmbot_does_not_sell_or_without_a_subscription_is_ignored(
+        self,
+    ) -> None:
+        other = self._schedule()
+        other["phases"][1]["items"] = [{"price": "price_somebody_elses"}]
+        self.assertIsNone(self.provider.parse(event("subscription_schedule.updated", other)))
+        self.assertIsNone(
+            self.provider.parse(
+                event("subscription_schedule.updated", self._schedule(subscription=None))
+            )
+        )
+
     async def test_the_billing_page_refuses_a_foreign_address_and_failures(self) -> None:
         path = ("POST", "/v1/billing_portal/sessions")
         answers: list[tuple[int, Any]] = [
@@ -1078,7 +1252,9 @@ class Routes(DatabaseTest):
             settings(), self.db, FakeDiscord(), payments=self.provider, clock=lambda: self.now
         )
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         start = await self.client.get("/auth/discord/start")
         state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]

@@ -2,7 +2,7 @@ DMbot, in short (a reviewed digest of its help; the sidebar answers questions ab
 
 What it is: a Discord bot that listens to a D&D table's voice channel and privately helps the Dungeon Master (DM). The bot advises; the DM decides. It never makes up the story, never decides anything, and never posts rulings to players or public channels.
 
-Recording: only people who say yes are recorded. When a session starts, or someone joins the voice channel, DMbot sends them a private message with an "I'm 16 or older, record me" button (you must be 16 or older to be recorded). To stop: press the "⚙️ Menu" button in that message, then "Stop recording me". No message from DMbot? Check Message Requests, or type /consent give. To stop by command: /consent revoke. Bots are never recorded. An AI company (Anthropic) also reads what is said, with who said it, to give the DM notes; it is not used to train their AI.
+Recording: only people who say yes are recorded. When a session starts, or someone joins the voice channel, DMbot sends them a private message with an "I'm 16 or older, record me" button (you must be 16 or older to be recorded). To stop: press the "🗂️ Menu" button in that message, then "Stop recording me". No message from DMbot? Check Message Requests, or type /consent give. To stop by command: /consent revoke. Bots are never recorded. An AI company (Anthropic) also reads what is said, with who said it, to give the DM notes; it is not used to train their AI.
 
 Commands:
 - /dmbot start: pick a campaign and voice channel, then start listening. /dmbot stop: stop listening. /dmbot help: the help card. /dmbot status: what DMbot is doing now.
@@ -11,7 +11,7 @@ Commands:
 - /dmbot rule: look up a spell, condition, creature or rule (like cover or a long rest) in the free rules (SRD). Anyone in the server can, and only the person who asks sees the answer. The DM also has "Look up a rule" under Settings.
 - /dmbot optionalrules: turn optional rules from Xanathar's and Tasha's on or off.
 - /transcript: download what was said in a session. /dmbot backup: download a complete copy of a campaign; it holds the DM's secrets, so players should not open it. /dmbot restore: bring a campaign back from a copy.
-- Playing on D&D Beyond? Press "⚙️ Menu" in DMbot's private message, then "My character sheet", so DMbot spells your spell names better.
+- Playing on D&D Beyond? Press "🗂️ Menu" in DMbot's private message, then "My character sheet", so DMbot spells your spell names better.
 
 Transcripts: anyone in the server can read and download a campaign's transcripts, raw or cleaned. The DM screen's notes are never in them. The DM sidebar (the DM's quick questions to DMbot, and its answers about the game) is saved in the raw transcript only, marked [DM Sidebar]; the cleaned one never has it.
 

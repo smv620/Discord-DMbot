@@ -33,7 +33,7 @@ import discord
 from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.db import Database
 from dmbot.discord_limits import fit_message
-from dmbot.dm_screen import messages
+from dmbot.dm_screen import messages, npc_pages
 from dmbot.dm_screen.channel import (
     CACHE_WAIT_S,
     CACHE_WAIT_STEPS,
@@ -130,10 +130,10 @@ def _more(names: tuple[str, ...], more: int) -> str:
     return f"{shown}, and {more} more" if more else shown
 
 
-def entry_text(entry: RosterEntry) -> str:
-    """One entry as its message: name and kind, other names, its groups, who it is close to."""
-    mark = GROUP_MARK if entry.is_group else PERSON_MARK
-    lines = [f"{mark} **{_clean(entry.name)}** · {entry.kind}"]
+def other_lines(entry: RosterEntry) -> str:
+    """The entry's lines under its name: other names, its groups, who it is close to. What the
+    list shows the players and nothing more (the page and the button's neighbour read the same)."""
+    lines: list[str] = []
     if entry.also_called:
         names = entry.also_called[:OTHER_NAMES_MAX]
         lines.append(f"Also called: {_more(names, len(entry.also_called) - len(names))}")
@@ -141,6 +141,15 @@ def entry_text(entry: RosterEntry) -> str:
         lines.append(f"In: {_more(entry.groups, entry.groups_more)}")
     if entry.ties:
         lines.append(f"Connected to: {_more(entry.ties, entry.ties_more)}")
+    return "\n".join(lines)
+
+
+def entry_text(entry: RosterEntry) -> str:
+    """One entry as a plain message (no site address): name and kind, then its other lines."""
+    mark = GROUP_MARK if entry.is_group else PERSON_MARK
+    lines = [f"{mark} **{_clean(entry.name)}** · {entry.kind}"]
+    if extra := other_lines(entry):
+        lines.append(extra)
     return fit_message("\n".join(lines))  # (belt: names are capped already)
 
 
@@ -153,7 +162,9 @@ class SyncResult:
     sent: int = 0
     edited: int = 0
     deleted: int = 0
+    replaced: int = 0  # messages put in the other layout (#2425)
     left_for_next_time: int = 0  # over the caps, or a message Discord refused: run again soon
+    stopped: bool = False  # Discord said no (a permission): the rest waits for the next pass
 
 
 _MORE = "more"  # the key of the "+N more" message
@@ -261,20 +272,23 @@ async def _delete_messages(
 _AND_MORE = re.compile(r", and \d+ more$")
 
 
-def _items(text: str) -> set[str]:
-    """The names listed under the heading line, one by one ("Also called: A, B" gives A and B)."""
+def _items(text: str, *, heading: bool = True) -> set[str]:
+    """The names listed under the heading line, one by one ("Also called: A, B" gives A and B).
+    A name-button message has no heading line: all of its text is the lines."""
     out: set[str] = set()
-    for line in text.splitlines()[1:]:
+    for line in text.splitlines()[1 if heading else 0 :]:
         _, _, names = line.partition(": ")
         out.update(n for n in _AND_MORE.sub("", names).split(", ") if n)
     return out
 
 
-def _removes_text(old: str, new: str) -> bool:
+def _removes_text(old: npc_pages.Look, new: npc_pages.Look) -> bool:
     """Does this edit take a listed name away (an other name made secret, a tie that ended)?
     Such edits go first: what players may no longer see must not wait behind cosmetic changes
     (a new kind, a name added)."""
-    return not _items(old) <= _items(new)
+    return not _items(old.text, heading=old.layout == "text") <= _items(
+        new.text, heading=new.layout == "text"
+    )
 
 
 def _out_of_place(order: list[str], wanted_keys: list[str]) -> int:
@@ -291,6 +305,17 @@ def _out_of_place(order: list[str], wanted_keys: list[str]) -> int:
     return len(order) - len(tails)
 
 
+def _swap(now: npc_pages.Look, wanted: npc_pages.Look) -> bool:
+    """Whether the message must be replaced (it cannot gain or lose the v2 flag by an edit)."""
+    return now.layout != wanted.layout and "v2" in (now.layout, wanted.layout)
+
+
+def _swaps(have: dict[str, discord.Message], looks: dict[str, npc_pages.Look]) -> bool:
+    return any(
+        _swap(npc_pages.look_of(m), looks[k]) for k, m in have.items() if k in looks and k != _MORE
+    )
+
+
 async def sync_roster(
     channel: discord.TextChannel,
     me_id: int,
@@ -300,15 +325,33 @@ async def sync_roster(
     guild_id: int,
     campaign_id: str,
     reorder: bool = False,
+    site_url: str = "",
 ) -> SyncResult:
     """Make the channel show exactly these entries. Looks at DMbot's own messages only (found by
     the message map, never by their text); edits rather than reposts; the rest is picked up next
     time (`left_for_next_time`). A new entry goes at the end. With `reorder` the list is put in
     order again, but only when `REORDER_MIN` or more messages are out of place: whatever follows
-    the first message out of place is deleted (in bulk) and posted again. Idempotent."""
+    the first message out of place is deleted (in bulk) and posted again. Idempotent. With a
+    `site_url` each entry's message is its name as a link button to its page, with the other lines
+    beside it (#2425); a message in the other layout is replaced once (new posted, then the old
+    deleted, in order), within the same limits. A name taken away goes first, by an edit."""
     result = SyncResult()
     wanted = wanted_messages(entries)
+    links = {
+        key: npc_pages.page_url(site_url, guild_id, campaign_id, key)
+        for key, _ in wanted
+        if key != _MORE
+    }
     wanted_text = dict(wanted)
+    by_key = {e.id: e for e in entries[:MAX_ENTRIES]}
+    # How each message should look: the name as a link button when there is a page to open,
+    # else today's text (#2425). The "+N more" message is always text.
+    looks = {
+        key: npc_pages.wanted_look(by_key[key], other_lines(by_key[key]), links[key], text)
+        if key in by_key
+        else npc_pages.Look("text", text)
+        for key, text in wanted
+    }
     mapped = await mapping.load(guild_id, campaign_id)
     key_of = {message_id: key for key, message_id in mapped.items()}
     have: dict[str, discord.Message] = {}
@@ -327,7 +370,11 @@ async def sync_roster(
     if lost:  # the message is gone (deleted by hand): forget the row and post it again
         await mapping.forget(guild_id, campaign_id, lost)
     missing = [key for key, _ in wanted if key not in have]
-    if reorder:
+    # A message in the other layout is replaced by a new one posted at the end (#2425), so while
+    # replacements are pending the list is mid-swap, not out of order: reordering then would delete
+    # the tail and, with posting paced, leave the channel blank (the deploy pass asks to reorder).
+    swapping = _swaps(have, looks)
+    if reorder and not swapping:
         keep = 0
         while keep < len(order) and keep < len(wanted) and order[keep] == wanted[keep][0]:
             keep += 1
@@ -335,7 +382,7 @@ async def sync_roster(
             for key in order[keep:]:
                 extras.append(have.pop(key))
             missing = [key for key, _ in wanted if key not in have]
-    elif missing and _MORE in have:
+    if _MORE in have and (missing or swapping):
         extras.append(have.pop(_MORE))  # it is last, so it moves behind the new messages
         missing = [key for key, _ in wanted if key not in have]
     deletes_left = False
@@ -347,41 +394,112 @@ async def sync_roster(
         result.left_for_next_time += left
         deletes_left = left > 0 or stopped
         await mapping.forget(guild_id, campaign_id, [k for k, m in key_of_messages(mapped, gone)])
-    changes = [(k, m) for k, m in have.items() if m.content != wanted_text[k]]
-    changes.sort(key=lambda km: not _removes_text(km[1].content, wanted_text[km[0]]))
+    # (key, message, how it looks now, scrub): `scrub` is an edit that only takes a name away from
+    # a message that is about to be replaced, so a name made secret goes at once, not when the
+    # replacement's turn comes
+    changes: list[tuple[str, discord.Message, npc_pages.Look, bool]] = []
+    replacing: list[tuple[str, discord.Message]] = []  # a message can't gain or lose the v2 flag
+    for key in order:
+        if key not in have:
+            continue
+        message = have[key]
+        now = npc_pages.look_of(message)
+        if now == looks[key]:
+            continue
+        if _swap(now, looks[key]):
+            replacing.append((key, message))
+            if _removes_text(now, looks[key]):
+                changes.append((key, message, now, True))
+        else:
+            changes.append((key, message, now, False))
+    changes.sort(key=lambda c: not _removes_text(c[2], looks[c[0]]))
     edits = 0
-    for key, message in changes:
+    for key, message, now, scrub in changes:
         if edits >= MAX_EDITS:
             result.left_for_next_time += 1
             continue
         edits += 1
         try:
-            await message.edit(content=wanted_text[key], allowed_mentions=NO_PINGS)
+            if scrub:  # the old layout, with the name gone; the replacement follows
+                entry = by_key[key]
+                if now.layout == "v2":
+                    layout = npc_pages.layout_for(entry, other_lines(entry), now.link)
+                    await message.edit(view=layout, allowed_mentions=NO_PINGS)
+                else:
+                    await message.edit(content=entry_text(entry), allowed_mentions=NO_PINGS)
+            elif looks[key].layout == "v2":
+                layout = npc_pages.layout_for(by_key[key], other_lines(by_key[key]), links[key])
+                await message.edit(view=layout, allowed_mentions=NO_PINGS)
+            else:  # (text, and no button: the old 📖 Open one goes with the address)
+                await message.edit(content=wanted_text[key], view=None, allowed_mentions=NO_PINGS)
         except discord.HTTPException as exc:
             log.warning("NPC channel: couldn't edit a message: %s", exc)
             result.left_for_next_time += 1
             if isinstance(exc, discord.Forbidden):
                 break
             continue
-        result.edited += 1
+        result.edited += 0 if scrub else 1
     if deletes_left:  # a new message now would land before ones still to be reposted
-        result.left_for_next_time += len(missing)
+        result.left_for_next_time += len(missing) + len(replacing)
+        return result
+    # A message in the other layout is replaced: the new one is posted, the map points to it, then
+    # the old one is deleted, in the order they sit, so the list stays in order and a restart
+    # between two of them just carries on (the next pass sees what is already new).
+    for key, old in replacing:
+        if result.sent >= MAX_SENDS:
+            result.left_for_next_time += 1
+            continue
+        sent = await _post(channel, key, wanted_text, looks, by_key, links, result)
+        if sent is None:
+            if result.stopped:
+                break
+            continue
+        await mapping.save(guild_id, campaign_id, key, sent.id)
+        result.sent += 1
+        result.replaced += 1
+        gone, stopped = await _delete_messages(channel, [old])
+        result.deleted += len(gone)
+        if stopped:  # no right to delete: stop posting copies; the rest waits
+            result.stopped = True
+            result.left_for_next_time += 1
+            break
+    if result.stopped:
         return result
     for key in missing:
         if result.sent >= MAX_SENDS:
             result.left_for_next_time += 1
             continue
-        try:
-            sent = await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
-        except discord.HTTPException as exc:
-            log.warning("NPC channel: couldn't post a message: %s", exc)
-            result.left_for_next_time += 1
-            if isinstance(exc, discord.Forbidden):
+        sent = await _post(channel, key, wanted_text, looks, by_key, links, result)
+        if sent is None:
+            if result.stopped:
                 break
             continue
         await mapping.save(guild_id, campaign_id, key, sent.id)
         result.sent += 1
     return result
+
+
+async def _post(
+    channel: discord.TextChannel,
+    key: str,
+    wanted_text: dict[str, str],
+    looks: dict[str, npc_pages.Look],
+    by_key: dict[str, RosterEntry],
+    links: dict[str, str],
+    result: SyncResult,
+) -> discord.Message | None:
+    """Post one entry's message in the layout it should have. None: Discord refused (counted for
+    next time; `result.stopped` when it is a permission and the pass should end)."""
+    try:
+        if looks[key].layout == "v2":
+            view = npc_pages.layout_for(by_key[key], other_lines(by_key[key]), links[key])
+            return await channel.send(view=view, allowed_mentions=NO_PINGS, silent=True)
+        return await channel.send(wanted_text[key], allowed_mentions=NO_PINGS, silent=True)
+    except discord.HTTPException as exc:
+        log.warning("NPC channel: couldn't post a message: %s", exc)
+        result.left_for_next_time += 1
+        result.stopped = isinstance(exc, discord.Forbidden)
+        return None
 
 
 def key_of_messages(
@@ -547,6 +665,9 @@ async def sync_campaign(
     mapping: MessageMap,
     *,
     reorder: bool = False,
+    site_url: str = "",
+    roster: npc_pages.NpcRosterStore | None = None,
+    now: int = 0,
 ) -> SyncResult | None:
     """Bring the campaign's NPC channel up to date from what the players may know. None if the
     campaign has no NPC channel or it is gone (the next start makes it again). Raises on a
@@ -557,7 +678,14 @@ async def sync_campaign(
         if channel is None or me is None:
             return None
         entries = await recall.roster(guild.id, campaign.id)
-        return await sync_roster(
+        saved = True
+        if roster is not None:  # the page the buttons open shows what this pass lists (#2265)
+            try:
+                await roster.save(guild.id, campaign.id, entries, now)
+            except Exception:
+                log.warning("NPC channel: couldn't save the pages' view", exc_info=True)
+                saved = False
+        done = await sync_roster(
             channel,
             me.id,
             entries,
@@ -565,4 +693,8 @@ async def sync_campaign(
             guild_id=guild.id,
             campaign_id=campaign.id,
             reorder=reorder,
+            site_url=site_url,
         )
+        if not saved:  # run again soon: the page must not keep showing what the list no longer does
+            done.left_for_next_time += 1
+        return done

@@ -15,6 +15,7 @@ from dmbot.rules.homebrew import FileEntry, HomebrewSection, HomebrewStore
 from dmbot.rules.homebrew_import import HomebrewImporter
 from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.ui import homebrew as ui
+from dmbot.ui import logic
 from tests.pg import DatabaseTest
 from tests.test_homebrew_import import URL, Fetches
 from tests.test_memory_names import FakeResponse
@@ -165,6 +166,20 @@ class KindsMenu(HomebrewUiTest):
             [str(c.label) for c in view.children if hasattr(c, "label") and c.row == 2],
             ["◀ Newer", "↩️ Put back Bolt 00"],
         )
+
+    async def test_the_undo_label_shows_an_ordinary_long_name_whole_and_cuts_a_very_long_one(
+        self,
+    ) -> None:
+        names = ("Amulet of Tenacity", "A" * 20, "A" * 21, "Hollow King")
+        for name in names:
+            await self.add(name, kind="item")
+        made = {e.name: ui._undo_label(e) for e in await self.store.list(GUILD, self.campaign.id)}
+        self.assertEqual(made["Amulet of Tenacity"], "↩️ Put back Amulet of Tenacity")
+        self.assertEqual(made["A" * 20], "↩️ Put back " + "A" * 20)
+        self.assertEqual(made["A" * 21], "↩️ Put back " + "A" * 19 + "…")
+        for label in made.values():
+            self.assertLessEqual(len(label), logic.NAME_LABEL_MAX)  # the wider phone label
+            self.assertLessEqual(len(label), logic.BUTTON_LABEL_MAX)  # and Discord's limit
 
     async def test_a_player_cannot_use_the_packs_button(self) -> None:
         await self.add("Frost Lance", kind="spell")

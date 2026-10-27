@@ -103,6 +103,216 @@ class MentionedRules(unittest.TestCase):
         self.assertIn("Goblin", prompt)
 
 
+class CombatEncounters(unittest.TestCase):
+    """The SRD's Combat Encounters section (#2000): the DM's, found only when asked for."""
+
+    def hits(self, question: str, *, table: bool = False) -> list[Hit]:
+        return context.mentioned_rules(question, INDEX, "2024", "2014", table=table)
+
+    def names(self, question: str, *, table: bool = False) -> list[str]:
+        return [h.entry.name for h in self.hits(question, table=table)]
+
+    def prompt(self, question: str, *, table: bool = False) -> str:
+        return context.build(
+            question,
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+            table=table,
+        ).prompt
+
+    def test_the_cue_words_find_the_budget_entry(self) -> None:
+        for question in (
+            "how do I work out the xp budget",
+            "what is a deadly encounter",
+            "how do I choose encounter difficulty",
+            "what is the difficulty of a fight with 4 goblins",
+        ):
+            self.assertIn("Step 2: Determine Your XP Budget", self.names(question), question)
+
+    def test_a_fight_with_a_party_finds_it_and_the_line_for_the_level_asked(self) -> None:
+        question = "how hard is a fight with 4 goblins for 4 level 3 characters"
+        self.assertEqual(self.names(question)[0], "Step 2: Determine Your XP Budget")
+        prompt = self.prompt(question)
+        self.assertIn("Level 3: Low 150, Moderate 225, High 400 XP per character", prompt)
+        self.assertNotIn("Level 2:", prompt)
+        self.assertNotIn("Level 4:", prompt)
+        (hit,) = [h for h in self.hits(question) if h.entry.name.startswith("Step 2")]
+        self.assertEqual(hit.entry.citation, "SRD 5.2.1, Gameplay Toolbox, p. 202")
+
+    def test_cr_with_a_party_finds_it_and_a_creatures_cr_does_not(self) -> None:
+        self.assertIn("Step 2: Determine Your XP Budget", self.names("what cr for my party"))
+        self.assertNotIn("Step 2: Determine Your XP Budget", self.names("what's a goblin's CR"))
+        (hit,) = self.hits("what's a goblin's CR")
+        self.assertEqual(hit.entry.kind, "monster")
+
+    def test_plain_questions_leave_it_alone(self) -> None:
+        for question in ("how does long rest work", "what is a fight", "does a goblin have xray"):
+            self.assertFalse(
+                [n for n in self.names(question) if "XP" in n or "Encounter" in n], question
+            )
+
+    def test_a_table_question_gets_none_of_it(self) -> None:
+        question = "how hard is a fight with 4 goblins for 4 level 3 characters"
+        self.assertNotIn("XP Budget", self.prompt(question, table=True))
+
+    def test_a_named_creature_is_never_pushed_out_by_the_budget(self) -> None:
+        names = self.names("how hard is a fight with a goblin, an ogre and a wolf for the party")
+        self.assertEqual(len(names), 3)
+        self.assertNotIn("Step 2: Determine Your XP Budget", names)
+
+    def test_everyday_combat_talk_leaves_it_alone(self) -> None:
+        for question in (
+            "what is a deadly trap",
+            "how does surprise work in combat for characters",
+            "what level can a wizard fight",
+            "what is the xp for a level 3 goblin",
+            "troubleshooting my mic",
+        ):
+            self.assertFalse(
+                [n for n in self.names(question) if "Budget" in n or "Encounter" in n], question
+            )
+
+    def test_xp_or_difficulty_alone_is_everyday_talk(self) -> None:
+        for question in ("how much xp does a goblin give", "what is the difficulty of the lock"):
+            self.assertNotIn("Step 2: Determine Your XP Budget", self.names(question), question)
+        self.assertIn("Step 2: Determine Your XP Budget", self.names("xp for a party of four"))
+
+    def test_levels_are_read_in_the_ways_a_dm_says_them(self) -> None:
+        for question in (
+            "xp budget for levels 3 and 4",
+            "xp budget for 3rd level and 4th level characters",
+        ):
+            entry = self.hits(question)[0].entry
+            kept = context.only_levels_asked(entry, question)
+            self.assertIn("Level 3:", kept, question)
+            self.assertIn("Level 4:", kept, question)
+            self.assertNotIn("Level 5:", kept, question)
+
+    def test_only_the_levels_asked_are_kept(self) -> None:
+        entry = next(h.entry for h in self.hits("xp budget for level 10 and level 20 characters"))
+        kept = context.only_levels_asked(entry, "xp budget for level 10 and level 20 characters")
+        self.assertIn("Level 10:", kept)
+        self.assertIn("Level 20:", kept)
+        self.assertNotIn("Level 11:", kept)
+        self.assertIn("do not multiply", kept)
+
+
+class MagicItemRules(unittest.TestCase):
+    """The SRD's Magic Items section (#2001): the players' rules, found when asked for."""
+
+    def hits(self, question: str, *, table: bool = False) -> list[Hit]:
+        return context.mentioned_rules(question, INDEX, "2024", "2014", table=table)
+
+    def names(self, question: str, *, table: bool = False) -> list[str]:
+        return [h.entry.name for h in self.hits(question, table=table)]
+
+    def test_each_cue_word_finds_its_rule(self) -> None:
+        for question, name in (
+            ("how does attunement work", "Attunement"),
+            ("how many items can I attune to", "Attunement"),
+            ("how many charges does a wand have", "Magic Item Charges"),
+            ("what is a cursed item", "Cursed Items"),
+            ("how do I craft a magic item", "Crafting Magic Items"),
+            ("tell me about sentient items", "Sentient Magic Items"),
+            ("what does rarity mean", "Magic Item Rarity"),
+            ("can a fighter attune to an item with a class prerequisite", "Attunement"),
+        ):
+            self.assertIn(name, self.names(question), question)
+
+    def test_attune_to_a_bag_of_holding_gives_the_rule_and_the_item_each_cited(self) -> None:
+        hits = self.hits("can I attune to a Bag of Holding")
+        self.assertEqual(
+            [(h.entry.kind, h.entry.name) for h in hits],
+            [("rule", "Attunement"), ("item", "Bag of Holding")],
+        )
+        self.assertEqual(hits[0].entry.citation, "SRD 5.2.1, Rules Glossary, p. 177")
+        self.assertEqual(hits[1].entry.citation, "SRD 5.2.1, Magic Items, p. 212")
+
+    def test_a_players_rule_is_cited_in_the_magic_items_section(self) -> None:
+        (hit,) = self.hits("how many charges does a wand have")
+        self.assertEqual(hit.entry.citation, "SRD 5.2.1, Magic Items, p. 206")
+        self.assertFalse(hit.entry.dm_side)
+
+    def test_charges_come_before_the_wand_and_requirements_find_the_prerequisites(self) -> None:
+        self.assertEqual(self.names("how many charges does a wand have")[0], "Magic Item Charges")
+        self.assertIn(
+            "Attunement Prerequisites", self.names("what are the attunement requirements")
+        )
+
+    def test_rarity_and_price_give_the_value_lines(self) -> None:
+        (hit,) = self.hits("what does rarity mean for price")
+        self.assertEqual(hit.entry.name, "Magic Item Values by Rarity")
+        prompt = context.build(
+            "what does rarity mean for price",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("Uncommon: 400 GP", prompt)
+
+    def test_crafting_time_gives_the_time_and_cost_lines(self) -> None:
+        question = "how long does crafting a rare item take"
+        self.assertEqual(self.names(question), ["Crafting: Time and Cost"])
+
+    def test_ordinary_crafting_and_a_stray_magic_item_leave_the_rules_out(self) -> None:
+        for question in (
+            "how long does crafting a longsword take",
+            "how long does it take to craft a longsword",
+            "this magic item is cool",
+        ):
+            self.assertNotIn("Magic Items", self.names(question), question)
+            self.assertFalse([n for n in self.names(question) if n.startswith("Crafting")])
+
+    def test_a_one_word_name_needs_a_cue_and_a_longer_one_does_not(self) -> None:
+        self.assertEqual(self.names("ring of a hundred rooms"), [])
+        self.assertIn("Magic Armor", self.names("what is a magic armor"))
+        self.assertIn("Magic Potions", self.names("mixing potions"))
+        self.assertEqual(self.names("potions are lovely"), [])
+
+    def test_everyday_talk_about_items_leaves_the_rules_out(self) -> None:
+        for question in ("what does the rogue do", "does the item in the shop cost much"):
+            self.assertFalse(
+                [n for n in self.names(question) if n.startswith(("Magic", "Crafting"))]
+            )
+
+    def test_the_gm_s_part_goes_to_the_dm_and_not_to_the_table(self) -> None:
+        for question, name in (
+            ("tell me about sentient items", "Sentient Magic Items"),
+            ("what are paired items", "Paired Items"),
+            ("what is unusual anatomy", "Unusual Anatomy"),
+        ):
+            self.assertIn(name, self.names(question), question)
+            self.assertEqual(self.names(question, table=True), [], question)
+            (hit,) = [h for h in self.hits(question) if h.entry.name == name]
+            self.assertTrue(hit.entry.dm_side, name)
+
+    def test_the_players_part_is_for_the_table_too(self) -> None:
+        self.assertIn(
+            "Attunement Prerequisites",
+            self.names("what are the attunement prerequisites", table=True),
+        )
+
+    def test_a_long_rule_is_sent_whole(self) -> None:
+        prompt = context.build(
+            "how does crafting cost work",
+            target="2024",
+            fallback="2014",
+            index=INDEX,
+            house_rules=[],
+            lookup=None,
+            scene="",
+        ).prompt
+        self.assertIn("Legendary: 250 days, 100,000 GP", prompt)
+        self.assertNotIn("(cut)", prompt)
+
+
 class TheRulesGlossary(unittest.TestCase):
     """The SRD's Rules Glossary (#1884): cited when the question names nothing else."""
 
@@ -488,6 +698,16 @@ class MagicItems(unittest.TestCase):
         )
         self.assertIn("Disadvantage on Stealth", self.build("how heavy is plate armor").prompt)
 
+    def test_a_short_armor_name_needs_a_cue_and_is_the_2024_armor(self) -> None:
+        # (#1937) "plate" and "leather" are the 5.1's names for Plate Armor and Leather Armor
+        got = [(h.entry.name, h.entry.edition) for h in self.hits("what is the AC of plate")]
+        self.assertEqual(got, [("Plate Armor", "2024")])
+        got = [(h.entry.name, h.entry.edition) for h in self.hits("how heavy is leather armor")]
+        self.assertEqual(got, [("Leather Armor", "2024")])
+        for question in ("the leather pouch", "he wears plate", "a hide of the beast"):
+            armor = [h for h in self.hits(question) if h.entry.kind == "armor"]
+            self.assertEqual(armor, [], question)
+
     def test_an_everyday_weapon_or_property_word_alone_adds_nothing(self) -> None:
         for question in ("the guard swings a club", "the light is dim", "a heavy door", "push it"):
             gear = [h for h in self.hits(question) if h.entry.kind in ("weapon", "armor", "rule")]
@@ -634,6 +854,37 @@ class MagicItems(unittest.TestCase):
         self.assertIn("ABOUT DMBOT", prompt)
 
 
+class TheCoreRules(unittest.TestCase):
+    """The SRD 5.1's core rules in the sidebar (#1943)."""
+
+    def names(self, question: str, target: str = "2024", fallback: str = "2014") -> list[str]:
+        hits = context.mentioned_rules(question, INDEX, target, fallback)
+        return [f"{h.entry.name} {h.entry.edition}" for h in hits]
+
+    def test_an_everyday_5_1_title_adds_nothing_in_a_2024_campaign(self) -> None:
+        for question in (
+            "how much time does the party have",
+            "can I use the water to put out the fire",
+            "what is my wisdom bonus",
+            "how much food do we need",
+            "what about space and movement",
+        ):
+            self.assertEqual(self.names(question), [], question)
+
+    def test_a_longer_5_1_rule_is_found_tagged_in_2024_and_plain_in_2014(self) -> None:
+        self.assertEqual(self.names("how does underwater combat work"), ["Underwater Combat 2014"])
+        self.assertEqual(self.names("how does grappling work", "2014", "2024"), ["Grappling 2014"])
+        self.assertEqual(self.names("how does grappling work"), ["Grappling 2024"])
+
+    def test_the_2024_feat_beats_the_2014_rule_of_the_same_name(self) -> None:
+        self.assertEqual(
+            self.names("how do I do two-weapon fighting"), ["Two-Weapon Fighting 2024"]
+        )
+
+    def test_a_single_word_is_found_in_a_2014_campaign(self) -> None:
+        self.assertIn("Time 2014", self.names("how much time does the party have", "2014", "2024"))
+
+
 class GameplayToolbox(unittest.TestCase):
     """The DM's chapter (#1935): poisons, traps, curses and the hazard and travel rules."""
 
@@ -718,6 +969,22 @@ class GameplayToolbox(unittest.TestCase):
             self.assertNotIn("RULES ENTRIES", table.prompt, question)
             self.assertNotIn("Gameplay Toolbox", table.prompt, question)
 
+    def test_a_comparison_never_brings_the_other_editions_dm_chapter_to_the_table(self) -> None:
+        question = "travel pace 2014 vs 2024"
+        for target, fallback in (("2014", "2024"), ("2024", "2014")):
+            dms = context.mentioned_rules(question, INDEX, target, fallback, both=True)
+            table = context.mentioned_rules(
+                question, INDEX, target, fallback, both=True, table=True
+            )
+            self.assertTrue(any(h.entry.dm_side for h in dms), target)
+            self.assertEqual([h for h in table if h.entry.dm_side], [], target)
+
+    def test_a_spell_with_an_everyday_name_needs_cast_spell_or_cantrip(self) -> None:
+        for question in ("they light a torch", "send a message", "we sleep here", "fly home"):
+            self.assertEqual(self.hits(question), [], question)
+        for question in ("I cast light on the torch", "the light spell", "cast sleep"):
+            self.assertEqual([h.entry.kind for h in self.hits(question)], ["spell"], question)
+
     def test_a_table_question_still_gets_the_rules_glossary(self) -> None:
         table = self.build("how does cover work", table=True)
         self.assertEqual([h.entry.name for h in table.hits], ["Cover"])
@@ -726,6 +993,58 @@ class GameplayToolbox(unittest.TestCase):
         for hit in self.hits("purple worm poison") + self.hits("extreme cold"):
             self.assertTrue(hit.entry.dm_side, hit.entry.name)
         self.assertFalse(self.hits("how does cover work")[0].entry.dm_side)
+
+
+class TheGameMasterChapters(unittest.TestCase):
+    """The SRD 5.1's traps, diseases, poisons and madness (#1944): the DM's, like the 5.2.1's."""
+
+    def names(self, question: str, target: str = "2024", fallback: str = "2014") -> list[str]:
+        hits = context.mentioned_rules(question, INDEX, target, fallback)
+        return [f"{h.entry.kind}:{h.entry.name} {h.entry.edition}" for h in hits]
+
+    def test_a_2014_only_poison_trap_and_disease_are_found_tagged_in_a_2024_campaign(self) -> None:
+        self.assertEqual(self.names("what does drow poison do"), ["poison:Drow Poison 2014"])
+        self.assertEqual(self.names("the rolling sphere"), ["trap:Rolling Stone 2024"])
+
+    def test_the_2014_chapters_are_first_in_a_2014_campaign(self) -> None:
+        self.assertEqual(
+            self.names("how does cackle fever work", "2014", "2024"), ["disease:Cackle Fever 2014"]
+        )
+        self.assertEqual(
+            self.names("what is the dc for a pit trap", "2014", "2024"),
+            ["trap:Simple Pit 2014", "trap:Hidden Pit 2014", "trap:Locking Pit 2014"],  # (three)
+        )
+
+    def test_the_2024_contagion_wins_in_2024_and_the_disease_in_2014(self) -> None:
+        # all three diseases are contagions in the 5.2.1: the newer entry, never the 2014 one
+        for name in ("cackle fever", "sewer plague", "sight rot"):
+            got = self.names(name)
+            self.assertEqual(len(got), 1, name)
+            self.assertTrue(got[0].startswith("rule:") and got[0].endswith("2024"), got)
+            old = self.names(name, "2014", "2024")
+            self.assertTrue(old[0].startswith("disease:") and old[0].endswith("2014"), old)
+
+    def test_a_table_question_gets_none_of_them(self) -> None:
+        for question, target, fallback in (
+            ("how does sight rot work", "2024", "2014"),
+            ("what does drow poison do", "2014", "2024"),
+            ("how do I disarm the hidden pit", "2014", "2024"),
+        ):
+            built = context.build(
+                question,
+                target=target,
+                fallback=fallback,
+                index=INDEX,
+                house_rules=[],
+                lookup=None,
+                scene="",
+                table=True,
+            )
+            self.assertEqual(built.hits, (), question)
+            self.assertNotIn("Gameplay Toolbox", built.prompt, question)
+
+    def test_the_disease_cue_makes_a_one_word_name_count(self) -> None:
+        self.assertIn("rule:Madness 2014", self.names("madness table", "2014", "2024"))
 
 
 class AboutDMbot(unittest.TestCase):

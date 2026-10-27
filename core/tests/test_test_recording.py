@@ -978,7 +978,7 @@ class TheSecondQuestion(unittest.IsolatedAsyncioTestCase):
         await c.SaveVoiceButton(GUILD).callback(interaction)
         self.assertEqual(actions.saving, set())
         self.assertIn("First say yes to being recorded", said(interaction))
-        self.assertIn("open ⚙️ Menu and press", said(interaction))
+        self.assertIn("open 🗂️ Menu and press", said(interaction))
 
     async def test_saving_is_refused_outside_a_test_server(self) -> None:
         actions = FakeActions(listed=False)

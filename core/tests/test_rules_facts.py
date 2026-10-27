@@ -132,6 +132,7 @@ class NoReaderSkipsTheMetadata(unittest.TestCase):
         "ui/rule_card.py": (1, "shows the facts on their own line above the text"),
         "sidebar/context.py": (1, "sends the facts in front of the text as FACTS:"),
         "sidebar/answer.py": (1, "the fallback's first sentences; a field question uses facts"),
+        "recaps/draft.py": (1, "takes lower-case words for a vocabulary (#2013); shows nothing"),
     }
     # Where the entry is made and its words are indexed or matched.
     # (and the campaign's own homebrew, whose entries have a `.text` but are not rules entries)

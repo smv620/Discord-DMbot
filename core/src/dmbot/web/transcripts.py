@@ -7,14 +7,16 @@ download a campaign's, so unlike the recap pages this is not for DMs only. Two d
 rows to any signed-in person whose session lists the server; the website's role has no grant on the
 transcript tables. What the reader sees is made by the bot's own `transcript/export.py`
 (`render`), the same text the Discord download carries: the cleaned version leaves out what
-Discord's cleaned file leaves out (DM sidebar lines, typed chat, off-topic talk) and the
+Discord's cleaned file leaves out (DM sidebar lines, off-topic talk and typing) and the
 as-heard version is the raw transcript, sidebar lines included (docs/PLAN.md). There is no
 second formatter.
 
 Two things the website cannot do as Discord does. It has no Discord access, so a speaker's display
-name is not known: each person who spoke is "Speaker 1", "Speaker 2" in the order they first
-spoke in the session, and the file says so. And the bot's `{character}` labels come from the memory
-store, which the website's role cannot read, so lines carry none.
+name is the one the bot kept at the session (`transcript_sessions.speaker_names`, #2337); someone
+whose name was never kept, or could not be found, is "Speaker 1", "Speaker 2" in the order they
+first spoke, and the page says so. A speaker who is a DM of the campaign is marked "(Name, DM)".
+And the bot's `{character}` labels come from the memory store, which the website's role cannot
+read, so lines carry none.
 
 The plan rule is the bot's (`plan_gate("transcript")`): transcripts belong to the plans with copies,
 judged by the campaign's OWNER's plan, and only when plans are enforced. A campaign is named by
@@ -24,6 +26,8 @@ judged by the campaign's OWNER's plan, and only when plans are enforced. A campa
 from __future__ import annotations
 
 import asyncio
+import re
+from collections.abc import Mapping
 from typing import Any
 
 from dmbot import plan_rules
@@ -31,7 +35,7 @@ from dmbot.db import Database
 from dmbot.entitlements import plan_grant_access
 from dmbot.recaps.notify import parse_ref
 from dmbot.transcript import export
-from dmbot.transcript.models import QUESTION_KINDS, Line, Lineage, TranscriptSession
+from dmbot.transcript.models import Line, Lineage, TranscriptSession
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -40,9 +44,10 @@ from dmbot.web.sessions import Session
 VERSIONS = {"cleaned": export.CLEANED, "heard": export.AS_HEARD}
 
 SPEAKER = "Speaker"
+FALLBACK = re.compile(rf"{SPEAKER} \d+( \(\d+\))?", re.IGNORECASE)
 NAMES_NOTE = (
-    "On the website, people are shown as Speaker 1, Speaker 2 and so on, in the order they first "
-    "spoke in this session. Discord's download has their names."
+    "DMbot could not find the names of some people, so they are shown as Speaker 1, Speaker 2 and "
+    "so on, in the order they first spoke in this session."
 )
 
 
@@ -183,21 +188,36 @@ def _line(row: dict[str, Any]) -> Line:
         ),
         entity=row["entity"] or "",
         typed=bool(row["typed"]),
+        image=bool(row.get("image", False)),  # an older door sends none
     )
 
 
-def speaker_names(lines: list[Line], version: str = export.AS_HEARD) -> dict[int, str]:
-    """ "Speaker 1", "Speaker 2", ... in the order each person first appears in THIS version. The
-    cleaned version leaves out typed chat and sidebar lines, so someone who only typed or asked
-    DMbot is not numbered there: a gap in the numbers would hint at a hidden person."""
+def speaker_names(
+    lines: list[Line], version: str = export.AS_HEARD, stored: Mapping[int, str] | None = None
+) -> dict[int, str]:
+    """Each person's name in the order they first appear in THIS version: the one kept at the
+    session (`stored`; two people with one name tell apart with " (2)"), else "Speaker 1",
+    "Speaker 2", ... counted among those without a name. The cleaned version leaves out sidebar
+    lines and typing clearly not about the game, so someone who only asked DMbot, or whose typing
+    was all hidden, is not listed there: a gap in the numbers would hint at a hidden person."""
+    kept = stored or {}
     names: dict[int, str] = {}
-    for line in sorted(lines, key=lambda x: x.started_ms):
-        if line.sidebar and line.sidebar not in QUESTION_KINDS:
-            continue  # DMbot's own answers are shown as DMbot, not as a person
-        if version == export.CLEANED and (line.sidebar or line.typed):
-            continue
-        names.setdefault(line.user_id, f"{SPEAKER} {len(names) + 1}")
-    return names
+    unnamed = 0
+    for user_id in export.speaker_order(lines, version):
+        name = kept.get(user_id, "")
+        # (a real name that looks like the stand-in is no name: it could pass for one)
+        if name and not FALLBACK.fullmatch(export.person_name(name)):
+            names[user_id] = name
+        else:
+            unnamed += 1
+            names[user_id] = f"{SPEAKER} {unnamed}"
+    return dict(export.distinct_names(names))
+
+
+def has_fallback(lines: list[Line], names: Mapping[int, str]) -> bool:
+    """Whether anyone shown in the file has no name of their own (the note at the top says so)."""
+    spoke = {line.user_id for line in lines}
+    return any(FALLBACK.fullmatch(name) for user, name in names.items() if user in spoke)
 
 
 # The most lines read for one session, and the biggest text made from them: the bot's own limit for
@@ -257,6 +277,23 @@ async def _characters(
     return {int(user): str(name) for user, name in (found or {}).items()}
 
 
+async def _speakers(
+    db: Database, session: Session, guild_id: int, campaign_id: str, sid: str
+) -> tuple[dict[int, str], set[int]]:
+    """(the names kept at the session, the speakers who are DMs of the campaign), from the door
+    that holds them. None are shown rather than a failure, as for the characters."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_transcript_speakers(%s, %s, %s) AS found",
+            (guild_id, campaign_id, sid),
+        )
+        row = await cur.fetchone()
+    found = (row["found"] if row else None) or {}
+    names = {int(u): str(n) for u, n in (found.get("names") or {}).items() if n}
+    return names, {int(u) for u in found.get("dms") or ()}
+
+
 async def _render(
     db: Database,
     session: Session,
@@ -266,9 +303,11 @@ async def _render(
     *,
     now: int,
     enforce_plans: bool,
-) -> tuple[str, str, int | None]:
-    """(the file's name, the file's text, when its transcript was deleted). A deleted session has
-    no lines to build a file from, so its name and text are empty and only the time is set."""
+) -> tuple[str, str, int | None, bool, list[export.Skip], str]:
+    """(the file's name, the file's text, when its transcript was deleted, whether anyone is
+    shown as "Speaker N", where the cleaned file's skipped notes are, the session's id). A deleted
+    session has no lines to build a file from, so its name and text are empty and only the time
+    is set."""
     if version not in VERSIONS:
         raise RecapError("not_found")
     guild_id, campaign_id, found = await _sessions(
@@ -279,9 +318,10 @@ async def _render(
         raise RecapError("not_found")
     deleted = _deleted_at(wanted)
     if deleted is not None:
-        return "", "", deleted
+        return "", "", deleted, False, [], ""
     lines = await _all_lines(db, session, guild_id, campaign_id, str(wanted["id"]))
     playing = await _characters(db, session, guild_id, campaign_id)
+    kept, dms = await _speakers(db, session, guild_id, campaign_id, str(wanted["id"]))
     stored = TranscriptSession(
         id=str(wanted["id"]),
         guild_id=guild_id,
@@ -293,19 +333,30 @@ async def _render(
         engines=tuple(wanted["engines"]),
     )
     kind = VERSIONS[version]
+    shown = speaker_names(lines, kind, kept)
     # Off the event loop, as the bot does: a long session is a lot of text to build.
+    skips: list[export.Skip] = []
     text = await asyncio.to_thread(
         export.render,
         found["name"],
         stored,
         lines,
-        speaker_names(lines, kind),
+        shown,
         characters=playing,
+        dms=dms,
         version=kind,
+        skips=skips,
     )
     if len(text.encode("utf-8")) > FILE_LIMIT:
         raise RecapError("too_big")
-    return export.file_name(found["name"], stored, kind), text, None
+    return (
+        export.file_name(found["name"], stored, kind),
+        text,
+        None,
+        has_fallback(lines, shown),
+        skips,
+        stored.id,
+    )
 
 
 async def render(
@@ -322,7 +373,7 @@ async def render(
     gives, made by `export.render`. A person outside the server, a missing campaign or session, a
     session whose transcript was deleted (nothing to save) and an unknown version are "not
     found"."""
-    name, text, deleted = await _render(
+    name, text, deleted, _fallback, _skips, _sid = await _render(
         db, session, ref, number, version, now=now, enforce_plans=enforce_plans
     )
     if deleted is not None:
@@ -348,7 +399,7 @@ async def read_session(
 
     A session whose transcript was deleted answers `transcriptsDeletedAt` (Unix seconds) with no
     lines, so a direct link to it says so rather than failing."""
-    name, text, deleted = await _render(
+    name, text, deleted, fallback, skips, sid = await _render(
         db, session, ref, number, version, now=now, enforce_plans=enforce_plans
     )
     if deleted is not None:
@@ -365,11 +416,170 @@ async def read_session(
     everything = body.rstrip("\n").split("\n") if body.strip() else []
     start = max(0, offset)
     end = start + READ_PAGE
-    return {
+    page: dict[str, Any] = {
         "number": number,
         "version": version,
         "fileName": name,
-        "notes": [*head.split("\n"), NAMES_NOTE],
+        "notes": [*head.split("\n"), *([NAMES_NOTE] if fallback else [])],
         "lines": everything[start:end],
         "next": end if end < len(everything) else None,
     }
+    if version == "cleaned":
+        guild_id, campaign_id = _parse(ref)
+        # Where each skipped note is on this page, without the words it stands for (#2567).
+        page["skips"] = [
+            {
+                "line": k.index - start,
+                "speaker": str(k.speaker),
+                "fromMs": k.from_ms,
+                "toMs": k.to_ms,
+                "seconds": k.seconds,
+                "lines": k.lines,
+            }
+            for k in skips
+            if start <= k.index < end
+        ]
+        choices = await _choices(db, session, guild_id, campaign_id, sid)
+        page["filter"] = {
+            "kept": choices["kept"] + choices["leanedBack"],
+            "leftOut": choices["leftOut"],
+            "putBack": choices["putBack"],
+        }
+        page["putBacks"] = choices["choices"]
+    return page
+
+
+async def _choices(
+    db: Database, session: Session, guild_id: int, campaign_id: str, sid: str
+) -> dict[str, Any]:
+    """How the off-topic filter treated the session's spoken lines (counts) and the stretches a DM
+    decided (#2567), from the door that counts them. Counts and times only: no words."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_transcript_choices(%s, %s, %s) AS found",
+            (guild_id, campaign_id, sid),
+        )
+        row = await cur.fetchone()
+    found = row["found"] if row else None
+    if found is None:
+        raise RecapError("not_found")
+    return {
+        "kept": int(found["kept"]),
+        "leanedBack": int(found["leanedBack"]),
+        "leftOut": int(found["leftOut"]),
+        "putBack": int(found["putBack"]),
+        "choices": [
+            {
+                "speaker": str(c["speaker"]),
+                "fromMs": int(c["fromMs"]),
+                "toMs": int(c["toMs"]),
+                "lines": int(c["lines"]),
+                "putBack": bool(c["putBack"]),
+            }
+            for c in found["choices"]
+        ],
+    }
+
+
+async def _session_id(
+    db: Database, session: Session, ref: str, number: int, *, now: int, enforce_plans: bool
+) -> tuple[int, str, str, int]:
+    """(server, campaign, the session's id, when it started in Unix seconds) for a numbered
+    session, or a refusal. A session whose transcript was deleted has nothing to change, and
+    counts as not found."""
+    guild_id, campaign_id, found = await _sessions(
+        db, session, ref, now=now, enforce_plans=enforce_plans
+    )
+    wanted = next((s for s in found["sessions"] if int(s["number"]) == number), None)
+    if wanted is None or _deleted_at(wanted) is not None:
+        raise RecapError("not_found")
+    return guild_id, campaign_id, str(wanted["id"]), int(wanted["startedAt"])
+
+
+def _speaker_id(raw: str) -> int:
+    """A Discord id as the page sends it (text), or a refusal."""
+    if not re.fullmatch(r"[0-9]{1,20}", raw) or int(raw) > 2**63 - 1:
+        raise RecapError("bad_choice")
+    return int(raw)
+
+
+def _span(from_ms: int, to_ms: int) -> None:
+    if from_ms < 0 or to_ms < from_ms or to_ms > 2**62:
+        raise RecapError("bad_choice")
+
+
+async def stretch(
+    db: Database,
+    session: Session,
+    ref: str,
+    number: int,
+    speaker: str,
+    from_ms: int,
+    to_ms: int,
+    *,
+    now: int,
+    enforce_plans: bool,
+) -> dict[str, Any]:
+    """The as-heard words of one skipped stretch, for anyone who may read the session (#2567): the
+    same people who may read the as-heard file. At most 200 lines; nothing found is "not found"."""
+    who = _speaker_id(speaker)
+    _span(from_ms, to_ms)
+    guild_id, campaign_id, sid, began = await _session_id(
+        db, session, ref, number, now=now, enforce_plans=enforce_plans
+    )
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_transcript_stretch(%s, %s, %s, %s, %s, %s) AS found",
+            (guild_id, campaign_id, sid, who, from_ms, to_ms),
+        )
+        row = await cur.fetchone()
+    found = row["found"] if row else None
+    if found is None or not found["lines"]:
+        raise RecapError("not_found")
+    # The time shown is since the session began, like the file's own lines.
+    return {
+        "lines": [
+            {
+                "when": export.clock((int(x["startedMs"]) - began * 1000) / 1000),
+                "text": " ".join(str(x["heard"]).split()),
+            }
+            for x in found["lines"]
+        ]
+    }
+
+
+async def choose(
+    db: Database,
+    session: Session,
+    ref: str,
+    number: int,
+    speaker: str,
+    from_ms: int,
+    to_ms: int,
+    *,
+    put_back: bool,
+    now: int,
+    enforce_plans: bool,
+) -> dict[str, Any]:
+    """A DM of the campaign puts a skipped stretch back, or leaves it out again (#2567). Anyone
+    else is refused (`not_a_dm`). How many lines changed; none is not an error."""
+    who = _speaker_id(speaker)
+    _span(from_ms, to_ms)
+    guild_id, campaign_id, sid, _began = await _session_id(
+        db, session, ref, number, now=now, enforce_plans=enforce_plans
+    )
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_transcript_choose(%s, %s, %s, %s, %s, %s, %s) AS found",
+            (guild_id, campaign_id, sid, who, from_ms, to_ms, put_back),
+        )
+        row = await cur.fetchone()
+    found = row["found"] if row else None
+    if found is None:
+        raise RecapError("not_found")
+    if found["status"] != "ok":
+        raise RecapError("not_a_dm")
+    return {"changed": int(found["changed"])}

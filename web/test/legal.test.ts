@@ -9,8 +9,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import facts from "../src/content/plans.json";
-import { deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
+import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
+import { RECAPS_LIVE } from "../src/content/recap-words";
 import { initiativeLine, peopleListLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
@@ -154,12 +155,39 @@ describe("the facts #433 asks for", () => {
     }
   });
 
+  it("names Voyage AI as a processor, with what it gets and what is deleted (#2664)", () => {
+    const voyage = privacy().slice(privacy().indexOf("MongoDB, Inc.)"));
+    expect(voyage.slice(0, 900)).toContain("the campaign's own text");
+    expect(voyage.slice(0, 900)).toContain("never sound");
+    expect(voyage.slice(0, 900)).toContain("only while it keeps that text, and deletes it when the text, or the campaign, is deleted");
+    expect(voyage.slice(0, 900)).toContain("Voyage AI does not use your campaign's text to train its models");
+    expect(privacy()).toContain("Voyage AI (part of MongoDB, Inc.)");
+  });
+
   it("names OVH US as the host and the US companies, with Stripe as seller of record", () => {
     expect(privacy()).toContain("OVH US LLC (OVHcloud, U.S.A.)");
     expect(privacy()).toContain("Its servers are in the United States");
-    expect(privacy()).toMatch(/Deepgram, Anthropic, OVH US, Cloudflare, GitHub and Stripe/);
+    expect(privacy()).toMatch(/Deepgram, Anthropic, ElevenLabs, Voyage AI \(MongoDB\), OVH US, Cloudflare, GitHub and Stripe/);
     expect(privacy()).toContain("Stripe is the seller of record and handles withdrawal rights, invoices and tax");
     expect(privacy()).not.toContain("HOSTING PROVIDER");
+  });
+
+  it("lists Google (Gemini) as the recap writer only if switched on, says what it is sent, and links its terms (#2583)", () => {
+    const p = privacy();
+    expect(p).toContain("Google (Gemini): only if switched on.");
+    expect(p).toContain("It is off unless DMbot LLC turns it on.");
+    // what the writer is sent (owner decision 2026-10-23, #2590): the cleaned transcript, the list of what happened,
+    // the names, the last recap, style notes and fixes; never sound, the as-heard transcript or the DM screen
+    expect(p).toContain("the session's cleaned transcript (what was said at the table by people who agreed to be recorded, with the off-topic chat left out)");
+    expect(p).toContain("a short list of what happened (and who and where)");
+    expect(p).toContain("It never gets sound, the as-heard transcript, or anything from the DM screen.");
+    expect(p).not.toContain("full transcript"); // the earlier wording, which stopped being true with #2590
+    expect(p).toContain("Google's paid terms say it doesn't use that text to train its AI.");
+    expect(p).toContain("Google is a company in the United States.");
+    const link = doc("privacy").querySelector('a[href="https://ai.google.dev/gemini-api/terms"]');
+    expect(link?.textContent).toBe("Google's terms for paid use");
+    // the Anthropic line keeps its own training sentence
+    expect(p).toContain(aiTrainingSentence);
   });
 
   it("states the owner's choices on prices, closing, Try It, takedowns and service level", () => {
@@ -273,14 +301,14 @@ describe("the facts #433 asks for", () => {
     expect(privacy()).toContain("no tracking or ad cookies");
   });
 
-  // Stopping now goes through the ⚙️ Menu (#807, #830): no page may send people to a
+  // Stopping now goes through the 🗂️ Menu (#807, #830): no page may send people to a
   // "Stop recording me" button that isn't there.
-  it.each(["terms", "privacy"])("%s: stopping is explained through the ⚙️ Menu", (name) => {
+  it.each(["terms", "privacy"])("%s: stopping is explained through the 🗂️ Menu", (name) => {
     const body = text(rendered.get(name)?.querySelector("main") ?? rendered.get(name) ?? null);
     const stops = [...body.matchAll(/Stop recording me/g)];
     expect(stops.length).toBeGreaterThan(0);
     for (const stop of stops) {
-      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("⚙️ Menu");
+      expect(body.slice(Math.max(0, stop.index - 80), stop.index)).toContain("🗂️ Menu");
     }
   });
 
@@ -335,7 +363,11 @@ describe("what the AI company does with the text (#1328)", () => {
     // Not copied to another company or to the short summary (which has no such promise to make).
     // The public Q&A section (#1356) repeats the same sentence once it is switched on, so it counts
     // there too; qabot-privacy.test.ts checks that it is the same sentence.
-    expect(privacy().match(/train/gi)).toHaveLength(QABOT_LIVE ? 2 : 1);
+    // The Recaps section (#1384) repeats it too once recaps are live: it says the same of the recap writer.
+    // The Google (Gemini) line (#2583) has its own paid-terms sentence, which is about Google's AI.
+    // Voyage AI's line makes its own promise (#2664): it counts once, and the owner's opt-out in
+    // Voyage's settings must be done before that line is merged.
+    expect(privacy().match(/train/gi)).toHaveLength(3 + (QABOT_LIVE ? 1 : 0) + (RECAPS_LIVE ? 1 : 0));
   });
 
   it("makes no such promise for the speech company: it depends on that company's own setting", () => {
@@ -391,10 +423,12 @@ describe("writing to the team (#1340)", () => {
     expect(t).toContain("goes only to the team, privately, and is not posted anywhere public");
     expect(t).toContain("We keep it for 12 months, then delete it");
     expect(t).toContain("The team replies by email to the address on your account");
-    // #1373: the account page lists the person's own questions, never the words.
+    // #1373: the account page lists the person's own questions; #2193: each opens to its whole
+    // conversation, which only the person and the team can read.
     expect(t).toContain(
-      "your account page shows you its subject, when you sent it and whether it was answered, never the message itself",
+      "your account page shows you its subject, when you sent it and whether it was answered. You can open it there to read the whole conversation: your message and the replies. On our website, only you and the team can read it",
     );
+    expect(t).not.toContain("never the message itself");
     expect(t).not.toContain("does not show it to you again");
     expect(t).toContain("If you delete your account, we delete your messages too");
   });

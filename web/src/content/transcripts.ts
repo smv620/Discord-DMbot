@@ -2,10 +2,12 @@
 // bot's own (core/src/dmbot/transcript/export.py: CLEANED_NOTE, AS_HEARD_NOTE), word for word, so
 // the website says what the Discord download says; test/transcripts-words.test.ts checks them
 // against that file.
+import { transcriptsCard } from "./account-cards";
+
 import type { TranscriptVersion } from "../account/api";
 
 export const cleanedNote =
-  "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be wrong. Chat clearly not about the game is left out, and a short note says how long it was spoken. The \"As heard\" version (/transcript) still has every word. Only people who agreed were recorded.";
+  "Cleaned: DMbot fixed the spelling of names it was sure about; a few may still be wrong. Long chat clearly not about the game is left out, and a short note says how long it was spoken; when DMbot is unsure, it keeps the line. The DM can put left-out chat back on the website. The \"As heard\" version (/transcript) still has every word. Only people who agreed were recorded.";
 export const heardNote =
   "As heard: every word exactly as DMbot heard it, off-topic chat included, before it fixed any names, so some names may be misheard. The \"Cleaned\" version (/transcript) has the names fixed and leaves out clearly off-topic chat. Only people who agreed were recorded.";
 
@@ -14,10 +16,45 @@ export const versionNote: Record<TranscriptVersion, string> = {
   heard: heardNote,
 };
 
+/** Off-topic chat left out of the cleaned transcript, and the DM's way to put it back (#2568; core #2567). */
+export const PUT_BACK_READS_AGAIN = false; // true once a put-back also reaches names and story memory (#2587)
+export const offTopic = {
+  left: (lines: number, seconds: number): string =>
+    `Left out as off-topic: ${lines} ${lines === 1 ? "line" : "lines"} (${seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${seconds} sec`}).`,
+  putBackLine: (lines: number): string => `Put back by a DM: ${lines} ${lines === 1 ? "line" : "lines"} now in the cleaned transcript.`,
+  show: "Show what was said",
+  showFor: (lines: number): string => `Show what was said in the ${lines} left-out ${lines === 1 ? "line" : "lines"}`,
+  hide: "Hide",
+  loading: "Loading what was said…",
+  heading: "As heard",
+  who: (when: string, who: string): string => `[${when}] ${who}`,
+  putBack: "Put it back",
+  putBackFor: (lines: number): string => `Put it back in the cleaned transcript (${lines} ${lines === 1 ? "line" : "lines"})`,
+  leaveOut: "Leave it out again",
+  leaveOutFor: (lines: number): string => `Leave it out again (${lines} ${lines === 1 ? "line" : "lines"})`,
+  explainPutBack: "Put it back adds these lines to the cleaned transcript and its downloads. You can leave it out again.",
+  onlyDm: "Only a DM can put this back.",
+  reloadButton: "Reload",
+  working: "One moment…",
+  putBackDone: "Put back. The cleaned transcript now includes these lines.",
+  readsAgain: " DMbot will read it for names and story again.",
+  leftOutDone: "Left out again. The cleaned transcript no longer includes these lines.",
+  nothingChanged: "It was already like that.",
+  reload: "Reload the page to see it in place.",
+  filter: (kept: number, leftOut: number, putBack: number): string =>
+    `${kept} ${kept === 1 ? "line" : "lines"} kept, ${leftOut} left out as off-topic${putBack > 0 ? `, ${putBack} put back` : ""}.`,
+  problem: {
+    "not-allowed": "Only this campaign's DMs can put chat back. Ask your DM.",
+    "not-found": "Those lines aren't there any more. Reload the page.",
+    network: "We couldn't reach DMbot, so nothing was changed. Try again in a moment.",
+    server: "That didn't work, and nothing was changed. Try again in a moment.",
+  } as Record<string, string>,
+};
+
 export const text = {
-  heading: "Session transcripts",
-  link: "Read session transcripts",
-  lead: "Read what was said at your table, or save it as a text file. Anyone in the Discord server can read these. Only people who agreed were recorded.",
+  heading: transcriptsCard.heading,
+  link: transcriptsCard.link,
+  lead: transcriptsCard.lead,
   loading: "Loading…",
   empty: "No transcripts yet. They appear here after a session that DMbot recorded. Ask your DM to start recording.",
   signedOut: "Sign in to read transcripts.",
@@ -62,7 +99,7 @@ export const text = {
   tooBig: "This transcript is too big to show here. Ask whoever runs DMbot for help.",
   noLines: "Nothing was said in this version.",
   names:
-    "On the website, people are shown as Speaker 1, Speaker 2 and so on, in the order they first spoke in this session. Discord's download has their names.",
+    "DMbot could not find the names of some people, so they are shown as Speaker 1, Speaker 2 and so on, in the order they first spoke in this session.",
   notFound: "We can't find that transcript. Pick it from the list.",
   notInPlan: "Transcripts aren't available for this campaign. Ask the campaign's owner to take a look.",
   failed: "That didn't load. Try again in a moment.",

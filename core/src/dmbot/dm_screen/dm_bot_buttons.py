@@ -1,10 +1,10 @@
 """The DM Bot channel's panel and what its buttons do (#1666; docs/PLAN.md, "The DM Bot
 channel").
 
-One shared message holds two buttons everyone may press: 👤 My buttons and ❓ Help. 👤 answers
+One shared message holds two buttons everyone may press: 👤 DMbot Main Menu and ❓ Help. 👤 answers
 privately with the buttons that person's role gets (`dm_bot_panel.buttons_for`), re-checked from
 the campaign as it is now on every press, and those buttons are the menus DMbot already has
-(the ⚙️ Menu, 📜 My character sheet, ⚙️ Settings), each of which checks the person again. Every
+(the 🗂️ Menu, 📜 My character sheet, ⚙️ Settings), each of which checks the person again. Every
 answer is private; nothing from the DM screen is ever posted here.
 
 The panel message is kept by DMbot: edited in place when it exists, posted again when it was
@@ -24,7 +24,9 @@ import discord
 from dmbot import consent_dm
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import dm_bot_panel as panel
+from dmbot.dm_screen.backstory_button import BackstoryButton
 from dmbot.dm_screen.dm_bot_panel import Button, Role, Standing
+from dmbot.dm_screen.names_button import NamesButton
 from dmbot.dm_screen.settings import SettingsButton
 from dmbot.mentions import NO_PINGS
 
@@ -38,13 +40,13 @@ WENT_WRONG = "Something went wrong. Please press it again."
 _TAIL = " Press Look up a rule to check a rule, or Transcripts to read what was said."
 CARD_TEXT = {
     Role.GAME_MASTER: (
-        "You are a DM here. ⚙️ Menu is about you (stop recording, delete your transcripts). "
+        "You are a DM here. 🗂️ Menu is about you (stop recording, delete your transcripts). "
         "⚙️ Settings is for the whole game." + _TAIL
     ),
     Role.PLAYER: (
-        "You play here. Press ⚙️ Menu to stop being recorded or delete your transcripts." + _TAIL
+        "You play here. Press 🗂️ Menu to stop being recorded or delete your transcripts." + _TAIL
     ),
-    Role.MEMBER: ("You agreed to be recorded in this server. Press ⚙️ Menu to stop." + _TAIL),
+    Role.MEMBER: ("You agreed to be recorded in this server. Press 🗂️ Menu to stop." + _TAIL),
     Role.GUEST: (
         "DMbot is not recording you. To play, join the voice channel and DMbot will message "
         "you to ask. Help explains DMbot." + _TAIL
@@ -55,7 +57,7 @@ CARD_TEXT = {
 async def standing_of(client: Any, campaign: Campaign, user_id: int) -> Standing:
     """What the role depends on, read now (both reads at once, for Discord's 3 seconds). A failed
     read counts as nothing, so a hiccup hides buttons and never adds one. (`recorded` itself
-    answers "yes" when unsure, so the ⚙️ Menu, whose Stop button must never be hidden, can show.)"""
+    answers "yes" when unsure, so the 🗂️ Menu, whose Stop button must never be hidden, can show.)"""
 
     async def tied() -> bool:
         memory = getattr(client, "memory", None)
@@ -106,6 +108,10 @@ def role_view(
             view.add_item(consent_dm.sheet_button(campaign.guild_id, campaign.id))
         elif button is Button.SETTINGS:
             view.add_item(SettingsButton(campaign.id))
+        elif button is Button.NAMES:
+            view.add_item(NamesButton(campaign.id))
+        elif button is Button.BACKSTORY:
+            view.add_item(BackstoryButton(campaign.id))
     return view
 
 
@@ -130,7 +136,7 @@ class OpenButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:panel:open:{_ID}",
 ):
-    """👤 My buttons: the person's own buttons, privately."""
+    """👤 DMbot Main Menu: the person's own buttons, privately."""
 
     def __init__(self, campaign_id: str) -> None:
         super().__init__(
@@ -149,16 +155,19 @@ class OpenButton(
         return cls(match["campaign"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # Answer first: reading the campaign and the person's standing takes database time, and
+        # Discord drops a button that isn't answered in 3 seconds (#1964).
+        await interaction.response.defer(ephemeral=True)
         campaign = await _campaign_here(interaction, self.campaign_id)
         if campaign is None:
-            await interaction.response.send_message(GONE, ephemeral=True)
+            await interaction.followup.send(GONE, ephemeral=True)
             return
         who = await standing_of(interaction.client, campaign, interaction.user.id)
         role = panel.role_of(who)
         sheets = getattr(interaction.client, "sheets", None) is not None
         settings = getattr(interaction.client, "settings", None)  # (a client without one: no link)
         site = str(getattr(settings, "site_url", "") or "")
-        await interaction.response.send_message(
+        await interaction.followup.send(
             CARD_TEXT[role],
             view=role_view(role, campaign, sheets=sheets, site_url=site),
             ephemeral=True,
@@ -191,13 +200,12 @@ class HelpButton(
     async def callback(self, interaction: discord.Interaction) -> Any:
         from dmbot.ui import logic  # (ui imports the dm_screen package: import it late)
 
+        await interaction.response.defer(ephemeral=True)  # (the campaign read can be slow: #1964)
         campaign = await _campaign_here(interaction, self.campaign_id)
         if campaign is None:
-            await interaction.response.send_message(GONE, ephemeral=True)
+            await interaction.followup.send(GONE, ephemeral=True)
             return
-        await interaction.response.send_message(
-            logic.HELP_TEXT, ephemeral=True, allowed_mentions=NO_PINGS
-        )
+        await interaction.followup.send(logic.HELP_TEXT, ephemeral=True, allowed_mentions=NO_PINGS)
 
 
 class RuleButton(

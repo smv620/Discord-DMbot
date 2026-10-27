@@ -3,11 +3,13 @@
 // appears in core/src/dmbot, so the page can't drift. Only built features; no game trademarks
 // (CLAUDE.md), so the character-sheet steps name no company.
 import { QA_URL } from "./account";
+import { IMPORT_LIVE, importSteps } from "./import-words";
 import { minimumAge } from "./legal";
 import { price as narrationPrice } from "./recap-audio";
 import { RECAP_AUDIO_LIVE, RECAPS_LIVE, emailsIntroTail, recapEmailStep, recapSteps as baseRecapSteps } from "./recap-words";
 import { SUPPORT_AI_LIVE, helpNote } from "./support-words";
 import { portalLoginSteps, portalLoginUrl } from "./billing-login";
+import { liveFeatureSteps } from "./help-features";
 
 export interface Step {
   /** The words people read. Names in `names` must appear in the bot's code. */
@@ -80,6 +82,48 @@ export const secretClueSteps: Step[] = [
   },
 ];
 
+// The note before each session (#1403; core memory/presession.py) and the question about a secret
+// name a player said (#1407; core ui/secret_aloud.py) are built and waiting for the owner's live
+// checks, so their steps are held with the What's new entries "A note before tonight's session"
+// and "When a player says a secret name" (whats-new.ts, `held`). Set each switch to true in the
+// same change that moves its entry out of `held`; a test keeps each pair in step. The note's
+// story-thread lines and buttons sit behind STORY_THREADS_LIVE and the guide switch, so the step
+// names none of them.
+export const PRESESSION_NOTE_LIVE = false;
+export const SECRET_SAID_LIVE = false;
+
+// The question DMbot asks at once when the game master says a secret name out loud (#2088, #2094;
+// core ui/secret_reveal.py). It is on by default on the server (DMBOT_SECRET_REVEAL_ASK), so it
+// goes live with the deploy. The step is held with the What's new entry "When you say a secret
+// name"; set the switch to true in the same change that moves the entry out of `held`.
+export const SECRET_REVEAL_LIVE = true;
+
+export const secretRevealSteps: Step[] = [
+  {
+    text: "When you say a name you marked secret out loud at the table, DMbot asks you at once on your DM screen whether it is revealed now. If your players can look at your DM screen, it is sent to you as a private message instead. Press Yes, players know now, and DMbot may use the name in answers to players; you can make it secret again from the name's card (in the names list). If DMbot has the name more than once, your answer covers every copy. Press No, keep it secret, and DMbot won't ask about that name again this session. It only asks when you say the name, never when a player does, and it never decides for you. Only the campaign's DMs can answer.",
+    names: [
+      { name: "Yes, players know now", file: "ui/secret_reveal.py" },
+      { name: "No, keep it secret", file: "ui/secret_reveal.py" },
+    ],
+  },
+];
+
+export const presessionNoteSteps: Step[] = [
+  {
+    text: "When a session starts, if your plan includes story memory, DMbot can post a short note on your DM screen: read it before you begin. It has last time's recap, what you confirmed about the names heard last time, who or what is dead, lost, destroyed, missing or captured, and how many things said at the table wait for your check. If there is nothing to say, there is no note. It comes once a session, not again if DMbot restarts mid-game. DMbot never sends it to players, and it is not in the transcript.",
+  },
+];
+
+export const secretSaidSteps: Step[] = [
+  {
+    text: "After a session, DMbot asks you privately about each secret name a player said, one at a time and five at most. A name you marked secret is now in the transcript, which anyone in your server can read. Press Keep it secret and DMbot still will not use it in answers to players, and asks again if it is said in a later session. Press Not secret any more and DMbot may use it in answers to players; you can make it secret again from the name's card. If DMbot has the name more than once, your answer covers every copy. If more than five were said, DMbot asks about the rest next session. Only the campaign's DMs can answer, and DMbot never decides for you.",
+    names: [
+      { name: "Keep it secret", file: "ui/secret_aloud.py" },
+      { name: "Not secret any more", file: "ui/secret_aloud.py" },
+    ],
+  },
+];
+
 // Who is alive or dead and who carries the one-of-a-kind things (#1284; core memory/states.py,
 // ui/claims_review.py). The facts come from lines the game master says yes to after a session,
 // and those lines come from the story extractor, which stays off until its prompt passes the
@@ -112,6 +156,30 @@ export const storyStateSteps: Step[] = [
 // the two in step and checks that no line points both ways.
 export const DM_BOT_CHANNEL_LIVE = false;
 
+// The 📇 Names button (#1986, #1987, core dm_screen/names_button.py) opens the same private names
+// card as /dmbot names. It is merged but not deployed, so its What's new entry "A 📇 Names button"
+// (whats-new.ts, `held`) is held and Help follows. Set this to true in the same change that moves
+// that entry out of `held`; a test keeps the two in step. Where the button is says "the DMbot
+// channel" only while that is live (DM_BOT_CHANNEL_LIVE), so no line points both ways.
+export const NAMES_BUTTON_LIVE = false;
+
+export const namesButtonSteps: Step[] = [
+  {
+    text: `${
+      DM_BOT_CHANNEL_LIVE
+        ? "To see every name DMbot knows in your campaign, press 📇 Names on your card in the DMbot channel, or in ⚙️ Settings."
+        : "To see every name DMbot knows in your campaign, press ⚙️ Settings, then 📇 Names."
+    } You can search the names and fix one. Any after-session check you haven't done yet (Check names, Check who is who, Check what was said) waits there. You can also type /dmbot names.`,
+    names: [
+      { name: "Names", file: "dm_screen/names_button.py" },
+      { name: "Check names", file: "ui/names.py" },
+      { name: "Check who is who", file: "ui/names.py" },
+      { name: "Check what was said", file: "ui/names.py" },
+      { name: "/dmbot names", file: "bot.py" },
+    ],
+  },
+];
+
 export const settingsOnDmScreenSteps: Step[] = [
   {
     text: "On your DM screen, press ⚙️ Settings to change the game clock, house rules, or who can peek behind the DM screen.",
@@ -124,16 +192,16 @@ export const settingsOnDmScreenSteps: Step[] = [
 
 export const dmBotChannelSteps: Step[] = [
   {
-    text: "Each campaign has a channel called dmb-dm-bot. Everyone can read it, and only DMbot posts there. It holds one message with two buttons. Press 👤 My buttons to see the buttons for your part at the table. Only you see them. Press ❓ Help to read about DMbot.",
+    text: "Each campaign has a channel called dmb-dm-bot. Everyone can read it, and only DMbot posts there. It holds one message with two buttons. Press 👤 DMbot Main Menu to see the buttons for your part at the table. Only you see them. Press ❓ Help to read about DMbot.",
     names: [
-      { name: "👤 My buttons", file: "dm_screen/dm_bot_panel.py" },
+      { name: "👤 DMbot Main Menu", file: "dm_screen/dm_bot_panel.py" },
       { name: "❓ Help", file: "dm_screen/dm_bot_panel.py" },
     ],
   },
   {
-    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get ⚙️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
+    text: "Everyone also gets 📖 Look up a rule and 📜 Transcripts. If you said yes to being recorded, you get 🗂️ Menu, where you can stop being recorded. Players also get 📜 My character sheet. Game masters get ⚙️ Settings too.",
     names: [
-      { name: "⚙️ Menu", file: "consent_dm.py" },
+      { name: "🗂️ Menu", file: "consent_dm.py" },
       { name: "📜 My character sheet", file: "ui/sheets.py" },
     ],
   },
@@ -146,7 +214,7 @@ export const dmBotChannelSteps: Step[] = [
     ],
   },
   {
-    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 My buttons in the DMbot channel, then ⚙️ Settings.",
+    text: "To change the game clock, house rules, or who can see the DM screen, press 👤 DMbot Main Menu in the DMbot channel, then ⚙️ Settings. Who can see the DM screen is under 👁️.",
     names: [{ name: "Settings", file: "dm_screen/settings.py" }],
   },
   {
@@ -285,13 +353,13 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "You need Shared story on and an adventure that DMbot has read (Give your adventure, then Read it now). To say that a name from your table is someone or somewhere in your adventure, open the name's card and press 📖 In my adventure…, then pick them from the list. The card then shows In your adventure. In each file of your adventure, a name links to one entry, and an entry to one name. A person can only match a person or group, and a place a place. To remove a link, press 📖 In my adventure… again, then Take off. Made a mistake? Press Undo that. DMbot never links names by itself. To be asked, press 🔗 Match names on the Shared story card. DMbot lists up to ten pairs that share a name, without using AI. Pick the ones that are the same in the Same person or place… menu and the ones that are not in the Not the same… menu. A not-the-same answer is remembered, and pairs you skip come back next time. Only the DM sees the links; players never do.",
+    text: "You need Shared story on and an adventure that DMbot has read (Give your adventure, then Read it now). To say that a name from your table is someone or somewhere in your adventure, open the name's card and press 📖 In my adventure…, then pick them from the list. The card then shows In your adventure. In each file of your adventure, a name links to one entry, and an entry to one name. A character can only match a character or group, and a place a place. To remove a link, press 📖 In my adventure… again, then Take off. Made a mistake? Press Undo that. DMbot never links names by itself. To be asked, press 🔗 Match names on the Shared story card. DMbot lists up to ten pairs that share a name, without using AI. Pick the ones that are the same in the Same character or place… menu and the ones that are not in the Not the same… menu. A not-the-same answer is remembered, and pairs you skip come back next time. Only the DM sees the links; players never do.",
     names: [
       { name: "In my adventure…", file: "ui/name_card.py" },
       { name: "Take off", file: "ui/book_link.py" },
       { name: "Undo that", file: "ui/book_link.py" },
       { name: "Match names", file: "dm_screen/adventure_card.py" },
-      { name: "Same person or place…", file: "ui/book_link.py" },
+      { name: "Same character or place…", file: "ui/book_link.py" },
       { name: "Not the same…", file: "ui/book_link.py" },
     ],
   },
@@ -450,6 +518,104 @@ export const whatsOnSteps: Step[] = [
   },
 ];
 
+// What /dmbot rule finds beyond spells, conditions and creatures (#1924; core ui/rule_lookup.py):
+// glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
+// What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
+// to true in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const RULE_KINDS_LIVE = false;
+
+export const ruleKindSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first. If the newer rules have nothing by that name, you get the older 2014 one, marked [Legacy 2014].",
+  },
+  {
+    text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
+  },
+  {
+    text: "Things for the DM, like traps, poisons, curses and diseases, are not for players. If you ask for one, DMbot says \"That's one for your DM.\"",
+  },
+];
+
+// Every rule the Help text and the held "Look up any rule" entry name as an example, with the kind it is
+// meant to be, so test/rule-examples.test.ts can check each one is in the rules data the bot reads.
+// `text` is the exact wording in the sentence; `name` is the entry's name where it differs; `class` is
+// for a class feature ("rogue evasion" is the Rogue's Evasion).
+export interface RuleExample {
+  text: string;
+  kind: string;
+  name?: string;
+  class?: string;
+}
+export const ruleExamples: RuleExample[] = [
+  { text: "cover", kind: "rule" },
+  { text: "dash", kind: "rule" },
+  { text: "long rest", kind: "rule" },
+  { text: "rage", kind: "feature" },
+  { text: "rogue evasion", kind: "feature", name: "Evasion", class: "Rogue" },
+  { text: "Bag of Holding", kind: "item" },
+  { text: "longsword", kind: "weapon" },
+  { text: "plate armor", kind: "armor" },
+  { text: "Thieves' Tools", kind: "tool" },
+  { text: "Healer's Kit", kind: "gear" },
+  { text: "Alert", kind: "feat" },
+  { text: "Goliath", kind: "species" },
+  { text: "Sage", kind: "background" },
+  { text: "Orc (creature)", kind: "monster", name: "Orc" },
+  { text: "xp budget", kind: "rule", name: "Step 2: Determine Your XP Budget" },
+  { text: "attunement", kind: "rule", name: "Attunement" },
+  { text: "charges", kind: "rule", name: "Magic Item Charges" },
+];
+
+// What the rules index gained on 2026-10-19: how hard a fight is (the SRD's Combat Encounters section,
+// for the game master only, #2000) and the Magic Items section (attunement, charges, rarity, value,
+// #2001), found by /dmbot rule and the DM sidebar (core rules/index.py, sidebar/context.py). Held with
+// the What's new entry "Look up fight difficulty rules" until dev1 deploys it (#2004, #2006). Set this to true
+// in the same change that moves that entry out of `held`; a test keeps the two in step.
+export const FIGHT_AND_ITEM_RULES_LIVE = false;
+
+// The game master's step: the XP budget is the DM's chapter (`dm_side`), so players get "That's one for
+// your DM." DMbot reads the lines for the levels named and does no sum and no ruling (sidebar/context.py
+// ENCOUNTER_NOTE), so the words promise neither.
+export const fightRuleSteps: Step[] = [
+  {
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
+  },
+];
+
+// For everyone: the Magic Items section is open rules, not the DM's chapter.
+export const magicItemRuleSteps: Step[] = [
+  {
+    text: "You can look up the rules for magic items the same way: type /dmbot rule, then \"attunement\" or \"charges\". You can also ask what rarity means and what an item is worth by rarity.",
+  },
+];
+
+// The game master sees what players do not (core ui/rule_lookup.py: DM_ONLY, the player branch and the
+// typeahead filter). Held with RULE_KINDS_LIVE: it deploys with the same rules data.
+export const ruleKindDmSteps: Step[] = [
+  {
+    text: "/dmbot rule also finds things for you alone, like traps, poisons, curses and diseases. Only you see the answer.",
+  },
+];
+
+// DMbot stops a session by itself when nobody is there (#2034, #2038): nobody in the voice channel
+// for 5 minutes, or nobody has spoken or typed for the campaign's quiet limit (5, 10, 15 or 30 minutes,
+// no Off, #2288). It warns on the DM screen first, with a Keep listening button. The numbers MIRROR core
+// idle_stop.py (EMPTY_S, WARN_S) and campaigns/store.py (QUIET_STOP_CHOICES): change them together.
+// Held with the What's new entry "Stops listening when no one's there" until dev1 deploys
+// #2038. Set this to true in the same change that moves that entry out of `held`; a test keeps the
+// two in step.
+export const QUIET_STOP_LIVE = false;
+
+export const quietStopSteps: Step[] = [
+  {
+    text: "If nobody is in the voice channel for 5 minutes, or nobody has spoken or typed at the table for 10 minutes, DMbot warns you on your DM screen, so a forgotten game doesn't use up your listening hours. Press Keep listening, or just speak, type or come back, and it carries on; if nothing changes, it stops listening 5 minutes later. A music bot or any other bot never counts as a person. To change the 10 minutes, use the 🔇 Stop when quiet button in ⚙️ Settings: each press goes to 15, 30 and 5, then back to 10; there is no Off. When it stops, it sends you a private message and tells everyone still in the voice channel.",
+    names: [
+      { name: "Keep listening", file: "dm_screen/quiet_stop.py" },
+      { name: "Stop when quiet", file: "dm_screen/settings.py" },
+    ],
+  },
+];
+
 export const dmSteps: Step[] = [
   { text: "Add DMbot to your Discord server from the Add to Discord page. Send your players to getdmbot.com/players." },
   {
@@ -468,6 +634,7 @@ export const dmSteps: Step[] = [
     names: [{ name: "▶ Start listening", file: "ui/dmbot_commands.py" }],
   },
   ...(DM_BOT_CHANNEL_LIVE ? dmBotChannelSteps : settingsOnDmScreenSteps),
+  ...(NAMES_BUTTON_LIVE ? namesButtonSteps : []),
   ...(WHATS_ON_LIVE ? whatsOnSteps : []),
   {
     text: "To let DMbot read what people type, press ⚙️ Settings, then Table chat. It reads the voice channel's chat and one more channel you pick, only from people who said yes.",
@@ -543,10 +710,11 @@ export const dmSteps: Step[] = [
     names: [{ name: "Show all ▾", file: "ui/name_card.py" }],
   },
   {
-    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Secret: no, so it reads 🤫 Secret: yes, then pick the other name. Players' cards never show that connection. Only a game master of the campaign can turn Secret on. If a connection is already secret, it stays secret.",
+    text: "To keep a connection from your players, open the name, press 🧭 Connect to…, press 🤫 Next one is public so it reads 🤫 Next one is secret, then pick the other name from the list. Players' cards never show that connection. To hide or show a connection you already made, press ✏️ Edit a connection… on the same screen, pick it, and press 🤫 Hide from players or 👁 Show players. Only a game master of the campaign can do either.",
     names: [
       { name: "Connect to…", file: "ui/name_card.py" },
-      { name: "🤫 Secret: yes", file: "ui/name_card.py" },
+      { name: "🤫 Next one is secret", file: "ui/name_card.py" },
+      { name: "✏️ Edit a connection…", file: "ui/name_card.py" },
     ],
   },
   {
@@ -566,6 +734,7 @@ export const dmSteps: Step[] = [
     text: "When the game is over, type /dmbot stop.",
     names: [{ name: "/dmbot stop", file: "bot.py" }],
   },
+  ...(QUIET_STOP_LIVE ? quietStopSteps : []),
   {
     text: "To keep a copy of a campaign, type /dmbot backup (paid campaigns only). The copy also keeps how often names were said and by whom, but after a restore only for people who are still recorded.",
     names: [{ name: "/dmbot backup", file: "ui/dmbot_commands.py" }],
@@ -641,8 +810,8 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 📜 Transcripts). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
-    names: [{ name: "Transcripts", file: "dm_screen/transcript_keep.py" }],
+    text: "You can choose how long a campaign keeps its transcripts: Forever, 1 year, 90 days or 30 days (⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention). Older ones are deleted within a day. Recaps stay. Each campaign's Transcripts page on this website shows its limit, so you can save a copy before a transcript is deleted.",
+    names: [{ name: "Transcript retention", file: "dm_screen/transcript_keep.py" }],
   },
   {
     text: "To add homebrew (your own spells, monsters, items and other game content), press ⚙️ Settings, then 📚 Homebrew. Press ➕ Add to type an entry in, or 📥 Load file to bring in a text file (see keeping homebrew in a text file). When you load a file, DMbot asks Who made these? Pick Me, A website or Someone else, and the name stays with the entries. It also asks whether it is from a book. Made-up rules go in House rules, not here.",
@@ -670,7 +839,13 @@ export const dmSteps: Step[] = [
   ...(NPCS_CHANNEL_LIVE ? npcsChannelSteps : []),
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
+  ...(PRESESSION_NOTE_LIVE ? presessionNoteSteps : []),
+  ...(SECRET_SAID_LIVE ? secretSaidSteps : []),
+  ...(SECRET_REVEAL_LIVE ? secretRevealSteps : []),
+  ...(RULE_KINDS_LIVE ? ruleKindDmSteps : []),
+  ...(FIGHT_AND_ITEM_RULES_LIVE ? fightRuleSteps : []),
   ...(STORY_STATES_LIVE ? storyStateSteps : []),
+  ...(IMPORT_LIVE ? importSteps : []),
   {
     text: "To share your homebrew with another table, press ⚙️ Settings, then 📚 Shared rules, then 📦 Homebrew packs, then 📤 Share my homebrew (paid campaigns only). DMbot gives you a share code. Any game master in your server can read everything you share, and so can anyone you give the code to. That includes entries you hide from players. Only share what you are happy for them to see. Followers get a new version only when you press 🔄 Publish my changes. Only homebrew is shared, never your story, names or notes.",
     names: [
@@ -707,7 +882,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Settings, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
+    text: "Only the game master whose plan a campaign uses can delete it, and not while it is being played. Press ⚙️ Settings, then 🗂️ Campaign management, then 🗑 Delete this campaign. DMbot lists what will be lost: story memory, notes, recaps, house rules, homebrew and transcripts. To keep a copy first, press 💾 Back up first. Then press Delete it and type the campaign's name. It can't be undone. Copies people already downloaded stay, and the transcript and chat channels stay until a server admin removes them.",
     names: [
       { name: "Delete this campaign", file: "dm_screen/delete_campaign.py" },
       { name: "Back up first", file: "dm_screen/delete_campaign.py" },
@@ -715,7 +890,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To see or change who your game masters are, press ⚙️ Settings, then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (⚙️ Settings, then Hand over). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
+    text: "To see or change who your game masters are, press 🗂️ Campaign management (it is in ⚙️ Settings), then 👑 Game masters. To add one, press ➕ Add a game master and pick someone from your server (people only, not bots). A campaign can have up to 5. They get a private message, and right away they can see the DM screen and change settings. To remove one, press ➖ Remove a game master, pick them, then press Remove to confirm. They lose access right away, even in the middle of a game. You can remove yourself too. You can't remove the last game master, or the one whose plan the campaign uses; hand the campaign over first (🤝 Hand over, under 🗂️ Campaign management in ⚙️ Settings). Being made a game master doesn't record anyone. Being recorded is still each person's own yes.",
     names: [
       { name: "Game masters", file: "dm_screen/game_masters.py" },
       { name: "Add a game master", file: "dm_screen/game_masters.py" },
@@ -723,8 +898,21 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: "To give a campaign to another game master, press ⚙️ Settings, then Hand over. They must say yes.",
+    text: "To give a campaign to another game master, press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over. They must say yes.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
+  },
+  // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
+  ...liveFeatureSteps("gameMaster"),
+];
+
+// The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
+// entry is held and this Help step follows. Set this to true in the same change that moves that
+// entry out of `held`; a test ties the two.
+export const SIDEBAR_SOURCES_LIVE = false;
+
+export const sidebarSourceSteps: Step[] = [
+  {
+    text: "Where did that come from? Under a rules answer, press 📖 What I looked at. You get the source of each rule it used, with the book and page number. Press a rule to open it. Only you see it.",
   },
 ];
 
@@ -756,6 +944,7 @@ export const quickAnswers: Step[] = [
   {
     text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
   },
+  ...(SIDEBAR_SOURCES_LIVE ? sidebarSourceSteps : []),
 ];
 
 /** The recaps steps, with the narration add-on's price from its one constant while narration is on
@@ -786,7 +975,7 @@ export const noThanksStep: Step = {
 };
 
 export const stopStep: Step = {
-  text: "To stop at any time, press ⚙️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
+  text: "To stop at any time, press 🗂️ Menu in that private message, then Stop recording me, then Yes, stop recording me.",
   names: [
     { name: "Menu", file: "consent_dm.py" },
     { name: "Stop recording me", file: "consent_dm.py" },
@@ -808,21 +997,6 @@ export const fightBotStep: Step = {
   text: "In a fight, DMbot's fight helper, FightBot, may send you a short private reminder of what your sheet says you still have, like a spell, a feature, or spell slots. It only reminds you. Your game master decides what happens. To switch it off, press 📜 My character sheet, then Turn FightBot off.",
   names: [{ name: "Turn FightBot off", file: "ui/sheets.py" }],
 };
-
-// What /dmbot rule finds beyond spells, conditions and creatures (#1924; core ui/rule_lookup.py):
-// glossary rules, class features, magic items, feats, species and backgrounds. It is held with the
-// What's new entry "Look up any rule" until dev1 deploys it (#1890, #1891, #1912, #1913). Set this
-// to true in the same change that moves that entry out of `held`; a test keeps the two in step.
-export const RULE_KINDS_LIVE = false;
-
-export const ruleKindSteps: Step[] = [
-  {
-    text: "/dmbot rule also finds rules like cover or long rest, class features like rage, magic items like Bag of Holding, weapons and armor like longsword or plate armor, tools and gear like Thieves' Tools or a Healer's Kit, and feats, species and backgrounds like Alert, Goliath or Sage. If a spell or condition has the same name, you get that first.",
-  },
-  {
-    text: "Some classes share a feature. Type the class first, like rogue evasion, to get that class's. If two things share a name, the list marks them, like Orc (creature). Pick the one you mean.",
-  },
-];
 
 export const playerSteps: Step[] = [
   consentStep,
@@ -853,8 +1027,9 @@ export const playerSteps: Step[] = [
     names: [{ name: "/dmbot rule", file: "ui/rule_lookup.py" }],
   },
   ...(RULE_KINDS_LIVE ? ruleKindSteps : []),
+  ...(FIGHT_AND_ITEM_RULES_LIVE ? magicItemRuleSteps : []),
   {
-    text: "Want your own lines gone? In Discord, open the ⚙️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
+    text: "Want your own lines gone? In Discord, open the 🗂️ Menu DMbot sends you and press 🗑 Delete my transcripts. It deletes every line you said in that server, from every past game. It can't be undone. Other people's lines, your game master's story notes and copies already downloaded stay.",
     names: [{ name: "🗑 Delete my transcripts", file: "consent_dm.py" }],
   },
   {
@@ -869,6 +1044,8 @@ export const playerSteps: Step[] = [
   {
     text: "If your sheet is linked online, your spell slots show on your character card. About a minute after someone at the table says a slot was used, DMbot looks at your sheet again to keep up. It never changes your sheet.",
   },
+  // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
+  ...liveFeatureSteps("player"),
 ];
 
 /** Your account (#1215): DMbot has no password of its own, and a new Discord account starts clean. */
@@ -877,11 +1054,11 @@ export const accountSteps: Step[] = [
     text: "Forgot your password? DMbot has no password. It uses your Discord account, so use Discord's own reset: open the Discord sign-in page and press Forgot your password?",
   },
   {
-    text: "Moving to a new Discord account? Do this for each campaign you own: press ⚙️ Settings, then press Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
+    text: "Moving to a new Discord account? Do this for each campaign you own: press 🗂️ Campaign management (it is in ⚙️ Settings), then 🤝 Hand over, and pick your new account or another game master. When all are handed over, cancel your plan on your account page. On the new account, say yes to being recorded again.",
     names: [{ name: "Hand over", file: "dm_screen/handover.py" }],
   },
   {
-    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
+    text: "Can't get into your old account any more? After 7 days out of the server, or if Discord says the account is gone, DMbot offers the campaign's other game masters a Take it on button in ⚙️ Settings → 🗂️ Campaign management. A game master chooses whether to press it. Or use a new account: join the server, type /dmbot backup, then /dmbot restore. Both need a paid campaign, and restore needs a free campaign slot on your plan.",
     names: [
       { name: "Take it on", file: "dm_screen/handover.py" },
       { name: "/dmbot backup", file: "ui/dmbot_commands.py" },
@@ -890,6 +1067,8 @@ export const accountSteps: Step[] = [
   },
   // Only when the build has Stripe's billing login link (#1711).
   ...portalLoginSteps(portalLoginUrl()),
+  // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
+  ...liveFeatureSteps("account"),
 ];
 
 /** Emails from DMbot (#1283): every sentence is read from core/src/dmbot/mail.py, trial_jobs.py and

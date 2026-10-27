@@ -28,6 +28,14 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "handover by email",
+        "Hand over by email",
+        "A campaign is handed over by a link sent to an email address.",
+        lambda s: s.handover_email_on,
+        ("handover_email_on",),
+        for_dms=False,  # for whoever runs DMbot: on only when the whole hand-over is live (#2532)
+    ),
+    Feature(
         "time suggestions",
         "Clock suggestions",
         "DMbot offers to move the game clock when time passes. You choose.",
@@ -42,11 +50,36 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on",),
     ),
     Feature(
+        "plot checks",
+        "Story checks on recaps",
+        "PlotBot compares each recap with the earlier ones and asks you about anything that "
+        "does not fit. You decide.",
+        lambda s: s.plot_check_on,
+        ("recaps_on", "plot_check_on"),
+        for_dms=False,
+    ),
+    Feature(
         "recap audio",
         "Spoken recaps",
         "DMbot reads a recap aloud, with music.",
         lambda s: s.recap_audio_on,
-        ("recaps_on", "elevenlabs_key", "elevenlabs_voice_id"),
+        ("recaps_on", "elevenlabs_key", "elevenlabs_voice_id", "recap_voice_tags"),
+    ),
+    Feature(
+        "structured split",
+        "Recap opening split in two steps",
+        "",
+        lambda s: s.recap_structured_output_split,
+        ("recap_structured_output_split",),
+        for_dms=False,  # how the work is done, not something a DM sees (#2714)
+    ),
+    Feature(
+        "structured beats",
+        "Recap beat sheet in two steps",
+        "",
+        lambda s: s.recap_structured_output_beats,
+        ("recap_structured_output_beats",),
+        for_dms=False,  # how the work is done, not something a DM sees (#2714)
     ),
     Feature(
         "sidebar",
@@ -76,10 +109,26 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.story_extractor_on,
         (
             "story_extractor_on",
+            "story_readings_on",
+            "story_contradictions_on",
             "story_extractor_tier",
             "story_extractor_max_calls",
             "story_extractor_max_calls_day",
         ),
+    ),
+    Feature(
+        "live heads-up",
+        "Heads-up during play",
+        "DMbot tells you on the DM screen when someone you said is dead is voiced at the table.",
+        lambda s: s.live_heads_up,
+        ("live_heads_up", "live_heads_up_cooldown_s"),
+    ),
+    Feature(
+        "secret reveal",
+        "Asks when you say a secret",
+        "DMbot asks you or your co-DMs privately, at once, if a secret name you said is revealed.",
+        lambda s: s.secret_reveal_ask,
+        ("secret_reveal_ask",),
     ),
     Feature(
         "plan limits",
@@ -87,6 +136,14 @@ FEATURES: tuple[Feature, ...] = (
         "",
         lambda s: s.enforce_plans,
         ("enforce_plans",),
+        for_dms=False,
+    ),
+    Feature(
+        "importing sessions",
+        "Importing sessions",
+        "",
+        lambda s: s.imports_on or bool(s.imports_servers),  # (on for all, or for chosen servers)
+        ("imports_on", "imports_servers"),
         for_dms=False,
     ),
     Feature(
@@ -114,6 +171,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,
     ),
     Feature(
+        "table pictures",
+        "Pictures in the table chat",
+        "",
+        lambda s: s.table_images_on,
+        ("table_images_on",),
+        for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
@@ -137,7 +202,11 @@ NOT_A_SWITCH: dict[str, str] = {
     "data_dir": "a folder",
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",
+    "gemini_key": "a secret, used only when Gemini is chosen for the recap",
+    "recap_writer_reads": "which text the recap writer reads, a choice (off by default)",
+    "ai_provider_creative": "which company's AI writes the recap, a choice (off by default)",
     "log_format": "how logs look",
+    "cleaner_rank_max": "a number: the most ranking calls a session makes (0 is off)",
     "log_level": "how much is logged",
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
@@ -147,6 +216,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "recap_audio_per_month": "a limit",
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
+    "table_images_per_day": "a limit",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }

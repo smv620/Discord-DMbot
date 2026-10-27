@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from dmbot.memory import name_list
 from dmbot.memory.models import name_key
+from dmbot.transcript import rank_options
 from dmbot.transcript.cleaner import Fix, Question
 
 KEEP = "keep"  # the button choice that keeps the words as heard
@@ -109,6 +110,8 @@ class Asked:
     prev_fixes: tuple[Fix, ...] = ()
     prev_start: int = 0
     prev_end: int = 0
+    # The AI put the first option first, as the likely one (#2048); the DM still answers.
+    likely: bool = False
 
 
 class Begin(Enum):
@@ -191,6 +194,19 @@ class QuestionBook:
             return self.open
         return None
 
+    def rank(self, question_id: str, name: str) -> Asked | None:
+        """Put the option called `name` first and mark it likely (#2048), if this question is
+        still open and not being answered. The buttons are made from the result, so a press
+        always means the option shown. Returns the question as it now stands."""
+        asked = self.open
+        if asked is None or asked.id != question_id:
+            return None
+        if self.answering or asked.likely or not any(o[1] == name for o in asked.options):
+            return asked
+        options = rank_options.first(asked.options, name)
+        self.open = replace(asked, options=options, likely=True)
+        return self.open
+
     def expire(self, now: float) -> Asked | None:
         """The open question, closed now if nobody answered it in time (returned, so its
         message can say so). Never one whose answer is being saved."""
@@ -270,8 +286,11 @@ def seam_text(speaker: str, before: str, after: str) -> str:
     )
 
 
-def option_label(name: str) -> str:
-    return _short(name, LABEL_MAX)
+def option_label(name: str, likely: bool = False) -> str:
+    """A button's name; the likely one says so, still within `LABEL_MAX`."""
+    if not likely:
+        return _short(name, LABEL_MAX)
+    return f"{_short(name, LABEL_MAX - len(rank_options.LIKELY) - 1)} {rank_options.LIKELY}"
 
 
 def keep_label(heard: str) -> str:

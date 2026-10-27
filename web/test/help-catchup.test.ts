@@ -79,7 +79,7 @@ describe("the recap steps (shown only while recaps are on, by the page)", () => 
   it("say the DM screen tells the DM, then email unless turned off, and the DM screen's buttons", async () => {
     const all = recaps(await help());
     expect(all).toContain("DMbot tells you on the DM screen when a recap is ready");
-    expect(all).toContain("It also emails you, unless you turn that off.");
+    expect(all).toContain("It also emails you, unless you turn that off, and the email says why if a recap couldn't be written");
     expect(all).toContain("Read it");
     expect(all).toContain("Press Post to the table to send it to your players; DMbot asks once first.");
     expect(all).toContain("Not this one");
@@ -87,10 +87,11 @@ describe("the recap steps (shown only while recaps are on, by the page)", () => 
     expect(all).toContain("Each campaign gets up to 10 recaps a month.");
   });
 
-  it("have no narration sentence while narration is off", async () => {
+  it("say what narration is, since it is on (#2617), and nothing of an add-on while it has no price", async () => {
     live.recaps = true;
     const all = recaps(await help());
-    expect(all).not.toMatch(/narrat|add-on/i);
+    expect(all).toMatch(/narrator's voice and music/i);
+    expect(all).not.toMatch(/add-on/i);
   });
 
   it("add the narration add-on sentence, with the price from its constant, when narration is on", async () => {

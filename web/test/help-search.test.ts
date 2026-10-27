@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { applySearch, matches, normalize, nothingFound, statusText, wire } from "../scripts/helpsearch.mjs";
 import { afterEach, vi } from "vitest";
 import help from "../src/pages/help.astro";
-import { accountSteps, dmSteps, playerSteps } from "../src/content/help";
+import { ruleKindSteps, ruleKindDmSteps, sidebarSourceSteps, accountSteps, dmSteps, playerSteps } from "../src/content/help";
 import { parsePage } from "./dom";
 
 describe("matcher", () => {
@@ -18,8 +18,8 @@ describe("matcher", () => {
   });
 
   it("ignores emoji and punctuation", () => {
-    expect(normalize("⚙️ Menu, then 🗑 Delete my transcripts!")).toBe("menu then delete my transcripts");
-    expect(matches("menu delete", "press ⚙️ Menu, then 🗑 Delete my transcripts")).toBe(true);
+    expect(normalize("🗂️ Menu, then 🗑 Delete my transcripts!")).toBe("menu then delete my transcripts");
+    expect(matches("menu delete", "press 🗂️ Menu, then 🗑 Delete my transcripts")).toBe(true);
     expect(matches("🗑", "anything")).toBe(true); // an emoji alone is no word
   });
 
@@ -74,7 +74,7 @@ describe("on the Help page", () => {
     const shown = visibleSteps(doc);
     expect(found).toBe(shown.length);
     expect(found).toBeGreaterThan(0);
-    expect(shown.some((t) => t.includes("⚙️ Menu") && t.includes("Stop recording me"))).toBe(true);
+    expect(shown.some((t) => t.includes("🗂️ Menu") && t.includes("Stop recording me"))).toBe(true);
   });
 
   it("keeps matching steps under their section headings, and hides the rest", () => {
@@ -224,5 +224,25 @@ describe("the box, wired up", () => {
     const submit = new Window.Event("submit", { bubbles: true, cancelable: true });
     form.dispatchEvent(submit);
     expect(submit.defaultPrevented).toBe(true);
+  });
+});
+
+describe("Help search finds the 2014 mark and the game master's entries (#1961)", () => {
+  it("matches legacy, 2014, trap and poison", () => {
+    const text = [...ruleKindSteps, ...ruleKindDmSteps].map((s) => s.text).join(" ");
+    for (const query of ["legacy", "2014", "trap", "poison"]) {
+      expect(matches(query, text), query).toBe(true);
+    }
+  });
+});
+
+describe("Help search finds the sources step (#1958)", () => {
+  it("matches the three ways a game master would ask", () => {
+    // Wording only: the step is held, so this does not look at the rendered page.
+    expect(sidebarSourceSteps.length).toBeGreaterThan(0);
+    const text = sidebarSourceSteps.map((s) => s.text).join(" ");
+    for (const query of ["where did that come from", "source", "page number"]) {
+      expect(matches(query, text), query).toBe(true);
+    }
   });
 });

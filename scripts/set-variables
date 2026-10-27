@@ -7,7 +7,9 @@
 #   scripts/set-variables                    pick from a numbered list
 #   scripts/set-variables MAIL_ALERTS_FROM   change that one
 #
-# It lists every setting in .env.example EXCEPT: keys, tokens and secrets (names ending in
+# It lists every setting in .env.example, also one written as "# NAME=value" (a switch left
+# commented out until needed; only "#", one space, then NAME=, so a prose comment doesn't count)
+# when DMbot's config.py reads that name, EXCEPT: keys, tokens and secrets (names ending in
 # _KEY, _TOKEN or _SECRET: use scripts/set-key), every password and password hash (the database
 # passwords would lock DMbot out of its saved data; the admin password has its own script,
 # scripts/set-admin-password) and DATABASE_URL (it has a password inside it). Those never show
@@ -18,14 +20,21 @@
 # scripts/update-env does; set-key keeps no copy. The new .env replaces the old file, so a
 # symlinked .env becomes a plain file owned by whoever runs this.
 #
+# What each setting does is in scripts/setting-descriptions (NAME|short line|detail): the short
+# line shows in the list, the detail when a setting is picked, before the value is asked for. A
+# test checks that every setting in the menu has a line there (#2181).
+#
 # Tests point DMBOT_ENV_FILE, DMBOT_ENV_EXAMPLE and DMBOT_DOCKER at stand-ins, and set
-# DMBOT_TEST_NO_TERMINAL to pipe the answers in.
+# DMBOT_TEST_NO_TERMINAL to pipe the answers in; DMBOT_CONFIG_SOURCE points at the file that
+# stands in for core/src/dmbot/config.py.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 env_file=${DMBOT_ENV_FILE:-$root/.env}
 example=${DMBOT_ENV_EXAMPLE:-$root/.env.example}
 docker=${DMBOT_DOCKER:-docker}
+config_source=${DMBOT_CONFIG_SOURCE:-$root/core/src/dmbot/config.py}
+descriptions=${DMBOT_SETTING_DESCRIPTIONS:-$root/scripts/setting-descriptions}
 
 fail() {
   printf '%s\n' "$1" >&2
@@ -45,9 +54,33 @@ scripts/set-variables"
 # One rule decides this for the menu and for a name typed in, so they can't disagree. It looks
 # anywhere in the name (SECRET_FOO, FOO_PASSWORD_FILE) and adds a few usual endings as a net.
 secret_names='PASSWORD|SECRET|TOKEN|_KEY|_HASH|_PASS$|_SALT|_DSN|CREDENTIAL|^DATABASE_URL$'
-mapfile -t choices < <(
-  sed -nE 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' "$example" | grep -vE "$secret_names" || true
-)
+# A commented "# NAME=value" line is only a setting if config.py reads that name (#1970): this
+# keeps notes like "# COMPOSE_PROFILES=web. ..." and names DMbot doesn't know out of the list.
+reads_setting() {
+  [[ -e $config_source ]] && grep -rqF "\"$1\"" "$config_source"
+}
+mapfile -t active < <(sed -nE 's/^([A-Z][A-Z0-9_]*)=.*/\1/p' "$example")
+mapfile -t commented < <(sed -nE 's/^# ([A-Z][A-Z0-9_]*)=.*/\1/p' "$example")
+# File order: each name where it first appears, active or commented.
+mapfile -t listed < <(sed -nE 's/^(# )?([A-Z][A-Z0-9_]*)=.*/\2/p' "$example" | awk '!seen[$0]++')
+declare -A is_commented_only=()
+choices=()
+for k in "${listed[@]}"; do
+  grep -qE "$secret_names" <<<"$k" && continue
+  if printf '%s\n' "${active[@]}" | grep -qxF -- "$k"; then
+    choices+=("$k")
+  elif printf '%s\n' "${commented[@]}" | grep -qxF -- "$k" && reads_setting "$k"; then
+    choices+=("$k")
+    is_commented_only[$k]=1
+  fi
+done
+
+# The short line, or the detail, written for a setting ("" when it has none). Field 1 is the name;
+# the text is everything after it, so a description may not hold the field separator.
+describe() {
+  [[ -f $descriptions ]] || return 0
+  awk -F'|' -v name="$1" -v field="$2" '$1 == name { print $field; exit }' "$descriptions"
+}
 
 is_choice() {
   local k
@@ -65,9 +98,15 @@ current_value() {
   printf '%s' "$raw"
 }
 
-# What DMbot uses when .env says nothing: the value in .env.example, if it has one.
+# What DMbot uses when .env says nothing: the value in .env.example, if it has one (a commented
+# "# NAME=value" line says it too).
 default_value() {
-  sed -nE "s/^$1=(.*)$/\1/p" "$example" | tail -n 1
+  sed -nE "s/^(# )?$1=(.*)$/\2/p" "$example" | tail -n 1
+}
+
+# Whether .env has an active line for the setting at all.
+in_env() {
+  [[ -f $env_file ]] && grep -q "^$1=" "$env_file"
 }
 
 if [[ $# -gt 1 ]]; then
@@ -82,7 +121,12 @@ else
   for i in "${!choices[@]}"; do
     status="empty"
     [[ -n $(current_value "${choices[$i]}") ]] && status="set"
-    printf '  %d) %s (%s)\n' "$((i + 1))" "${choices[$i]}" "$status"
+    # A switch left commented in .env.example, and not in .env yet: say so.
+    if [[ -n ${is_commented_only[${choices[$i]}]:-} ]] && ! in_env "${choices[$i]}"; then
+      status="not in .env"
+    fi
+    short=$(describe "${choices[$i]}" 2)
+    printf '  %d) %s (%s)%s\n' "$((i + 1))" "${choices[$i]}" "$status" "${short:+ - $short}"
   done
   pick=""
   read -r -p "Type a number and press Enter (just Enter cancels): " pick || true
@@ -117,6 +161,12 @@ For anything else, edit .env: nano $root/.env"
 old=$(current_value "$name")
 default=$(default_value "$name")
 echo "$name"
+detail=$(describe "$name" 3)
+if [[ -n $detail ]]; then
+  # Wrapped for a phone's width; the current value is not part of it (it is shown below).
+  fold -s -w 76 <<<"$detail" | sed 's/ *$//; s/^/  /'
+  echo
+fi
 if [[ -n $old ]]; then
   echo "  Now: $old"
 elif [[ -n $default ]]; then

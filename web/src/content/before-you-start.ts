@@ -20,7 +20,7 @@ export const beforeQuestions: readonly Question[] = [
     // stop later"). Stop asks once more to confirm (dm_screen/messages.py).
     question: "Does it record everyone?",
     answer:
-      "No. Only people who press yes (16 or older) are recorded, for what they say and type, and bots never are. Anyone can stop at any time with ⚙️ Menu, then Stop recording me; what was already written stays in the record.",
+      "No. Only people who press yes (16 or older) are recorded, for what they say and type, and bots never are. Anyone can stop at any time with 🗂️ Menu, then Stop recording me; what was already written stays in the record.",
   },
   {
     // CLAUDE.md "Transcripts are shared; the DM screen is not pushed to players"; the three

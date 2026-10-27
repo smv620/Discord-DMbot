@@ -32,7 +32,13 @@ from dmbot.config import (
     parse_ai_models,
 )
 
-MODELS = AIModels(fast="claude-fast-1", careful="claude-careful-1", deep="claude-deep-1")
+MODELS = AIModels(
+    fast="claude-fast-1",
+    careful="claude-careful-1",
+    deep="claude-deep-1",
+    creative="claude-creative-1",
+    formatting="claude-formatting-1",
+)
 BASE = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgres://x"}
 OK = {
     "content": [{"type": "text", "text": "the answer"}],
@@ -139,6 +145,8 @@ class Tiers(unittest.TestCase):
             FEATURE_TIERS,
             {
                 Feature.NAMES: AIModelTier.CAREFUL,
+                Feature.NAMES_BACKGROUND: AIModelTier.FAST,  # a DM's background (#2167)
+                Feature.NAMES_BACKGROUND_READ: AIModelTier.CAREFUL,  # pass 1 of it (#2454)
                 Feature.TOPIC: AIModelTier.FAST,
                 Feature.AUDIO_CHECK: AIModelTier.FAST,
                 Feature.SIDEBAR: AIModelTier.FAST,
@@ -152,9 +160,18 @@ class Tiers(unittest.TestCase):
                 Feature.EXTRACTOR: AIModelTier.FAST,  # the story extractor (#1363), off by default
                 Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
                 Feature.RECAP_RETRY: AIModelTier.CAREFUL,
+                Feature.NAME_PASS: AIModelTier.CAREFUL,  # the name pass (#2628)
+                Feature.RECAP_FEEDBACK: AIModelTier.FAST,  # the DM's feedback on a recap (#2076)
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)
                 Feature.SUPPORT: AIModelTier.DEEP,
+                Feature.RECAP_WRITE: AIModelTier.CREATIVE,  # the recap as plain text (#2074)
+                Feature.RECAP_FORMAT: AIModelTier.FORMATTING,  # its sections, no word changed
+                Feature.RULE_CONFLICTS: AIModelTier.FAST,  # house rules that disagree (#2284)
+                Feature.IMAGE: AIModelTier.FAST,  # an image posted in the table chat (#2450)
+                Feature.IMAGE_MAP: AIModelTier.CAREFUL,  # a map read again for its layout (#2450)
+                Feature.PLOT_CHECK: AIModelTier.CAREFUL,  # advice for the DM (#2122)
+                Feature.PLOT_TALK: AIModelTier.CAREFUL,  # talking an issue through (#2123)
             },
         )
         self.assertEqual(set(FEATURE_TIERS), set(Feature))  # none left out
@@ -173,6 +190,8 @@ class Tiers(unittest.TestCase):
         bot = DMBot(settings, SimpleNamespace(), MagicMock(), MagicMock())  # type: ignore[arg-type]
         for client, job in (
             (bot.ai, Feature.NAMES),
+            (bot.background_ai, Feature.NAMES_BACKGROUND),
+            (bot.background_read_ai, Feature.NAMES_BACKGROUND_READ),
             (bot.topic_ai, Feature.TOPIC),
             (bot.audio_ai, Feature.AUDIO_CHECK),
             (bot.sheet_ai, Feature.SHEET),
@@ -275,7 +294,10 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
         for tier in AIModelTier:
             reply = await client.complete("s", "t", tier=tier)
             self.assertEqual(reply.model, MODELS.of(tier))
-        self.assertEqual(service.asked, [MODELS.fast, MODELS.careful, MODELS.deep])
+        self.assertEqual(
+            service.asked,
+            [MODELS.fast, MODELS.careful, MODELS.deep, MODELS.creative, MODELS.formatting],
+        )
 
     async def test_a_model_that_is_not_available_falls_back_one_tier_down(self) -> None:
         for answer in (GONE, DENIED):
@@ -288,6 +310,24 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
             self.assertIn("claude-deep-1 (deep jobs) isn't available to this key", line)
             self.assertIn("Using claude-careful-1 instead", line)
             self.assertIn("AI_MODEL_DEEP", line)  # what to check, in the owner's words
+
+    async def test_a_refused_creative_model_that_is_also_the_deep_one_names_its_own_setting(
+        self,
+    ) -> None:
+        # With the defaults both read claude-opus-5-5: the warning must send the owner to
+        # AI_MODEL_CREATIVE, the tier that asked, not to AI_MODEL_DEEP (#2074).
+        shared = "claude-shared-1"
+        models = AIModels("claude-fast-1", "claude-careful-1", shared, shared, "claude-fmt-1")
+        service = Service({shared: GONE})
+        session: Any = service
+        client = AnthropicClient("sk-secret", models, session=session, clock=Clock())
+        with self.assertLogs("dmbot.ai", "WARNING") as logged:
+            reply = await client.complete("s", "t", tier=AIModelTier.CREATIVE)
+        self.assertEqual(reply.model, "claude-careful-1")
+        (line,) = logged.output
+        self.assertIn("(creative jobs)", line)
+        self.assertIn("AI_MODEL_CREATIVE", line)
+        self.assertNotIn("AI_MODEL_DEEP", line)
 
     async def test_it_goes_all_the_way_down_if_it_must(self) -> None:
         client, service = self.make({MODELS.deep: GONE, MODELS.careful: DENIED})
@@ -428,9 +468,12 @@ class Fallback(unittest.IsolatedAsyncioTestCase):
 
 class Timeouts(unittest.IsolatedAsyncioTestCase):
     async def test_the_slower_tiers_get_longer_to_answer(self) -> None:
-        self.assertEqual(ai_module.TIER_TIMEOUT_S[AIModelTier.FAST], ai_module.REQUEST_TIMEOUT_S)
+        # (a background answer may now be 16,000 tokens long, #2596; a table answer keeps 120 s)
+        self.assertEqual(ai_module.TIER_TIMEOUT_S[AIModelTier.FAST], ai_module.FAST_TIER_TIMEOUT_S)
         for tier in (AIModelTier.CAREFUL, AIModelTier.DEEP):
-            self.assertGreater(ai_module.TIER_TIMEOUT_S[tier], ai_module.REQUEST_TIMEOUT_S)
+            self.assertGreater(
+                ai_module.TIER_TIMEOUT_S[tier], ai_module.TIER_TIMEOUT_S[AIModelTier.FAST]
+            )
 
     async def test_a_request_that_takes_too_long_is_a_busy_error_not_a_hang(self) -> None:
         class Hangs(Service):

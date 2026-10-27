@@ -44,6 +44,9 @@ export interface AdminGrant {
   note: string;
   grantedBy: string;
   grantedAt: number;
+  /** Also on the server's free list, so the grant adds nothing (#2196). Missing from an older
+   * API: then the grant is listed as before. */
+  alsoFree?: boolean;
 }
 
 export interface AdminLogEntry {
@@ -63,7 +66,18 @@ export interface FreePerson {
 export interface GrantsView {
   free: FreePerson[];
   grants: AdminGrant[];
+  /** Page 1 of Recent changes, newest first (#2199). */
   log: AdminLogEntry[];
+  /** How many pages the log has. Missing from an API older than #2199: then there is only
+   * the one list, and no page bar. */
+  logPages?: number;
+}
+
+/** One page of Recent changes (#2199). */
+export interface LogPage {
+  log: AdminLogEntry[];
+  page: number;
+  pages: number;
 }
 
 export interface GrantRequest {
@@ -92,6 +106,10 @@ export interface TicketList {
   tickets: SupportTicketRow[];
   counts: TicketCounts;
   week?: TicketWeek;
+  /** Which page this is and how many there are in the filtered list (#2211). Missing from an API
+   * older than that: then it is one list, and there is no page bar. */
+  page?: number;
+  pages?: number;
 }
 
 /** One message after the first, in the order they came (#1432): the person's emailed reply, DMbot's
@@ -153,13 +171,15 @@ export interface AdminApi {
   signOut(csrf: string): Promise<void>;
   /** Free access (#773). */
   grants(): Promise<GrantsView>;
+  /** One page of Recent changes, from 1; a page that isn't there is a "stale" refusal. */
+  grantsLog?(page: number): Promise<LogPage>;
   give(
     csrf: string,
     request: GrantRequest,
   ): Promise<{ action: "grant" | "change"; name: string | null }>;
   revoke(csrf: string, discordId: string): Promise<void>;
   /** Support tickets, newest first, with the count for each status (#1340, #1375). */
-  tickets(filter?: TicketFilter): Promise<TicketList>;
+  tickets(filter?: TicketFilter, page?: number): Promise<TicketList>;
   setTicketStatus(csrf: string, id: number, status: TicketStatus): Promise<void>;
   /** The team's reply: emailed to the person and kept on the ticket, which becomes answered
    * (#1432). */
@@ -175,6 +195,7 @@ const grantProblems: Record<string, AdminProblem> = {
   bad_note: "bad-note",
   already_free: "already-free",
   no_grant: "no-grant",
+  bad_page: "stale", // a page that was there is gone: the page goes back to the first
   no_ticket: "no-ticket",
   bad_text: "bad-reply",
   reply_off: "reply-off",
@@ -257,6 +278,11 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
       return (await response.json()) as GrantsView;
     },
+    async grantsLog(page) {
+      const response = await call(`/admin/grants/log?page=${encodeURIComponent(String(page))}`);
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+      return (await response.json()) as LogPage;
+    },
     async give(csrf, request) {
       const response = await call("/admin/grants", {
         method: "POST",
@@ -273,19 +299,33 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       });
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
     },
-    async tickets(filter = "all") {
-      const response = await call(`/admin/support?status=${encodeURIComponent(filter)}`);
+    async tickets(filter = "all", page = 1) {
+      const response = await call(
+        `/admin/support?status=${encodeURIComponent(filter)}&page=${encodeURIComponent(String(page))}`,
+      );
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
       const body = (await response.json()) as {
         tickets: SupportTicketRow[];
         counts?: TicketCounts;
         week?: TicketWeek;
+        page?: unknown;
+        pages?: unknown;
       };
       const week = readWeek(body.week);
+      // Only whole numbers from the API count; anything else is an API without pages.
+      const paging =
+        Number.isInteger(body.page) && Number.isInteger(body.pages)
+          ? { page: body.page as number, pages: body.pages as number }
+          : {};
       const c = body.counts;
       if (c && [c.new, c.answered, c.closed].every((n) => typeof n === "number")) {
         // An API older than #1431 has no escalated count: none.
-        return { tickets: body.tickets, counts: { ...c, escalated: c.escalated ?? 0 }, ...(week ? { week } : {}) };
+        return {
+          tickets: body.tickets,
+          counts: { ...c, escalated: c.escalated ?? 0 },
+          ...(week ? { week } : {}),
+          ...paging,
+        };
       }
       // An API older than #1375 sends every ticket and no counts: count and filter here, so the
       // buttons still work until it is deployed. (It sends only its newest tickets, so until then
@@ -328,6 +368,10 @@ function readWeek(raw: TicketWeek | undefined): TicketWeek | undefined {
   }
   return { questions: raw.questions, helper: raw.helper, team: raw.team, waiting: raw.waiting, reasons };
 }
+
+/** Entries on a page of Recent changes and of tickets in the preview, as on the real API
+ * (#2199, #2211). */
+const MOCK_PAGE = 20;
 
 /** The pretend API for preview builds (PUBLIC_API_BASE=mock): any password works. */
 export function pretendAdminApi(): AdminApi {
@@ -372,10 +416,13 @@ export function pretendAdminApi(): AdminApi {
     },
   ];
   return {
-    tickets: async (filter = "all") => {
+    tickets: async (filter = "all", page = 1) => {
       const counts: TicketCounts = { new: 0, answered: 0, closed: 0, escalated: 0 };
       for (const t of tickets) counts[t.status] += 1;
-      const shown = tickets.filter((t) => filter === "all" || t.status === filter);
+      const filtered = tickets.filter((t) => filter === "all" || t.status === filter);
+      const pages = Math.max(1, Math.ceil(filtered.length / MOCK_PAGE));
+      if (!Number.isInteger(page) || page < 1 || page > pages) throw new AdminApiError("stale");
+      const shown = filtered.slice((page - 1) * MOCK_PAGE, page * MOCK_PAGE);
       const week: TicketWeek = {
         questions: tickets.length,
         helper: 0,
@@ -383,7 +430,7 @@ export function pretendAdminApi(): AdminApi {
         waiting: counts.new + counts.escalated,
         reasons: { unhappy: 1 },
       };
-      return { tickets: structuredClone(shown), counts, week };
+      return { tickets: structuredClone(shown), counts, week, page, pages };
     },
     replyToTicket: async (_csrf, id, text) => {
       const ticket = tickets.find((t) => t.id === id);
@@ -396,7 +443,21 @@ export function pretendAdminApi(): AdminApi {
       if (!ticket) throw new AdminApiError("no-ticket");
       ticket.status = status;
     },
-    grants: async () => structuredClone(view),
+    grants: async () => {
+      const first = structuredClone(view);
+      first.log = first.log.slice(0, MOCK_PAGE);
+      first.logPages = Math.max(1, Math.ceil(view.log.length / MOCK_PAGE));
+      return first;
+    },
+    grantsLog: async (page) => {
+      const pages = Math.max(1, Math.ceil(view.log.length / MOCK_PAGE));
+      if (!Number.isInteger(page) || page < 1 || page > pages) throw new AdminApiError("stale");
+      return {
+        log: structuredClone(view.log.slice((page - 1) * MOCK_PAGE, page * MOCK_PAGE)),
+        page,
+        pages,
+      };
+    },
     give: async (_csrf, request) => {
       if (!/^[0-9]{17,20}$/.test(request.discordId)) throw new AdminApiError("bad-id");
       const action = view.grants.some((g) => g.discordId === request.discordId)

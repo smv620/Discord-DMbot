@@ -14,6 +14,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore, decode_backup, encode_backup
 from dmbot.dm_screen import recap_panel as panel
 from dmbot.dm_screen.settings import settings_view
+from dmbot.transcript.models import Line
 from tests.pg import DatabaseTest
 
 DM, OTHER = 7, 9
@@ -87,6 +88,14 @@ def campaign(**kw: Any) -> Any:
     return SimpleNamespace(**{**base, **kw})
 
 
+ALICE_ID = 7
+
+
+def long_session() -> list[Line]:
+    """Two hours of game talk by one person who agreed: never a short session."""
+    return [Line(i * 120_000, ALICE_ID, "x", "words said", duration_ms=110_000) for i in range(60)]
+
+
 def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool = True) -> Any:
     """A bot with just what the three job paths read, and the real methods bound to it."""
     allowed = {"recap": True, "recap_audio": True, **(plan or {})}
@@ -100,21 +109,32 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
             recap_audio_on=audio_on,
             site_url="https://site.example.com",
             enforce_plans=False,
+            recap_audio_per_month=5,
+            recaps_per_month=5,
         ),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
         plan_allows=plan_allows,
         recap_worker=object(),
-        recaps=SimpleNamespace(enqueue=AsyncMock(return_value=True)),
-        transcripts=SimpleNamespace(
-            session=AsyncMock(return_value=SimpleNamespace(started_at=100, lines=5))
+        recap_holds=None,  # no hold store: queued at once, as before #2169
+        recaps=SimpleNamespace(
+            enqueue=AsyncMock(return_value=True),
+            used_in_month=AsyncMock(return_value=SimpleNamespace(narrated=0, recaps=0)),
         ),
+        transcripts=SimpleNamespace(
+            session=AsyncMock(return_value=SimpleNamespace(id="s", started_at=100, lines=5)),
+            lines=AsyncMock(return_value=long_session()),
+        ),
+        consent=SimpleNamespace(consenting=AsyncMock(return_value={ALICE_ID})),
         post=AsyncMock(),
+        post_message=AsyncMock(),
+        _short_asks={},
         mailer=object(),
         meter=None,
     )
     for name in (
-        "recap_session", "recap_allowed", "recap_told", "recap_audio_wanted",
-        "recap_audio_switched", "recap_audio_allowed", "recap_plan_facts",
+        "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
+        "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
+        "recap_plan_facts", "recap_audio_why", "_recap_allowance", "_recap_refusal",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
@@ -178,8 +198,8 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_the_email_is_skipped_when_off_and_sent_when_on(self) -> None:
-        job = SimpleNamespace(state="ready", session_at=100, title="T")
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+        job = SimpleNamespace(state="ready", session_at=100, title="T", to_confirm=())
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
             await fake_bot(campaign(recaps_email=False)).recap_told(GUILD, "c" * 32, job)
             sent.assert_not_awaited()
             await fake_bot(campaign()).recap_told(GUILD, "c" * 32, job)
@@ -188,23 +208,70 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
     async def test_a_ready_recap_is_on_the_dm_screen_with_its_buttons_email_or_not(self) -> None:
         for email in (False, True):
             bot = fake_bot(campaign(recaps_email=email))
-            ready = SimpleNamespace(state="ready", session_at=100, title="The Silver Lock")
-            with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+            ready = SimpleNamespace(
+                state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+            )
+            with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
                 await bot.recap_told(GUILD, "c" * 32, ready)
             self.assertEqual(sent.await_count, 1 if email else 0)
             (channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
             self.assertEqual(channel, 66)
             self.assertIn("Recap ready: **The Silver Lock**", line)
-            self.assertIn("Edit it here: https://site.example.com", line)
-            ids = [i.custom_id for i in kwargs["view"].children]
+            self.assertIn("on your recap page: https://site.example.com", line)
+            # the three ways to approve (#2420), then the review link to this recap's page and
+            # Share a recap (#2118)
+            children = kwargs["view"].children
             self.assertEqual(
-                ids, [f"dmbot:recap:{a}:{'c' * 32}:100" for a in ("read", "post", "drop")]
+                [c.item.custom_id.split(":")[2] for c in children[:3]], ["ap", "aa", "ak"]
             )
+            self.assertTrue(children[3].url.startswith("https://site.example.com/"))
+            self.assertEqual(children[4].item.custom_id, f"dmbot:recapshare:{'c' * 32}")
+            self.assertFalse(children[1].item.disabled)  # audio is in this campaign's plan
+
+    async def test_the_audio_button_is_greyed_with_its_reason_for_each_reason(self) -> None:
+        # (#2420) not set up here, the DM's switch off, the plan, and the month's allowance used up
+        from dmbot.ui.recap_dm import AUDIO_WHY
+
+        used_up = fake_bot(campaign())
+        used_up.recaps.used_in_month = AsyncMock(return_value=SimpleNamespace(narrated=5, recaps=0))
+        cases = [
+            (fake_bot(campaign(), audio_on=False), "not_set_up"),
+            (fake_bot(campaign(recaps_audio=False)), "not_set_up"),
+            (fake_bot(campaign(), plan={"recap_audio": False}), "unavailable"),
+            (used_up, "unavailable"),
+        ]
+        for bot, why in cases:
+            ready = SimpleNamespace(
+                state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+            )
+            with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
+                await bot.recap_told(GUILD, "c" * 32, ready)
+            (_channel, line), kwargs = bot.post.await_args.args, bot.post.await_args.kwargs
+            children = kwargs["view"].children
+            self.assertTrue(children[1].item.disabled, why)  # the audio button
+            self.assertFalse(children[0].item.disabled)
+            self.assertFalse(children[2].item.disabled)
+            self.assertIn(AUDIO_WHY[why], line)
+            # asking why must not post the used-up refusal on top of the recap line (#2504)
+            self.assertEqual(bot.post.await_count, 1, why)
+
+    async def test_a_failure_in_telling_why_audio_is_off_still_posts_the_recap(self) -> None:
+        bot = fake_bot(campaign())
+        bot.recap_audio_why = AsyncMock(side_effect=OSError("down"))
+        ready = SimpleNamespace(
+            state="ready", session_at=100, title="The Silver Lock", to_confirm=()
+        )
+        with (
+            patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            await bot.recap_told(GUILD, "c" * 32, ready)
+        self.assertTrue(bot.post.await_args.kwargs["view"].children[1].item.disabled)
 
     async def test_a_failed_recap_is_said_on_the_dm_screen_only_when_the_email_is_off(self) -> None:
-        failed = SimpleNamespace(state="failed", session_at=100, title="")
+        failed = SimpleNamespace(state="failed", session_at=100, title="", keeps_previous=False)
         off = fake_bot(campaign(recaps_email=False))
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()) as sent:
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()) as sent:
             await off.recap_told(GUILD, "c" * 32, failed)
         sent.assert_not_awaited()
         channel, line = off.post.await_args.args
@@ -212,7 +279,7 @@ class TheAudioAndTheEmail(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't write this session", line)
         self.assertIn("https://site.example.com", line)
         on = fake_bot(campaign())
-        with patch("dmbot.bot.tell_the_dm", AsyncMock()):
+        with patch("dmbot.recaps.discord.tell_the_dm", AsyncMock()):
             await on.recap_told(GUILD, "c" * 32, failed)
         on.post.assert_not_awaited()  # the email says it
 
@@ -260,9 +327,9 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
 
     def test_the_buttons_follow_the_plan(self) -> None:
         three = panel.RecapsPanel(campaign(), panel.PlanFacts(True, True, "part of your plan"))
-        self.assertEqual(len(three.children), 3)
+        self.assertEqual(len(three.children), 5)  # and ✍️ Recap style and Share a recap
         two = panel.RecapsPanel(campaign(), panel.PlanFacts(True, False))
-        self.assertEqual(len(two.children), 2)
+        self.assertEqual(len(two.children), 4)
         self.assertEqual(
             len(panel.RecapsPanel(campaign(), panel.PlanFacts(False, False)).children), 0
         )
@@ -270,7 +337,7 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
     def test_the_settings_card_offers_the_button_to_the_campaigns_dms_only(self) -> None:
         camp = campaign(
             dm_screen_level="normal", dm_screen_visibility="peek", rules_cards=False,
-            side_initiative=False, dndbeyond_invite=None, paused=False,
+            side_initiative=False, dndbeyond_invite=None, paused=False, quiet_stop_minutes=30,
         )  # fmt: skip
 
         def ids(viewer: int) -> list[str]:

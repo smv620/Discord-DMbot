@@ -16,6 +16,7 @@ over, a press just says it is closed. Register with
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import time
@@ -27,6 +28,7 @@ import discord
 
 from dmbot.dm_screen.rules_cards import spotter_for
 from dmbot.rules import house
+from dmbot.rules.conflicts import Checked
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_voice import Clash, Proposal, Said
 from dmbot.ui import rule_card
@@ -171,6 +173,9 @@ async def _finish(interaction: discord.Interaction, note: str) -> None:
     """Take the buttons off the proposal and say what happened to it."""
     message = interaction.message
     words = message.content if message is not None else ""
+    if interaction.response.is_done():  # answered first, while the check for a disagreement ran
+        await interaction.edit_original_response(content=f"{words}\n{note}", view=None)
+        return
     await interaction.response.edit_message(content=f"{words}\n{note}", view=None)
 
 
@@ -213,6 +218,16 @@ async def press(
     if table.house_voice.proposals.pop(proposal_id, None) is None:
         await interaction.response.send_message(CLOSED, ephemeral=True)
         return
+    found = Checked()
+    if action != "replace" and getattr(bot, "rule_conflict_ai", None) is not None:
+        # Does it disagree with a rule already in force (#2284)? The check can take a moment.
+        from dmbot.ui import house_conflicts
+
+        await interaction.response.defer()
+        found = await house_conflicts.look(bot, campaign, [proposal.said.rule])
+        if found.disagreements:
+            await _ask_which_wins(interaction, bot, campaign, store, proposal, proposal_id, found)
+            return
     try:
         if action == "replace":
             note = await _replace(store, campaign, interaction.user.id, proposal)
@@ -225,12 +240,20 @@ async def press(
                 None,
                 scenario=proposal.scenario,
                 session_id=proposal.session_id,
+                source="voice",
             )
             note = f"✅ Saved as house rule {saved.number}."
+            if found.unchecked:
+                from dmbot.ui.house_conflicts import UNCHECKED
+
+                note += UNCHECKED
     except BaseException as exc:
         table.house_voice.proposals[proposal_id] = proposal
         if isinstance(exc, HouseRuleError):
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            if interaction.response.is_done():
+                await interaction.followup.send(str(exc), ephemeral=True)
+            else:
+                await interaction.response.send_message(str(exc), ephemeral=True)
             return
         raise
     await _finish(interaction, note)
@@ -238,6 +261,60 @@ async def press(
     from dmbot.ui import house_file as file_ui
 
     await file_ui.send_after_change(interaction, campaign, note)
+
+
+async def _ask_which_wins(
+    interaction: discord.Interaction,
+    bot: Any,
+    campaign: Any,
+    store: Any,
+    proposal: Proposal,
+    proposal_id: str,
+    found: Checked,
+) -> None:
+    """The saved rule would disagree with another: ask the DM, privately, which one wins.
+    The offer stays claimed (nobody else can save it) until the DM answers or gives up."""
+    from dmbot.ui import house_conflicts
+    from dmbot.ui import house_file as file_ui
+
+    message = interaction.message
+    table = bot.tables.get(campaign.guild_id)
+
+    async def save() -> HouseRule:
+        saved: HouseRule = await store.add(
+            campaign.guild_id,
+            campaign.id,
+            interaction.user.id,
+            proposal.said.rule,
+            None,
+            scenario=proposal.scenario,
+            session_id=proposal.session_id,
+        )
+        return saved
+
+    async def shown(where: discord.Interaction, note: str) -> None:
+        await where.response.edit_message(content=note, view=None)
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(content=f"{message.content}\n{note}", view=None)
+        await file_ui.send_after_change(where, campaign, note)
+
+    def give_back() -> None:
+        if table is not None:
+            table.house_voice.proposals[proposal_id] = proposal
+
+    await house_conflicts.ask(
+        interaction,
+        bot,
+        campaign,
+        proposal.said.rule,
+        found,
+        save=save,
+        saved_note=lambda r: f"✅ Saved as house rule {r.number}.",
+        replace=None,
+        done=shown,
+        cancelled=give_back,
+    )
 
 
 async def _replace(store: Any, campaign: Any, user_id: int, proposal: Proposal) -> str:

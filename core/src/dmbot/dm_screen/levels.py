@@ -25,9 +25,19 @@ NOTICE = "notice"  # things DMbot noticed: chatty only (nothing uses it yet)
 # is governed by the level, because nothing is wrong if it is missed. None on Quiet, every
 # half hour on Normal, every quarter hour on Chatty.
 REMINDER = "reminder"
+# A live heads-up (a character confirmed dead is voiced, #2068): none on Quiet, which means "only
+# what you ask for" (docs/STORY_MEMORY.md, section 4).
+WARNING = "warning"
 REMINDER_GAP_S: dict[str, float | None] = {QUIET: None, NORMAL: 1800.0, CHATTY: 900.0}
 
-_LOWEST = {ALERT: QUIET, QUESTION: NORMAL, FIX_NOTE: NORMAL, NOTICE: CHATTY, REMINDER: NORMAL}
+_LOWEST = {
+    ALERT: QUIET,
+    QUESTION: NORMAL,
+    FIX_NOTE: NORMAL,
+    NOTICE: CHATTY,
+    REMINDER: NORMAL,
+    WARNING: NORMAL,
+}
 
 
 def reminder_gap_s(level: str) -> float | None:

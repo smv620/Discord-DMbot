@@ -116,10 +116,10 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
 4. **Both people get a private message from DMbot** ("🎙️ Can DMbot record you for your
    D&D game…") with **I'm 16 or older, record me** and **No thanks** buttons, and both press
    **I'm 16 or older, record me**. The message changes to "✅ You said yes on …" with a
-   **⚙️ Menu** button.
+   **🗂️ Menu** button.
    - **Testing alone (DM only):** only one private message is expected, steps 5–6 have no
      turn-taking or overlap, and the consent check (step 7) is the DM pressing
-     **⚙️ Menu**, then **Stop recording me**, then **Yes, stop recording me**.
+     **🗂️ Menu**, then **Stop recording me**, then **Yes, stop recording me**.
    - Someone who agreed in an earlier session gets a reminder with the date instead.
    - Someone with DMs from server members turned off gets nothing; the DM screen says
      "📭 Not recording: …". They use `/consent give` instead.
@@ -144,7 +144,7 @@ Tell the owner: **"Both parts are running. Go ahead with step 4."**
    core logs `Session started`, `Consent given: user …` and a `Capture check: …` line
    every 15 s while someone is talking (low audio shows as `(audio gaps)`); ears logs `joined voice channel …` and `capturing user …` the first time
    each person is heard.
-7. **Consent check:** the second person presses **⚙️ Menu**, then **Stop recording me**,
+7. **Consent check:** the second person presses **🗂️ Menu**, then **Stop recording me**,
    then **Yes, stop recording me** in DMbot's private message (or runs `/consent revoke`
    and presses Yes) and keeps talking. The message itself then reads "🛑 Stopped". They
    must **disappear** from the transcript channel and the following capture checks. In the terminals: core logs

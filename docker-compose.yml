@@ -111,6 +111,17 @@ services:
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}
       WEB_SESSION_DAYS: ${WEB_SESSION_DAYS:-30}
+      # Which speech-to-text the bot uses, so the approval check counts only the consent that
+      # holds for it (the same setting as the bot's; no key).
+      TRANSCRIBER: ${TRANSCRIBER:-whisper-local}
+      # Whether the bot has a voice for recap narration, so the recap page greys its audio button
+      # when it does not (#2419). `:+1` passes "1" when the setting exists and never the value:
+      # the speech key stays out of this container.
+      RECAP_AUDIO_KEY_SET: ${ELEVENLABS_API_KEY:+1}
+      RECAP_AUDIO_VOICE_SET: ${ELEVENLABS_VOICE_ID:+1}
+      # The bot's setting for mood tags in the narration, so the page can tell which paragraphs a
+      # change would speak again (#2630). It changes nothing the bot does.
+      DMBOT_RECAP_VOICE_TAGS: ${DMBOT_RECAP_VOICE_TAGS:-1}
       PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-}
       PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
       # Stripe (#1110): used when PAYMENT_PROVIDER=stripe. The webhook secret above is its
@@ -159,6 +170,15 @@ services:
       DMBOT_FREE_USERS: ${DMBOT_FREE_USERS:-}
       # The same switch as the bot's: the site's hand-over accept checks the campaign cap too.
       DMBOT_ENFORCE_PLANS: ${DMBOT_ENFORCE_PLANS:-0}
+      # Importing older sessions (#2105): off until dev1 has checked a real import.
+      DMBOT_IMPORTS: ${DMBOT_IMPORTS:-0}
+      # Servers where importing is on although the line above is off (#2259): test servers only.
+      DMBOT_IMPORTS_SERVERS: ${DMBOT_IMPORTS_SERVERS:-}
+      # The same switch as the bot's: with recaps off, "make the narration again" is refused (#2183).
+      DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
+      # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
+      DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
+      DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Where it finds the recap audio (#1418): the volume below, read-only. A path inside the

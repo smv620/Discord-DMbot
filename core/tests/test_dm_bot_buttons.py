@@ -5,6 +5,7 @@ another server's campaign. The real campaign and memory stores, against the data
 from __future__ import annotations
 
 import unittest.mock
+from functools import partial
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -62,6 +63,10 @@ class Fake:
         return message
 
 
+def _note(order: list[str], what: str, **_: Any) -> None:
+    order.append(what)
+
+
 class PanelTest(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -90,6 +95,8 @@ class PanelTest(DatabaseTest):
         it.guild = SimpleNamespace(id=guild)
         it.user = member
         it.response.send_message = send_message
+        it.response.defer = AsyncMock()  # the answer-first buttons defer, then send a follow-up
+        it.followup.send = send_message
         it.sent = sent
         return it
 
@@ -153,7 +160,14 @@ class Cards(PanelTest):
     async def test_the_card_holds_only_the_buttons_of_that_role(self) -> None:
         await self.make_player()
         expected = {
-            DM: [*OPEN_TO_ALL, "Menu", "📜 My character sheet", "Settings"],
+            DM: [
+                *OPEN_TO_ALL,
+                "Menu",
+                "📜 My character sheet",
+                "Settings",
+                "Names",
+                "Upload campaign lore",
+            ],
             PLAYER: [*OPEN_TO_ALL, "Menu", "📜 My character sheet"],
             MEMBER: [*OPEN_TO_ALL, "Menu"],
             GUEST: OPEN_TO_ALL,
@@ -177,6 +191,30 @@ class Cards(PanelTest):
         await buttons.HelpButton(self.campaign.id).callback(it)
         self.assertTrue(it.sent["ephemeral"])
         self.assertTrue(it.sent["text"])
+
+    async def test_my_buttons_and_help_answer_before_any_slow_read(self) -> None:
+        # Discord drops a button not answered in 3 seconds (#1964): both defer first, privately,
+        # and send what they have as the follow-up. The campaign read is the slow part.
+        for button in (buttons.OpenButton, buttons.HelpButton):
+            it = self.press(GUEST)
+            order: list[str] = []
+            real = self.bot.campaigns.get
+
+            async def slow_get(*a: Any, _real: Any = real, _order: list[str] = order) -> Any:
+                _order.append("read")
+                return await _real(*a)
+
+            it.response.defer = AsyncMock(side_effect=partial(_note, order, "defer"))
+            with unittest.mock.patch.object(self.bot.campaigns, "get", slow_get):
+                await button(self.campaign.id).callback(it)
+            self.assertEqual(order[:2], ["defer", "read"], button.__name__)
+            it.response.defer.assert_awaited_once_with(ephemeral=True)
+            self.assertTrue(it.sent["ephemeral"])
+
+    async def test_a_gone_campaign_is_said_in_the_follow_up(self) -> None:
+        it = self.press(GUEST)
+        await buttons.HelpButton("0" * 32).callback(it)
+        self.assertEqual(it.sent["text"], buttons.GONE)
 
     async def test_the_transcripts_button_is_a_link_to_the_websites_page(self) -> None:
         it = self.press(GUEST)
@@ -284,7 +322,7 @@ class Cards(PanelTest):
         view = buttons.panel_view(self.campaign.id)
         self.assertEqual(
             [getattr(getattr(c, "item", c), "label", "") for c in view.children],
-            ["👤 My buttons", "❓ Help"],
+            ["👤 DMbot Main Menu", "❓ Help"],
         )
 
 

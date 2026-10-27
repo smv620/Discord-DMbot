@@ -101,7 +101,7 @@ class TheDMsListTest(unittest.TestCase):
             self.assertNotIn(hidden, text)
 
     def test_nothing_on_has_one_plain_line_and_everything_on_has_no_off_block(self) -> None:
-        none = settings(sidebar_recall=False, presession_note=False)
+        none = settings(sidebar_recall=False, presession_note=False, secret_reveal_ask=False)
         self.assertEqual(features.whats_on_text(none), features.NOTHING_ON)
         every = settings(
             time_suggestions=True,
@@ -110,6 +110,8 @@ class TheDMsListTest(unittest.TestCase):
             elevenlabs_voice_id="v",
             sidebar_on=True,
             story_extractor_on=True,
+            live_heads_up=True,
+            plot_check_on=True,
         )
         text = features.whats_on_text(every)
         self.assertNotIn("Not available right now", text)

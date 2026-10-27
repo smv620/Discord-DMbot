@@ -4,32 +4,30 @@
 
 ---
 
-## Test K: the new DM Bot channel
+## Test M: the backstory upload again (long document)
 
-**People:** 1 (you, as the DM)
-**Time:** about 5 minutes. No voice needed, and nothing is deleted or changed.
-**Why:** settings and options used to crowd the DM screen. They now live in a channel of their own, so the DM screen keeps only what you need during the game. This checks that the new channel is there, that it works, and that the DM screen is tidier.
+**People:** you (the DM), alone, on the test server
+**Time:** about 10 minutes
+**Why:** the last long upload reported "no new names", but the reading had been cut off, not finished. The fix reads the whole text in two passes, and a second run picks up where the first stopped. This checks a long document gives back its names and connections.
 
 ### Steps
-1. In your server, look for a channel named like `dmb-dm-bot-` followed by a short version of your campaign's name. **If you can't find it:** type `/dmbot start`, press **▶ Continue last campaign** (don't press Start listening), then look again. Tell me if you had to do this.
-2. Open it. There should be **one** message from DMbot with buttons on it, and nobody else can post there. As the DM you should see **⚙️ Settings** and also your own things such as a ⚙️ Menu, **📖 Look up a rule** and a **❓ Help** button. (The exact buttons may differ a little; tell me what you see.)
-3. Press **⚙️ Settings**. The answer should be a **private** message, one only you can see.
-4. In Settings, open **Homebrew**. Each kind (spells, monsters, items and so on) should show with a **count** next to it. Your 3 entries should be counted.
-5. Go back to the channel and press **❓ Help**. It should answer privately too.
-6. Open your **#dm-screen** channel (`dmb-dm-screen-…`). It should **not** have a Settings card or option buttons any more, only a one-line note saying settings and options are in the DM Bot channel.
+1. In the test server, open the names menu (the names panel, then 📜 From my story, or 📜 Upload campaign lore if you see it).
+2. Paste the link to the same long document you used last time.
+3. Press **🤖 Find names**.
+4. Wait for DMbot's reply in the DM screen. Don't press anything else while it works.
+5. If the reply says a part couldn't be read, press **🤖 Find names** again. It picks up the rest.
 
 ### It worked if
-- Step 2: the channel exists with one message of buttons, and you can see the Settings button.
-- Step 3 and 5: the answers are private.
-- Step 4: Homebrew shows each kind with a count.
-- Step 6: the DM screen has no Settings card, just the pointer.
+- Step 4: the reply lists names and connections from the document (it does not say "no new names" for a long text).
+- Step 5, if needed: a second press adds what the first one missed, and the reply says so.
 
-**If not:** tell me the step where it went wrong and what you saw (a screenshot is fine, with no private names in it).
+**If not:** tell dev1 the step where it went wrong, and what the reply said (copy the message, but leave out any private names).
 
-### Tell me
-- **Worked** or **didn't work** for each of steps 1 to 6, and anything that felt confusing.
-- This test can't check what **a player** sees in the channel (they should get fewer buttons than you). That needs a second person, so it comes later.
+### Tell dev1
+- **Worked** or **didn't work** for each step 1 to 5.
+- How many names and connections the reply gave, and whether a part was left unread (a count is enough; no names or words).
+- Anything that felt confusing.
 
 ---
 
-*Test I (the new consent question) passed on 2026-10-17. The full test plan and every result are in `docs/testing-status.log` and `docs/testing-history.log`. This page is only the next step.*
+*Test L (a real session with a recap) is paused until the recap fix is checked. Test K was done on 2026-10-18 (the owner, one person). Test I passed on 2026-10-17. The full record is in `docs/testing-status.log` and `docs/testing-history.log`. This page is only the next step.*

@@ -11,7 +11,7 @@ from dmbot.devtools.srd import build, parse, toolbox
 from dmbot.devtools.srd import equipment as equipment_reader
 from dmbot.devtools.srd.pdf import COLUMN_SPLIT, FOOTER_Y, Line, Piece, lines_of
 from tests.monster_fixtures import goblin
-from tests.test_srd_toolbox import FIXTURE_LEFT_OUT
+from tests.test_srd_toolbox import FIXTURE_LEFT_OUT, encounters, magic_items
 from tests.test_srd_toolbox import chapter as toolbox_chapter
 
 TITLE, ITALIC, BODY = "GillSans-SemiBold", "Cambria-Italic", "Cambria"
@@ -508,9 +508,10 @@ class Building(unittest.TestCase):
         glossary = [say("Rules Glossary", TITLE, 12), say("Rules Definitions", TITLE, 12),
                     say("Blinded [Condition]", TITLE, 12), say("You can’t see.", BODY, 12),
                     say("Cover", TITLE, 12), say("Cover protects a target.", BODY, 12)]  # fmt: skip
-        # the chapter as the toolbox reader's own tests have it, and the heading that ends it
+        # the chapter as the toolbox reader's own tests have it, with its Combat Encounters and
+        # Magic Items sections after it (the items' own heading ends them)
         toolbox = toolbox_chapter()
-        combat = [say("Combat Encounters", TITLE, 14)]
+        combat = [*encounters(), *magic_items()]
         classes = [
             say("Classes", TITLE, 20),
             say("Barbarian", TITLE, 20),
@@ -608,8 +609,8 @@ class Building(unittest.TestCase):
         monsters = [say("Monsters", TITLE, 23)]
         creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
         return [
-            contents, *[[]] * 9, spells, glossary, toolbox, combat, classes, origins, feats,
-            equipment, weapons, armor, tools, gear_table, mounts, items, monsters, creatures,
+            contents, *[[]] * 9, classes, origins, feats, equipment, weapons, armor, tools,
+            gear_table, mounts, spells, glossary, toolbox, combat, items, monsters, creatures,
         ]  # fmt: skip
 
     def document(self) -> dict[str, Any]:
@@ -725,7 +726,10 @@ class Building(unittest.TestCase):
 
     def test_a_different_document_stops_the_tool(self) -> None:
         pages = self.pages()
-        pages[11] = [say("Something else", TITLE, 12)]  # no Rules Glossary
+        glossary = next(
+            i for i, page in enumerate(pages) if page and page[0].text == "Rules Glossary"
+        )
+        pages[glossary] = [say("Something else", TITLE, 12)]  # no Rules Glossary
         with self.assertRaisesRegex(parse.SrdError, "Rules Glossary"):
             build.build_files(pages, self.document())
 

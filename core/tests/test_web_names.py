@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import psycopg
@@ -23,7 +24,7 @@ from dmbot.web.names import list_names, set_said_as
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base, callers
-from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
 
 class Names(Base):
@@ -52,6 +53,12 @@ class Names(Base):
         self.heard = (
             await self.memory.add_alias(
                 g, self.one.id, self.kazeth, "Kayzeth", kind="misheard", source=DM_SOURCE,
+                status="confirmed",
+            )
+        ).value.id  # fmt: skip
+        self.old = (
+            await self.memory.add_alias(
+                g, self.one.id, self.kazeth, "Kazet", kind="old", source=DM_SOURCE,
                 status="confirmed",
             )
         ).value.id  # fmt: skip
@@ -107,7 +114,7 @@ class Names(Base):
         self.assertEqual(set(shown["Zeth"]), {"id", "text", "kind", "saidAs"})
         self.assertIsNone(shown["Zeth"]["saidAs"])
         everything = str(await list_names(self.web, self.session, self.cref))
-        for hidden in ("Grey Voice", "Kayzeth", "Maybe Manor", "Alice Real", "Brynwater"):
+        for hidden in ("Grey Voice", "Kayzeth", "Kazet", "Maybe Manor", "Alice Real", "Brynwater"):
             self.assertNotIn(hidden, everything)
 
     async def test_another_campaigns_dm_a_stranger_and_a_bad_address_get_not_found(self) -> None:
@@ -189,6 +196,7 @@ class Names(Base):
         for who, ref, alias in (
             (self.session, self.cref, self.title),  # a secret name: told as "not found"
             (self.session, self.cref, self.heard),  # a note of how a name was misheard
+            (self.session, self.cref, self.old),  # an old spelling: nothing is spoken from it
             (self.session, self.cref, "0" * 32),
             (self.session, self.cref, "not-an-id"),
             (self.session, self.cref, theirs),  # another campaign's name through my campaign
@@ -236,7 +244,11 @@ class Names(Base):
 
     async def test_a_saved_spelling_reaches_the_narrators_dictionary(self) -> None:
         await set_said_as(self.web, self.session, self.cref, self.main, "Kah-zeth")
-        bot = SimpleNamespace(lookup=LookupCache(self.memory))
+        bot = SimpleNamespace(
+            lookup=LookupCache(self.memory),
+            _recanted=AsyncMock(return_value=()),
+            _relation_ties=AsyncMock(return_value=()),
+        )
         got = await DMBot.recap_audio_inputs(bot, THURSDAY.id, self.one.id, SimpleNamespace())  # type: ignore[arg-type]
         assert got is not None
         rules = nm.rules(got.names)
@@ -273,9 +285,11 @@ class TheRoutes(Names):
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
-        self.client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(self.client.aclose)
 
     async def test_read_and_write_over_http(self) -> None:
@@ -307,7 +321,9 @@ class TheRoutes(Names):
         )
         self.assertEqual((secret.status_code, secret.json()), (404, {"error": "not_found"}))
         anonymous = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=self.app), base_url=API, follow_redirects=False
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.get(url)).status_code, 401)

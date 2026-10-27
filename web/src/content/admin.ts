@@ -63,6 +63,10 @@ export const text = {
   // `who` is the person's name, or a shortened id when they haven't signed in lately.
   confirmRevoke: (who: string): string => `Revoke free access for ${who}?`,
   yesRevoke: "Yes, revoke",
+  // A grant for someone who is now on the server's free list (#2196): it changes nothing.
+  olderGrant: "They're always free anyway. An older free-access entry for them isn't needed.",
+  removeOlderGrant: "Remove old entry",
+  olderGrantRemoved: (who: string): string => `Done. The older entry for ${who} is removed. They are still always free.`,
   cancel: "Cancel",
   revoked: (who: string): string => `Done. ${who} no longer has free access.`,
   addHeading: "Add someone",
@@ -90,6 +94,33 @@ export const text = {
     `Done. Changed free access for ${who}: ${how}.`,
   historyHeading: "Recent changes",
   noHistory: "No changes yet.",
+  // The page bar under Recent changes (#2199).
+  historyList: "Recent changes, newest first",
+  pagesNav: "Pages of recent changes",
+  ticketPagesNav: "Pages of tickets",
+  // The tickets are not "newer" and "older" (Needs the team reads longest-waiting first), so their
+  // bar says where it goes in the list.
+  ticketPageFirst: "First",
+  ticketPagePrevious: "Previous",
+  ticketPageNext: "Next",
+  ticketPageLast: "Last",
+  // When the page the team was on has gone (its last ticket left): it shows the last page there is.
+  ticketPageGone: "That page isn't there any more, so here is the last one that is.",
+  pageNewest: "Newest",
+  pageNewer: "Newer",
+  pageOlder: "Older",
+  pageOldest: "Oldest",
+  // What a page-bar button is called to a screen reader: the move, and the page it goes to (a
+  // disabled one keeps just the move: it goes nowhere).
+  pageTo: (move: string, target: number): string => `${move}, page ${target}`,
+  pageBox: "Page",
+  pageGo: "Go",
+  pageOf: (pages: number): string => `of ${pages}`,
+  pageNow: (page: number, pages: number): string => `Page ${page} of ${pages}`,
+  pagePick: (pages: number): string => `Pick a page from 1 to ${pages}.`,
+  pageDown: "We couldn't load that page. Try again.",
+  pageGone: "That page isn't there any more, so here is the newest one.",
+  pageLoading: "Loading…",
   logLine: (when: string, by: string, action: string, who: string): string =>
     `${when}: ${by} ${
       action === "grant"

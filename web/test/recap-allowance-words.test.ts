@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { questions } from "../src/content/pricing";
 import {
+  RECAPS_LIVE,
   RECAPS_PER_MONTH,
   RECAP_AUDIO_PER_MONTH,
   allowanceSentence,
@@ -32,16 +33,16 @@ describe("the allowance sentence", () => {
 });
 
 describe("where it shows", () => {
-  it("is not in the plans FAQ today (recaps are off)", () => {
+  it("is in the plans FAQ only while recaps are live", () => {
     const answer = questions.find((f) => f.question === "What's different between the plans?")?.answer;
     expect(answer).toBeTruthy();
-    expect(answer).not.toMatch(/recaps a month/);
+    expect(/recaps a month/.test(answer ?? "")).toBe(RECAPS_LIVE);
   });
 
-  it("is a Help step with what happens when the month is used, and no narration while it is off", () => {
+  it("is a Help step with what happens when the month is used, with the narrated number now narration is on (#2617)", () => {
     const step = recapSteps.map((s) => s.text).find((t) => t.includes("recaps a month"));
     expect(step).toContain("Each campaign gets up to 10 recaps a month.");
     expect(step).toContain("If you use them all, DMbot tells you on the DM screen, and the next recap comes on the 1st of next month.");
-    expect(step).not.toMatch(/narrat/i);
+    expect(step).toContain("Up to 8 of those can be narrated");
   });
 });

@@ -101,6 +101,20 @@ class Table_(DatabaseTest):
         self.now += 2
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
 
+    async def test_open_questions_are_counted_by_session(self) -> None:
+        self.assertEqual(await self.store.count_for_session(GUILD, self.session), 0)
+        await self.store.save(
+            GUILD, self.campaign.id, self.session, [self.item(), self.item(2000, "w")]
+        )
+        self.assertEqual(await self.store.count_for_session(GUILD, self.session), 2)
+        self.assertEqual(await self.store.count_for_session(GUILD, "x" * 32), 0)  # another session
+        self.assertEqual(await self.store.count_for_session(OTHER, self.session), 0)  # server
+        (first, _) = await self.store.waiting(GUILD, self.campaign.id)
+        await self.store.decide(GUILD, first.id, "answered", DM)
+        self.assertEqual(await self.store.count_for_session(GUILD, self.session), 1)
+        self.now += EXPIRE_S + 1  # a week on, it expires quietly and may release a held recap
+        self.assertEqual(await self.store.count_for_session(GUILD, self.session), 0)
+
     async def test_only_one_press_closes_it_and_a_failed_save_reopens_it(self) -> None:
         await self.store.save(GUILD, self.campaign.id, self.session, [self.item()])
         (w,) = await self.store.waiting(GUILD, self.campaign.id)
