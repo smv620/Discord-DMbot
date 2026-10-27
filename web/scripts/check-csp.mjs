@@ -22,6 +22,7 @@ const SCRIPTED = new Set([
   "account/house-rules.html",
   "account/homebrew.html",
   "account/sharing.html", // the Shared rules page (#2460)
+  "account/restore.html", // the Load a backup page (#2745)
   "account/timeline.html", // the Story timeline (#2462)
   "account/transcripts.html",
   "account/import.html", // the importer (#2107); open for the site or a test server (#2260)
