@@ -8,6 +8,7 @@
 // for a campaign). The API decides everything; this only sends what the DM chose and says what came back.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
 import { RECAP_MAKE_LIVE, makeWords as w } from "../content/recap-make";
 import { sessionDay } from "../content/recaps";
 import { stageWords, workWords } from "../content/work-progress";
@@ -21,7 +22,7 @@ export const WATCH_LIMIT_MS = 30 * 60_000;
 const MAX_FILE_BYTES = 1_000_000;
 
 /** What was chosen when the API asked its one question. */
-type Asking = { ref: string; what: "again" | "replace"; kept: boolean; input?: AddRecapInput } | null;
+type Asking = { ref: string; what: "again" | "replace"; kept: boolean; lists?: "yes" | "maybe" | undefined; input?: AddRecapInput } | null;
 
 function kindOf(error: unknown): string {
   return error instanceof ApiError ? error.kind : "server";
@@ -76,6 +77,16 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       </p>
     );
 
+  /** Whether the recap has "who was there" lists the DM saved: "yes", "maybe" when it could not be read, else nothing. */
+  const savedLists = async (s: PastSession): Promise<"yes" | "maybe" | undefined> => {
+    if (!PRESENT_PER_SCENE_LIVE || !api.recap) return undefined;
+    try {
+      return (await api.recap(s.ref)).beats?.some((b) => b.saved) ? "yes" : undefined;
+    } catch {
+      return "maybe";
+    }
+  };
+
   /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
   const start = async (s: PastSession, replace: boolean): Promise<void> => {
     if (inFlight.current || !api.makeRecap) return;
@@ -88,7 +99,10 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       setRunning({ at: s.sessionAt, ref: got.ref });
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") });
+      if (kind === "needs-confirm") {
+        // A saved "who was there" list is cleared by a rewrite: the question says so, so no one loses work unseen (#2684).
+        setAsking({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted"), lists: await savedLists(s) });
+      }
       else if (kind === "busy") await load(); // the list then shows it being made and watches it
       else {
         setAsking(null);
@@ -169,6 +183,9 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                 ) : question ? (
                   <div class="stack" role="group" aria-label={question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}>
                     <p>{question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}</p>
+                    {question.what === "again" && question.lists && (
+                      <p>{question.lists === "yes" ? w.askAgainLists : w.askAgainMaybeLists}</p>
+                    )}
                     <div class="row">
                       <button
                         type="button"

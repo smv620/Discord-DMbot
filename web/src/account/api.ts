@@ -431,6 +431,8 @@ export interface Recap {
 export interface RecapBeat {
   n: number;
   present: string[];
+  /** The DM set this list on the page (#2684); making the recap again clears it. Missing from an older API. */
+  saved?: boolean;
 }
 
 /** One past session as the recap maker lists it (`GET /me/campaigns/{ref}/past-sessions`, #2610). */

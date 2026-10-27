@@ -88,6 +88,9 @@ class Beat:
     # any the beat names. Worked out in code from the table's own lines; the
     # writer is shown it and a group scene must name all of them or say "the party".
     present: tuple[str, ...] = ()
+    # The DM set `present` on the recap page (#2684, #2577): their word stands, so nothing here
+    # works the list out again. A rewrite finds the scenes afresh and starts without it.
+    saved: bool = False
 
     @property
     def matters(self) -> bool:
@@ -375,6 +378,7 @@ def as_json(beats: Sequence[Beat]) -> list[dict[str, object]]:
             **({"note": b.note} if b.note else {}),
             **({"keep": True} if b.keep else {}),
             **({"present": list(b.present)} if b.present else {}),
+            **({"saved": True} if b.saved else {}),
         }
         for b in beats
     ]
@@ -406,6 +410,7 @@ def from_json(data: object) -> list[Beat]:
                     str(item.get("note") or ""),
                     item.get("keep") is True,
                     _present_of(item.get("present")),
+                    item.get("saved") is True,
                 )
             )
         except (KeyError, TypeError, ValueError):

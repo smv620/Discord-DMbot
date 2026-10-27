@@ -49,21 +49,27 @@ describe("Who was in each scene", () => {
     await waitFor(() => expect(document.activeElement?.getAttribute("data-scene")).toBe("2"));
   });
 
-  it("offers Make it again beside the saved message, and asks once before replacing the text", async () => {
+  it("says the list is kept for this recap and that making it again starts the scenes over, and offers no rewrite", async () => {
+    const api = await open();
+    expect(screen.getByText(w.lead).textContent).toContain("Making the recap again starts the scenes over");
+    fireEvent.click(screen.getByRole("button", { name: w.changeScene(2) }));
+    fireEvent.click(screen.getByLabelText("Tavian"));
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    const said = await screen.findByText(w.saved(2));
+    expect(said.textContent).toContain("kept for this recap");
+    expect(screen.queryByRole("button", { name: /make it again/i })).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
+  });
+
+  it("marks the scene's list as the DM's after saving", async () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: w.changeScene(2) }));
     fireEvent.click(screen.getByLabelText("Tavian"));
     fireEvent.click(screen.getByRole("button", { name: w.save }));
-    await waitFor(() => expect(screen.getByText(w.saved(2))).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: w.again }));
-    expect(screen.getByText(w.againSure)).toBeTruthy();
-    expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: w.againNo }));
-    expect(screen.getByRole("button", { name: w.again })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: w.again }));
-    fireEvent.click(screen.getByRole("button", { name: w.againYes }));
-    await waitFor(() => expect(api.calls).toContain(`makeRecap:${DRAFT}:replace`));
-    await waitFor(() => expect(screen.getByText(w.againStarted)).toBeTruthy());
+    await screen.findByText(w.saved(2));
+    const read = await api.recap!(DRAFT);
+    expect(read.beats?.find((b) => b.n === 2)?.saved).toBe(true);
+    expect(read.beats?.find((b) => b.n === 1)?.saved).toBeFalsy();
   });
 
   it("can be cancelled without saving", async () => {
