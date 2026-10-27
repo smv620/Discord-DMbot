@@ -507,6 +507,10 @@ export interface SessionReport {
   /** While `making` or `failed`: the shared wait shape (counts and codes only). */
   progress?: JobProgress | null;
   counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };
+  /** Found but not sorted or graded (the call limit stopped the run): a count, never read as "nothing found". */
+  notSorted?: number;
+  /** A ready report the call limit cut short: the rest is checked after the next session. */
+  leftForNextTime?: boolean;
   contradictions: ReportContradiction[];
   differences: { disguised: ReportDifference[]; misunderstood: ReportDifference[]; false: ReportDifference[] };
 }
@@ -1348,6 +1352,13 @@ export interface NamesPage {
   pageSize: number;
 }
 
+/** The answer to "Search by meaning" (#2733): the campaign's names nearest in meaning to the words, best
+ * first, at most 50, in the same row shape as the list. Needs the meaning search deployed (core, after #2664):
+ * without it the API refuses with `not-available` and the page says so. */
+export interface SmartNamesAnswer {
+  names: NameRow[];
+}
+
 export interface NamesQuery {
   q: string;
   /** Kind keys joined with commas ("npc,place"), or "" for every kind. */
@@ -1543,6 +1554,7 @@ export type ApiErrorKind =
   | "plot-is-known" // the secret plot is already known (#2412)
   | "already-known" // the belief is already kept (#2412)
   | "stale" // the recap changed since the page read it, so its scenes were read again (#2577)
+  | "not-available" // the meaning search can't be used for this campaign yet (no vectors made, or switched off) (#2733)
   | "bad-present" // a name that isn't one of the campaign's characters (#2577)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
@@ -1775,6 +1787,9 @@ export interface AccountApi {
   /** One page of a campaign's names, searched, filtered and sorted (#2295). `ref` is
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
+  /** Names by meaning, for "ice goddess" or "friend of Brannoc" (#2733). The words go in a POST body, never the
+   * address (a query string is written to logs). Missing from an API older than that. */
+  smartNames?(ref: string, words: string): Promise<SmartNamesAnswer>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
   /** One campaign's page (#2416). Missing from an API older than that. */
   campaignPage?(campaignRef: string): Promise<CampaignPage>;
@@ -1992,6 +2007,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   plot_is_known: "plot-is-known",
   already_known: "already-known",
   bad_present: "bad-present",
+  not_available: "not-available",
   no_lines: "no-lines",
   needs_rights: "needs-rights",
   not_a_google_doc: "not-a-google-doc",
@@ -2357,11 +2373,10 @@ export function httpApi(
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`)) as SessionReport,
     makeSessionReport: async (campaignRef, at) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report/make`, {})) as SessionReport,
+    // Written at once by the API (an answer is the DM's bookkeeping, not a change to the story: Supervisor on
+    // #2661), so there is nothing to wait for or poll; the page reads the report again.
     answerReport: async (campaignRef, at, id, action) => {
-      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}`;
-      const queued = (await call("POST", `${base}/sessions/${at}/report`, { id, action })) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`, { id, action });
     },
     setBeatPresent: async (recapRef, n, present) =>
       (await call("PUT", `/me/recaps/${encodeURIComponent(recapRef)}/beats/${n}/present`, { present })) as RecapBeat,
@@ -2699,6 +2714,8 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    smartNames: async (ref, words) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
     // answer by asking about once a second, up to a minute (#2294).
     changeName: async (ref, id, change) => {

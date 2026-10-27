@@ -172,6 +172,11 @@ FACTS_ROOM_MAX = (
 FACTS_TOKENS_PER_SENTENCE = 60  # one flag as JSON: the sentence number, the kind, the beat numbers
 
 
+def _kinds_line(counts: Mapping[str, int]) -> str:
+    """`ordinary_word 2, unknown 1`: fixed words and counts, never the names (#2741)."""
+    return ", ".join(f"{k} {n}" for k, n in sorted(counts.items()))
+
+
 def facts_room(sentences: int) -> int:
     """The fact check's output room: never below the old 800, and a number pair for each sentence
     of a long recap (#2345)."""
@@ -1156,7 +1161,10 @@ class RecapWorker:
 
         draft: rd.Prose = prose  # (the closure below reads this one; `prose` may be cut later)
 
+        name_counts: dict[str, int] = {}
+
         def checked(last_try: bool) -> list[str]:
+            name_counts.clear()
             return rd.check_prose(
                 draft,
                 beats=sheet,
@@ -1172,6 +1180,8 @@ class RecapWorker:
                 corrections=inputs.corrections,
                 pcs=inputs.pcs,
                 identity_ties=inputs.identity_ties,
+                name_counts=name_counts,
+                aliases=inputs.aliases,
             )
 
         problems = checked(False)
@@ -1179,8 +1189,14 @@ class RecapWorker:
             # A draft that passes everything but a doubtful scene check stands on the last try.
             problems = []
         count = len(words(narration_of(prose.summary)))
-        self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
+        self._annotate(
+            gid, cid, job, stage, checks=lambda: cl.kinds(problems), names=lambda: dict(name_counts)
+        )
         if problems:
+            if name_counts:
+                log.info(
+                    "Recap: names outside the beat sheet, by kind: %s", _kinds_line(name_counts)
+                )
             log.info(
                 "Recap: a draft failed %d check(s): %s (%d words, %d wanted, %d section(s) "
                 "of at most %d, about %.2f hours)",
@@ -2223,6 +2239,7 @@ class RecapWorker:
             for text in (parsed[0], *parsed[1])
         ]
         parsed = (fixed[0][0].summary, [f.summary for f, _ in fixed[1:]])
+        title_names: dict[str, int] = {}
         finish, problems = rd.check_finish(
             parsed,
             beats=sheet,
@@ -2231,7 +2248,13 @@ class RecapWorker:
             secret_names=inputs.secret_names,
             previous=inputs.previous,
             transcript=transcript,
+            name_counts=title_names,
+            pcs=inputs.pcs,
+            aliases=inputs.aliases,
         )
+        if title_names:
+            log.info("Recap: names outside the beat sheet, by kind: %s", _kinds_line(title_names))
+            self._annotate(gid, cid, job, "title", names=dict(title_names))
         if finish is not None and any(r for _, r in fixed):
             finish, problems = None, ["a name is too like one the DM keeps secret: leave it out"]
         self._annotate(
