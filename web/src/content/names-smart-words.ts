@@ -10,6 +10,7 @@ export const smartWords = {
   button: "Search",
   // The stage shown while it works (counts and stages only: never the words typed).
   stage: "Looking for names that mean this",
+  capped: "Only your newest notes were searched.",
   found: (n: number): string => (n === 1 ? "1 name found, the closest match." : `${n} names found, the closest first.`),
   none: "No names are close to that. Try other words, or use Find a name.",
   back: "Back to all names",

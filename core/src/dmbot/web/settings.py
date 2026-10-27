@@ -72,6 +72,13 @@ class WebSettings:
     ai_key: str = field(default="", repr=False)
     support_ai_model: str = ""
     mail_inbound_secret: str = field(default="", repr=False)
+    # Search by meaning on the Names page (#2733): the same switch, key and models the bot reads
+    # (#2664), so the search words are turned into numbers with the model the kept numbers were
+    # made with. Off until the switch is 1 and a key is set.
+    meaning_search: bool = False
+    voyage_key: str = field(default="", repr=False)
+    voyage_embed_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
     # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
     # service receives. Empty: the support sender's own domain.
     mail_reply_domain: str = ""
@@ -133,6 +140,10 @@ class WebSettings:
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
+
+    @property
+    def meaning_search_on(self) -> bool:
+        return self.meaning_search and bool(self.voyage_key)
 
     @property
     def site_origin(self) -> str:
@@ -223,6 +234,20 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
         raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
+    meaning_raw = (get("DMBOT_MEANING_SEARCH") or "0").lower()
+    if meaning_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_MEANING_SEARCH must be 1 (on) or 0 (off), got "{meaning_raw}".')
+    voyage_models = []
+    for model_name, default in (
+        ("VOYAGE_EMBED_MODEL", "voyage-3.5"),
+        ("VOYAGE_RERANK_MODEL", "rerank-2.5"),
+    ):
+        model = get(model_name) or default
+        if not (
+            model.isascii() and model.replace("-", "").replace(".", "").replace("_", "").isalnum()
+        ):
+            raise ConfigError(f"{model_name} must be a model name such as {default}.")
+        voyage_models.append(model)
     support_team_email = get("SUPPORT_TEAM_EMAIL")
     if support_team_email and not one_address(support_team_email):
         raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
@@ -343,6 +368,10 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         ai_key=get("ANTHROPIC_API_KEY"),
         support_ai_model=support_ai_model,
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
+        meaning_search=meaning_raw in ("1", "true", "on"),
+        voyage_key=get("VOYAGE_API_KEY"),
+        voyage_embed_model=voyage_models[0],
+        voyage_rerank_model=voyage_models[1],
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         outside_engine=get("TRANSCRIBER").lower()
