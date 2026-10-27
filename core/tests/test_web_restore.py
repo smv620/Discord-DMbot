@@ -353,6 +353,27 @@ class Staging(Base):
         await self.db_sql("UPDATE web_restores SET state = 'working'")
         self.assertEqual(
             await self.refused(restores.cancel(self.web, self.session, THURSDAY.id, again["id"])),
+            "working",
+        )
+
+    async def test_the_bytes_go_the_moment_a_restore_ends(self) -> None:
+        made = await self.stage(a_copy(parts=1))
+        await restores.add_part(self.web, self.session, THURSDAY.id, made["id"], 1, A_PART)
+        await self.db_sql("UPDATE web_restores SET state = 'failed', stage = 'failed'")
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT (SELECT count(*) FROM web_restores WHERE main IS NOT NULL) AS m,"
+                " (SELECT count(*) FROM web_restore_parts) AS p"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["m"], row["p"]), (0, 0))
+
+    async def test_a_restore_older_than_a_day_is_no_longer_read(self) -> None:
+        made = await self.stage(a_copy())
+        await self.db_sql("UPDATE web_restores SET created_at = created_at - 90000")
+        self.assertEqual(
+            await self.refused(restores.status(self.web, self.session, THURSDAY.id, made["id"])),
             "not_found",
         )
 
@@ -402,6 +423,20 @@ class TheRoute(Staging):
         self.assertEqual(sent.status_code, 202)
         again = await self.client.post(url, json={}, headers=HEADERS)
         self.assertEqual(again.status_code, 409)  # not receiving any more
+
+    async def test_a_server_the_session_does_not_have_is_refused_before_the_body_is_read(
+        self,
+    ) -> None:
+        refused = await self.client.post(
+            f"/me/restores/{OTHER_SERVER}", content=a_copy(), headers=HEADERS
+        )
+        self.assertEqual((refused.status_code, refused.json()["error"]), (404, "not_found"))
+
+    async def test_cancelling_one_the_bot_has_says_working(self) -> None:
+        made = await self.client.post(self.base, content=a_copy(), headers=HEADERS)
+        await self.db_sql("UPDATE web_restores SET state = 'working', stage = 'restore_reading'")
+        gone = await self.client.delete(f"{self.base}/{made.json()['id']}", headers=HEADERS)
+        self.assertEqual((gone.status_code, gone.json()["error"]), (409, "working"))
 
     async def test_a_post_without_the_site_header_is_refused(self) -> None:
         refused = await self.client.post(self.base, content=a_copy())

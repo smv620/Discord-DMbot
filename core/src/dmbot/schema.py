@@ -13449,6 +13449,23 @@ WEB_RESTORES = (
     + _isolate("web_restores")
     + _isolate("web_restore_parts")
     + r"""
+    -- The bytes never outlive the end of a restore, whatever the bot does: the moment a row turns
+    -- done or failed, the copy is emptied and its transcripts files go (the 24-hour sweep catches
+    -- the rows that never ended).
+    CREATE FUNCTION web_restores_empty() RETURNS trigger
+    LANGUAGE plpgsql AS $fn$
+    BEGIN
+        IF NEW.state IN ('done', 'failed') THEN
+            NEW.main := NULL;
+            DELETE FROM web_restore_parts p
+                WHERE p.guild_id = NEW.guild_id AND p.restore_id = NEW.id;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER web_restores_empty BEFORE UPDATE ON web_restores
+        FOR EACH ROW EXECUTE FUNCTION web_restores_empty();
+
     -- Stage a restore: the copy itself, already checked by the API (a backup of this name, asking
     -- for this many transcripts files). `replace_` is a campaign of the caller's to swap for the
     -- copy, or NULL for a new campaign. The door checks what it can see: the caller is in the
@@ -13479,7 +13496,8 @@ WEB_RESTORES = (
                WHERE d.guild_id = g AND d.campaign_id = replace_ AND d.user_id = me) THEN
             RETURN jsonb_build_object('status', 'bad_target');
         END IF;
-        PERFORM pg_advisory_xact_lock(hashtextextended('web_restore:' || g::TEXT || me, 0));
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended('web_restore:' || g::TEXT || ':' || me::TEXT, 0));
         DELETE FROM web_restores r WHERE r.guild_id = g AND r.created_at < now_s - 86400;
         SELECT r.id INTO have FROM web_restores r
             WHERE r.guild_id = g AND r.user_id = me
@@ -13590,7 +13608,8 @@ WEB_RESTORES = (
         SELECT x.state, x.stage, x.error, x.name, x.parts_wanted, x.done_parts, x.left_out,
                x.replace_id, x.result_id, x.without_parts, x.created_at, x.updated_at INTO r
             FROM web_restores x
-            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user();
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400;
         IF NOT FOUND THEN
             RETURN NULL;
         END IF;
@@ -13625,20 +13644,27 @@ WEB_RESTORES = (
 
     -- Take it back: the person's own restore, while the bot has not started it. The bytes go with
     -- the row. True when something was removed.
-    CREATE FUNCTION dmbot_web_restore_cancel(g BIGINT, rid TEXT) RETURNS BOOLEAN
+    CREATE FUNCTION dmbot_web_restore_cancel(g BIGINT, rid TEXT) RETURNS TEXT
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
-        gone INT;
+        st TEXT;
     BEGIN
         IF dmbot_current_user() IS NULL
            OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
             RETURN NULL;
         END IF;
-        DELETE FROM web_restores x
+        SELECT x.state INTO st FROM web_restores x
             WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
-              AND x.state IN ('receiving', 'waiting', 'done', 'failed');
-        GET DIAGNOSTICS gone = ROW_COUNT;
-        RETURN gone > 0;
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'gone';
+        END IF;
+        -- The bot has it: it cannot be taken back, and the page must go on showing it.
+        IF st = 'working' THEN
+            RETURN 'working';
+        END IF;
+        DELETE FROM web_restores x WHERE x.guild_id = g AND x.id = rid;
+        RETURN 'ok';
     END
     $fn$;
     DO $do$

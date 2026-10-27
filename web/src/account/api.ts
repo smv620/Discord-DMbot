@@ -1629,6 +1629,7 @@ export type ApiErrorKind =
   | "bad-part" // a transcripts file that is not one of the copy's (#2745)
   | "files-missing" // transcripts files are still to come (#2745)
   | "not-receiving" // the copy has already gone to DMbot (#2745)
+  | "restore-working" // DMbot has started the restore, so it can't be taken back (#2745)
   | "server"; // anything else
 
 /** A backup loaded from the website (#2745; core web/restores.py). The shared progress shape, plus what the page
@@ -1639,6 +1640,8 @@ export interface RestoreStatus extends JobProgress {
   name: string;
   /** The restore swaps one of the person's own campaigns for the copy. */
   replacing: boolean;
+  /** The campaign it replaces (its address), so the page can name it after a reload. */
+  replaceRef: string | null;
   partsWanted: number;
   partsReceived: number;
   /** The person chose to restore without the transcripts files. */
@@ -2058,6 +2061,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_part: "bad-part",
   missing: "files-missing",
   not_receiving: "not-receiving",
+  working: "restore-working",
   shares_rules: "shares-rules",
   not_the_owner: "not-allowed",
   session_running: "session-running",

@@ -2444,6 +2444,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         id: found.id,
         name: found.name,
         replacing: found.replacing,
+        replaceRef: found.replacing ? found.campaign : null,
         partsWanted: found.wanted,
         partsReceived: found.got.size,
         withoutParts: found.without,

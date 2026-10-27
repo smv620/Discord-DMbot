@@ -79,7 +79,7 @@ describe("a copy with no transcripts files", () => {
     pick(FILE, gz("Lost World.dmbot.json.gz"));
     press(w.checkFile);
     expect(await screen.findByRole("heading", { name: w.confirmHeading })).toBeTruthy();
-    expect(screen.getByText(w.confirmNew("Lost World"))).toBeTruthy();
+    expect(screen.getByText(w.confirmNew("Lost World", "Thursday Table"))).toBeTruthy();
     expect(calls(api, "restoreGo")).toHaveLength(0); // nothing has gone to DMbot yet
     press(w.yes);
     await waitFor(() => expect(calls(api, "restoreGo")).toEqual([`restoreGo:${SERVER}:rs1:with`]));
@@ -95,6 +95,7 @@ describe("a copy with no transcripts files", () => {
     await screen.findByLabelText(FILE);
     expect(calls(api, "restoreCancel")).toHaveLength(1);
     expect(calls(api, "restoreGo")).toHaveLength(0);
+    expect(screen.getByText(w.cancelled)).toBeTruthy(); // the person is told nothing was changed
   });
 
   it("asks for the file first", async () => {
@@ -161,6 +162,16 @@ describe("replacing a campaign", () => {
     expect(screen.getByRole("link", { name: w.downloadFirst }).getAttribute("href")).toContain(`${SERVER}.own`);
     expect(calls(api, "restoreStage")).toEqual([`restoreStage:${SERVER}:${SERVER}.own`]);
     expect(screen.getByRole("button", { name: w.yesReplace })).toBeTruthy();
+  });
+
+  it("never offers Replace when the campaign can't be named, even after a reload", async () => {
+    const api = withOwnCampaign();
+    await api.restoreStage?.(SERVER, gz("Lost World.dmbot.json.gz"), `${SERVER}.gone`); // not among the person's campaigns
+    live.on = true;
+    render(<Restore api={api} />);
+    expect(await screen.findByText(w.lostTrack)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.yesReplace })).toBeNull();
+    expect(screen.getByRole("button", { name: w.cancel })).toBeTruthy();
   });
 
   it("offers no replacing when the person runs nothing in that server", async () => {
@@ -244,7 +255,7 @@ describe("finding its way back", () => {
     pick(FILE, gz("Other.dmbot.json.gz"));
     press(w.checkFile);
     expect(await screen.findByRole("heading", { name: w.confirmHeading })).toBeTruthy();
-    expect(screen.getByText(w.confirmNew("Lost World"))).toBeTruthy();
+    expect(screen.getByText(w.confirmNew("Lost World", "Thursday Table"))).toBeTruthy();
   });
 });
 
@@ -292,5 +303,48 @@ describe("the page itself", () => {
     await screen.findByRole("heading", { name: w.confirmHeading });
     await check();
     expect(within(document.body).getByRole("button", { name: w.cancel })).toBeTruthy();
+  });
+});
+
+describe("the watching and the cancelling", () => {
+  it("stops asking after the watch limit and starts again on Check again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const api = mockApi("table");
+      const real = api.restoreStatus!.bind(api);
+      // The pretend DMbot never moves, so the restore stays running.
+      api.restoreStatus = async (server, id) => {
+        const found = await real(server, id);
+        return found && found.stage !== "restore_receiving" ? { ...found, stage: "restore_reading", state: "running", updatedAt: 5 } : found;
+      };
+      await page(api);
+      pick(FILE, gz("Lost World.dmbot.json.gz"));
+      press(w.checkFile);
+      await screen.findByRole("heading", { name: w.confirmHeading });
+      press(w.yes);
+      await vi.advanceTimersByTimeAsync(46 * 60_000);
+      const asked = calls(api, "restoreStatus").length;
+      await screen.findByText(w.stopped);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(calls(api, "restoreStatus")).toHaveLength(asked); // it has really stopped
+      press(w.checkAgain);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(calls(api, "restoreStatus").length).toBeGreaterThan(asked);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes on showing a restore that DMbot started while another tab was cancelling it", async () => {
+    const api = await page();
+    pick(FILE, gz("Lost World.dmbot.json.gz"));
+    press(w.checkFile);
+    await screen.findByRole("heading", { name: w.confirmHeading });
+    api.restoreCancel = async () => {
+      throw new ApiError("restore-working");
+    };
+    press(w.cancel);
+    expect((await screen.findByRole("alert")).textContent).toBe(w.problems["restore-working"]);
+    expect(screen.queryByLabelText(FILE)).toBeNull(); // still the restore, not the empty form
   });
 });

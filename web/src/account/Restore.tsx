@@ -41,8 +41,7 @@ export default function Restore({ api }: { api: AccountApi }) {
   const [frozen, setFrozen] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const live = useRef(true);
-  // What the person chose for this page's own restore; a reload forgets it (the status does not carry it).
-  const chosen = useRef<{ target: Campaign | null }>({ target: null });
+  const [done, setDone] = useState<string | null>(null); // a note that stays after the form comes back
 
   useEffect(
     () => () => {
@@ -91,7 +90,7 @@ export default function Restore({ api }: { api: AccountApi }) {
   const watching = status !== null && !ended(status) && status.stage !== "restore_receiving";
   const stamp = status?.updatedAt ?? 0;
   useEffect(() => {
-    if (!watching || !status || !api.restoreStatus) return;
+    if (!watching || !status || !api.restoreStatus || frozen) return;
     let current = true;
     let delay = POLL_MS;
     let last = stamp;
@@ -132,6 +131,12 @@ export default function Restore({ api }: { api: AccountApi }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, serverId, watching, status?.id, frozen]);
 
+  // Each screen starts at its heading, so a keyboard or screen-reader user is not left on a button that went.
+  const screen = status === null ? "form" : status.stage === "restore_receiving" ? `receiving:${without}:${status.partsReceived}` : status.state;
+  useEffect(() => {
+    heading.current?.focus();
+  }, [screen]);
+
   const fail = (error: unknown) => {
     setProblem(restoreProblem(error instanceof ApiError ? error.kind : "server"));
   };
@@ -156,10 +161,10 @@ export default function Restore({ api }: { api: AccountApi }) {
       return;
     }
     setProblem(null);
+    setDone(null);
     setBusy(w.checking);
     try {
       const picked = where === "replace" ? mine.find((c) => c.ref === target) : undefined;
-      chosen.current = { target: picked ?? null };
       const staged = await api.restoreStage(serverId, file, picked?.ref);
       setWithout(false);
       setParts([]);
@@ -213,21 +218,29 @@ export default function Restore({ api }: { api: AccountApi }) {
     if (!status) return;
     setProblem(null);
     setBusy(w.working);
+    let kept = false; // DMbot has it: the page goes on showing it
     try {
       await api.restoreCancel?.(serverId, status.id);
     } catch (error) {
-      // Gone already is what was wanted.
-      if (!(error instanceof ApiError && error.kind === "not-found")) fail(error);
-    } finally {
-      if (live.current) {
-        setStatus(null);
-        setFile(null);
-        setParts([]);
-        setWithout(false);
-        setBusy(null);
-        keepFocus(() => heading.current);
+      // Gone already is what was wanted. But DMbot may have started it meanwhile (another tab pressed Load
+      // it): that can't be taken back, so say so and go on showing it.
+      if (error instanceof ApiError && error.kind === "restore-working") {
+        kept = true;
+        fail(error);
+        await read(status.id).catch(() => null);
+      } else if (!(error instanceof ApiError && error.kind === "not-found")) {
+        fail(error);
       }
     }
+    if (!live.current) return;
+    setBusy(null);
+    if (kept) return;
+    setDone(status.state === "running" ? w.cancelled : null);
+    setStatus(null);
+    setFile(null);
+    setParts([]);
+    setWithout(false);
+    keepFocus(() => heading.current);
   };
 
   const picker = (
@@ -253,7 +266,7 @@ export default function Restore({ api }: { api: AccountApi }) {
   );
 
   const note = problem && (
-    <p class="warn" role="alert">
+    <p class="warn" role="alert" ref={(el) => el?.scrollIntoView?.({ block: "nearest" })}>
       {problem}
     </p>
   );
@@ -266,6 +279,11 @@ export default function Restore({ api }: { api: AccountApi }) {
           {w.heading}
         </h2>
         <p>{w.intro}</p>
+        {done && (
+          <p class="ok" role="status">
+            {done}
+          </p>
+        )}
         {picker}
         {!looked ? (
           <p class="muted" role="status">
@@ -363,7 +381,7 @@ export default function Restore({ api }: { api: AccountApi }) {
               {busy}
             </p>
           )}
-          <div class="row">
+          <div class="stack">
             <button type="button" class="button" aria-disabled={busy !== null || parts.length === 0} onClick={() => busy === null && parts.length > 0 && void sendParts()}>
               {w.sendParts}
             </button>
@@ -377,30 +395,38 @@ export default function Restore({ api }: { api: AccountApi }) {
         </div>
       );
     }
-    const target = chosen.current.target;
+    const target = status.replaceRef ? (me.campaigns.find((c) => c.ref === status.replaceRef) ?? null) : null;
+    const serverName = servers.find((x) => x.id === serverId)?.name ?? "";
+    // A replace whose campaign can't be named is never offered: the button would destroy something unnamed.
+    const lost = status.replacing && target === null;
     return (
       <div class="stack restore">
         <h2 ref={heading} tabIndex={-1}>
           {w.confirmHeading}
         </h2>
-        <p>{status.replacing ? w.confirmReplace(status.name, target?.name ?? w.theCampaign) : w.confirmNew(status.name)}</p>
+        <p>{lost ? w.lostTrack : status.replacing ? w.confirmReplace(status.name, target?.name ?? "") : w.confirmNew(status.name, serverName)}</p>
         {without && status.partsWanted > 0 && <p class="note">{w.noTranscriptsNote}</p>}
         <p class="small muted">{w.expires}</p>
         {status.replacing && target?.ref && (
           <p>
-            <a href={campaignHref(target.ref)}>{w.downloadFirst}</a>
+            <a class="button secondary" href={campaignHref(target.ref)} target="_blank" rel="noopener">
+              {w.downloadFirst}
+            </a>{" "}
+            <span class="small muted">{w.downloadNote}</span>
           </p>
         )}
         {note}
         {busy !== null && (
           <p role="status" class="muted">
-            {busy}
+            {busy} {w.keepOpen}
           </p>
         )}
-        <div class="row">
-          <button type="button" class={status.replacing ? "button danger" : "button"} aria-disabled={busy !== null} onClick={() => busy === null && void load()}>
-            {status.replacing ? w.yesReplace : w.yes}
-          </button>
+        <div class="stack">
+          {!lost && (
+            <button type="button" class={status.replacing ? "button danger" : "button"} aria-disabled={busy !== null} onClick={() => busy === null && void load()}>
+              {status.replacing ? w.yesReplace : w.yes}
+            </button>
+          )}
           <button type="button" class="button secondary" aria-disabled={busy !== null} onClick={() => busy === null && void clear()}>
             {w.cancel}
           </button>
@@ -414,7 +440,7 @@ export default function Restore({ api }: { api: AccountApi }) {
   return (
     <div class="stack restore">
       <h2 ref={heading} tabIndex={-1}>
-        {status.state === "done" ? w.doneTitle(status.name) : w.partsHeading(status.name)}
+        {status.state === "done" ? w.doneTitle(status.name) : w.loadingHeading(status.name)}
       </h2>
       <WorkProgress
         stage={stageWords(w.stage, status.stage)}
@@ -440,6 +466,7 @@ export default function Restore({ api }: { api: AccountApi }) {
         </>
       )}
       {note}
+      {frozen && <p class="small muted">{w.stopped}</p>}
       {frozen && (
         <button
           type="button"
@@ -450,6 +477,11 @@ export default function Restore({ api }: { api: AccountApi }) {
           }}
         >
           {w.checkAgain}
+        </button>
+      )}
+      {!ended(status) && status.stage === "restore_waiting" && (
+        <button type="button" class="button secondary" aria-disabled={busy !== null} onClick={() => busy === null && void clear()}>
+          {w.cancel}
         </button>
       )}
       {ended(status) && (

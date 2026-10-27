@@ -195,6 +195,8 @@ async def status(
         "id": restore_id,
         "name": got["name"],
         "replacing": got["replaceId"] is not None,
+        # The campaign being replaced, so the page can name it after a reload (it finds it in /me).
+        "replaceRef": (f"{server_id}.{got['replaceId']}" if got["replaceId"] else None),
         "partsWanted": int(got["partsWanted"]),
         "partsReceived": int(got["partsReceived"]),
         "withoutParts": bool(got["withoutParts"]),
@@ -217,5 +219,8 @@ async def cancel(db: Database, session: Session, server_id: int, restore_id: str
             "SELECT dmbot_web_restore_cancel(%s, %s) AS r", (server_id, restore_id)
         )
         found = await cur.fetchone()
-    if not (found and found["r"]):
+    got = found["r"] if found else None
+    if got == "working":
+        raise RecapError("working")
+    if got != "ok":
         raise RecapError("not_found")

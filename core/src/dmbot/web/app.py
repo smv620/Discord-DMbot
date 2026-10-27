@@ -952,6 +952,8 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    restore_reading = asyncio.Semaphore(2)  # files being read and checked at once (#2745)
+    restore_part_limit = RateLimit(3600, count=120)  # up to 24 files a copy, a few copies an hour
     restore_limit = RateLimit(3600, count=10)  # copies loaded on the page: big, so few (#2745)
     upload_limit = RateLimit(60, count=6)  # recaps written by the table, added on the page (#2609)
     name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
@@ -1764,6 +1766,7 @@ def create_app(
         "busy": (409, "busy"),
         "missing": (409, "missing"),
         "not_receiving": (409, "not_receiving"),
+        "working": (409, "working"),
     }
 
     def restore_refusal(err: RecapError) -> HTTPException:
@@ -1795,16 +1798,21 @@ def create_app(
         session, _token = signed
         if restore_limit.take(f"restore:{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
-        raw = await bounded_bytes(request, restores.MAX_BODY_BYTES)
-        try:
-            return await restores.stage(db, session, server_id, replace, raw)
-        except RecapError as err:
-            if err.code == "busy" and err.problems:
-                # Says which one is pending, so the page can show that one instead.
-                return JSONResponse(
-                    {"error": "busy", "id": err.problems[0].get("id")}, status_code=409
-                )
-            raise restore_refusal(err) from None
+        # A server the session does not have gets nothing read: the body can be 25 MB (the door
+        # checks again). At most two files are read and decoded at once, so memory stays bounded.
+        if not any(g.id == server_id for g in session.guilds):
+            raise HTTPException(status_code=404, detail="not_found")
+        async with restore_reading:
+            raw = await bounded_bytes(request, restores.MAX_BODY_BYTES)
+            try:
+                return await restores.stage(db, session, server_id, replace, raw)
+            except RecapError as err:
+                if err.code == "busy" and err.problems:
+                    # Says which one is pending, so the page can show that one instead.
+                    return JSONResponse(
+                        {"error": "busy", "id": err.problems[0].get("id")}, status_code=409
+                    )
+                raise restore_refusal(err) from None
 
     @app.put("/me/restores/{server_id}/{restore_id}/parts/{number}")
     async def me_restore_part(
@@ -1813,11 +1821,16 @@ def create_app(
         """One transcripts file of a staged copy (numbers 1 to the count it asked for; sending
         a number again replaces it). Answers `{received}`."""
         session, _token = signed
-        raw = await bounded_bytes(request, restores.MAX_BODY_BYTES)
-        try:
-            return await restores.add_part(db, session, server_id, restore_id, number, raw)
-        except RecapError as err:
-            raise restore_refusal(err) from None
+        if restore_part_limit.take(f"restore-part:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        if not any(g.id == server_id for g in session.guilds):
+            raise HTTPException(status_code=404, detail="not_found")
+        async with restore_reading:
+            raw = await bounded_bytes(request, restores.MAX_BODY_BYTES)
+            try:
+                return await restores.add_part(db, session, server_id, restore_id, number, raw)
+            except RecapError as err:
+                raise restore_refusal(err) from None
 
     @app.post("/me/restores/{server_id}/{restore_id}/go", status_code=202)
     async def me_restore_go(
