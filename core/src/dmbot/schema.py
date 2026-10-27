@@ -14241,13 +14241,20 @@ def _plot_chat_followups() -> str:
     made them so nothing else about them can drift: the campaign's hourly cap answers its own
     code (`hour_full`, so the page can say it is the hour and not the issue that is full); a Save
     is stamped with its time (`saving_at`); and a proposal still `saving` thirty minutes after
-    that (or after its message, for one saved before this) is shown as failed (`timed_out`) when
-    the DM next looks, so a Save made while PlotBot is off does not wait forever."""
+    that (or after its message, for one saved before this) is shown as failed when the DM next
+    looks, so a Save made while PlotBot is off does not wait forever. The two give-ups (a message
+    never answered, a Save never made) write a plain sentence as their error, not a code: the
+    page prints errors word for word."""
     start = PLOT_CHAT.index("    CREATE FUNCTION dmbot_plot_chat_send")
     end = PLOT_CHAT.index("    DO $do$")
     doors = PLOT_CHAT[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
     now = "floor(extract(epoch FROM clock_timestamp()))::BIGINT"
     edits = (
+        (
+            "        UPDATE plot_chat SET state = 'failed', error = 'timed_out'\n",
+            "        UPDATE plot_chat SET state = 'failed',\n"
+            "                             error = 'PlotBot didn''t answer. Ask it again.'\n",
+        ),
         (
             "              AND m.created_at > now_s - 3600) >= 30 THEN\n"
             "            RETURN jsonb_build_object('status', 'too_many');",
@@ -14267,8 +14274,8 @@ def _plot_chat_followups() -> str:
             "            SELECT jsonb_agg(CASE WHEN e->>'state' = 'saving'\n"
             "                    AND COALESCE((e->>'saving_at')::BIGINT, created_at)\n"
             f"                        < {now} - 1800\n"
-            "                THEN e || jsonb_build_object('state', 'failed',\n"
-            "                                             'error', 'timed_out')\n"
+            "                THEN e || jsonb_build_object('state', 'failed', 'error',\n"
+            "                    'PlotBot didn''t save this in time. Ask it again.')\n"
             "                ELSE e END ORDER BY ord)\n"
             "            FROM jsonb_array_elements(proposals) WITH ORDINALITY AS t(e, ord))\n"
             "            WHERE guild_id = g AND campaign_id = c AND issue_id = p_issue\n"

@@ -316,7 +316,10 @@ class Saving(TalkBase):
         self.assertEqual((await self.messages())[-1]["proposals"][0]["state"], "saving")
         await self.move_saving_back(31 * 60)
         [late] = (await self.messages())[-1]["proposals"]
-        self.assertEqual((late["state"], late["error"]), ("failed", "timed_out"))
+        self.assertEqual(
+            (late["state"], late["error"]),
+            ("failed", "PlotBot didn't save this in time. Ask it again."),
+        )
         # and the bot, back at last, has nothing to make for it
         self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
         self.assertEqual(await self.condition(), "dead")
@@ -328,7 +331,7 @@ class Saving(TalkBase):
         async with self.db.guild(THURSDAY.id) as conn:  # the message itself is an hour old
             await conn.execute("UPDATE plot_chat SET created_at = created_at - 3600")
         [late] = (await self.messages())[-1]["proposals"]
-        self.assertEqual((late["state"], late["error"]), ("failed", "timed_out"))
+        self.assertEqual((late["state"], late["error"][:8]), ("failed", "PlotBot "))
 
     async def test_a_repeat_changes_nothing_more(self) -> None:
         p = await self.reply_with_proposal()

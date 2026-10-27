@@ -179,6 +179,31 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         bot.recaps.decide.assert_not_awaited()
         bot.post_recaps.assert_not_awaited()
 
+    async def test_yes_on_an_unapproved_draft_stops_when_a_player_is_no_longer_recorded(
+        self,
+    ) -> None:
+        """The real check (`recap_approval_problems`) behind the Yes: a speaker who is not in the
+        agreed list stops the post, with the plain words, and nothing is approved or posted."""
+        from dmbot.recaps.discord import RecapFeatures
+
+        button, bot, interaction = press("yes", found=job(approved=False, speakers=(7, 8)))
+        me: Any = SimpleNamespace(
+            recap_secret_names=AsyncMock(return_value=set()),
+            recap_allowed_names=AsyncMock(return_value=set()),
+            consent=SimpleNamespace(agreed=AsyncMock(return_value={7})),  # 8 stopped
+        )
+
+        async def problems(campaign: Any, found: Any) -> list[str]:
+            return await RecapFeatures.recap_approval_problems(me, campaign, found)
+
+        bot.recap_approval_problems = problems
+        bot.recaps.approve = AsyncMock()
+        await button.callback(interaction)
+        self.assertIn("stopped being recorded", told(interaction))
+        bot.recaps.approve.assert_not_awaited()
+        bot.recaps.decide.assert_not_awaited()
+        bot.post_recaps.assert_not_awaited()
+
     async def test_yes_on_an_already_approved_draft_posts_it_as_before(self) -> None:
         button, bot, interaction = press("yes", found=job(approved=True))
         bot.recaps.approve = AsyncMock()

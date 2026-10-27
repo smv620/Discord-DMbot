@@ -100,8 +100,9 @@ class TalkStore:
         now = int(self._now() * 1000)  # milliseconds: the claim is the token that lets one write
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE plot_chat SET state = 'working', claimed_at = %s WHERE (guild_id, id) ="
-                " (SELECT guild_id, id FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
+                "UPDATE plot_chat SET state = 'working', claimed_at = %s"
+                " WHERE (guild_id, campaign_id, id) = (SELECT guild_id, campaign_id, id"
+                " FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s"
                 " AND created_at > %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
