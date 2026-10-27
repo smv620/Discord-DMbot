@@ -15,6 +15,7 @@ from unittest.mock import patch
 from dmbot.ai import AIError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.devtools.recap_run import __main__ as run
+from dmbot.devtools.recap_run import review as rv
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore, blank
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.eleven import ElevenLabs
@@ -60,6 +61,22 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("below the bar: nothing", text)
         self.assertIn("Calls: 5", text)  # beats, prose, fact check, grader, finish
         self.assertIn("spend $", text)
+
+    async def test_structured_asks_both_steps_the_two_pass_way_and_reports_counts_only(
+        self,
+    ) -> None:
+        draft = "event | lines 1 | who | where | The party reached the keep at dusk"
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        careful = fx.Canned(draft)
+        out = await run.run_text(inputs(), fast, careful, structured=True)
+        self.assertEqual(out.job.state, "ready")
+        self.assertEqual(out.structured and out.structured["runs"], 1)
+        text = "\n".join(run.report(out, {}))
+        self.assertIn("Structured: runs 1, passes 2", text)
+        self.assertNotIn(draft, text)
+        plain = await run.run_text(inputs(), happy(), fx.Canned())
+        self.assertIsNone(plain.structured)
+        self.assertNotIn("Structured:", "\n".join(run.report(plain, {})))
 
     async def test_the_report_shows_how_the_opening_was_split_by_count_never_by_word(self) -> None:
         from tests import test_recap_split as st
@@ -249,6 +266,33 @@ class TheFlags(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 run.parse_args(bad)
         self.assertTrue(run.parse_args(["--golden"]).golden)
+
+    def test_structured_goes_with_a_session_or_a_transcript_only(self) -> None:
+        self.assertTrue(
+            run.parse_args(["--session", "1", "c" * 32, "100", "--structured"]).structured
+        )
+        self.assertTrue(
+            run.parse_args(["--transcript", "t.txt", "--dm", "Quill", "--structured"]).structured
+        )
+        for bad in (
+            ["--golden", "--structured"],
+            ["--transcript", "t.txt", "--dm", "Quill", "--compare", "--structured"],
+            ["--review", "somewhere", "--structured"],
+        ):
+            with self.assertRaises(SystemExit, msg=bad):
+                run.parse_args(bad)
+
+    async def test_structured_with_out_writes_the_counts_line_into_the_report_file(self) -> None:
+        draft = "event | lines 1 | who | where | The party reached the keep at dusk"
+        fast = fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER)
+        out = await run.run_text(inputs(), fast, fx.Canned(draft), structured=True)
+        lines = run.report(out, {})
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "run"
+            run.save_text(folder, out, lines, names_given=False)
+            report = (folder / rv.REPORT_FILE).read_text()
+        self.assertIn("Structured: runs 1, passes 2", report)
+        self.assertNotIn(draft, report)  # counts only
 
     def test_prices_are_given_or_on_file_and_never_guessed(self) -> None:
         got = run.prices_of(["m=3,15"], ["m", "claude-haiku-4-5-20251001", "unknown-model"])
