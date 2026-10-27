@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from dmbot.db import Database
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.contradictions import Candidate
+from dmbot.memory.store import MemoryStore
 
 MAJOR, MINOR, NOT_GRADED = "major", "minor", "not_graded"
 GRADES = (MAJOR, MINOR, NOT_GRADED)
@@ -67,6 +68,11 @@ class GradeStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    @classmethod
+    def of(cls, memory: MemoryStore) -> GradeStore:
+        """On the memory store's own database (the bot has the one store)."""
+        return cls(memory._db)
 
     async def save(self, guild_id: int, campaign_id: str, graded: Sequence[Graded]) -> int:
         """Keep these grades (a candidate seen again takes the new grade and reason, and keeps

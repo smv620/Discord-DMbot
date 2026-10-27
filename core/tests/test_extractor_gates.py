@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 from dmbot.ai import AIError
 from dmbot.bot import DMBot
 from dmbot.campaigns.store import CampaignStore
-from dmbot.memory import extractor
+from dmbot.memory import contradiction_run, extractor
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.models import Line
@@ -243,6 +243,80 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         with patch.object(extractor, "run", AsyncMock()) as run:
             await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
+
+
+class Contradictions(unittest.IsolatedAsyncioTestCase):
+    """`DMBot.grade_contradictions`, with the parts it asks canned (#2660)."""
+
+    def fake(self, *, on: bool = True, allowed: bool = True, used: int = 0, day: int = 0) -> Any:
+        transcripts = SimpleNamespace(
+            session=AsyncMock(return_value=SimpleNamespace(lines=3, started_at=9)),
+            extraction=AsyncMock(return_value=(0, used)),
+            extractor_calls_since=AsyncMock(return_value=day),
+            record_extraction=AsyncMock(),
+        )
+        return SimpleNamespace(
+            settings=SimpleNamespace(
+                story_extractor_on=True, story_contradictions_on=on,
+                story_extractor_max_calls=480, story_extractor_max_calls_day=960,
+            ),
+            extractor_ai=object(),
+            memory=SimpleNamespace(_db=object()),
+            transcripts=transcripts,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
+            plan_allows=AsyncMock(return_value=allowed),
+        )  # fmt: skip
+
+    def table(self) -> Any:
+        return SimpleNamespace(campaign_id="c", transcript_session_id="s", guild_id=1)
+
+    async def test_off_by_default_runs_nothing_and_reads_nothing(self) -> None:
+        me = self.fake(on=False)
+        with patch.object(contradiction_run, "run", AsyncMock()) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        run.assert_not_called()
+        me.plan_allows.assert_not_called()
+
+    async def test_without_the_extractor_it_runs_nothing(self) -> None:
+        me = self.fake()
+        me.settings.story_extractor_on = False
+        with patch.object(contradiction_run, "run", AsyncMock()) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        run.assert_not_called()
+
+    async def test_a_plan_without_story_memory_runs_nothing(self) -> None:
+        me = self.fake(allowed=False)
+        with patch.object(contradiction_run, "run", AsyncMock()) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        run.assert_not_called()
+        self.assertEqual(me.plan_allows.await_args.args[0], "story")
+
+    async def test_it_runs_with_at_most_three_calls_and_counts_each(self) -> None:
+        me = self.fake(used=10, day=100)
+        done = contradiction_run.Report(found=2, calls=1)
+        with patch.object(contradiction_run, "run", AsyncMock(return_value=done)) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        assert run.await_args is not None
+        kw = run.await_args.kwargs
+        self.assertEqual((kw["max_calls"], kw["session_started_at"]), (3, 9))
+        await kw["count_call"]()
+        me.transcripts.record_extraction.assert_awaited_once()
+        self.assertEqual(me.transcripts.record_extraction.await_args.kwargs["calls"], 1)
+
+    async def test_it_makes_only_the_calls_the_extractors_limits_have_left(self) -> None:
+        me = self.fake(used=479, day=500)
+        with patch.object(
+            contradiction_run, "run", AsyncMock(return_value=contradiction_run.Report())
+        ) as run:
+            await DMBot.grade_contradictions(me, self.table())
+        assert run.await_args is not None
+        self.assertEqual(run.await_args.kwargs["max_calls"], 1)
+
+    async def test_the_limit_used_up_runs_nothing(self) -> None:
+        for me in (self.fake(used=480), self.fake(day=960)):
+            with patch.object(contradiction_run, "run", AsyncMock()) as run:
+                await DMBot.grade_contradictions(me, self.table())
+            run.assert_not_called()
 
 
 if __name__ == "__main__":
