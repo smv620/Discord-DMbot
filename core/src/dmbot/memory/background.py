@@ -296,8 +296,8 @@ def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
     names, so "both names are in the quoted words" stays true without trusting the AI's reading
     of a pronoun. (A trade-off: a window with both names does not prove which one the pronoun
     means; the DM confirms every suggestion before it is kept.) None when the quote cannot be
-    found in one paragraph or the window still lacks a name. Cut to `QUOTE_WORDS` words at the front or the back, whichever keeps
-    both names."""
+    found in one paragraph or the window still lacks a name. Cut to `QUOTE_WORDS` words at the front or the back,
+    whichever keeps both names."""
     if not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
         return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
     pattern = r"\s+".join(re.escape(w) for w in words)
