@@ -28,11 +28,12 @@ describe("the tick boxes", () => {
   it("are for the campaign's DMs only", async () => {
     open(MANAGER);
     await ready();
-    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    // (the type filter's boxes are not these: they are in the Type group)
+    expect(document.querySelectorAll(".name-pick")).toHaveLength(0);
     cleanup();
     open();
     await ready();
-    expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(1);
+    expect(document.querySelectorAll(".name-pick").length).toBeGreaterThan(1);
   });
 
   it("show the bar only with two or more ticked, and Clear takes them back", async () => {

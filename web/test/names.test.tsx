@@ -24,6 +24,13 @@ function open(path = DM, api = mockApi("table")) {
 const rows = () => screen.getAllByRole("listitem").filter((li) => li.classList.contains("name-row"));
 const rowOf = (name: string) => rows().find((li) => li.textContent?.includes(name)) as HTMLElement;
 const ready = async () => screen.findByRole("list", { name: w.listLabel });
+// The page shows 50 names unless asked; most of these tests are about a page of 20, as before.
+const twenty = async () => {
+  fireEvent.change(screen.getByLabelText(w.perPageLabel), { target: { value: "20" } });
+  await waitFor(() => expect(rows()).toHaveLength(20));
+};
+const types = () => screen.getByRole("group", { name: w.kindLabel });
+const tick = (label: string) => fireEvent.click(within(types()).getByLabelText(label));
 const calls = (api: ReturnType<typeof mockApi>, prefix: string) => api.calls.filter((c) => c.startsWith(prefix));
 
 describe("the address", () => {
@@ -35,16 +42,27 @@ describe("the address", () => {
 });
 
 describe("finding names", () => {
-  it("lists the first twenty, with the count and a count for each kind", async () => {
-    open();
+  it("lists the first fifty, with the count and a tick box with a count for each type", async () => {
+    const api = open();
     await ready();
-    expect(rows()).toHaveLength(20);
-    expect(screen.getByText(/^\d+ names$/)).toBeTruthy();
-    const kind = screen.getByLabelText(w.kindLabel) as HTMLSelectElement;
-    const labels = [...kind.options].map((o) => o.textContent);
-    expect(labels[0]).toMatch(/^Everything \(\d+\)$/);
-    expect(labels).toContain("NPCs (16)");
-    expect(labels).toContain("Places (9)");
+    const total = Number(/^(\d+) names$/.exec(screen.getByText(/^\d+ names$/).textContent ?? "")?.[1]);
+    expect(rows()).toHaveLength(Math.min(50, total));
+    expect(calls(api, "allNames").shift()).toContain("size=50");
+    expect(within(types()).getByLabelText("NPCs (16)")).toBeTruthy();
+    expect(within(types()).getByLabelText("Places (9)")).toBeTruthy();
+    expect(within(types()).queryByRole("button", { name: /Show every type/ })).toBeNull(); // nothing ticked
+  });
+
+  it("offers 20, 50, 200 and 500 a page, 50 to begin with, and starts over at page 1", async () => {
+    const api = open();
+    await ready();
+    const select = screen.getByLabelText(w.perPageLabel) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(["20", "50", "200", "500"]);
+    expect(select.value).toBe("50");
+    await twenty();
+    expect(calls(api, "allNames").pop()).toContain("page=1:size=20");
+    fireEvent.change(select, { target: { value: "200" } });
+    await waitFor(() => expect(calls(api, "allNames").pop()).toContain("size=200"));
   });
 
   it("searches as you type, in names and in other names, and says when nothing matches", async () => {
@@ -61,10 +79,25 @@ describe("finding names", () => {
   it("filters by kind and starts over at page 1", async () => {
     const api = open();
     await ready();
-    fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "place" } });
+    tick("Places (9)");
     await waitFor(() => expect(rows()).toHaveLength(9));
     expect(calls(api, "allNames:100.cmp1:q=:kind=place").pop()).toContain("page=1");
     expect(rows().every((r) => /Places/.test(r.textContent ?? ""))).toBe(true);
+  });
+
+  it("takes several types at once, and one button shows every type again", async () => {
+    const api = open();
+    await ready();
+    tick("Places (9)");
+    await waitFor(() => expect(rows()).toHaveLength(9));
+    tick("NPCs (16)");
+    await waitFor(() => expect(rows()).toHaveLength(25));
+    expect(calls(api, "allNames").pop()).toContain("kind=place,npc");
+    tick("Places (9)"); // un-ticked again
+    await waitFor(() => expect(rows()).toHaveLength(16));
+    fireEvent.click(within(types()).getByRole("button", { name: /Show every type/ }));
+    await waitFor(() => expect(rows().length).toBeGreaterThan(25));
+    expect(calls(api, "allNames").pop()).toContain("kind=:");
   });
 
   it("sorts by name or newest first", async () => {
@@ -80,9 +113,10 @@ describe("finding names", () => {
   it("moves between pages with the page bar, which says which page each button goes to", async () => {
     const api = open();
     await ready();
+    await twenty();
     const bar = screen.getByRole("navigation", { name: w.pagesNav });
     fireEvent.click(within(bar).getByRole("button", { name: "Next, page 2" }));
-    await waitFor(() => expect(calls(api, "allNames").some((c) => c.endsWith("page=2"))).toBe(true));
+    await waitFor(() => expect(calls(api, "allNames").some((c) => c.includes("page=2"))).toBe(true));
     await waitFor(() => expect(rows().length).toBeLessThan(20));
     expect(within(bar).getByRole("button", { name: "Previous, page 1" })).toBeTruthy();
   });
@@ -90,6 +124,7 @@ describe("finding names", () => {
   it("goes back to the first page, and says so, when the page asked for is gone", async () => {
     const api = open();
     await ready();
+    await twenty();
     const real = api.allNames!.bind(api);
     let first = true;
     api.allNames = async (ref, q) => {
@@ -115,7 +150,7 @@ describe("finding names", () => {
     expect(link.getAttribute("href")).toBe("/account/npc/100.cmp1/n4");
     expect(screen.getAllByText(w.secretWords).length).toBeGreaterThan(0);
     // A place has no NPC page.
-    fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "place" } });
+    tick("Places (9)");
     await waitFor(() => expect(rows()).toHaveLength(9));
     expect(screen.queryByRole("link", { name: /NPC page/ })).toBeNull();
   });
@@ -128,9 +163,10 @@ describe("what a DM can do", () => {
     return within(row);
   };
 
-  it("says the changes can be undone in Discord, and shows a Change button on every row", async () => {
+  it("says the changes can be undone in Discord, and has a name to press on every row", async () => {
     open();
     await ready();
+    await twenty();
     expect(screen.getByText(w.undoNote)).toBeTruthy();
     expect(screen.queryByText(w.readOnly)).toBeNull();
     expect(screen.getAllByRole("button", { name: /^Change / })).toHaveLength(20);
@@ -344,7 +380,6 @@ describe("someone who can't change names", () => {
     expect(screen.queryByText(w.undoNote)).toBeNull();
     // The counts leave the secret names out too.
     const total = Number(/^(\d+) names$/.exec(screen.getByText(/^\d+ names$/).textContent ?? "")?.[1]);
-    fireEvent.change(screen.getByLabelText(w.kindLabel), { target: { value: "" } });
     expect(total).toBeLessThan(50);
   });
 
