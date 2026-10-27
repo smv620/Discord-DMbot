@@ -41,6 +41,7 @@ export default function NamesSmart({ api, campaignRef, onResults, showing, refre
   const [meaning, setMeaning] = useState("");
   const [run, setRun] = useState<{ since: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [capped, setCapped] = useState(false); // only the newest notes were searched (the API says so)
   const latest = useRef(0);
   const lastSearch = useRef("");
   const shownRef = useRef(false); // (a ref: an answer that arrives later must see it now, not as of its render)
@@ -69,6 +70,7 @@ export default function NamesSmart({ api, campaignRef, onResults, showing, refre
       const got = await api.smartNames(campaignRef, text);
       if (mine !== latest.current) return;
       shownRef.current = true;
+      setCapped(got.capped === true);
       onResults(got.names);
     } catch (error) {
       if (mine !== latest.current) return;
@@ -87,6 +89,7 @@ export default function NamesSmart({ api, campaignRef, onResults, showing, refre
     lastSearch.current = "";
     setRun(null);
     setProblem(null);
+    setCapped(false);
   }
 
   // The list's own controls were used: back to the list. (Not on the first render.)
@@ -111,7 +114,10 @@ export default function NamesSmart({ api, campaignRef, onResults, showing, refre
     const mine = latest.current;
     api.smartNames(campaignRef, lastSearch.current).then(
       (got) => {
-        if (mine === latest.current && shownRef.current) onResults(got.names);
+        if (mine === latest.current && shownRef.current) {
+          setCapped(got.capped === true);
+          onResults(got.names);
+        }
       },
       () => {
         // (the rows stay as they were; the next Search says what is wrong)
@@ -168,6 +174,7 @@ export default function NamesSmart({ api, campaignRef, onResults, showing, refre
         )}
       </div>
       {showing && <p class="small muted">{smartWords.showing}</p>}
+      {showing && capped && <p class="small muted">{smartWords.capped}</p>}
       {showing && (
         <p class="small" role="status" aria-live="polite">
           {count === 0 ? smartWords.none : smartWords.found(count)}
