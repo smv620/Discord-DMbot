@@ -222,4 +222,3 @@ class Places(WithChecks):
         got = await sessions.find(self.web, token, now=NOW)
         assert got is not None
         return got
-
