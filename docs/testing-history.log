@@ -2682,6 +2682,14 @@ Overall ...................................... PASS (Deepgram baseline: 33/33, 1
   DISCORD_CLEAR_GUILD_COMMANDS is empty in .env (the owner emptied it). The running process still holds the value it started with until the next restart; the next restart reads the empty value.
   Still to check by the owner: /dmbot shows each command once in that server, and in the owner's test server (1561035576076017774) and dnd_testing. Then the Stripe test 1 rerun.
 
+2026-10-19 00:0x UTC  dev1  DEPLOY 61757d7 (core, then web-api). The owner's OK by AskUserQuestion after core CI went green on 61757d7.
+  Contents: the recap test tool (#1972, #1980; recaps stay off); two empty-safe email settings for web-api (OWNER_ALERT_EMAIL, MAIL_ALERTS_REPLY_TO). No migrations (0130 is the newest, already live).
+  Head note: development moved to 2e1dbef3 (CI only: #1984, core tests in parts, a skip for commits that already passed; no runtime code) before the restart. The deploy was of 61757d7, the approved and green head; the checkout was set to 61757d7 for the build.
+  Backup: ~/db-backups/dmbot-before-61757d7e-*.sql (chmod 600). Images built from 61757d7.
+  Restart: core once (connected to Discord, 2 servers; ears connected; 0 errors), then web-api (healthy, /health 200 from inside its container; 0 errors).
+  Records: the owner confirmed /dmbot shows once in the original server (the cleanup worked). The owner removed the old .env backup.
+  Recap test: a private folder on the server for the owner's transcript (chmod 700); the owner runs the tool themselves because it asks a consent question on the terminal.
+
 2026-10-19 00:26 UTC  dev1  RECAP TEST 1 (recap_run --transcript, the owner's own file, --audio, recaps stay off). Result: NOT FINISHED, by design. The recap failed the grounding check (every detail must come from what was said), so nothing was written; the --out folder is empty.
   Scores and counts only: 652 lines, 5 speakers, 3 header lines skipped, 79 wrapped lines joined. Calls: 4 (3 fast, 1 careful); tokens in 21091, out 6810. Spend about $0.042 (the careful model has no price on file, so its share is not in the figure). Audio not made.
   Consent: the owner answered yes to the consent question for everyone in the file and to this test.
