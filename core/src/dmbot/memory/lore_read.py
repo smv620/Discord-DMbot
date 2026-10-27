@@ -392,9 +392,12 @@ async def read_list(
     if (
         not cut
         and len(text) >= SECOND_LOOK_MIN_CHARS
+        and stats.read_calls <= 1  # (a text that needed retries or continuations has spent enough)
         and time.monotonic() - started < PASS1_BUDGET_S
     ):
-        await _second_look(ai, text, own, gate, stats, found, tick)
+        await _second_look(
+            ai, text, own, gate, stats, found, tick, PASS1_BUDGET_S - (time.monotonic() - started)
+        )
     return found, cut
 
 
@@ -416,6 +419,7 @@ async def _second_look(
     stats: Stats,
     listed: PlainList,
     tick: Callable[[int], None] | None,
+    budget_s: float,
 ) -> None:
     """Pass 1 skips statements (#2757, as #2454 reads again what an answer cut off): the names it
     gave no relationship are asked about once more, in one more call over the same text. What
@@ -430,17 +434,18 @@ async def _second_look(
     if tick is not None:
         tick(stats.read_calls + 1)
     try:
-        reply = await _call(
-            gate,
-            ai,
-            second_look_instructions(own),
-            second_look_request(text, lonely[:SECOND_LOOK_NAMES]),
-            read_room(text, model),
-        )
+        async with asyncio.timeout(budget_s):  # the rest of pass 1's time, never more
+            reply = await _call(
+                gate,
+                ai,
+                second_look_instructions(own),
+                second_look_request(text, lonely[:SECOND_LOOK_NAMES]),
+                read_room(text, model),
+            )
     except AIOutOfFunds:
         raise
-    except AIError:
-        log.info("Lore read: the second look stopped by an AI error")
+    except (AIError, TimeoutError):
+        log.info("Lore read: the second look stopped (an AI error or out of time)")
         return
     stats.read_calls += 1
     if reply.cut:
@@ -451,6 +456,7 @@ async def _second_look(
     joined = dedupe([*listed.links, *more.links])
     stats.extra_links = len(joined) - len(listed.links)
     listed.links = joined
+    stats.links_listed = len(joined)  # the "found" count of the summary includes these lines
 
 
 async def _shape(

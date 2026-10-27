@@ -19,7 +19,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
@@ -74,15 +74,18 @@ CONNECTIONS = {
 LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
 LORE_WORDS = {
     "mentor": "mentors",
-    "apprentice": "is an apprentice of",
     "rival": "is a rival of",
     "founded": "founded",
-    "parent": "is a parent of",
-    "child": "is a child of",
     "leads": "leads",
     "worships": "worships",
 }
-ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS)  # what the AI may answer in `how`
+# Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
+# parent of b" (the role belongs to the first name, as `kin` reads it).
+LORE_KIN = ("parent", "child")
+# "a is an apprentice of b" is "b mentors a": kept that way round, so the two ways of saying it are
+# one fact and are never offered twice.
+LORE_REVERSED = {"apprentice": "mentor"}
+ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS, *LORE_KIN, *LORE_REVERSED)  # `how` answers
 MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
 # A stated relationship no fixed kind and no campaign term fits (#2454): kept on the catch-all
 # relationship, with the words the text used as its label ("pays", "sworn on the ashes of").
@@ -153,10 +156,14 @@ class Connection:
     b: str
     quote: str  # a line of the text that holds both names, as written
     secret: bool = False  # an end was found through a secret spelling: it is kept as secret only
-    words: str = ""  # the label of the catch-all (`how` is then FALLBACK_PREDICATE), else ""
-    # The spellings the TEXT used for an end the AI wrote another way (#2757), checked against the
-    # campaign's other names when the list is kept: a variant that is another name is no variant.
-    variants: tuple[str, ...] = ()
+    # The label of the catch-all (`how` is then FALLBACK_PREDICATE), or the family role of a
+    # `kin_of` ("parent"), else "".
+    words: str = ""
+    # The spellings the TEXT used for an end the AI wrote another way (#2757), by end: checked
+    # against the campaign's names when the list is kept. A variant that is another name than its
+    # own end is no variant, and the line is dropped.
+    variant_a: str = ""
+    variant_b: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,22 +299,25 @@ def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
     """A quote that holds only one of the two names (the sentence says "his sister", #2757) made
     the sentence before it too: the text from the start of the previous sentence, in the same
     paragraph, to the end of the quote, word for word as written. Only for a quote with a pronoun
-    in it ("his", "she", "who"). Kept only when this holds BOTH
-    names, so "both names are in the quoted words" stays true without trusting the AI's reading
-    of a pronoun. (A trade-off: a window with both names does not prove which one the pronoun
-    means; the DM confirms every suggestion before it is kept.) None when the quote cannot be
-    found in one paragraph or the window still lacks a name. Cut to `QUOTE_WORDS` words at
-    the front or the back, whichever keeps both names."""
+    in it ("his", "she", "who"). The AI's whole quote is always in the result (only the earlier
+    sentence's front is ever cut, to `QUOTE_WORDS` words), and it is kept only when the window
+    holds BOTH names, so "both names are in the quoted words" stays true without trusting the AI's
+    reading of a pronoun. (A trade-off: a window with both names does not prove which one the
+    pronoun means; the DM confirms every suggestion before it is kept.) A quote that runs across
+    a line break is not looked at: the sentence before it would be another paragraph's. None when
+    no place in the text gives such a window."""
     if not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
         return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
     pattern = r"\s+".join(re.escape(w) for w in words)
     for hit in re.finditer(pattern, piece, re.I):  # (a quote may stand in the text more than once)
         start, end = hit.start(), hit.end()
+        if "\n" in piece[start:end]:
+            continue
         paragraph = piece.rfind("\n", 0, start) + 1
         before = piece[paragraph:start]
         starts = [0] + [m.end() for m in _SENTENCE_END.finditer(before)]
         cut = starts[-2] if len(starts) >= 2 else 0
-        window = _quote_window(piece[paragraph + cut : end].split(), a, b)
+        window = piece[paragraph + cut : end].split()[-QUOTE_WORDS:]
         said = _squash(" ".join(window))
         if _in_quote(said, a) and _in_quote(said, b):
             return window
@@ -575,6 +585,8 @@ def read_connections(
             continue
         a, b, quote = item.get("a"), item.get("b"), item.get("quote")
         word = str(item.get("how", "")).strip().lower()
+        reverse = word in LORE_REVERSED
+        word = LORE_REVERSED.get(word, word)
         how = (
             CONNECTIONS.get(word)
             or LORE_KEPT.get(word)
@@ -583,6 +595,8 @@ def read_connections(
         label = ""
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
+        elif how is None and word in LORE_KIN:  # family by role
+            how, label = "kin_of", word
         if word == OTHER:  # the catch-all, kept with the words the text used
             label = at_word_end(" ".join(str(item.get("words") or "").split()), WORDS_CHARS)
             if not label or "|" in label:
@@ -603,45 +617,64 @@ def read_connections(
             continue
         # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
-        words = _quote_window(str(quote).split(), a, b)
+        if reverse:  # "a is an apprentice of b" is kept as "b mentors a"
+            a, b = b, a
+        spoken = str(quote).split()
         if (
             not a
             or not b
             or len(a) > NAME_CHARS
             or len(b) > NAME_CHARS
             or name_key(a) == name_key(b)
-            or not words
+            or not spoken
         ):
             lost["bad_names"] += 1
             continue
-        said = " ".join(words)
         # A name the document spells another way than the AI wrote it (#2757) counts as in the
         # text when exactly one spelling a letter away is there; keep_connections later checks
-        # that spelling is no OTHER name of the campaign.
-        seen_a, seen_b = a, b
-        used: list[str] = []
-        for end in (a, b):
-            if _has(haystack, end):
-                continue
-            spelled = _variant(haystack, end, variants)
-            if spelled is not None:
-                used.append(spelled)
-                if end is a:
-                    seen_a = spelled
-                else:
-                    seen_b = spelled
+        # that spelling is no OTHER name of the campaign. Kept per end, so each is checked against
+        # the name it stands for.
+        seen = [a, b]
+        for index, end in enumerate((a, b)):
+            if not _has(haystack, end):
+                spelled = _variant(haystack, end, variants)
+                if spelled is not None:
+                    seen[index] = spelled
+        if name_key(seen[0]) == name_key(seen[1]):  # two ends that came to one spelling
+            lost["bad_names"] += 1
+            continue
+        words = _quote_window(spoken, seen[0], seen[1])
+        said = " ".join(words)
         said_squashed = _squash(said)
-        if not (_has(haystack, seen_a) and _has(haystack, seen_b) and _has(haystack, said)):
+        made = Connection(
+            a,
+            how,
+            b,
+            said,
+            words=label,
+            variant_a=seen[0] if seen[0] != a else "",
+            variant_b=seen[1] if seen[1] != b else "",
+        )
+        if not (_has(haystack, seen[0]) and _has(haystack, seen[1]) and _has(haystack, said)):
             lost["not_in_text"] += 1
-        elif _in_quote(said_squashed, seen_a) and _in_quote(said_squashed, seen_b):
-            out.append(Connection(a, how, b, said, words=label, variants=tuple(used)))
-        elif (wide := _widen(piece, words, seen_a, seen_b)) is not None:
+        elif _in_quote(said_squashed, seen[0]) and _in_quote(said_squashed, seen[1]):
+            out.append(made)
+        elif (wide := _widen(piece, words, seen[0], seen[1])) is not None:
             # The quote named one end ("his sister…"): the sentence before it joins, word for word.
             lost["quote_widened"] += 1
-            out.append(Connection(a, how, b, " ".join(wide), words=label, variants=tuple(used)))
+            out.append(replace(made, quote=" ".join(wide)))
         else:
             lost["not_in_text"] += 1
     return out
+
+
+def _clashes(reader: Ends, variant: str, own: str) -> bool:
+    """Whether a spelling the text used for an end is, or may be, a name other than that end's own
+    (#2757): then the AI's name was not this spelling, and the link is not this one's."""
+    if not variant:
+        return False
+    got = reader.match(variant)
+    return bool(got.ambiguous) or got.name not in (None, own)
 
 
 def keep_connections(
@@ -704,6 +737,9 @@ def keep_connections(
                 lost["whose"] += 1
                 continue
             first, second = reader.match(end_a), reader.match(end_b)
+            if (c.variant_a or c.variant_b) and (first.ambiguous or second.ambiguous):
+                lost["spelling_clash"] += 1  # (a spelling is never a question: it is a guess)
+                continue
             if (
                 picks is not None
                 and len(picks) < MAX_PICKS
@@ -739,16 +775,19 @@ def keep_connections(
                 continue
             # A spelling the text used for an end the AI wrote another way must not be another
             # name of the campaign (#2757): then it was that name, and the link is not this one's.
-            if any(ends.get(name_key(v)) not in (None, a, b) for v in c.variants):
+            if _clashes(reader, c.variant_a, a) or _clashes(reader, c.variant_b, b):
                 lost["spelling_clash"] += 1
                 continue
             ka, kb = name_key(a), name_key(b)
             if c.how in both_ways and kb < ka:
                 ka, kb = kb, ka
-            if (ka, c.how, kb) in seen:  # (one catch-all for a pair, whatever its words)
+            # One fact per pair and kind; two different catch-all relationships between one pair
+            # (a mentor who is also a rival) are two facts, told apart by their words.
+            kind = f"{c.how}|{name_key(c.words)}" if c.how == FALLBACK_PREDICATE else c.how
+            if (ka, kind, kb) in seen:
                 lost["same_pair"] += 1
                 continue
-            seen.add((ka, c.how, kb))
+            seen.add((ka, kind, kb))
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
                 lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has

@@ -630,7 +630,7 @@ class TheSpellingVariants(unittest.TestCase):
             SPELLED,
         )
         (c,) = got
-        self.assertEqual((c.a, c.variants), ("Brother Aldric", ("brother aldrik",)))
+        self.assertEqual((c.a, c.variant_a, c.variant_b), ("Brother Aldric", "brother aldrik", ""))
         self.assertFalse(lost)
 
     def test_a_short_name_is_never_matched_by_a_nearby_spelling(self) -> None:
@@ -677,7 +677,7 @@ class TheSpellingVariants(unittest.TestCase):
             bg.Found("Brother Aldric", "npc", (), (), ""),
             bg.Found("Mira", "npc", (), (), ""),
             bg.Found("Brother Aldrik", "npc", (), (), ""),  # another entry that is spelled so
-        ]
+        ]  # (the AI's "Brother Aldric" was the document's "Brother Aldrik": a different entry)
         lost: Any = Counter()
         self.assertEqual(bg.keep_connections([got], found, {}, dropped=lost), [])
         self.assertEqual(dict(lost), {"spelling_clash": 1})
@@ -716,6 +716,8 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<names_to_check>\n- Mira\n</names_to_check>", request)
         self.assertNotIn("- Greyfen Abbey\n</names_to_check>", request)
         self.assertEqual((done.stats.lonely, done.stats.extra_links), (1, 1))
+        # the summary's "found" count includes the lines the second look added
+        self.assertEqual(done.stats.links_listed, 2)
 
     async def test_a_short_text_or_no_lonely_name_asks_nothing_more(self) -> None:
         calls = 0
@@ -842,3 +844,188 @@ class TheWidenedQuoteTwice(unittest.TestCase):
             [c.quote for c in got],
             ["Brother Aldric ruled Greyfen. His sister, Mira, ran the farm."],
         )
+
+
+def kept(
+    rows: list[dict[str, str]], names: list[str], text: str, known: dict[str, str] | None = None
+) -> tuple[list[bg.Connection], Any]:
+    got, _ = connections(rows, text)
+    lost: Any = Counter()
+    found = [bg.Found(n, "npc", (), (), "") for n in names]
+    return bg.keep_connections([got], found, known or {}, dropped=lost), lost
+
+
+FAMILY = "Brother Aldric ruled Greyfen. Mira, called the Fox, is the niece of Brother Aldric."
+
+
+class TheRolesAndDirections(unittest.TestCase):
+    def quote(self) -> str:
+        return "Mira, called the Fox, is the niece of Brother Aldric"
+
+    def test_parent_and_child_are_family_with_the_role_as_its_detail(self) -> None:
+        for word in ("parent", "child"):
+            got, lost = connections([row("Brother Aldric", word, "Mira", self.quote())], FAMILY)
+            self.assertEqual(
+                [(c.a, c.how, c.b, c.words) for c in got],
+                [("Brother Aldric", "kin_of", "Mira", word)],
+                word,
+            )
+            self.assertFalse(lost)
+
+    def test_an_apprentice_is_kept_as_the_mentor_the_other_way_round(self) -> None:
+        got, _ = connections([row("Mira", "apprentice", "Brother Aldric", self.quote())], FAMILY)
+        self.assertEqual(
+            [(c.a, c.how, c.words, c.b) for c in got],
+            [("Brother Aldric", FALLBACK_PREDICATE, "mentors", "Mira")],
+        )
+
+    def test_a_mentor_line_and_an_apprentice_line_for_one_pair_are_one_fact(self) -> None:
+        rows = [
+            row("Brother Aldric", "mentor", "Mira", self.quote()),
+            row("Mira", "apprentice", "Brother Aldric", self.quote()),
+        ]
+        out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual(
+            [(c.a, c.b, c.words) for c in out], [("Brother Aldric", "Mira", "mentors")]
+        )
+        self.assertEqual(dict(lost), {"same_pair": 1})
+
+    def test_a_parent_line_and_a_child_line_for_one_pair_are_one_fact(self) -> None:
+        rows = [
+            row("Brother Aldric", "parent", "Mira", self.quote()),
+            row("Mira", "child", "Brother Aldric", self.quote()),
+        ]
+        out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual(
+            [(c.a, c.how, c.b, c.words) for c in out],
+            [("Brother Aldric", "kin_of", "Mira", "parent")],
+        )
+        self.assertEqual(dict(lost), {"same_pair": 1})
+
+    def test_two_different_relationships_between_one_pair_both_stand(self) -> None:
+        rows = [
+            row("Brother Aldric", "mentor", "Mira", self.quote()),
+            row("Brother Aldric", "rival", "Mira", self.quote()),
+        ]
+        out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual(sorted(c.words for c in out), ["is a rival of", "mentors"])
+        self.assertFalse(lost)
+
+    def test_the_first_name_is_the_one_the_relationship_is_about(self) -> None:
+        # a mentors b / b mentors a are two different facts and keep their own direction
+        rows = [
+            row("Brother Aldric", "mentor", "Mira", self.quote()),
+            row("Mira", "mentor", "Brother Aldric", self.quote()),
+        ]
+        out, _ = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual(
+            [(c.a, c.b) for c in out], [("Brother Aldric", "Mira"), ("Mira", "Brother Aldric")]
+        )
+
+
+class TheWidenedQuoteKeepsTheStatement(unittest.TestCase):
+    def test_a_long_earlier_sentence_is_cut_at_its_front_never_the_ais_own_words(self) -> None:
+        early = " ".join(["slowly"] * 18 + ["Aldric Vane walked."])
+        text = early + " She later founded the Ashen Hand."
+        got, _ = connections(
+            [row("Aldric Vane", "founded", "Ashen Hand", "She later founded the Ashen Hand.")],
+            text,
+        )
+        (c,) = got
+        self.assertTrue(c.quote.endswith("She later founded the Ashen Hand."))
+        self.assertIn("Aldric Vane", c.quote)
+        self.assertLessEqual(len(c.quote.split()), bg.QUOTE_WORDS)
+
+    def test_a_window_that_only_holds_the_names_by_dropping_the_quote_is_not_kept(self) -> None:
+        early = " ".join(["Aldric Vane and Mira Thorn walked"] + ["slowly"] * 18 + ["home."])
+        text = early + " She later founded the Hand of Dusk."
+        got, lost = connections(
+            [row("Aldric Vane", "mentor", "Mira Thorn", "She later founded the Hand of Dusk.")],
+            text,
+        )
+        self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))
+
+    def test_a_quote_across_a_paragraph_break_is_not_widened(self) -> None:
+        text = "Brother Aldric ruled Greyfen. His sister,\n\nMira, ran the farm."
+        got, lost = connections(
+            [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text
+        )
+        self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))
+
+
+class TheVariantsStayWithTheirEnd(unittest.TestCase):
+    def test_a_variant_that_is_the_other_end_of_the_same_link_is_dropped(self) -> None:
+        text = "Kaelan swore an oath to the crown."
+        got, lost = connections([row("Kaelen", "enemy", "Kaelan", "Kaelan swore an oath")], text)
+        self.assertEqual((got, dict(lost)), ([], {"bad_names": 1}))
+
+    def test_a_variant_that_may_be_another_known_name_is_dropped(self) -> None:
+        text = "Torvan swore an oath to Mira the Fox."
+        got, _ = connections(
+            [row("Torven", "serves", "Mira", "Torvan swore an oath to Mira")], text
+        )
+        (c,) = got
+        self.assertEqual(c.variant_a, "torvan")
+        out, lost = kept(
+            [row("Torven", "serves", "Mira", "Torvan swore an oath to Mira")],
+            ["Torven", "Torvan Ash", "Mira"],
+            text,
+        )
+        self.assertEqual((out, dict(lost)), ([], {"spelling_clash": 1}))
+
+    def test_a_variant_that_is_no_known_name_stands(self) -> None:
+        text = "Torvan swore an oath to Mira the Fox."
+        out, lost = kept(
+            [row("Torven", "serves", "Mira", "Torvan swore an oath to Mira")],
+            ["Torven", "Mira"],
+            text,
+        )
+        self.assertEqual([(c.a, c.b) for c in out], [("Torven", "Mira")])
+        self.assertFalse(lost)
+
+    def test_a_variant_is_checked_against_its_own_end_not_the_other(self) -> None:
+        text = "Torvan swore an oath to Mira the Fox."
+        # the name that the variant spells is the link's OTHER end: not its own, so it clashes
+        out, lost = kept(
+            [row("Mira", "serves", "Torven", "Torvan swore an oath to Mira")],
+            ["Torvan", "Mira", "Torven"],
+            text,
+        )
+        self.assertEqual((out, dict(lost)), ([], {"spelling_clash": 1}))
+
+
+class TheSecondLookCeiling(unittest.IsolatedAsyncioTestCase):
+    async def test_a_read_that_needed_a_continuation_gets_no_second_look(self) -> None:
+        queue = [
+            Reply('NAMES\n- Mira | person | quote: "Mira"\n', True),
+            Reply("NAMES\n- Zorgul | person\n", False),
+        ]
+        asked = 0
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            nonlocal asked
+            if schema is None:
+                asked += 1
+                return queue.pop(0)
+            return Reply(json.dumps({"names": [], "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        done = await read(fake, text=LONG)
+        self.assertEqual(
+            (asked, done.stats.lonely), (2, 0)
+        )  # (the first call and its continuation)
+
+    async def test_a_second_look_that_runs_out_of_time_leaves_the_list_as_it_was(self) -> None:
+        queue = [Reply('NAMES\n- Mira | person | quote: "Mira"\n', False)]
+
+        async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            if schema is None:
+                if queue:
+                    return queue.pop(0)
+                await asyncio.sleep(10)
+            return Reply(json.dumps({"names": [], "connections": []}), False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        with mock.patch.object(lr, "PASS1_BUDGET_S", 0.3):
+            done = await read(fake, text=LONG)
+        self.assertEqual((done.stats.lonely, done.stats.extra_links), (1, 0))
