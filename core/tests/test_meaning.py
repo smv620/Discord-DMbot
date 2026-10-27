@@ -80,7 +80,7 @@ class Finding(DatabaseTest):
             await self.add_entry(f"{n + 1:032x}", name, desc)
 
     async def add_entry(
-        self, id_: str, name: str, desc: str, campaign: str | None = None, **flags: object
+        self, id_: str, name: str, desc: str, *, campaign: str | None = None, **flags: object
     ) -> None:
         cid = campaign or self.c
         async with self.db.guild(GUILD) as conn:
