@@ -276,30 +276,34 @@ async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
         if add:
             raise  # Discord could not be asked: the choice can be sent again
         log.info("A game master's name could not be looked up: %s", type(exc).__name__)
-        member = Member(game_masters.UNREACHABLE, False)
+        member = None
+    # The page shows these words as plain text, so names go in raw, not escaped for Discord.
     if add:
         if member is None:
             return Outcome(REFUSED, game_masters.NOT_IN_SERVER)
         if member.bot:
             return Outcome(REFUSED, game_masters.NOT_A_PERSON)
         if person in campaign.dm_user_ids:
-            return Outcome(REFUSED, game_masters.ALREADY.format(name=game_masters.md(member.name)))
+            return Outcome(REFUSED, game_masters.ALREADY.format(name=member.name))
     else:
         if person not in campaign.dm_user_ids:
             return Outcome(REFUSED, game_masters.GONE_FROM_LIST)
-    name = member.name if member is not None else game_masters.LEFT
+    name = member.name if member is not None else game_masters.LEFT  # (a removal; an add has one)
     try:
         done = await host.apply_co_dm(campaign, person, add, item.user_id)
     except CampaignError as exc:
         if str(exc) == OWNER_STAYS:
-            return Outcome(
-                REFUSED, game_masters.plan_holder_words(person, item.user_id, {person: name})
+            words = (
+                game_masters.PLAN_HOLDER_SELF
+                if person == item.user_id
+                else game_masters.PLAN_HOLDER_OTHER.format(name=name)
             )
+            return Outcome(REFUSED, words)
         return Outcome(REFUSED, str(exc))  # (the limit, the last game master, a campaign gone)
-    # Short sentences for the page (it shows the note without the bold marks).
-    shown = name  # raw: the page shows the note as plain text, so no escapes
+    if member is None:  # a removal and no name to give: the page uses its own
+        return Outcome()
     first = (
-        f"**{shown}** is now a game master." if add else f"**{shown}** is no longer a game master."
+        f"**{name}** is now a game master." if add else f"**{name}** is no longer a game master."
     )
     extra = ("" if done.told else game_masters.NOT_TOLD) + done.late
     return Outcome(note=(first + extra.replace("\n", " ")).strip())
@@ -308,8 +312,9 @@ async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
 async def run_one(host: Host, store: SettingStore, guild_id: int, item: Setting) -> bool:
     """Apply one claimed choice and mark it. A bug never leaves the row "working": it ends as
     `failed` for the page to offer a retry. False when the row could not be marked (the loop
-    stops; the row is taken again later and `apply` sees it already done). Only the outcome word
-    is logged, never the choice."""
+    stops; the row is taken again later and `apply` sees it already done: for a game master
+    change that reads as a refusal, and the change itself stays saved). Only the outcome word is
+    logged, never the choice."""
     try:
         done = await apply(host, guild_id, item)
     except Exception as exc:

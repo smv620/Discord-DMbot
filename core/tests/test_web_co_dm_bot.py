@@ -7,15 +7,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import discord
 
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignError
-from dmbot.campaigns.store import MAX_DMS, TOO_MANY_DMS
+from dmbot.campaigns.store import LAST_DM, MAX_DMS, TOO_MANY_DMS
 from dmbot.dm_screen import game_masters
 from dmbot.dm_screen import web_settings as ws
+from dmbot.web import campaign_settings
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE
 from tests.test_web_settings import FakeBot, Settings
@@ -174,9 +175,8 @@ class TheCoDm(Settings):
     async def test_a_game_master_who_left_the_server_can_still_be_removed(self) -> None:
         await self.campaigns.add_dm(self.g, self.one.id, GONE_ID)
         done = await self.change(GONE_ID, False)
-        self.assertEqual(
-            (done.error, done.note), ("", f"**{game_masters.LEFT}** is no longer a game master.")
-        )
+        self.assertEqual((done.error, done.note), ("", ""))  # (no name: the page uses its own)
+        self.assertEqual(await self.dms(), {ALICE.id})
 
     async def test_the_limit_is_the_stores_words(self) -> None:
         for extra in (BOB.id, DANA, 7001, 7002):
@@ -194,12 +194,50 @@ class TheCoDm(Settings):
         self.assertEqual(own.note, game_masters.PLAN_HOLDER_SELF)
         self.assertEqual(await self.dms(), {ALICE.id, DANA})
 
-    async def test_the_last_game_master_cannot_go(self) -> None:
+    async def test_the_plan_holder_who_is_the_only_game_master_cannot_go(self) -> None:
         # Alice holds the plan, so give the plan to a campaign whose only DM is someone else.
         lone = await self.campaigns.create(self.g, "Lone", DANA)
         item = ws.Setting("b", lone.id, DANA, "co_dm", str(DANA), False, 1, False)
         done = await ws.apply(self.bot, self.g, item)
         self.assertEqual((done.error, done.note), (ws.REFUSED, game_masters.PLAN_HOLDER_SELF))
+
+    async def test_the_last_game_master_cannot_go_in_the_stores_words(self) -> None:
+        async def refuse(*args: Any) -> Campaign:
+            raise CampaignError(LAST_DM)
+
+        with patch.object(self.campaigns, "remove_dm", refuse):
+            await self.campaigns.add_dm(self.g, self.one.id, DANA)
+            done = await self.change(DANA, False)
+        self.assertEqual((done.error, done.note), (ws.REFUSED, LAST_DM))
+
+    async def test_names_go_to_the_page_raw_not_escaped_for_discord(self) -> None:
+        self.bot.people[DANA] = ws.Member("dana_b*", False)
+        await self.campaigns.add_dm(self.g, self.one.id, DANA)
+        already = await self.change(DANA, True)
+        self.assertEqual(already.note, "**dana_b*** is already a game master.")
+        plan = await self.change(ALICE.id, False, asker=DANA)
+        self.assertEqual(plan.note, game_masters.PLAN_HOLDER_OTHER.format(name="Alice"))
+        self.bot.people[ELI] = ws.Member("eli_x*", False)
+        added = await self.change(ELI, True)
+        self.assertEqual(added.note, "**eli_x*** is now a game master.")
+
+    async def test_a_removal_whose_name_cannot_be_looked_up_gives_an_empty_note(self) -> None:
+        await self.campaigns.add_dm(self.g, self.one.id, DANA)
+        self.bot.lookup_fails = True
+        done = await self.change(DANA, False)
+        self.assertEqual((done.error, done.note), ("", ""))
+
+    async def test_one_campaigns_change_leaves_every_other_campaign_alone(self) -> None:
+        before = (await self.campaign(self.two)).dm_user_ids
+        await self.change(DANA, True)
+        self.assertEqual((await self.campaign(self.two)).dm_user_ids, before)
+        self.assertNotIn(DANA, before)
+
+    async def test_a_row_for_a_campaign_of_another_server_is_not_found(self) -> None:
+        item = ws.Setting("d", self.one.id, ALICE.id, "co_dm", str(DANA), False, 1, True)
+        done = await ws.apply(self.bot, self.g + 1, item)
+        self.assertEqual(done.error, ws.NOT_FOUND)
+        self.assertEqual(await self.dms(), {ALICE.id})
 
     async def test_removing_someone_who_is_not_a_game_master_says_so(self) -> None:
         done = await self.change(ELI, False)
@@ -291,3 +329,67 @@ class TheMessage(Settings):
         me = SimpleNamespace(campaigns=self.campaigns, get_guild=lambda gid: None)
         with self.assertRaises(CampaignError):
             await DMBot.apply_co_dm(cast(Any, me), self.one, DANA, True, ALICE.id)
+
+
+class ThroughTheRealDoor(Settings):
+    """A game master row made by the website's own database door, claimed with its `turn_on`,
+    applied by the bot's real loop and left `done`."""
+
+    async def test_an_add_and_a_removal_go_door_claim_run_done(self) -> None:
+        from dmbot.config import Settings as BotSettings
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
+                " VALUES (%s, %s, 1, %s)",
+                (self.g, DANA, TERMS_VERSION),
+            )
+        bot = DMBot(
+            BotSettings(discord_token="t", ears_secret="s"),
+            SimpleNamespace(),  # type: ignore[arg-type]
+            self.campaigns,
+            MagicMock(),
+        )
+        bot.web_settings = self.items
+        guild = SimpleNamespace(
+            id=self.g,
+            name="Thursday",
+            get_member=lambda uid: SimpleNamespace(
+                display_name="Dana", bot=False, send=AsyncMock()
+            ),
+        )
+        cast(Any, bot).get_guild = lambda guild_id: guild
+        follow = AsyncMock(return_value="")
+        told = AsyncMock(return_value=True)
+
+        async def ask(on: bool) -> str:
+            return await campaign_settings.queue_setting(
+                self.web,
+                self.session,
+                self.cref,
+                {"setting": "co_dm", "value": str(DANA), "on": on},
+                co_dms_on=True,
+            )
+
+        async def run() -> None:
+            with (
+                patch.object(DMBot, "guilds", new_callable=PropertyMock, return_value=[guild]),
+                patch.object(game_masters, "follow_access_on", follow),
+                patch.object(game_masters, "tell_new", told),
+            ):
+                await bot.run_web_settings()
+
+        added = await ask(True)
+        await run()
+        got = await self.poll(added)
+        self.assertEqual((got["state"], got["error"]), ("done", ""))
+        self.assertEqual(got["note"], "**Dana** is now a game master.")
+        self.assertEqual((await self.campaign()).dm_user_ids, {ALICE.id, DANA})
+        told.assert_awaited_once()
+        removed = await ask(False)
+        await run()
+        got = await self.poll(removed)
+        self.assertEqual((got["state"], got["error"]), ("done", ""))
+        self.assertEqual((await self.campaign()).dm_user_ids, {ALICE.id})
+        self.assertEqual(follow.await_count, 2)

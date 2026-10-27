@@ -10479,7 +10479,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         found = guild.get_member(user_id)
         if found is None:
             try:
-                found = await guild.fetch_member(user_id)
+                found = await asyncio.wait_for(
+                    guild.fetch_member(user_id), game_masters.LOOKUP_S * 4
+                )  # (one slow call must not hold every server's queue)
             except discord.NotFound:
                 return None
         return web_settings.Member(found.display_name, found.bot)
