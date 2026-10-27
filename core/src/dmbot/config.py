@@ -123,6 +123,13 @@ class Settings:
     elevenlabs_key: str = field(default="", repr=False)
     elevenlabs_voice_id: str = ""
     elevenlabs_speech_model: str = "eleven_v3"  # the voice model; dev1 compares models by ear
+    # Meaning search (#2664): the campaign's own text turned into numbers by Voyage AI, so PlotBot's
+    # starting points find what a note means, not only its words. Off until the switch is 1 and a
+    # key is set (scripts/set-key VOYAGE_API_KEY, by dev1 once the privacy page names Voyage).
+    meaning_search: bool = False
+    voyage_key: str = field(default="", repr=False)
+    voyage_embed_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
     recap_audio_max_credits: int = 15000  # provider credits one recap may use (about $3)
     # The recap's mood cues reach the voice as delivery tags (#1983); 0 sends only whisper, sigh and
     # pauses, so dev1 can compare the two narrations by ear.
@@ -133,6 +140,10 @@ class Settings:
 
     def imports_enabled_for(self, guild_id: int) -> bool:
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
+
+    @property
+    def meaning_search_on(self) -> bool:
+        return self.meaning_search and bool(self.voyage_key)
 
     @property
     def recap_audio_on(self) -> bool:
@@ -383,6 +394,20 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     speech_model = get("ELEVENLABS_SPEECH_MODEL") or "eleven_v3"
     if not (speech_model.isascii() and speech_model.replace("_", "").replace(".", "").isalnum()):
         raise ConfigError("ELEVENLABS_SPEECH_MODEL must be a model id such as eleven_v3.")
+    meaning_raw = (get("DMBOT_MEANING_SEARCH") or "0").lower()
+    if meaning_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_MEANING_SEARCH must be 1 (on) or 0 (off), got "{meaning_raw}".')
+    voyage_models = []
+    for name, default in (
+        ("VOYAGE_EMBED_MODEL", "voyage-3.5"),
+        ("VOYAGE_RERANK_MODEL", "rerank-2.5"),
+    ):
+        model = get(name) or default
+        if not (
+            model.isascii() and model.replace("-", "").replace(".", "").replace("_", "").isalnum()
+        ):
+            raise ConfigError(f"{name} must be a model name such as {default}.")
+        voyage_models.append(model)
     images_raw = (get("DMBOT_TABLE_IMAGES") or "0").lower()
     if images_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_TABLE_IMAGES must be 1 (on) or 0 (off), got "' + images_raw + '".')
@@ -460,6 +485,10 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
         time_suggestions=suggestions_raw in ("1", "true", "on"),
+        meaning_search=meaning_raw in ("1", "true", "on"),
+        voyage_key=get("VOYAGE_API_KEY"),
+        voyage_embed_model=voyage_models[0],
+        voyage_rerank_model=voyage_models[1],
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=voice_id,
         elevenlabs_speech_model=speech_model,

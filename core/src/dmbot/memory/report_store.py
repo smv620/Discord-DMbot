@@ -95,6 +95,8 @@ class Run:
     total: int
     started_at: int
     updated_at: int
+    # `reason` is a failure code when `state` is failed, and `left_for_next_time` when it is ready
+    # but not whole (a call limit left items); empty otherwise.
     reason: str
 
 
@@ -289,17 +291,26 @@ class ReportStore:
             )  # fmt: skip
 
     async def finish(
-        self, guild_id: int, campaign_id: str, session_at: int, token: int, *, failed: str = ""
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        token: int,
+        *,
+        failed: str = "",
+        left: str = "",
     ) -> None:
         """The run with this token is over: ready, or failed with a code (lower-case letters and
-        underscores). A run that was taken over changes nothing."""
+        underscores). `left` is a code for a ready report that is not whole (a call limit left
+        items for next time), so the page can say so rather than show it as complete. A run that
+        was taken over changes nothing."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE memory_report_runs SET state = %s, updated_at = %s, reason = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
                 " AND started_at = %s",
                 (
-                    FAILED if failed else READY, int(self._now()), failed[:40],
+                    FAILED if failed else READY, int(self._now()), (failed or left)[:40],
                     guild_id, campaign_id, session_at, token,
                 ),
             )  # fmt: skip

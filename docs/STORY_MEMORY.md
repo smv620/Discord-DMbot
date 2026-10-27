@@ -791,6 +791,12 @@ the plan's limits with the shared progress, and the doors.
   it in story time. A guess The truth neither holds nor denies is not a difference, nor is the DM's own
   doubt. Ids and numbers only (the sort into disguised, misunderstood and false is PlotBot's, a later
   slice); each point of view and connection is reported once.
+  **Built (#2661 slice 3b): the make job.** `memory/report_make.py` makes one session's report in the
+  order reading, grading, sorting: it finds the differences, grades the clashes (the contradiction
+  pass, with its progress), drops differences that no longer hold, sorts the rest, then marks the run
+  ready. One run at a time per session; one call limit shared by both steps; a step that could not
+  finish leaves its items for the next run, never as "nothing found". A failure keeps only a code
+  (`out_of_funds`, `failed`); the log line and the progress are counts and stages, never words.
 
 Everything after a session is built on the **website first**. A Discord version is added only when
 the owner chooses it, one at a time.
@@ -834,6 +840,23 @@ processor before it is used.
 - Each vector stores the model name and version, so a change of model re-embeds everything.
 - Vectors are per campaign and never compared across campaigns or servers.
 - `pgvector` is a database image change, which only dev1 deploys.
+- **Built (#2664 part 2): where the numbers live.** `memory_vectors` (migration 0248) holds them as a
+  plain list of numbers, and `memory/vectors.py` compares them in Python inside ONE campaign (stock
+  Postgres has no `pgvector`; a read over 20,000 rows logs a counts-only warning, and `pgvector`
+  can replace the comparison later without changing what a row means). A transcript line's row is
+  tied to the line by a foreign key that deletes it with the line, so Stop recording me, Delete my
+  transcripts, retention and a deleted session or campaign all take the numbers in the same
+  statement. A line deleted while its text was away at Voyage AI is never saved (the save selects
+  the line). Not in a backup: they are made again.
+- **Built (#2664 parts 3 and 4): keeping them up to date, and using them.** `memory/embedding.py` is
+  the after-session job (batches under one call limit, consent read before every batch and again
+  after the call, long text split and never cut, counts-only progress, no credit stops it). It runs
+  only with `DMBOT_MEANING_SEARCH=1` and a Voyage key, inside the story plan, and sends only the
+  campaign's confirmed entries and the game talk of people who agree to be recorded.
+  `memory/meaning.py` gives the sidebar more starting points: the entries closest in meaning to a
+  question, re-scored by `rerank-2.5`, added to the names the question spelled out. Optional: a
+  switch off, no numbers yet, nothing close or any failure means names alone. An entry the players
+  may not know yet is never a lead for a sidebar answer. Table questions never ask for leads.
 
 **Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
 rule says which in `memory/checks.py`'s docstring.
