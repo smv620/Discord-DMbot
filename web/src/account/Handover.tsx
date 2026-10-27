@@ -12,38 +12,9 @@ import { HANDOVER_LIVE, handoverWords as words } from "../content/handover-words
 import { campaignHref } from "./campaignLinks";
 import { ApiError, type AccountApi, type HandoverLook, type HandoverServer } from "./api";
 import { keepFocus } from "./focus";
+import { forgetHandoverToken, handoverToken, keepHandoverToken } from "./handover-token";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
-
-const KEY = "dmbot:handover";
-
-/** The token in the address's hash, or one kept across the sign-in; null if neither looks right. */
-export function handoverToken(hash: string): string | null {
-  const fromHash = hash.replace(/^#/, "");
-  if (/^[\w-]{1,200}$/.test(fromHash)) return fromHash;
-  try {
-    const kept = sessionStorage.getItem(KEY);
-    return kept && /^[\w-]{1,200}$/.test(kept) ? kept : null;
-  } catch {
-    return null;
-  }
-}
-
-export function keepHandoverToken(token: string): void {
-  try {
-    sessionStorage.setItem(KEY, token);
-  } catch {
-    // Storage may be blocked; the link in the email still works.
-  }
-}
-
-function forgetHandoverToken(): void {
-  try {
-    sessionStorage.removeItem(KEY);
-  } catch {
-    // nothing to forget
-  }
-}
 
 type View =
   | { kind: "loading" }
