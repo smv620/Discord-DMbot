@@ -27,8 +27,11 @@ export const gameMasterWords = {
   loadingMembers: "Loading members…",
   full: (max: number): string => `A campaign can have at most ${max} game masters. Remove one before adding another.`,
   nobody:
-    "No one to add yet. Only members who agreed to be recorded show up here. To add anyone else, use ⚙️ Settings → 🗂️ Campaign management → 👑 Game masters in Discord.",
-  noMatch: "No one with that name. Only members who agreed to be recorded can be found here. Try fewer letters, or add them in Discord.",
+    "No one to add yet. Only members who agreed to be recorded show up here.",
+  /** Always shown under the search: whoever is not listed is added in Discord. */
+  inDiscord:
+    "Not listed? Add anyone in your server in Discord: type /dmbot settings, then 🗂️ Campaign management → 👑 Game masters.",
+  noMatch: "No one with that name. Only members who agreed to be recorded can be found here. Try fewer letters.",
   searchFailed: "We couldn't look that up. Try again in a moment.",
   // The wait for the bot's answer (#2564): DMbot's stage, how long, when it last moved.
   stage: {

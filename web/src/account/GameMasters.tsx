@@ -241,6 +241,7 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
             </p>
           )}
           {Array.isArray(people) && people.length === 0 && <p class="small muted">{query.trim() === "" ? w.nobody : w.noMatch}</p>}
+          <p class="small muted">{w.inDiscord}</p>
           {Array.isArray(people) && people.length > 0 && (
             <ul class="campaigns">
               {people.map((c) => {

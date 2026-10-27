@@ -47,7 +47,7 @@ describe("while it is switched off", () => {
     );
     await screen.findByRole("heading", { level: 2, name: "Settings" });
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
-    expect(screen.getAllByText(/Campaign management → 👑 Game masters/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Do this in Discord: .*Game masters/).length).toBeGreaterThan(0);
     expect(calls(api, "campaignGameMasters")).toHaveLength(0);
   });
 
@@ -61,7 +61,7 @@ describe("while it is switched off", () => {
     );
     expect(await screen.findByRole("heading", { name: w.heading }, slow)).toBeTruthy();
     expect(calls(api, "campaignGameMasters")).toEqual(["campaignGameMasters:100.cmp1"]);
-    expect(screen.queryByText(/Campaign management → 👑 Game masters/)).toBeNull();
+    expect(screen.queryByText(/Do this in Discord: .*Game masters/)).toBeNull(); // (the row's own steps go; the section's line stays)
   });
 });
 
@@ -105,9 +105,16 @@ describe("adding", () => {
     expect(within(person("Dana")).getByRole("button", { name: w.removeLabel("Dana") })).toBeTruthy();
   });
 
-  it("says so when nobody can be offered, and where to go instead", async () => {
+  it("says so when nobody can be offered", async () => {
     await section("100.cmp1.gm-nobody");
     expect(await screen.findByText(w.nobody)).toBeTruthy();
+  });
+
+  it("always says anyone not listed can be added in Discord, with the command", async () => {
+    await section();
+    await screen.findByText("Dana", { selector: "strong" });
+    expect(screen.getByText(w.inDiscord)).toBeTruthy();
+    expect(w.inDiscord).toMatch(/\/dmbot settings/);
   });
 
   it("shows no search at the limit, and says why", async () => {
