@@ -411,6 +411,60 @@ class TheReport(Reading):
         self.assertEqual((p["startedAt"], p["updatedAt"]), (now - 60, now - 5))
         self.assertAlmostEqual(p["serverNow"], now, delta=5)
 
+    async def test_the_sorting_stage_shows_its_counts_too(self) -> None:
+        await self.sql(
+            "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage, done,"
+            " total, started_at, updated_at) VALUES (%s, %s, %s, 'making', 'sorting', 2, 7,"
+            " extract(epoch FROM now())::BIGINT - 10, extract(epoch FROM now())::BIGINT - 1)",
+            GUILD, self.one.id, S1,
+        )  # fmt: skip
+        p = (await self.read())["progress"]
+        self.assertEqual((p["stage"], p["done"], p["total"], p["unit"]), ("sorting", 2, 7, "items"))
+
+    async def test_the_sql_item_keys_are_the_report_stores_keys(self) -> None:
+        from dmbot import schema
+
+        for perspective, kind, first, second in (
+            ("a" * 32, "contradiction", "1" * 32, "2" * 32),
+            ("0" * 32, "too_many", "f" * 32, "f" * 31 + "0"),
+            (self.party, "held_twice", self.ally, self.enemy),
+        ):
+            row = await self.one_row(
+                f"SELECT {schema._REPORT_KEY_C} AS k FROM (VALUES (%s, %s, %s, %s))"
+                " m(perspective_id, kind, first_relation_id, second_relation_id)",
+                perspective, kind, first, second,
+            )  # fmt: skip
+            self.assertEqual(row["k"], rs.contradiction_key(perspective, kind, first, second), kind)
+        for perspective, relation in (("a" * 32, "b" * 32), (self.party, self.ally)):
+            row = await self.one_row(
+                f"SELECT {schema._REPORT_KEY_D} AS k FROM (VALUES (%s, %s))"
+                " m(perspective_id, relation_id)",
+                perspective, relation,
+            )  # fmt: skip
+            self.assertEqual(row["k"], rs.difference_key(perspective, relation))
+
+    async def test_a_rejected_connection_is_never_shown(self) -> None:
+        await self.difference("false")
+        await self.sql(
+            "UPDATE memory_relations SET status = 'rejected' WHERE guild_id = %s AND id = %s",
+            GUILD, self.ally,
+        )  # fmt: skip
+        got = await self.read()
+        self.assertEqual(got["differences"]["false"], [])
+
+    async def test_a_waiting_guess_is_shown_only_for_an_item_marked_as_a_guess(self) -> None:
+        await self.difference("false")
+        await self.sql(
+            "UPDATE memory_relations SET status = 'proposed', secret = true, source = 'extractor'"
+            " WHERE guild_id = %s AND id = %s",
+            GUILD, self.ally,
+        )  # fmt: skip
+        self.assertEqual((await self.read())["differences"]["false"], [])  # not marked: hidden
+        await self.sql(
+            "UPDATE memory_differences SET involves_guess = true WHERE guild_id = %s", GUILD
+        )
+        self.assertEqual(len((await self.read())["differences"]["false"]), 1)
+
     async def test_a_run_that_has_not_moved_for_a_long_time_is_stalled_and_a_failed_one_has_a_code(
         self,
     ) -> None:

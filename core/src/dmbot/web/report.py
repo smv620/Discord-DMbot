@@ -23,10 +23,14 @@ from dmbot.memory.report_store import STALLED_S
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped, session_facts
 from dmbot.web.sessions import Session
+from dmbot.web.transcripts import numbered_sessions
 
 SORT_ORDER = ("disguised", "misunderstood", "false")
 NOT_SO = "That is not so."  # what the DM's view says where it denies the connection
-UNIT = {"grading": "items"}  # what `done` and `total` count at a stage (reading has no count)
+UNIT = {
+    "grading": "items",
+    "sorting": "items",
+}  # what `done` and `total` count at a stage (reading has no count)
 STATES = ("none", "making", "ready", "failed")
 
 
@@ -201,10 +205,7 @@ async def read_report(db: Database, session: Session, ref: str, at: object) -> d
         )
         if await cur.fetchone() is None:
             raise RecapError("not_allowed")  # a player, or a campaign that is not theirs
-        cur = await conn.execute(
-            "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
-        )
-        listed = list(((await cur.fetchone() or {}).get("found") or {}).get("sessions", []))
+        listed = await numbered_sessions(conn, guild_id, campaign_id)
         cur = await conn.execute(
             "SELECT dmbot_web_report(%s, %s, %s) AS r", (guild_id, campaign_id, when)
         )

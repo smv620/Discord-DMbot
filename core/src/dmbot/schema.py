@@ -15448,7 +15448,10 @@ _REPORT_RELATION = """
          FROM memory_relations r
          JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c AND s.id = r.subject_id
          JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c AND o.id = r.object_id
-         WHERE r.guild_id = g AND r.campaign_id = c AND r.id = {rel})"""
+         WHERE r.guild_id = g AND r.campaign_id = c AND r.id = {rel}
+           AND (r.status = 'confirmed'
+                OR (m.involves_guess AND r.status = 'proposed' AND r.secret
+                    AND r.source = 'extractor')))"""
 _REPORT_ANSWER = """
         CASE WHEN a.item_key IS NULL THEN NULL ELSE jsonb_build_object(
             'action', a.answer, 'at', a.answered_at, 'remindFrom', a.remind_from) END"""
@@ -15568,7 +15571,11 @@ REPORT_READ_DOOR = (
                                                                  'b', r2.object_id)
                                         FROM memory_relations r2
                                         WHERE r2.guild_id = g AND r2.campaign_id = c
-                                          AND r2.id = m.relation_id),
+                                          AND r2.id = m.relation_id
+                                          AND (r2.status = 'confirmed'
+                                               OR (m.involves_guess AND r2.status = 'proposed'
+                                                   AND r2.secret
+                                                   AND r2.source = 'extractor'))),
                                'answer', """
     + _REPORT_ANSWER
     + r""") AS item
