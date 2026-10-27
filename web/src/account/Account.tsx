@@ -1,9 +1,8 @@
 /** @jsxImportSource preact */
 // The signed-in area (#434): one island on /account. All data comes from the web API in
 // core (#435); this file only shows it and sends the user's choices back.
-import type { ComponentChildren, JSX } from "preact";
-import { createContext } from "preact";
-import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
+import type { JSX } from "preact";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 import { recapCard } from "../content/account-cards";
 import { sharingCard } from "../content/sharing";
@@ -12,7 +11,7 @@ import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-delete";
 import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
-import { handoverToken } from "./Handover";
+import { handoverToken } from "./handover-token";
 import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
 import { keepFocus } from "./focus";
 import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
@@ -25,7 +24,6 @@ import {
   type Character,
   type DiscordAccount,
   type Me,
-  type MyEmail,
   type MyPlan,
   type Offer,
   type Person,
@@ -35,10 +33,9 @@ import CampaignDelete from "./CampaignDelete";
 import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
 import CampaignFacts from "./CampaignFacts";
-import { Improvement } from "./Improvement";
 import { isSafeRedirect } from "./redirect";
-import { MyQuestions } from "./MyQuestions";
-import { PublicQuestions, Support } from "./Support";
+import LazyPanel from "./LazyPanel";
+import { ActionButton, Notice, SharedContext, emailConfirmToken, forgetEmailLink, rememberConfirm, useAction, useShared, type Shared } from "./account-shared";
 
 type State =
   | { kind: "loading" }
@@ -60,156 +57,19 @@ interface Props {
   siteKey?: string;
 }
 
-/** The code in `#email-confirm=...` (a change of the email DMbot uses, #2349), or null. */
-function emailConfirmToken(hash: string): string | null {
-  const found = /^#email-confirm=([\w-]{1,200})$/.exec(hash);
-  return found ? (found[1] ?? null) : null;
-}
-
 /** The code in `#email-link=...`, or null. */
 function emailLinkToken(hash: string): string | null {
   const found = /^#email-link=([\w-]{1,200})$/.exec(hash);
   return found ? (found[1] ?? null) : null;
 }
 
-/** A change-of-email code survives the Discord sign-in round trip in this tab's session storage, because
- * the address's `#...` does not (#2349). It is removed once the API has answered it. */
-const CONFIRM_KEY = "dmbot:email-confirm";
-function rememberConfirm(token: string): void {
-  try {
-    sessionStorage.setItem(CONFIRM_KEY, token);
-  } catch {
-    // Storage may be blocked; the code is then still in the address until sign-in.
-  }
-}
-function recalledConfirm(): string | null {
-  try {
-    const found = sessionStorage.getItem(CONFIRM_KEY);
-    return found && /^[\w-]{1,200}$/.test(found) ? found : null;
-  } catch {
-    return null;
-  }
-}
-function forgetConfirm(): void {
-  try {
-    sessionStorage.removeItem(CONFIRM_KEY);
-  } catch {
-    // Nothing to remove.
-  }
-}
-
-/** Take the code out of the address bar, so a reload or a shared screen can't use it again. */
-function forgetEmailLink(): void {
-  if (typeof window !== "undefined") {
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-  }
-}
-
 const defaultGo = (url: string): void => {
   window.location.assign(url);
 };
 
-interface Shared {
-  api: AccountApi;
-  /** Send the browser to Discord or the payment company; anything else is refused. */
-  go: (url: string) => void;
-  /** Fetch the account again after a change. A failure keeps what's on screen. */
-  refresh: () => Promise<void>;
-  /** The session ended (or must be renewed): back to sign-in, with a message. */
-  signedOut: (notice?: string) => void;
-  /** Free access with no hours or campaign limit: no "your hours" or "slots" wording (#824). */
-  noLimits: boolean;
-  /** Cloudflare Turnstile's site key for the Support form, or "" (#1340). */
-  siteKey: string;
-}
-
-const SharedContext = createContext<Shared | null>(null);
-
-function useShared(): Shared {
-  const shared = useContext(SharedContext);
-  if (!shared) throw new Error("Account sections need the Account component around them");
-  return shared;
-}
-
-/**
- * One action at a time per section: the button shows "One moment…" while it runs, a second
- * tap does nothing, and a failure shows its message inside that section, where the user is.
- */
-function useAction() {
-  const { signedOut } = useShared();
-  const running = useRef(false);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const run = useCallback(
-    async (action: () => Promise<void>, explain?: (error: ApiError) => string | null) => {
-      if (running.current) return;
-      running.current = true;
-      setBusy(true);
-      setNotice(null);
-      try {
-        await action();
-      } catch (error) {
-        const apiError = error instanceof ApiError ? error : new ApiError("server");
-        if (apiError.kind === "signed-out") {
-          signedOut();
-          return;
-        }
-        if (apiError.kind === "sign-in-again") {
-          signedOut(text.signInAgain);
-          return;
-        }
-        setNotice(explain?.(apiError) ?? text.errors[apiError.kind] ?? text.actionFailed);
-      } finally {
-        running.current = false;
-        setBusy(false);
-      }
-    },
-    [signedOut],
-  );
-
-  const clear = useCallback(() => setNotice(null), []);
-  return { busy, notice, run, clear };
-}
-
 /** For campaign actions: "not allowed" there means only the campaign's DM can. */
 function campaignRefusal(error: ApiError): string | null {
   return error.kind === "not-allowed" ? text.notTheDm : null;
-}
-
-function Notice({ message }: { message: string | null }) {
-  const ref = useRef<HTMLParagraphElement>(null);
-  useEffect(() => {
-    if (message) ref.current?.scrollIntoView?.({ block: "nearest" });
-  }, [message]);
-  if (!message) return null;
-  return (
-    <p ref={ref} class="warn" role="alert">
-      {message}
-    </p>
-  );
-}
-
-function ActionButton({
-  busy,
-  onClick,
-  kind = "primary",
-  label,
-  children,
-}: {
-  busy: boolean;
-  onClick: () => void;
-  kind?: "primary" | "secondary" | "danger";
-  /** A spoken name that starts with the visible words but says which thing, when there are several. */
-  label?: string;
-  children: ComponentChildren;
-}) {
-  const classes = kind === "primary" ? "button" : `button ${kind}`;
-  return (
-    <button type="button" class={classes} disabled={busy} aria-busy={busy} aria-label={busy ? undefined : label} onClick={onClick}>
-      {busy ? text.busy : children}
-    </button>
-  );
 }
 
 export default function Account({
@@ -486,7 +346,7 @@ function SignedIn({
   onDeleted: () => void;
   onSignedOutByChoice: () => void;
 }) {
-  const { api } = useShared();
+  const { api, siteKey } = useShared();
   const { busy, notice, run } = useAction();
   // Kept here, not in the offers section: answering the last offer removes that section.
   const [offerNews, setOfferNews] = useState<{ text: string; ok: boolean } | null>(null);
@@ -559,11 +419,15 @@ function SignedIn({
       {DISCORD_ACCOUNTS_LIVE && me.discordAccounts && api.addDiscordUrl && api.removeDiscordAccount && (
         <DiscordAccountsSection accounts={me.discordAccounts} resultText={discordNews} />
       )}
-      {api.myEmail && <EmailSection hash={hash} />}
+      {api.myEmail && (
+        <LazyPanel load={() => import("./AccountEmail")} what="the email settings" props={{ hash }} />
+      )}
       <ServersSection me={me} />
       {me.canMove === true && api.getMoveCode && <MoveSection />}
-      <SupportOrQuestions me={me} />
-      <Improvement api={api} />
+      <LazyPanel
+        load={() => import("./AccountTalk")}
+        what="the places to write to the team"
+        props={{ api, siteKey, me }} />
       <RecordingSection entries={me.recording ?? []} />
       <ExportSection />
       <DeleteSection
@@ -1669,270 +1533,6 @@ function IdSection({ me }: { me: Me }) {
           <p>{text.pointsLine(me.experiencePoints)}</p>
           <p class="muted small">{text.pointsNote}</p>
         </>
-      )}
-    </section>
-  );
-}
-
-/** Every account with a plan (Try It too, #1435) writes to the team in private; someone with no
- * account yet is pointed to the public Q&A.
- * An API older than #1340 has no canSupport, so it shows the Q&A (#1340). */
-function SupportOrQuestions({ me }: { me: Me }) {
-  const { api, siteKey } = useShared();
-  // Bumped when a question is sent, so the list below the form reads again (#1373).
-  const [sentCount, setSentCount] = useState(0);
-  return (
-    <>
-      {me.canSupport === true && api.sendSupport ? (
-        <Support
-          api={api}
-          siteKey={siteKey}
-          tryIt={me.plan?.id === "try-it"}
-          onSent={() => setSentCount((n) => n + 1)} />
-      ) : (
-        <PublicQuestions />
-      )}
-      <MyQuestions api={api} version={sentCount} canWrite={me.canSupport === true && !!api.sendSupport} />
-    </>
-  );
-}
-
-/** The email DMbot uses, for recap emails (#2349). A payment email is changed with the payment company
- * (its page is asked for only on a press); any other is changed here, but only after a link sent to
- * the new address is opened. The link works only in the same signed-in account that asked (the API
- * checks it; signed out, the page asks for a sign-in first), so a typo or a stranger's address never
- * takes over. Its code is in the address bar's `#...`, is used once and is taken out of the bar at once.
- * Only the person's own address is ever shown. */
-function EmailSection({ hash }: { hash: string }) {
-  const { api, go } = useShared();
-  const { busy, notice, run, clear } = useAction();
-  const [mine, setMine] = useState<MyEmail | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [address, setAddress] = useState("");
-  const [sent, setSent] = useState(false);
-  // The API answered with nothing waiting: the address is the one already in use, so no link was sent.
-  const [nothingSent, setNothingSent] = useState(false);
-  const [typeFirst, setTypeFirst] = useState(false);
-  const [portalOff, setPortalOff] = useState(false);
-  const box = useRef<HTMLInputElement>(null);
-
-  const read = useCallback(async (): Promise<MyEmail | null> => {
-    try {
-      const now = (await api.myEmail?.()) ?? null;
-      setMine(now);
-      setLoadFailed(false);
-      return now;
-    } catch (error) {
-      // An API that doesn't have the route yet (the site deploys on its own): no section, no alarm.
-      if (error instanceof ApiError && error.kind === "not-found") {
-        setMine(null);
-        setLoadFailed(false);
-        return null;
-      }
-      // A 401 already ends the session for the whole page (SIGNED_OUT_EVENT); this only says it did not load.
-      setLoadFailed(true);
-      return null;
-    }
-  }, [api]);
-  // The emailed link, opened once: the code leaves the address bar before it is sent.
-  const confirmed = useRef(false);
-  const [result, setResult] = useState<string | null>(null);
-  useEffect(() => {
-    // From the address, or kept across the sign-in that was needed first.
-    const token = emailConfirmToken(hash) ?? recalledConfirm();
-    if (token && api.confirmEmail && !confirmed.current) {
-      confirmed.current = true;
-      void (async () => {
-        let worked = false;
-        let answered = false;
-        await run(
-          async () => {
-            await api.confirmEmail?.(token);
-            worked = true;
-          },
-          (error) => {
-            // Any answer from the API spends the code (a bad link, or an address another account took
-            // while it waited); only a connection that failed or a server fault keeps it to try again.
-            if (error.kind === "network" || error.kind === "server") return null;
-            answered = true;
-            return error.kind === "bad-link" ? text.emailConfirmBad : (text.errors[error.kind] ?? null);
-          },
-        );
-        // The code goes only once the API has answered it; a network failure leaves it to try again.
-        if (worked || answered) {
-          forgetConfirm();
-          forgetEmailLink();
-        }
-        const now = await read();
-        if (worked) setResult(now?.address ? text.emailConfirmed(now.address) : null);
-      })();
-      return;
-    }
-    void read();
-    // `run` is stable per section; only the page and its address start this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [read, hash]);
-
-  if (loadFailed && !mine)
-    return (
-      <section aria-labelledby="email-section-heading" class="panel" id="email">
-        <h3 id="email-section-heading">{text.myEmailHeading}</h3>
-        <p class="warn" role="alert">
-          {text.emailLoadFailed}
-        </p>
-      </section>
-    );
-  if (!mine) return null;
-
-  const payment = mine.source === "payment";
-  const stripe = (): void =>
-    void run(
-      async () => {
-        const url = await api.billingPortalUrl();
-        if (!isSafeRedirect(url)) throw new ApiError("server");
-        go(url);
-      },
-      (error) => {
-        if (error.kind !== "payments-off") return null;
-        setPortalOff(true);
-        return "";
-      },
-    );
-  const submit = (event: Event): void => {
-    event.preventDefault();
-    if (address.trim() === "") {
-      setTypeFirst(true);
-      box.current?.focus();
-      return;
-    }
-    setTypeFirst(false);
-    void run(
-      async () => {
-        const answer = await api.changeEmail?.(address.trim());
-        setNothingSent(answer?.pending === null);
-        setSent(true);
-        setEditing(false);
-        setAddress("");
-        await read();
-      },
-      (error) => (error.kind === "email-failed" ? text.emailSendFailed : null),
-    );
-  };
-
-  return (
-    <section aria-labelledby="email-section-heading" class="panel" id="email">
-      <h3 id="email-section-heading">{text.myEmailHeading}</h3>
-      <p>{mine.address ? text.emailNow(mine.address) : text.emailNone}</p>
-      {payment && <p class="small">{text.emailPayment}</p>}
-      {mine.pending && (
-        <p class="small" role="status">
-          {text.emailPending(mine.pending, mine.address)}
-        </p>
-      )}
-      {mine.pending && !editing && api.cancelEmailChange && (
-        <div class="row">
-          <ActionButton
-            busy={busy}
-            kind="secondary"
-            onClick={() =>
-              void run(async () => {
-                await api.cancelEmailChange?.();
-                setSent(false);
-                setResult(text.emailCancelled);
-                await read();
-              })
-            }
-          >
-            {text.emailCancel}
-          </ActionButton>
-        </div>
-      )}
-      {result && (
-        <p class="ok" role="status">
-          {result}
-        </p>
-      )}
-      {sent && !mine.pending && !editing && (
-        <p class="ok" role="status">
-          {nothingSent ? text.emailAlready : text.emailSaved}
-        </p>
-      )}
-      <Notice message={notice} />
-      {payment ? (
-        <>
-          {portalOff ? (
-            <p class="small">{text.emailPortalOff}</p>
-          ) : (
-            <>
-              <div class="row">
-                <ActionButton busy={busy} kind="secondary" onClick={stripe}>
-                  {text.emailPaymentButton}
-                </ActionButton>
-              </div>
-              <p class="small muted">{text.emailPaymentHelp}</p>
-            </>
-          )}
-        </>
-      ) : editing ? (
-        <form class="stack" noValidate onSubmit={submit}>
-          <label class="field">
-            {text.emailNewLabel}
-            <input
-              ref={box}
-              type="email"
-              inputMode="email"
-              autoCapitalize="none"
-              autoComplete="email"
-              aria-describedby="email-link-note"
-              value={address}
-              maxLength={254}
-              onInput={(e) => {
-                setAddress((e.target as HTMLInputElement).value);
-                setTypeFirst(false);
-                clear();
-              }}
-            />
-          </label>
-          <p id="email-link-note" class="small muted">
-            {text.emailLinkNote}
-          </p>
-          {typeFirst && (
-            <p class="warn" role="alert">
-              {text.emailTypeFirst}
-            </p>
-          )}
-          <div class="row">
-            <button type="submit" class="button" disabled={busy}>
-              {busy ? text.busy : mine.pending ? text.emailSendAgain : text.emailSend}
-            </button>
-            <button
-              type="button"
-              class="button secondary"
-              onClick={() => {
-                setEditing(false);
-                setTypeFirst(false);
-                clear();
-              }}
-            >
-              {text.cancel}
-            </button>
-          </div>
-        </form>
-      ) : (
-        <div class="row">
-          <button
-            type="button"
-            class="button secondary"
-            onClick={() => {
-              setEditing(true);
-              setSent(false);
-              setTimeout(() => box.current?.focus(), 0);
-            }}
-          >
-            {mine.pending ? text.emailSendAgain : mine.address ? text.emailChange : text.emailAdd}
-          </button>
-        </div>
       )}
     </section>
   );
