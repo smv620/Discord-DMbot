@@ -268,6 +268,7 @@ from dmbot.memory import (
     lore_context,
     meaning,
     plan_reader,
+    report_make,
     voyage,
     web_actions,
 )
@@ -306,6 +307,7 @@ from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
+from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
@@ -540,6 +542,7 @@ from dmbot.ui.transcripts import (
 )
 from dmbot.web import accounts
 
+REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
@@ -3101,6 +3104,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             # After the extractor (its readings are beliefs too); off unless the switch is on.
             ("contradiction grades", lambda: self.grade_contradictions(table)),
+            # The report for the website (#2661): reuses those grades, then sorts the differences.
+            ("after-session report", lambda: self.make_report(table)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -8767,6 +8772,71 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
+
+    async def make_report(self, table: Table) -> None:
+        """After a session, only with DMBOT_STORY_REPORT on (and the extractor): make the report
+        the recap page shows (#2661): grade the clashes not graded yet, find what the party has
+        wrong and have PlotBot sort it. It reads no transcript line: the AI is shown only the
+        campaign's own names and relationship words. Inside the extractor's plan check and call
+        limits (its calls are counted there), and at most `REPORT_CALLS` a session; what the limit
+        leaves is made next time and the report says so. The run shows its stage and counts to the
+        page, and the log gets counts only. Nothing here changes a belief or tells a player.
+
+        No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
+        DM-confirmed names and relationships the campaign already stores."""
+        if (
+            not self.settings.story_report_on
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return  # closed: a plan that can't be checked is not run
+            sid = table.transcript_session_id
+            session = await self.transcripts.session(gid, sid)
+            if session is None:
+                return
+            _, used = await self.transcripts.extraction(gid, sid)
+            day_used = await self.transcripts.extractor_calls_since(
+                gid, cid, int(time.time()) - 86400
+            )
+            allowed = min(
+                REPORT_CALLS,
+                extractor.calls_left(
+                    self.settings.story_extractor_max_calls,
+                    used,
+                    self.settings.story_extractor_max_calls_day,
+                    day_used,
+                ),
+            )
+            if allowed == 0:
+                log.info("Report: not made, the extractor's call limit is used")
+                return
+            transcripts = self.transcripts
+            made = await report_make.make(
+                self.memory,
+                GradeStore.of(self.memory),
+                ReportStore.of(self.memory),
+                self.extractor_ai,
+                gid,
+                cid,
+                session.started_at,
+                session_started_at=session.started_at,
+                max_calls=allowed,
+                count_call=lambda: transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
+            )
+            log.info(made.line())
 
     async def meaning_leads(self, campaign: Campaign, question: str, asker_id: int) -> list[str]:
         """More starting points for the sidebar's recall by what the question means (#2664).
