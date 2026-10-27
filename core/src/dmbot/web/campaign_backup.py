@@ -30,7 +30,7 @@ from dmbot.web.sessions import Session
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 KEEP_FOR_S = 900  # what the database keeps a request and its file for
 # What a failed copy says, as the code the page turns into words.
-REASONS = {"not_found", "not_allowed", "plan", "too_big", "failed"}
+REASONS = {"not_found", "not_allowed", "plan", "too_big", "too_many_files", "failed"}
 
 
 async def request(db: Database, session: Session, ref: str) -> str:
@@ -83,6 +83,9 @@ async def status(
         "ready": got["state"] == "done",
         "fileName": got["fileName"] or None,
         "size": int(got["size"]) if got["state"] == "done" else None,
+        # Whether the main file is still there to fetch (it leaves the row as it is taken, so a
+        # half-finished download can carry on with the parts).
+        "fileWaiting": bool(got["fileWaiting"]),
         # The transcripts files still to fetch (number and size), and how many there were.
         "parts": [{"n": int(p["n"]), "size": int(p["size"])} for p in got["parts"]],
         "partsTotal": int(got["partsTotal"]),

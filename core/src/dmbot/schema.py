@@ -13472,7 +13472,8 @@ WEB_BACKUP_PARTS = (
             RETURN NULL;
         END IF;
         RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
-            'fileName', r.file_name, 'size', r.size, 'parts', waiting, 'partsTotal', r.parts,
+            'fileName', r.file_name, 'size', r.size, 'fileWaiting', r.has_file,
+            'parts', waiting, 'partsTotal', r.parts,
             'createdAt', r.created_at, 'updatedAt', r.updated_at);
     END
     $fn$;

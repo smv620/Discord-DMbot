@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from dmbot.campaigns.models import Campaign
+from dmbot.campaigns.parts import TOO_MANY_PARTS
 from dmbot.campaigns.store import BackupTooBig, encode_backup
 from dmbot.db import Database
 from dmbot.plan_rules import Action
@@ -39,6 +40,7 @@ NOT_FOUND = "not_found"  # the campaign is gone
 NOT_ALLOWED = "not_allowed"  # the sender is not the owner or a game master any more
 PLAN = "plan"  # the owner's plan has no copies (Try It)
 TOO_BIG = "too_big"  # bigger than a restore takes
+TOO_MANY_FILES = "too_many_files"  # more transcripts files than a restore has boxes for
 FAILED = "failed"  # anything unexpected; asking again is fine
 
 
@@ -159,9 +161,11 @@ async def build(host: Host, guild_id: int, item: Request, store: WebBackups) -> 
             data, parts = await host.export_campaign(guild_id, campaign.id)
             await store.stage(guild_id, item, "packing")
             raw = await asyncio.to_thread(encode_backup, data)
-        except BackupTooBig:  # (a main file, or a session, or a set of files a restore cannot take)
-            await store.failed(guild_id, item, TOO_BIG)
-            return TOO_BIG
+        except BackupTooBig as exc:  # a main file, a session, or a set a restore cannot take
+            # Discord says which when it is the number of files; so does the page.
+            why = TOO_MANY_FILES if str(exc) == TOO_MANY_PARTS else TOO_BIG
+            await store.failed(guild_id, item, why)
+            return why
         if not await store.done(
             guild_id, item, raw, backup_filename(campaign.name, int(time.time())), parts
         ):

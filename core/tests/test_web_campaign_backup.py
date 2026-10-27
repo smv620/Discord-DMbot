@@ -143,6 +143,7 @@ class Backing(Base):
             [
                 "expiresAt",
                 "fileName",
+                "fileWaiting",
                 "parts",
                 "partsTotal",
                 "ready",
@@ -245,8 +246,11 @@ class Backing(Base):
         ref = self.cref(THURSDAY.id, self.one)
         made = await campaign_backup.request(self.web, self.session, ref)
         await self.build_next(THURSDAY.id)
+        before = await campaign_backup.status(self.web, self.session, ref, made)
+        self.assertTrue(before["fileWaiting"])
         await campaign_backup.fetch(self.web, self.session, ref, made)
         still = await campaign_backup.status(self.web, self.session, ref, made)
+        self.assertFalse(still["fileWaiting"])  # (so a half-finished download can resume)
         self.assertTrue(still["parts"])  # the main file alone does not end it
         await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
         with self.assertRaises(RecapError):
@@ -339,7 +343,7 @@ class Backing(Base):
         made = await campaign_backup.request(self.web, self.session, ref)
         item = await self.backups.claim_next(THURSDAY.id)
         assert item is not None
-        with self.assertRaises(Exception):  # noqa: B017 (the driver's own error, a bad value)
+        with self.assertRaises(TypeError):  # (`len(None)` in Python, before anything is stored)
             await self.backups.done(
                 THURSDAY.id,
                 item,
@@ -372,6 +376,23 @@ class Backing(Base):
                 campaign_backup.part_filename(main, n, 7),
                 logic.part_filename("Frostmaiden Tales", now, n, 7),
             )
+
+    async def test_too_many_files_has_its_own_reason_and_other_sizes_stay_too_big(self) -> None:
+        from dmbot.campaigns.parts import TOO_MANY_PARTS
+
+        ref = self.cref(THURSDAY.id, self.one)
+        for message, word in ((TOO_MANY_PARTS, "too_many_files"), ("a session too big", "too_big")):
+            made = await campaign_backup.request(self.web, self.session, ref)
+            host = self.host()
+
+            async def refuse(g: int, c: str, message: str = message) -> Any:
+                raise BackupTooBig(message)
+
+            host.export_campaign = refuse
+            self.assertEqual(await self.build_next(THURSDAY.id, host), word)
+            got = await campaign_backup.status(self.web, self.session, ref, made)
+            self.assertEqual((got["state"], got["reason"]), ("failed", word))
+            await self.db_sql(THURSDAY.id, "DELETE FROM web_backups")
 
     async def test_the_website_role_cannot_read_the_parts_table_itself(self) -> None:
         import psycopg
