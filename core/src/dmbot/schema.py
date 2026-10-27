@@ -3504,7 +3504,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_report", "dmbot_web_report(BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_report_answer", "dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     # A campaign's game masters, and the people who can be offered as one more (#2768).
-    ("dmbot_web_co_dm_add", "dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT)"),
+    ("dmbot_web_co_dm_add", "dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT, INT)"),
     ("dmbot_web_game_masters", "dmbot_web_game_masters(BIGINT, TEXT)"),
     (
         "dmbot_web_game_master_candidates",
@@ -16167,9 +16167,12 @@ GAME_MASTER_SETTING = r"""
     -- has left). An add is for someone who agreed to be recorded in this server, the people the
     -- candidates door lists: a made-up id is 'unknown_person', so no free-typed account is queued.
     -- 'ok' with the id, 'bad_value' for a malformed id or no yes/no, 'plan_holder' for removing
-    -- the one whose plan runs the campaign, 'too_many' for an add at the limit (5, the store's
-    -- MAX_DMS), 'unknown_person', 'too_soon'; NULL for anyone not a DM.
-    CREATE FUNCTION dmbot_web_co_dm_add(g BIGINT, c TEXT, uid TEXT, on_ BOOLEAN, terms INT)
+    -- the one whose plan runs the campaign, 'too_many' for an add at the limit (`max_dms`, the
+    -- store's MAX_DMS, passed in so the number lives in one place), 'unknown_person', 'too_soon';
+    -- NULL for anyone not a DM.
+    CREATE FUNCTION dmbot_web_co_dm_add(
+        g BIGINT, c TEXT, uid TEXT, on_ BOOLEAN, terms INT, max_dms INT
+    )
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -16200,7 +16203,7 @@ GAME_MASTER_SETTING = r"""
         IF on_ THEN
             SELECT count(*) INTO have FROM campaign_dms d
                 WHERE d.guild_id = g AND d.campaign_id = c;
-            IF have >= 5 AND NOT EXISTS (SELECT 1 FROM campaign_dms d
+            IF have >= max_dms AND NOT EXISTS (SELECT 1 FROM campaign_dms d
                                          WHERE d.guild_id = g AND d.campaign_id = c
                                            AND d.user_id = who) THEN
                 RETURN jsonb_build_object('status', 'too_many');
@@ -16226,11 +16229,11 @@ GAME_MASTER_SETTING = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT)'
+            'ALTER FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT, INT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT, INT) FROM PUBLIC;
 """
 
 MIGRATIONS: tuple[Migration, ...] = (
