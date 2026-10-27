@@ -20,7 +20,7 @@ function fake(answers: Answer[]) {
   return { api, seen };
 }
 const progress = (stage: string, extra: object = {}) => ({
-  stage, state: "running", startedAt: 100, updatedAt: 100, serverNow: 101, reason: null, ready: false, ...extra,
+  stage, state: "running", startedAt: 100, updatedAt: 100, serverNow: 101, reason: null, ready: false, parts: [], partsTotal: 0, ...extra,
 });
 const ID = "a".repeat(32);
 
@@ -80,16 +80,45 @@ describe("the backup before Delete", () => {
     expect(counted).toEqual(["0/3", "1/3", "2/3", "3/3"]);
   });
 
-  it("does not fetch the main file again when it was already taken", async () => {
-    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", fileWaiting: false, parts: [{ n: 2, size: 5 }], partsTotal: 2 });
+  it("does not fetch the main file again when core says it was taken (a size of 0)", async () => {
+    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", size: 0, parts: [{ n: 2, size: 5 }], partsTotal: 2 });
     const { api, seen } = fake([{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 200, file: true }]);
     const set = await api.campaignBackup!("100.cmp1");
     expect(set.files.map((f) => f.name)).toEqual(["x.transcripts-2-of-2.dmbot.json.gz"]);
     expect(seen.at(-1)!.url).toMatch(/\/file\/2$/);
   });
 
+  it("refuses a copy that lists fewer files than it had, before spending the once-only main file", async () => {
+    const short = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", size: 9, parts: [{ n: 1, size: 5 }, { n: 3, size: 5 }], partsTotal: 3 });
+    const { api, seen } = fake([{ status: 202, body: { id: ID } }, { status: 200, body: short }]);
+    await expect(api.campaignBackup!("100.cmp1")).rejects.toMatchObject({ kind: "backup-part" });
+    expect(seen.map((c) => c.url)).not.toContainEqual(expect.stringMatching(/\/file/)); // nothing was fetched
+  });
+
+  it("refuses a status that says nothing of the transcripts files, so a main file alone never looks complete", async () => {
+    const { partsTotal: _gone, parts: _no, ...old } = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz" });
+    const { api } = fake([{ status: 202, body: { id: ID } }, { status: 200, body: old }]);
+    await expect(api.campaignBackup!("100.cmp1")).rejects.toMatchObject({ kind: "backup-failed" });
+  });
+
+  it("asks for each file once and never again, and a dropped connection on a later file is a network trouble, not a broken set", async () => {
+    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", size: 9, parts: [{ n: 1, size: 5 }], partsTotal: 1 });
+    const answers: Answer[] = [{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 200, file: true }];
+    const queue = [...answers];
+    const seen: string[] = [];
+    const api = httpApi("https://api.example", (async (url: string) => {
+      seen.push(String(url));
+      const next = queue.shift();
+      if (!next) throw new TypeError("network down");
+      if (next.file) return new Response(new Blob(["{}"]), { status: 200, headers: { "Content-Type": "application/gzip" } });
+      return new Response(JSON.stringify(next.body ?? {}), { status: next.status, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch);
+    await expect(api.campaignBackup!("100.cmp1")).rejects.toMatchObject({ kind: "network" });
+    expect(seen.filter((u) => /\/file(\/1)?$/.test(u))).toHaveLength(2); // the main file once, the part once
+  });
+
   it("a transcripts file that fails fails the whole backup, and the main file's own refusals stay its own", async () => {
-    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", parts: [{ n: 1, size: 5 }], partsTotal: 1 });
+    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", size: 9, parts: [{ n: 1, size: 5 }], partsTotal: 1 });
     const failing = fake([{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 200, file: true }, { status: 404, body: { error: "not_found" } }]);
     await expect(failing.api.campaignBackup!("100.cmp1")).rejects.toMatchObject({ kind: "backup-part" });
     const first = fake([{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 404, body: { error: "not_found" } }]);

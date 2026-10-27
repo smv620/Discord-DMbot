@@ -238,7 +238,8 @@ describe("the backup", () => {
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.backupDone(files), {}, { timeout: 5000 })).toBeTruthy();
       expect(saved).toEqual(files);
-      expect(within(box).getByText(/Your backup is 3 files\. Keep them together/)).toBeTruthy();
+      expect(within(box).getByText(/Backup saved: 3 files\. Keep them all together/)).toBeTruthy();
+      for (const file of files) expect(within(box).getByText(file, { selector: "li" })).toBeTruthy(); // one to a line, easy to read on a phone
       expect(within(box).getByText(w.backupBigFile)).toBeTruthy();
     });
 
@@ -254,7 +255,7 @@ describe("the backup", () => {
       const box = await open("The Brynwater Crossing");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.stage["fetching"] as string)).toBeTruthy();
-      expect(within(box).getByText(`2 of 7 ${w.filesUnit}`)).toBeTruthy();
+      expect(within(box).getByText(`2 of 7 ${w.filesUnit(7)}`)).toBeTruthy();
       hold();
     });
 

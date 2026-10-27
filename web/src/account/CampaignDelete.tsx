@@ -65,7 +65,7 @@ export default function CampaignDelete({
       const set = await api.campaignBackup(refId, setMade, (done, total) => {
         const now = Math.floor(Date.now() / 1000);
         if (!fetchStart.current) fetchStart.current = now;
-        setFetched({ stage: "fetching", state: "running", done, total, unit: words.filesUnit, startedAt: fetchStart.current, updatedAt: now, serverNow: now });
+        setFetched({ stage: "fetching", state: "running", done, total, unit: words.filesUnit(total), startedAt: fetchStart.current, updatedAt: now, serverNow: now });
       });
       // One download after another, a moment apart, so a browser does not mistake them for a pile of pop-ups.
       for (const [i, file] of set.files.entries()) {
@@ -77,7 +77,8 @@ export default function CampaignDelete({
         document.body.appendChild(link);
         link.click();
         link.remove();
-        URL.revokeObjectURL(href);
+        // Not at once: some browsers cancel a download whose address is taken back in the same breath.
+        setTimeout(() => URL.revokeObjectURL(href), 30_000);
       }
       setSavedNames(set.files.map((f) => f.name));
       setSaved(true);
@@ -147,7 +148,18 @@ export default function CampaignDelete({
             />
           )}
           <p class="small">{words.backupNote}</p>
-          {saved && <p role="status" class="small">{words.backupDone(savedNames)}</p>}
+          {saved && (
+            <div role="status" class="small">
+              <p>{words.backupDone(savedNames)}</p>
+              {savedNames.length > 1 && (
+                <ul>
+                  {savedNames.map((file) => (
+                    <li key={file}>{file}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           {saved && savedNames.length > 1 && <p class="small muted">{words.backupBigFile}</p>}
         </>
       )}

@@ -2321,6 +2321,7 @@ export function httpApi(
         ready: boolean;
         fileName?: string | null;
         fileWaiting?: boolean;
+        size?: number | null;
         parts?: { n: number }[];
         partsTotal?: number;
       };
@@ -2340,21 +2341,29 @@ export function httpApi(
       // a backup with a file missing would restore without part of the story.
       const main = safeBackupName(got.fileName ?? "", "campaign.dmbot.json.gz");
       const stem = main.replace(/\.dmbot\.json\.gz$/, "") || "campaign";
+      // An API without the transcripts files says nothing of them: a main file alone would look complete.
+      if (typeof got.partsTotal !== "number") throw new ApiError("backup-failed");
       const parts = (got.parts ?? []).map((p) => p.n);
-      const total = (got.fileWaiting === false ? 0 : 1) + parts.length;
+      // The main file is still to fetch unless core says it was taken (`fileWaiting`, or a size of 0).
+      const mainWaits = got.fileWaiting ?? got.size !== 0;
+      // A copy that lists fewer files than it had, before anything is fetched, is broken: say so now, before the
+      // once-only main file is spent on a set that cannot be complete.
+      if (mainWaits && parts.length !== got.partsTotal) throw new ApiError("backup-part");
+      const total = (mainWaits ? 1 : 0) + parts.length;
       const files: BackupFile[] = [];
       onFile?.(0, total);
       const take = async (path: string, name: string, first: boolean): Promise<void> => {
         try {
           files.push({ name, blob: (await call("GET", `${copy}${path}`, undefined, true)) as Blob });
         } catch (error) {
-          // The main file keeps its own refusals (not yours, gone); a later file that fails is a broken set.
-          if (first) throw error;
+          // The main file keeps its own refusals (not yours, gone); a later file that fails is a broken set,
+          // unless the trouble is the connection or the sign-in, which are what they are.
+          if (first || (error instanceof ApiError && ["network", "signed-out", "slow-down"].includes(error.kind))) throw error;
           throw new ApiError("backup-part");
         }
         onFile?.(files.length, total);
       };
-      if (got.fileWaiting !== false) await take("/file", main, true);
+      if (mainWaits) await take("/file", main, true);
       for (const n of parts) await take(`/file/${n}`, `${stem}.transcripts-${n}-of-${got.partsTotal ?? parts.length}.dmbot.json.gz`, false);
       return { files };
     },
