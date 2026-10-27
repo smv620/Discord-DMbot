@@ -15,6 +15,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from dmbot.memory import kin
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
 from dmbot.memory.store import MemoryStore
@@ -42,6 +43,7 @@ async def keep_all(
             written = await memory.add_relation(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
                 source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
+                directional=kin.directional(c.detail),  # a family role keeps who holds it
                 unrevealed=True,
             )  # fmt: skip
         except MemoryRuleError:
