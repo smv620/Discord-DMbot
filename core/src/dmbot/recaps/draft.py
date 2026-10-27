@@ -1023,12 +1023,92 @@ def kept_names(
     return found
 
 
-def _all_known(name: str, known: set[str]) -> bool:
+def _all_known(name: str, known: set[str], *, title: bool = False) -> bool:
     """A name passes when every word of it is known. `proper_nouns` keeps "Dun-Varra's" whole but
     `known` is made of `words()`, which split at a hyphen, so the whole could never be found
-    (#2026); each word is looked up instead, as `is_known_name` does."""
+    (#2026); each word is looked up instead, as `is_known_name` does. A plural of a known word
+    passes too ("the Oskars" for Oskar). In a title (`title`) every word is written with a capital,
+    so an ordinary English word is not a name there (#2741)."""
     mine = set(words(name))
-    return not mine or mine <= known | NOT_NAMES
+    if not mine or mine <= known | NOT_NAMES:
+        return True
+    return all(
+        w in known or w in NOT_NAMES or _plural_of(w, known) or _title_word(w, title) for w in mine
+    )
+
+
+def _plural_of(word: str, known: set[str]) -> bool:
+    """A plural of a known word ("Oskars" for Oskar); only longer words, so "is" is not "i" + s."""
+    return len(word) > 3 and (
+        (word.endswith("s") and word[:-1] in known) or (word.endswith("es") and word[:-2] in known)
+    )
+
+
+def _title_word(word: str, title: bool) -> bool:
+    return title and _ordinary(word)
+
+
+_SUFFIXES = ("ing", "ed", "er", "ers", "est", "ly", "ness", "ful", "less", "ous", "es", "s", "d")
+
+
+def _ordinary(word: str) -> bool:
+    """An ordinary English word, or one made from one by a common ending ("rising" from "rise",
+    "hollowed" from "hollow"): the free rules' text does not hold every inflection."""
+    english = _english()
+    if word in english:
+        return True
+    for suffix in _SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            stem = word[: -len(suffix)]
+            if (
+                stem in english
+                or stem + "e" in english
+                or (len(stem) > 3 and stem[-1] == stem[-2] and stem[:-1] in english)
+            ):
+                return True
+    return False
+
+
+# Why a word was taken for a name outside the beat sheet, in fixed words (#2741): the report counts
+# these and never shows the name.
+NAME_CATEGORIES = ("pc_form", "heard_as", "plural", "ordinary_word", "unknown")
+
+
+def name_category(
+    name: str,
+    *,
+    known: set[str],
+    pcs: Collection[str] = (),
+    aliases: Mapping[str, str] | None = None,
+) -> str:
+    """What kind of word `name` is, for a report: a form of a player character's name, a form the
+    table's aliases know (heard as), a plural of a known word, an ordinary English word, or none of
+    those (not known at all)."""
+    mine = set(words(name))
+    if mine and any(mine & set(words(pc)) for pc in pcs):
+        return "pc_form"
+    if aliases and any(mine & set(words(a)) for a in aliases):
+        return "heard_as"
+    if mine and all(w in known or _plural_of(w, known) for w in mine):
+        return "plural"
+    if mine and all(_ordinary(w) for w in mine):
+        return "ordinary_word"
+    return "unknown"
+
+
+def count_categories(
+    names: Collection[str],
+    *,
+    known: set[str],
+    pcs: Collection[str] = (),
+    aliases: Mapping[str, str] | None = None,
+) -> dict[str, int]:
+    """How many of these words are of each kind (`name_category`), as fixed words and numbers."""
+    out: dict[str, int] = {}
+    for n in names:
+        k = name_category(n, known=known, pcs=pcs, aliases=aliases)
+        out[k] = out.get(k, 0) + 1
+    return out
 
 
 ENDING_WORDS = 40  # the last words of the narration are where the session must be left
@@ -1133,8 +1213,12 @@ def check_prose(
     corrections: Collection[str] = (),
     pcs: Collection[str] = (),
     identity_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+    name_counts: dict[str, int] | None = None,
+    aliases: Mapping[str, str] | None = None,
 ) -> list[str]:
     """What is wrong with the prose, in plain words for the retry; empty if nothing.
+    `name_counts`: filled with how many words taken for names outside the beat sheet there are of
+    each kind (`NAME_CATEGORIES`), for a report that never shows the names (#2741).
     `identity_ties`: a 🤫 spelling and its entry's public names: a sentence naming both says who is
     who, so it is refused (`states_secret_tie`), though a secret name the table said aloud may be
     used on its own (#2591). Relations between two names are not checked here: the writer is told
@@ -1188,6 +1272,8 @@ def check_prose(
     # secret check below says it without the name.
     unknown = [n for n in unknown if not names_a_secret(n, secret_names, allowed_names)]
     if unknown:
+        if name_counts is not None:
+            name_counts.update(count_categories(unknown, known=known, pcs=pcs, aliases=aliases))
         problems.append(
             f"names that are not allowed: {', '.join(unknown[:5])}. Use only the names listed, "
             "or leave the name out"
@@ -1369,9 +1455,15 @@ def check_finish(
     secret_names: Collection[str],
     previous: str = "",
     transcript: str = "",
+    name_counts: dict[str, int] | None = None,
+    pcs: Collection[str] = (),
+    aliases: Mapping[str, str] | None = None,
 ) -> tuple[Finish | None, list[str]]:
     """The title and bullets if they pass (bullets with their beat numbers taken off), and what
-    was wrong. Every bullet names a real beat; names come from the beats or the summary."""
+    was wrong. Every bullet names a real beat; names come from the beats or the summary. The title
+    is written with a capital on every word, so an ordinary English word in it is not a name
+    (#2741: a title like "Shadows Below" failed the recap as a name outside the beat sheet).
+    `name_counts`: as in `check_prose`."""
     title, raw_bullets = parsed
     problems: list[str] = []
     title = at_word_end(title, TITLE_HARD)
@@ -1387,15 +1479,31 @@ def check_finish(
     known = (
         _known(beats, allowed_names, previous, None) | set(words(summary)) | set(words(transcript))
     )
-    unknown = sorted(
-        {
+    title_nouns = proper_nouns(title, sentence_starts=True)
+    spared = [
+        n
+        for n in title_nouns
+        if len(n) > 3 and not _all_known(n, known) and _all_known(n, known, title=True)
+    ]
+    if (
+        spared and name_counts is not None
+    ):  # (not failed, but counted: the report shows the fix work)
+        name_counts["ordinary_word"] = name_counts.get("ordinary_word", 0) + len(spared)
+    found = {n for n in title_nouns if not _all_known(n, known, title=True) and len(n) > 3}
+    for bullet in bullets:
+        # (a bullet's first word is an imperative or a verb: "Decide who holds the key", so an
+        # ordinary word there is no name, as in the title)
+        lead = bullet.split(" ", 1)[0].strip(".,;:")
+        found |= {
             n
-            for n in proper_nouns(" ".join([title, *bullets]), sentence_starts=True)
-            if not _all_known(n, known) and len(n) > 3
+            for n in proper_nouns(bullet, sentence_starts=True)
+            if len(n) > 3 and not _all_known(n, known, title=(n == lead))
         }
-    )
+    unknown = sorted(found)
     unknown = [n for n in unknown if not names_a_secret(n, secret_names, allowed_names)]
     if unknown:
+        if name_counts is not None:
+            name_counts.update(count_categories(unknown, known=known, pcs=pcs, aliases=aliases))
         problems.append(f"names that are not in the beat sheet: {', '.join(unknown[:5])}")
     if names_a_secret(" ".join([title, *bullets]), secret_names, allowed_names):
         problems.append("it names something the DM keeps secret: leave it out")

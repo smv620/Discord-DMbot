@@ -14,6 +14,7 @@ from dmbot.ai import AIError, AIOutOfFunds, Reply
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.recaps import beats as bt
+from dmbot.recaps import critics as cr
 from dmbot.recaps import draft as rd
 from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
@@ -21,6 +22,7 @@ from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.recaps.store import Job, RecapSection, RecapStore
+from dmbot.recaps.text import CUE
 from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
 from tests import test_recap_significance as st_sig
@@ -1070,6 +1072,156 @@ class Working(WorkerHarness):
         self.assertEqual(len(self.careful.sent), 1)  # one revision, never two
         self.assertEqual(job.grade["faithful"], 4)  # one flag: not below the bar
         self.assertTrue(any("Cut 1 sentence" in x for x in notes))
+
+    async def test_a_flagged_ending_is_cut_and_the_recap_still_stands(self) -> None:
+        """#2741: the flagged sentence may be the one that ends the session. The recap loses it,
+        and is not lost with it."""
+        last = len(rd.sentences_of(fx.SUMMARY))
+        flag = fx.facts_answer([(last, "invented")])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("Neither of them moved", job.summary)
+        self.assertIn("Mira lifted her blade", job.summary)  # the rest stands
+        self.assertEqual(job.last_error, "")
+
+    async def test_several_flagged_sentences_cost_those_sentences_not_the_recap(self) -> None:
+        wanted = [self.sentence(f) for f in ("The torch burned", "Time passed", "Nothing answered")]
+        flag = fx.facts_answer([(n, "invented") for n in wanted])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        for gone in ("The torch burned", "Time passed", "Nothing answered"):
+            self.assertNotIn(gone, job.summary)
+        self.assertIn("Mira counted her breaths", job.summary)
+        self.assertIn("Mira lifted her blade", job.summary)
+
+    async def test_a_cut_that_takes_the_ending_off_leaves_a_note_for_the_dm(self) -> None:
+        """#2741: kept without its ending, the recap carries the note that says so."""
+        from unittest.mock import patch
+
+        last = len(rd.sentences_of(fx.SUMMARY))
+        flag = fx.facts_answer([(last, "invented"), (last - 1, "invented")])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        calls = iter([True, True])  # the two drafts end well; the draft left by the cut does not
+        with patch.object(rd, "ends_on", side_effect=lambda *a, **k: next(calls, False)):
+            job = await self.go()
+        self.assertEqual((job.state, job.last_error), ("ready", ""))
+        self.assertIn(pl.ENDING_CUT_NOTE, cr.loop_from_json(job.critics).notes)
+
+    async def test_a_fact_check_that_cannot_be_had_marks_the_recap_not_fact_checked(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=["not json at all"]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")  # it never stops a recap that passed every check
+        self.assertIn(pl.NOT_FACT_CHECKED_NOTE, cr.loop_from_json(job.critics).notes)
+
+    async def test_a_recap_that_was_fact_checked_carries_no_such_note(self) -> None:
+        await self.setUpWorker(self.happy())
+        job = await self.go()
+        self.assertEqual(cr.loop_from_json(job.critics).notes, ())
+
+    async def test_a_hard_failure_after_a_cut_gives_the_dms_try_back_with_the_code(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        n = self.sentence("The torch burned")
+        flag = fx.facts_answer([(n, "invented")])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        async with self.db.guild(1) as conn:
+            await conn.execute("UPDATE recap_jobs SET tries = 1")
+        real = rd.check_prose
+
+        def secret_after_the_cut(*a: Any, **k: Any) -> list[str]:
+            if sys._getframe(1).f_code.co_name == "_cut":
+                return ["it names something the DM keeps secret: leave it out"]
+            return list(real(*a, **k))
+
+        with patch.object(rd, "check_prose", secret_after_the_cut):
+            job = await self.go()
+        self.assertEqual(job.state, "failed")
+        self.assertIn("(check: secret)", job.last_error)
+        self.assertEqual(job.tries, 0)  # our side's failure: the DM keeps their Try again
+
+    async def test_a_speaker_who_stopped_during_the_fact_check_starts_the_recap_over(self) -> None:
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=["not json at all"]),
+        )
+        real = self.careful.complete
+
+        async def none_agree() -> Any:
+            return frozenset()
+
+        async def leaves_during_the_fact_check(*args: Any, **kw: Any) -> Any:
+            answer = await real(*args, **kw)
+            if args[0] in (rd.FACTS_SYSTEM, rd.FACTS_SYSTEM_TRANSCRIPT):
+                self.agreed = none_agree  # a player stops while the check is being made
+            return answer
+
+        self.careful.complete = leaves_during_the_fact_check  # type: ignore[method-assign]
+        job = await self.go()
+        self.assertNotEqual(job.state, "ready")  # begun again, not stood "not fact-checked"
+        self.assertNotIn(pl.NOT_FACT_CHECKED_NOTE, json.dumps(job.critics))
+
+    async def test_a_revision_that_lost_its_ending_is_still_refused(self) -> None:
+        """The critics' revision path: a better draft that has its ending is not replaced."""
+        from unittest.mock import patch
+
+        await self.setUpWorker(self.happy())
+        prose = rd.Prose(fx.SUMMARY, ("1. Low strings.",) * len(CUE.findall(fx.SUMMARY)))
+        flags = rd.Facts(((self.sentence("The torch burned"), "invented"),))
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="", day=4
+        )
+        ending = ["it must end exactly where the session stopped: the last beat"]
+        with patch.object(rd, "check_prose", return_value=ending):
+            cut, why = await self.worker._cut(
+                prose, flags, [], inputs, "", rd.length_for(2.0), keep_unended=False
+            )
+        self.assertEqual((cut, why), (None, "ending"))
+
+    def test_only_the_ending_may_be_left_after_a_cut(self) -> None:
+        self.assertEqual(pl.hard_after_cut(["it must end exactly where the session stopped"]), [])
+        secret = "it names something the DM keeps secret: leave it out"
+        self.assertEqual(
+            pl.hard_after_cut(["it must end exactly where the session stopped", secret]), [secret]
+        )
+
+    async def test_the_cut_keeps_every_check_but_the_ending_and_says_which_one_failed(self) -> None:
+        from unittest.mock import patch
+
+        await self.setUpWorker(self.happy())
+        prose = rd.Prose(fx.SUMMARY, ("1. Low strings.",) * len(CUE.findall(fx.SUMMARY)))
+        flags = rd.Facts(((self.sentence("The torch burned"), "invented"),))
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="", day=4
+        )
+        args: tuple[Any, ...] = (prose, flags, [], inputs, "", rd.length_for(2.0))
+        ending = ["it must end exactly where the session stopped: the last beat"]
+        with patch.object(rd, "check_prose", return_value=ending):
+            cut, why = await self.worker._cut(*args)
+        self.assertIsNotNone(cut)  # the ending alone does not end a recap
+        self.assertEqual(why, "")
+        secret = ["it names something the DM keeps secret: leave it out"]
+        with patch.object(rd, "check_prose", return_value=[*ending, *secret]):
+            cut, why = await self.worker._cut(*args)
+        self.assertIsNone(cut)
+        self.assertEqual(why, "secret")  # a fixed word, never the text
 
     async def test_a_revision_that_fails_its_checks_leaves_the_first_draft_with_cuts(self) -> None:
         n = self.sentence("The torch burned")
