@@ -25,6 +25,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory.store import MemoryStore
 from dmbot.memory.voyage import cosine
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,11 @@ class VectorStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    @classmethod
+    def of(cls, memory: MemoryStore) -> VectorStore:
+        """On the memory store's own database (the bot has the one store)."""
+        return cls(memory._db)
 
     async def save(self, guild_id: int, campaign_id: str, model: str, items: Sequence[Item]) -> int:
         """Keep these vectors for the campaign's own text (every kind but a line). One for a kind
@@ -119,6 +125,17 @@ class VectorStore:
                 )  # fmt: skip
                 kept += cur.rowcount
         return kept
+
+    async def has_any(self, guild_id: int, campaign_id: str, model: str, kind: str) -> bool:
+        """Whether this campaign has any numbers of this kind for this model: the cheap check
+        before a search sends a question anywhere with nothing to compare it to."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM memory_vectors WHERE guild_id = %s AND campaign_id = %s"
+                " AND model = %s AND owner_kind = %s LIMIT 1",
+                (guild_id, campaign_id, model, kind),
+            )
+            return await cur.fetchone() is not None
 
     async def kept(
         self, guild_id: int, campaign_id: str, model: str, *, kind: str | None = None

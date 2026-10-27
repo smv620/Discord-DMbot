@@ -10,6 +10,10 @@ reading ONE campaign (`memory/embedding.py` runs them).
   and DMbot's own words about the story. Never a guess still waiting for the DM, and never an entry
   merged into another.
 
+**Secret and DM-only entries are embedded too** (the numbers serve the DM's own search as well), so
+every reader of the numbers must filter before anything reaches a player: `meaning.entry_texts(...,
+for_players=True)` is the filter, checked live and never from what was true when they were made.
+
 PlotBot's notes, the DM's notes and shared lore are added here as they are found in the store;
 each is one more class with a `kind` and a `pieces`.
 """
