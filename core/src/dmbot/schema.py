@@ -3586,9 +3586,13 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
     # How a listed name is said, for the DM's row editor (#2317).
     ("dmbot_web_all_names_said", "dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])"),
+    # The Names page's search by meaning (#2733): the names nearest in meaning, DMs only.
+    ("dmbot_web_names_near", "dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)"),
     # The Settings page's choices (#2463), queued for the bot the same way.
     ("dmbot_web_setting_add", "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"),
     ("dmbot_web_setting_read", "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_optional_rules", "dmbot_web_optional_rules(BIGINT, TEXT)"),
+    ("dmbot_web_optional_rule_add", "dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN)"),
     # The All names page's list (#2294): DMs, and managers without what only a DM sees.
     (
         "dmbot_web_all_names",
@@ -10803,6 +10807,150 @@ ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
     1,
 ).replace("GREATEST(size, 1)", "LEAST(GREATEST(size, 1), 500)")
 
+# Search by meaning on the Names page (#2733, migration 0253).
+# `only_id` takes a short comma-separated list of ids as well as one (entry ids are 32 hex digits,
+# so a comma never belongs to one): the page asks for the rows of the names the search found, in
+# the rows' usual shape, with one call instead of one for each name.
+assert ALL_NAMES_KINDS.count("(only_id IS NULL OR v.id = only_id)") == 1
+ALL_NAMES_LIST = ALL_NAMES_KINDS.replace(
+    "(only_id IS NULL OR v.id = only_id)",
+    "(only_id IS NULL OR v.id = ANY (string_to_array(only_id, ',')))",
+    1,
+)
+NAMES_SMART = (
+    r"""
+    -- What an entry is searched by (#2733), as parts: the name and the description, the other
+    -- names it is called (not the secret ones) and its connections, each as the relationship's
+    -- key, the campaign's own label for it (NULL for a core relationship, whose words are in
+    -- code: `memory/entity_text.py` puts the text together), the other name, which way it runs
+    -- and whether it reads the same both ways. A connection the DM keeps secret, or one to an
+    -- entry the players don't know yet, is left out, so nothing a player may not know is in the
+    -- text of a name they may. NULL when the entry has no description (nothing is searched by a
+    -- bare name). The bot's numbers and the Names page's reranker both read it, so they read the
+    -- same words. The rules for what a name's text may hold are the players' own (the same as
+    -- `meaning.entry_texts` and the website's readers): a connection the DM has not revealed, one
+    -- to a story-planning entry, or one to an entry whose own name is a secret never goes in. Text
+    -- already made can lag until the next embedding run after an entry becomes hidden.
+    CREATE FUNCTION dmbot_entity_parts(g BIGINT, c TEXT, eid TEXT) RETURNS JSONB
+    LANGUAGE sql STABLE AS $fn$
+        SELECT jsonb_build_object(
+            'name', e.name,
+            'description', e.description,
+            'aliases', COALESCE((
+                SELECT jsonb_agg(t.text ORDER BY t.text)
+                FROM (SELECT DISTINCT a.text FROM memory_aliases a
+                      WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                        AND a.status = 'confirmed' AND NOT a.secret
+                        AND lower(a.text) <> lower(e.name)
+                      ORDER BY a.text LIMIT 6) t), '[]'::jsonb),
+            'links', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'predicate', k.predicate, 'label', k.label, 'symmetric', k.symmetric,
+                           'other', k.other, 'outgoing', k.outgoing)
+                       ORDER BY k.other, k.predicate)
+                FROM (SELECT DISTINCT r.predicate, p.label, p.is_symmetric AS symmetric,
+                             o.name AS other, (r.subject_id = e.id) AS outgoing
+                      FROM memory_relations r
+                      LEFT JOIN memory_predicates p
+                        ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
+                       AND p.key = r.predicate
+                      JOIN memory_entities o
+                        ON o.guild_id = r.guild_id AND o.campaign_id = r.campaign_id
+                       AND o.id = CASE WHEN r.subject_id = e.id THEN r.object_id
+                                       ELSE r.subject_id END
+                      WHERE r.guild_id = g AND r.campaign_id = c
+                        AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed
+                        AND (r.subject_id = e.id OR r.object_id = e.id)
+                        AND o.status = 'confirmed' AND o.merged_into IS NULL
+                        AND o.type <> 'person' AND NOT o.audience_limited
+                        AND NOT o.hidden_from_players
+                        AND o.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                           'promise', 'deed')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM memory_aliases sa
+                            WHERE sa.guild_id = o.guild_id AND sa.campaign_id = o.campaign_id
+                              AND sa.entity_id = o.id AND sa.secret AND sa.status <> 'rejected'
+                              AND regexp_replace(lower(sa.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(o.name), '[^[:alnum:]]', '', 'g'))
+                      ORDER BY other, predicate LIMIT 40) k), '[]'::jsonb))
+        FROM memory_entities e
+        WHERE e.guild_id = g AND e.campaign_id = c AND e.id = eid
+          AND char_length(btrim(e.description)) > 0
+    $fn$;
+    REVOKE ALL ON FUNCTION dmbot_entity_parts(BIGINT, TEXT, TEXT) FROM PUBLIC;
+
+    -- The Names page's search by meaning (#2733): the entries whose kept numbers are closest to the
+    -- search's numbers (`q`, made by the website's server from the DM's own words), best first,
+    -- with the parts of the text each was made from (`dmbot_entity_parts`) so the reranker can read
+    -- it. The comparing is done here because the website's role has no right on the numbers. A DM
+    -- of the campaign only (NULL for anyone else, a server manager who is not a DM included: the
+    -- text holds descriptions, which a manager does not see on the page). One campaign, one
+    -- model, the same number of numbers; the vectors are unit length, but the length is divided
+    -- out anyway. At most `pool` (60) rows, from the newest 10,000 numbers (about 3 seconds of one
+    -- core for 20,000 rows, measured); `capped` says there were more. An empty `q` only proves who
+    -- is asking.
+    CREATE FUNCTION dmbot_web_names_near(g BIGINT, c TEXT, m TEXT, q REAL[], pool INT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        qn DOUBLE PRECISION;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        qn := sqrt((SELECT sum(x::DOUBLE PRECISION * x) FROM unnest(q) AS x));
+        IF qn IS NULL OR qn = 0 OR cardinality(q) > 4096 THEN
+            RETURN jsonb_build_object('capped', false, 'rows', '[]'::jsonb);
+        END IF;
+        RETURN jsonb_build_object('capped', EXISTS (
+            SELECT 1 FROM memory_vectors x
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.owner_kind = 'assertion'
+              AND x.model = m AND cardinality(x.vector) = cardinality(q)
+            OFFSET 9999), 'rows', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', n.id, 'parts', n.parts, 'score', n.score)
+                             ORDER BY n.score DESC, n.id)
+            FROM (
+                SELECT best.id, dmbot_entity_parts(g, c, best.id) AS parts, best.score
+                FROM (
+                    SELECT split_part(v.owner_id, '#', 1) AS id,
+                           max(d.dot / (qn * d.len)) AS score
+                    FROM (SELECT x.owner_id, x.vector FROM memory_vectors x
+                          WHERE x.guild_id = g AND x.campaign_id = c
+                            AND x.owner_kind = 'assertion' AND x.model = m
+                            AND cardinality(x.vector) = cardinality(q)
+                          ORDER BY x.made_at DESC, x.owner_id LIMIT 10000) v
+                    CROSS JOIN LATERAL (
+                        SELECT sum(a::DOUBLE PRECISION * b) AS dot,
+                               sqrt(sum(a::DOUBLE PRECISION * a)) AS len
+                        FROM unnest(v.vector, q) AS u(a, b)) d
+                    WHERE d.len > 0
+                    GROUP BY 1
+                    ORDER BY 2 DESC, 1
+                    LIMIT LEAST(GREATEST(pool, 1), 60)
+                ) best
+                JOIN memory_entities e
+                  ON e.guild_id = g AND e.campaign_id = c AND e.id = best.id
+                 AND e.status = 'confirmed' AND e.merged_into IS NULL AND e.type <> 'person'
+            ) n
+            WHERE n.parts IS NOT NULL), '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT) FROM PUBLIC;
+    """
+    + ALL_NAMES_LIST
+)
+
 
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
@@ -13388,6 +13536,109 @@ WEB_BACKUPS = (
     REVOKE ALL ON FUNCTION dmbot_web_backup_take(BIGINT, TEXT, TEXT) FROM PUBLIC;
     """
 )
+
+OPTIONAL_RULES_READ = r"""
+    -- A campaign's optional-rule choices for the website's Settings tab (#2753): the main rules it
+    -- plays by, the campaign-wide default, and the choices the DM made rule by rule. Read only, DM
+    -- of the campaign only (as the other Settings reads), and nothing else leaves it; the API joins
+    -- it with the rules catalog. NULL for anyone else.
+    CREATE FUNCTION dmbot_web_optional_rules(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        camp campaigns%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO camp FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'target', camp.target_ruleset,
+            'default', camp.optional_rules_default,
+            'overrides', COALESCE((
+                SELECT jsonb_object_agg(o.rule_id, o.enabled)
+                FROM campaign_optional_rules o
+                WHERE o.guild_id = g AND o.campaign_id = c), '{}'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_optional_rules(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_optional_rules(BIGINT, TEXT) FROM PUBLIC;
+"""
+
+OPTIONAL_RULE_SETTING = r"""
+    -- A fourth choice on the website's Settings queue (#2753): an optional rule switched on or off.
+    -- The queue already carries the three settings (0197); here `setting` also accepts
+    -- 'optional_rule', `value` may be the rule's id (the longest is 18 characters), and a new
+    -- `turn_on` column says which way. `turn_on` is set exactly for an optional rule and is NULL
+    -- for every other setting (so it never shares a meaning with `flag`, the DM's yes to a shorter
+    -- transcript limit). No row changes: no backfill policy is needed.
+    ALTER TABLE setting_actions DROP CONSTRAINT IF EXISTS setting_actions_setting_check;
+    ALTER TABLE setting_actions DROP CONSTRAINT IF EXISTS setting_actions_value_check;
+    ALTER TABLE setting_actions
+        ADD CONSTRAINT setting_actions_setting_check
+            CHECK (setting IN ('visibility', 'level', 'retention', 'optional_rule')),
+        ADD CONSTRAINT setting_actions_value_check CHECK (char_length(value) <= 40),
+        ADD COLUMN turn_on BOOLEAN,
+        ADD CONSTRAINT setting_actions_turn_on_check
+            CHECK ((setting = 'optional_rule') = (turn_on IS NOT NULL));
+
+    -- Queue one optional-rule choice. Same guard as `dmbot_web_setting_add`: the caller is a DM of
+    -- the campaign in a server on the session's list, and the campaign's queue is not full. The
+    -- API has already checked the id against the catalog (a rule list that lives in Python); the
+    -- bot checks again, with the campaign's main rules, when it applies it. 'ok' with the id,
+    -- 'bad_value' for a malformed id or no on/off, 'too_soon'; NULL for anyone not a DM.
+    CREATE FUNCTION dmbot_web_optional_rule_add(g BIGINT, c TEXT, rid TEXT, on_ BOOLEAN)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        qid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF rid IS NULL OR rid !~ '^[a-z0-9-]{1,40}$' OR on_ IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_value');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
+        DELETE FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 10
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting, value, turn_on,
+                                     created_at)
+            VALUES (g, c, qid, dmbot_current_user(), 'optional_rule', rid, on_, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', qid);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
 
 TOPIC_CHOICES = """
     -- Who put a line back (or left it out again) after the session, and what the off-topic filter
@@ -16058,6 +16309,12 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # meaning search: numbers made from campaign text (#2664)
     ("0249_report_read_door", REPORT_READ_DOOR),  # a session's after-session report (#2661)
     ("0250_report_answer_door", REPORT_ANSWER_DOOR),  # the DM's answer to one item (#2661)
+    ("0252_optional_rules_read", OPTIONAL_RULES_READ),  # the Settings tab reads the choices (#2753)
+    ("0253_names_smart", NAMES_SMART),  # the Names page's search by meaning (#2733)
+    (
+        "0254_optional_rule_setting",
+        OPTIONAL_RULE_SETTING,
+    ),  # a rule switched on the website is queued for the bot (#2753)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
