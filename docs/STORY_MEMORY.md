@@ -749,13 +749,16 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   extractor) runs it after the extractor in the after-session steps: the campaign's plan must include
   story memory (closed if it can't be checked), it makes at most 3 AI calls a session, counted in the
   extractor's session and day limits, and the log gets counts only.
-  **Built (#2660 slice 2e): the DM screen.** After the grading, with the same switches and plan check, the
-  DM screen says the `major` clashes not yet told, at most 3 a session, as one private message (one plain
-  line each, saying when the game times aren't known or one side is a guess, and "Nothing was changed. You
-  decide what is true."). It makes no AI call, and a clash is marked told only after the message went out.
-  The line is posted as DM-screen content, so it is pulled back if the screen opens up. The minor ones are
-  not told here; they wait for the after-session report. Still to build: that report, and the point-of-view
-  reading in `continuity.conflicts_in` (not wired until Supervisor says).
+  **Built (#2660 slice 2e): telling the DM.** After the grading, with the same switches and plan check, DMbot
+  tells the DM the `major` clashes not yet told, at most 3 each time the step runs (once after a session), as
+  one message (one plain line each, saying when the game times aren't known or one side is a guess, and
+  "Nothing was changed. You decide what is true."). The line can name an entry, so with a **private** DM
+  screen it is posted there (and pulled back if the screen opens up); with peek or open it goes to each DM by
+  private message and the screen never carries it. If the private messages are closed the screen says only how
+  many wait, and they stay untold for the next session. A clash is marked told only once a message reached
+  a DM. No AI call. The minor ones are not told here; they wait for the after-session report. Still to
+  build: that report, and the point-of-view reading in `continuity.conflicts_in` (not wired until Supervisor
+  says).
 
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;

@@ -45,6 +45,10 @@ class TheText(unittest.TestCase):
     def test_a_reason_that_is_missing_still_gets_a_plain_line(self) -> None:
         self.assertIn(notes.NO_REASON, notes.line(stored("  ")))
 
+    def test_the_number_line_names_nothing(self) -> None:
+        self.assertIn("1 clash ", notes.waiting_text(1))
+        self.assertIn("3 clashes", notes.waiting_text(3))
+
     def test_it_fits_one_message(self) -> None:
         long = stored("word " * 600)
         self.assertLessEqual(len(notes.told_text([long, long, long])), MESSAGE_MAX)

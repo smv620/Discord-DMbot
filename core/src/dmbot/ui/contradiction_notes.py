@@ -28,6 +28,15 @@ def line(item: Stored) -> str:
     return f"• {said}" + (f" ({' '.join(notes)})" if notes else "")
 
 
+def waiting_text(count: int) -> str:
+    """For the DM screen when the DMs' private messages are closed: how many, never what."""
+    what = "clash" if count == 1 else "clashes"
+    return (
+        f"⚠️ {count} {what} in your story may not add up. Open your private messages from DMbot "
+        "to hear them."
+    )
+
+
 def told_text(items: Sequence[Stored]) -> str:
     """The DM-screen message for these clashes (at most `SAY_MAX` of them). Empty for none."""
     shown = list(items)[:SAY_MAX]

@@ -8729,12 +8729,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.info(report.line())
 
     async def tell_contradictions(self, table: Table) -> None:
-        """After the grading, with the same switches (#2660): the DM screen says the major clashes
-        PlotBot graded that were not told yet, at most `contradiction_notes.SAY_MAX` a session, as
-        one private message. The minor ones are left for the after-session report. No AI call, no
-        transcript line read; nothing changes a belief. A clash is marked told only once the
-        message went out, so a failed post is tried again next session. The line can name an entry,
-        so it is posted as DM-screen content that is pulled back if the screen opens up."""
+        """After the grading, with the same switches (#2660): the major clashes PlotBot graded that
+        were not told yet, at most `contradiction_notes.SAY_MAX` each time this step runs, as one
+        private message. The minor ones are left for the after-session report. No AI call, no
+        transcript line read; nothing changes a belief. The line can name an entry, so with a
+        private DM screen it goes there (pulled back if the screen opens up), and otherwise to each
+        DM by private message with only a number on the screen. A clash is marked told only once a
+        message reached the DM, so one that did not is tried again next session."""
         if (
             not self.settings.story_contradictions_on
             or not self.settings.story_extractor_on
@@ -8756,9 +8757,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.info("Contradictions: %d major waiting, %d told", len(waiting), len(told))
             if not told:
                 return
-            sent = await self.post(
-                table.screen_channel_id, contradiction_notes.told_text(told), secret_of=(gid, cid)
-            )
+            text = contradiction_notes.told_text(told)
+            if campaign.dm_screen_visibility == "private":
+                sent = await self.post(table.screen_channel_id, text, secret_of=(gid, cid))
+            else:
+                # Players may peek at the screen, and the line can name an entry: the DMs' own
+                # private messages instead, and nothing named on the screen (as the secret
+                # questions do). Told only if a DM was reached.
+                results = [await self.sidebar_send_dm(dm, text) for dm in campaign.dm_user_ids]
+                sent = "sent" in results
+                if not sent and "forbidden" in results:
+                    await self.post(
+                        table.screen_channel_id, contradiction_notes.waiting_text(len(told))
+                    )  # (no name; the clashes stay untold, so a later session tries again)
             if sent:
                 await grades.mark_said(
                     gid,

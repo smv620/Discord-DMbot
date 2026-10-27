@@ -330,14 +330,23 @@ class TellingContradictions(unittest.IsolatedAsyncioTestCase):
         )  # fmt: skip
 
     def fake(
-        self, rows: list[Any], *, on: bool = True, allowed: bool = True, sent: bool = True
+        self,
+        rows: list[Any],
+        *,
+        on: bool = True,
+        allowed: bool = True,
+        sent: bool = True,
+        visibility: str = "private",
+        dm: list[str] | None = None,
     ) -> Any:
+        campaign = SimpleNamespace(id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8])
         return SimpleNamespace(
             settings=SimpleNamespace(story_extractor_on=True, story_contradictions_on=on),
             memory=SimpleNamespace(_db=object()),
-            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             plan_allows=AsyncMock(return_value=allowed),
             post=AsyncMock(return_value=sent),
+            sidebar_send_dm=AsyncMock(side_effect=dm or ["sent", "sent"]),
             rows=rows,
         )  # fmt: skip
 
@@ -364,6 +373,40 @@ class TellingContradictions(unittest.IsolatedAsyncioTestCase):
         told = grades.mark_said.await_args.args[2]
         self.assertEqual([t[2] for t in told], ["a0", "a1", "a2"])
         self.assertEqual(grades.rows.await_args.kwargs, {"grade": "major", "unsaid": True})
+
+    async def test_a_screen_players_may_peek_at_gets_nothing_named_and_the_dms_are_messaged(
+        self,
+    ) -> None:
+        for visibility in ("peek", "open"):
+            me = self.fake([self.stored(1)], visibility=visibility)
+            grades = await self.tell(me)
+            me.post.assert_not_called()  # no clash on the screen the players can open
+            self.assertEqual(me.sidebar_send_dm.await_count, 2)  # each DM, privately
+            self.assertIn("Clash 1", me.sidebar_send_dm.await_args.args[1])
+            grades.mark_said.assert_awaited_once()
+
+    async def test_one_dm_reached_is_enough_to_mark_the_clashes_told(self) -> None:
+        me = self.fake([self.stored(1)], visibility="peek", dm=["forbidden", "sent"])
+        grades = await self.tell(me)
+        grades.mark_said.assert_awaited_once()
+        me.post.assert_not_called()
+
+    async def test_closed_private_messages_leave_a_number_on_the_screen_and_tell_nothing(
+        self,
+    ) -> None:
+        me = self.fake([self.stored(1), self.stored(2)], visibility="peek", dm=["forbidden"] * 2)
+        grades = await self.tell(me)
+        grades.mark_said.assert_not_called()  # tried again next session
+        me.post.assert_awaited_once()
+        shown = me.post.await_args.args[1]
+        self.assertIn("2 clashes", shown)
+        self.assertNotIn("Clash", shown.replace("clashes", ""))  # a number only, no line
+
+    async def test_a_send_that_failed_posts_nothing_and_marks_nothing(self) -> None:
+        me = self.fake([self.stored(1)], visibility="peek", dm=["failed", "failed"])
+        grades = await self.tell(me)
+        me.post.assert_not_called()
+        grades.mark_said.assert_not_called()
 
     async def test_nothing_waiting_posts_nothing(self) -> None:
         me = self.fake([])
