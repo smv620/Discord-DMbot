@@ -677,7 +677,7 @@ class RecapWorker:
             if not sent <= set(await consenting()):  # after it
                 return await self._restart(gid, cid, job)
             if tried.status == ai_structured.CUT:
-                return await self._beats_cut(gid, cid, job, bt.room(job.attempt))
+                return await self._beats_cut(gid, cid, job, OUTPUT_FLOOR << min(job.attempt, 2))
             parsed = tried.value
         if parsed is None:
             raw = await self._call(

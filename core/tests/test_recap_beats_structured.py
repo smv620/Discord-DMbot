@@ -77,6 +77,13 @@ class TheStructuredBeats(WorkerHarness):
         self.assertEqual(fast.sent[0], DRAFT)  # no form pass on a draft with its end missing
         self.assertEqual(careful.tokens[1], careful.tokens[0] * 2)
 
+    async def test_a_cut_form_is_never_read_either(self) -> None:
+        fast = fx.Canned(Reply('{"beats":[{"what"', True), Reply('{"beats":[{"what"', True))
+        careful = fx.Canned(DRAFT, Reply('{"beats":[{"what"', True), DRAFT)
+        await self.start(fast, careful)
+        job = await self.go()
+        self.assertNotEqual(job.state, "ready")  # a sheet with its end missing is never used
+
     async def test_a_recap_at_its_call_limit_is_stopped_between_the_calls(self) -> None:
         fast, careful = fx.Canned(fx.BEATS_ANSWER, *self.rest()), fx.Canned(DRAFT)
         await self.start(fast, careful)
