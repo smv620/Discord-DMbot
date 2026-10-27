@@ -10,6 +10,10 @@ export const NAME_LIMIT = 100;
 // `PAGE_SIZE` (web/all_names.py) refuse any other size: keep them equal.
 export const NAMES_PAGE_SIZES = [20, 50, 200, 500] as const;
 export const NAMES_PAGE_SIZE = 50;
+// NAMES_SMART_LIVE is "Search by meaning" on the Names page (#2733): "ice goddess" finds the frost goddess,
+// "friend of Brannoc" finds who is connected. It needs the meaning search (core, after #2664's embeddings)
+// deployed and seen to work, and moves with the What's new entry "Search names by what they mean".
+export const NAMES_SMART_LIVE = false;
 
 export const namesPage = {
   heading: "Names",
