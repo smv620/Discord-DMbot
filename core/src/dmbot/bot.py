@@ -27,7 +27,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -305,6 +305,7 @@ from dmbot.memory.ontology import Tally
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
+from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
@@ -9727,19 +9728,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         now = int(time.time())
         report = await name_pass_run.run(
             self.transcripts, lookup, ask, gid, cid, session_id,
-            people=people, agreed=agreed, now=now,
+            people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
+            consenting=lambda: self.consent.consenting(gid),
         )  # fmt: skip
         # The words PlotBot was not sure of, and the ones it says are new names, are name questions
         # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
-        # are answered (#2169). The report counts only what will really be offered: a word the
-        # campaign knows already, or a person at the table, is not (the same rule the scan uses).
-        skip = set(await self.memory.known_keys(gid, cid)) | people
-        report = replace(
-            report,
-            unsure=tuple(c for c in report.unsure if name_key(c.heard) not in skip),
-            new=tuple(c for c in report.new if name_key(c.heard) not in skip),
-        )
+        # are answered (#2169). The report counts only what will really be offered: `run` leaves out
+        # a word the campaign knows already, or a person at the table (the scan's own rule).
         if report.unsure or report.new:
             self._name_pass_asks[session_id] = [
                 (c.heard, c.times) for c in (*report.unsure, *report.new)
@@ -11869,6 +11865,7 @@ def register_backup_sections(
     campaigns.register_section(AcceptedSection())  # the recaps the DM approved (#2122)
     campaigns.register_section(PlotIssuesSection())  # PlotBot's issues and the DM's answers
     campaigns.register_section(PlotFineSection())  # ... and what the DM said was not a problem
+    campaigns.register_section(ReportAnswersSection())  # the DM's report answers (#2661)
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
 

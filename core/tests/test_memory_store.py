@@ -163,10 +163,30 @@ class Isolation(MemoryTest):
         from dmbot.memory.contradiction_grades import MAJOR, Graded, GradeStore
         from dmbot.memory.contradictions import Contradictions
 
-        await self.relate(a, "ally_of", b, status="confirmed")
-        await self.relate(a, "enemy_of", b, status="confirmed")
+        ally = await self.relate(a, "ally_of", b, status="confirmed")
+        enemy = await self.relate(a, "enemy_of", b, status="confirmed")
         clash = (await Contradictions(self.memory).find(GUILD_A, self.c))[0]
         await GradeStore(self.db).save(GUILD_A, self.c, [Graded(clash, MAJOR, "Both at once.")])
+        # and what the party has wrong, with PlotBot's sort, and a report being made (#2661)
+        from dmbot.memory.differences import CLASHES, Difference
+        from dmbot.memory.report_store import FALSE, ReportStore, SortedDifference
+
+        reports = ReportStore(self.db)
+        await reports.save_differences(
+            GUILD_A,
+            self.c,
+            [
+                SortedDifference(
+                    Difference(
+                        clash.perspective_id, "party", ally.value[0].id, enemy.value[0].id,
+                        CLASHES, False, False,
+                    ),
+                    FALSE,
+                    "Not so.",
+                )
+            ],
+        )  # fmt: skip
+        await reports.begin(GUILD_A, self.c, 1_000)
         from dmbot.memory.claims import ClaimStore, Extracted
 
         await ClaimStore(self.memory).propose(

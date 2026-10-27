@@ -336,7 +336,13 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
 
 def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
-    raises CampaignError(DAMAGED) on anything out of shape."""
+    raises CampaignError(DAMAGED) on anything out of shape.
+
+    A loop among the "led to" links is not out of shape (#2673): the restore trusts the backup
+    for that, on purpose. A backup holds the whole campaign and must always be loadable (CLAUDE.md:
+    a campaign is never lost), and a file written before the loop checks could hold one; refusing
+    it would strand the campaign, while a loop only shows as a neighbour on a card (the readers
+    follow one link, not a chain) and a new link or a merge can't add to it."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
     rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(rows)))
     for raw in rows:

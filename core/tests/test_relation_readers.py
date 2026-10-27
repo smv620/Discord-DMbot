@@ -33,6 +33,10 @@ READERS = {
     "memory/contradiction_grades.py": "only checks that the two connections of a grade still exist",
     "memory/contradiction_grader.py": DM_ONLY + ": reads kept and guess connections to put a clash "
     "into the campaign's words for PlotBot; ids and names, no transcript",
+    "memory/difference_sorter.py": DM_ONLY
+    + ": reads kept and guess connections to put a difference "
+    "into the campaign's words for PlotBot; ids and names, no transcript",
+    "memory/report_store.py": "only checks that the connections of a difference still exist",
     "memory/placing.py": "writes the proposed connections and their beliefs for the DM",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/health.py": DM_ONLY + ": counts for the DM, not shown to players",
@@ -53,6 +57,9 @@ STORE = {
     "_standing_index": CONFIRMED_ONLY,
     "_deed_rows": CONFIRMED_ONLY,
     "_audience": CONFIRMED_ONLY + ": who may be told",
+    "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
+    "_recheck_led_to_after_undo": CONFIRMED_ONLY
+    + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",

@@ -793,22 +793,71 @@
       grid-column: 1;
       margin-top: calc(-1 * var(--space-2));
     }
+
+    .account .names-tools > .names-types {
+      grid-column: 1 / -1;
+    }
   }
 
+  /* The type filter: ticks side by side, so every type is one glance (owner request, 2026-10-27). */
+  .account .names-types {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .account .names-type-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem var(--space-4);
+  }
+
+  /* Each tick box is as tall and wide as a thumb, so the type group is tapped as easily as a button. */
+  .account .names-type {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    min-width: var(--tap);
+  }
+
+  /* A button that reads as a link: the name that opens its editor, and "show every type". */
+  .account .link-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--link, var(--accent));
+    font: inherit;
+    text-align: start;
+    text-decoration: underline;
+    cursor: pointer;
+    min-height: var(--tap);
+    min-width: var(--tap);
+  }
+
+  /* One line a name, so a page of 200 is still easy to scan: ruled rows, no boxes. The line breaks
+     into more only on a narrow screen or for a long name. */
   .account .names-list {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
   }
 
   .account .name-row {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    /* A thumb's rows need a little air between them (the phone check wants 8 px between targets);
+       a mouse does not, so a wide screen packs them tighter below. */
+    padding: 0.3rem var(--space-3);
+    border-bottom: 1px solid var(--border);
     overflow-wrap: anywhere;
+  }
+
+  .account .name-row:last-child {
+    border-bottom: 0;
   }
 
   /* The label is the thumb's target (44 px); the box inside it is only what is drawn. */
@@ -822,8 +871,8 @@
   }
 
   .account .name-pick {
-    width: 1.4rem;
-    height: 1.4rem;
+    width: 1.2rem;
+    height: 1.2rem;
     margin: 0;
     accent-color: var(--accent);
   }
@@ -831,9 +880,67 @@
   .account .name-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2) var(--space-4);
+    align-items: center;
+    gap: 0 var(--space-3);
+    min-height: var(--tap);
+  }
+
+  /* A long name wraps inside its own button and stays beside the tick box, instead of being pushed
+     under it (and then touching it, or sticking out of a narrow screen). */
+  .account .name-head .campaign-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .account .name-head button.campaign-name {
+    flex: 1 1 8rem;
+  }
+
+  .account .name-open {
+    min-height: var(--tap);
+  }
+
+  /* Other names fill what is left of the line and are cut with … (the full list is the tooltip,
+     and the editor shows it whole). */
+  .account .name-aka {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (min-width: 48rem) {
+    .account .name-row {
+      padding-block: 0;
+    }
+
+    .account .name-head {
+      min-height: 2.25rem;
+    }
+
+    .account .name-tick,
+    .account .name-open,
+    .account .name-head .link-button {
+      min-height: 2.25rem;
+    }
+  }
+
+  .account .name-head .tags a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+
+  .account .name-head .tags {
+    margin-inline-start: auto;
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
   }
 
   .account .name-edit {
