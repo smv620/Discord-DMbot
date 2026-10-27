@@ -14919,9 +14919,10 @@ NAMES_FIXED_UNDO = (
 
 # ✏️ Change the words on the recap page's names to check (#2593; Discord's is #2570). One more answer
 # for `name_answers` (`change_words`: `text` holds the whole name and `target_id` how it was heard,
-# at most the name limit each), the answer door taking it, and up to three likely longer names kept
-# with each name the recap asks about (read from the card's quotes when the recap queues its
-# names, then shown by the read door). Both doors are rebuilt from their current text by guarded
+# at most the name limit each), the answer door taking it, and, from the read door, the lines of
+# table speech that say each name (only people who agree at that moment), for the website to work
+# the likely longer names out from when the page is read: nothing is stored, so a speaker who
+# stops being recorded drops out at once. Both doors are rebuilt from their current text by guarded
 # replacement, so a drift in either makes this fail loudly rather than quietly change a rule.
 def _swap(text: str, pairs: tuple[tuple[str, str], ...]) -> str:
     for old, new in pairs:
@@ -14964,15 +14965,27 @@ _CHECK_READ_DOOR = _swap(
     (
         (
             "'note', e.description,",
-            "'note', e.description, 'longerNames', to_jsonb(k.longer_names),",
+            "'note', e.description, 'lines', COALESCE((\n"
+            "    SELECT jsonb_agg(q.t ORDER BY q.o) FROM (\n"
+            "      SELECT COALESCE(l.text, l.heard) AS t,\n"
+            "             row_number() OVER (ORDER BY m.session_started_at NULLS LAST,\n"
+            "                                m.created_at, m.id) AS o\n"
+            "      FROM memory_mentions m\n"
+            "      JOIN transcript_lines l\n"
+            "        ON l.guild_id = g\n"
+            "       AND l.session_id = substring(m.line_ref from '^(.*):[0-9]+:[0-9]+$')\n"
+            "       AND l.started_ms::TEXT = substring(m.line_ref from ':([0-9]+):[0-9]+$')\n"
+            "       AND l.user_id::TEXT = substring(m.line_ref from ':([0-9]+)$')\n"
+            "      WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = e.id\n"
+            "        AND l.sidebar IS NULL\n"
+            "        AND EXISTS (SELECT 1 FROM consent n\n"
+            "                    WHERE n.guild_id = g AND n.user_id = l.user_id)\n"
+            "      ORDER BY 2 LIMIT 8) q), '[]'::jsonb),",
         ),
     ),
 )
 NAME_CHANGE_WORDS = (
     """
-    ALTER TABLE recap_name_checks ADD COLUMN longer_names TEXT[] NOT NULL DEFAULT '{}'
-        CHECK (cardinality(longer_names) <= 3
-               AND char_length(array_to_string(longer_names, ' ')) <= 320);
     ALTER TABLE name_answers DROP CONSTRAINT name_answers_action_check;
     ALTER TABLE name_answers ADD CONSTRAINT name_answers_action_check CHECK (action IN
         ('confirm', 'same', 'respell', 'not_a_name', 'explain', 'change_words'));

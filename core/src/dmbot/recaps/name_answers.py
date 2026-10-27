@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,7 +50,6 @@ EMPTY = "empty"  # no words
 TOO_LONG = "too_long"  # more than `NAME_MAX` letters
 ALREADY_KNOWN = "already_known"  # the words are a name DMbot already knows
 SECRET_CLASH = "secret_clash"  # the words are another entry's secret name (not said which)
-LONGER_MAX = 3  # longer names kept for the page per name (the card offers up to three)
 
 PLAYER_CHARACTER = "player_character"  # who plays them is asked in Discord, not on the page
 
@@ -74,43 +73,22 @@ class AnswerStore:
         self._now = clock
 
     async def link(
-        self,
-        guild_id: int,
-        campaign_id: str,
-        session_at: int,
-        entity_ids: Sequence[str],
-        longer: Mapping[str, Sequence[str]] | None = None,
+        self, guild_id: int, campaign_id: str, session_at: int, entity_ids: Sequence[str]
     ) -> int:
-        """Say which waiting suggestions belong to this recap (ids only), with the likely longer
-        names the card's quotes suggest for each (`longer`, words DMbot heard: for the DM's page
-        only). Repeats change nothing, except that a repeat brings the longer names up to date.
-        Returns how many were new."""
+        """Say which waiting suggestions belong to this recap (ids only). Repeats change
+        nothing. Returns how many were new."""
         ids = list(dict.fromkeys(entity_ids))
         if not ids:
             return 0
-        made = 0
         async with self._db.guild(guild_id) as conn:
-            for entity_id in ids:
-                known = entity_id in (longer or {})  # not read (a failure): keep what is stored
-                words = list((longer or {}).get(entity_id, ()))[:LONGER_MAX]
-                update = (
-                    " DO UPDATE SET longer_names = EXCLUDED.longer_names"
-                    " WHERE recap_name_checks.longer_names IS DISTINCT FROM EXCLUDED.longer_names"
-                    if known
-                    else " DO NOTHING"
-                )
-                cur = await conn.execute(
-                    "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id,"
-                    " longer_names) SELECT %s, %s, %s, e.id, %s FROM memory_entities e"
-                    " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
-                    " ON CONFLICT (guild_id, campaign_id, session_at, entity_id)"
-                    + update
-                    + " RETURNING (xmax = 0) AS inserted",
-                    (guild_id, campaign_id, session_at, words, guild_id, campaign_id, entity_id),
-                )
-                row = await cur.fetchone()
-                made += 1 if row is not None and row["inserted"] else 0
-        return made
+            cur = await conn.execute(
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " SELECT %s, %s, %s, e.id FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = ANY(%s)"
+                " ON CONFLICT DO NOTHING",
+                (guild_id, campaign_id, session_at, guild_id, campaign_id, ids),
+            )
+            return int(cur.rowcount)
 
     async def claim_next(self, guild_id: int) -> Answer | None:
         """The oldest waiting answer (or a stalled one), marked as being worked on."""

@@ -15,6 +15,8 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory.models import NAME_MAX
+from dmbot.memory.name_longer import MAX_OFFERED, longer_names
+from dmbot.memory.places import cut, find_in
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.web import recaps
@@ -50,11 +52,28 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
     # not shown (#2358), by the same rule as Discord's lists (`hidden_old_pronoun`): only a
     # pronoun the database marks as made before the gate. The marker is not passed on.
     waiting = [
-        {k: v for k, v in n.items() if k != "old"}
+        _with_longer_names({k: v for k, v in n.items() if k != "old"})
         for n in got["names"]
         if not (n.get("old") and not_names.is_not_name(str(n.get("name", ""))))
     ]
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
+
+
+def _with_longer_names(card: dict[str, Any]) -> dict[str, Any]:
+    """The likely longer names for one waiting name (#2593), worked out now from the lines that say
+    it, which the door gives only for people who agree at this moment (so a speaker who stops being
+    recorded drops out at once, and nothing of their words is kept). The lines are not passed on."""
+    lines = [str(x) for x in card.pop("lines", [])]
+    name = str(card.get("name", ""))
+    quotes = []
+    for said in lines:
+        said = " ".join(said.split())
+        found = find_in(said, [name])
+        if found:
+            before, heard, after = cut(said, found[0], found[1], 120)
+            quotes.append(f"{before}**{heard}**{after}")
+    card["longerNames"] = longer_names(quotes, name)[:MAX_OFFERED]
+    return card
 
 
 async def answer(

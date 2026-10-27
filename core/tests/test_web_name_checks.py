@@ -14,8 +14,11 @@ from dmbot import bot as bot_module
 from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED
 from dmbot.memory.store import MemoryStore
 from dmbot.recaps import name_answers as na
+from dmbot.transcript.models import Line, line_ref
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import name_checks as web
 from dmbot.web import sessions
+from dmbot.web.discord import DiscordUser
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
 from tests.test_web_api import ALICE, THURSDAY
@@ -473,23 +476,68 @@ class TheChangedWords(WithChecks):
         found = await self.memory.aliases(GUILD, self.one.id, entity_id=entity)
         return {a.text: a.kind for a in found}
 
-    async def test_the_longer_names_the_recap_found_are_listed_with_the_card(self) -> None:
-        written = await self.memory.add_entity(
-            GUILD, self.one.id, type="concept", name="Harrow", source="scan", description=""
+    async def says(self, entity: str, words: list[tuple[int, str]]) -> None:
+        """Lines of table speech that say the name, each pointed at by a mention (as the scan
+        leaves them); a speaker agrees now only when listed in `consent`."""
+        sid = await TranscriptStore(self.db).open_session(GUILD, self.one.id, AT)
+        for n, (user, text) in enumerate(words, start=1):
+            line = Line(n * 1000, user, text, text)
+            await TranscriptStore(self.db).add_lines(GUILD, sid, [line])
+            at = text.lower().index("harrow")
+            await self.memory.add_mention(
+                GUILD,
+                self.one.id,
+                entity,
+                line_ref=line_ref(sid, line.started_ms, user),
+                span=(at, at + 6),
+                confidence=1.0,
+                method="exact",
+                source="scan",
+                session_started_at=AT,
+            )
+
+    async def agree(self, *users: int, leave: tuple[int, ...] = ()) -> None:
+        async with self.db.guild(GUILD) as conn:
+            for user in users:
+                await conn.execute(
+                    "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, 0)"
+                    " ON CONFLICT DO NOTHING",
+                    (GUILD, user),
+                )
+            for user in leave:
+                await conn.execute(
+                    "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (GUILD, user)
+                )
+
+    async def test_the_longer_names_are_worked_out_from_the_lines_that_say_the_name(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.says(
+            harrow, [(ALICE.id, "We rode to Harrow's keep"), (ALICE.id, "ask Harrow's keep again")]
         )
-        await self.answers.link(
-            GUILD, self.one.id, AT, [written.value.id], {written.value.id: ["a", "b", "c", "d"]}
-        )
+        await self.agree(ALICE.id)
         (card,) = (await self.listed())["names"]
-        self.assertEqual(card["longerNames"], ["a", "b", "c"])  # at most three
-        await self.answers.link(
-            GUILD, self.one.id, AT, [written.value.id], {}
-        )  # not read this time (a failed read): what was stored stays
-        self.assertEqual((await self.listed())["names"][0]["longerNames"], ["a", "b", "c"])
-        await self.answers.link(
-            GUILD, self.one.id, AT, [written.value.id], {written.value.id: []}
-        )  # read, and none found: brought up to date
+        self.assertEqual((card["id"], card["longerNames"]), (harrow, ["Harrow's keep"]))
+        self.assertNotIn("lines", card)  # the words themselves are not passed to the page
+
+    async def test_a_speaker_who_stops_being_recorded_drops_out_at_once(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.says(
+            harrow,
+            [
+                (ALICE.id, "We rode to Harrow's keep"),
+                (ALICE.id, "ask Harrow's keep again"),
+                (BOB.id, "We rode to Harrow's keep"),
+                (BOB.id, "ask Harrow's keep again"),
+            ],
+        )
+        await self.agree(ALICE.id, BOB.id)
+        self.assertIn("Harrow's keep", (await self.listed())["names"][0]["longerNames"])
+        await self.agree(leave=(ALICE.id, BOB.id))  # both stop: nothing of theirs is read
         self.assertEqual((await self.listed())["names"][0]["longerNames"], [])
+        await self.agree(BOB.id)  # one agrees again: only their line is read, and it is enough
+        self.assertIn("Harrow's keep", (await self.listed())["names"][0]["longerNames"])
+        await self.agree(leave=(BOB.id,))
+        self.assertNotIn("keep", str(await self.listed()))
 
     async def test_the_words_change_in_one_change_and_the_card_stays(self) -> None:
         harrow = await self.suggest("Harrow")
@@ -548,7 +596,13 @@ class TheChangedWords(WithChecks):
 
     async def test_a_player_gets_not_found_and_a_changed_dm_is_refused_by_the_bot(self) -> None:
         mira = await self.suggest("Mirelle")
-        bob = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        bob = await sessions.sign_in(
+            self.web,
+            DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email),
+            [THURSDAY],
+            now=NOW,
+            days=30,
+        )
         player = await sessions.find(self.web, bob, now=NOW)
         assert player is not None
         with self.assertRaises(RecapError) as err:
@@ -602,7 +656,6 @@ class TheLoop(WithChecks):
         )
         bot.run_name_answers = bot_module.DMBot.run_name_answers.__get__(bot)
         bot._link_recap_names = bot_module.DMBot._link_recap_names.__get__(bot)
-        bot._longer_names = bot_module.DMBot._longer_names.__get__(bot)
         return bot
 
     async def test_the_loop_applies_the_answer_and_refreshes_the_lists(self) -> None:
@@ -662,27 +715,6 @@ class TheLoop(WithChecks):
         await bot._link_recap_names(GUILD, self.one.id, job)
         await bot._link_recap_names(GUILD, self.one.id, job)  # a repeat changes nothing
         self.assertEqual([n["id"] for n in (await self.listed())["names"]], [mira])
-
-    async def test_the_cards_quotes_give_the_pages_longer_names(self) -> None:
-        from unittest.mock import AsyncMock, patch
-
-        from dmbot.ui import name_places
-
-        bot = self.bot()
-        bot.transcripts = object()
-        bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={ALICE.id}))
-        bot.memory = SimpleNamespace(
-            entities=self.memory.entities, mentions=AsyncMock(return_value=[("ref", 1)])
-        )
-        harrow = await self.suggest("Harrow", link=False)
-        job = SimpleNamespace(session_at=AT, to_confirm=("Harrow",))
-        quotes = ["> We rode to **Harrow**'s Keep and Harrow's Keep again."]
-        with patch.object(
-            name_places, "first_places", AsyncMock(return_value=name_places.Places(quotes))
-        ):
-            await bot._link_recap_names(GUILD, self.one.id, job)
-        (card,) = (await self.listed())["names"]
-        self.assertEqual((card["id"], card["longerNames"]), (harrow, ["Harrow's Keep"]))
 
     async def test_a_name_that_is_removed_takes_its_answers_and_links_with_it(self) -> None:
         mira = await self.suggest("Mirelle")

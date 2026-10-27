@@ -48,11 +48,9 @@ from dmbot.memory.models import (
     HINTED,
     OPEN,
     PROPOSED,
-    Entity,
     MemoryRuleError,
     name_key,
 )
-from dmbot.memory.name_longer import longer_names
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
@@ -1509,35 +1507,10 @@ class RecapFeatures:
             # one name, answered once.)
             wanted = {name_key(n) for n in job.to_confirm}
             waiting = await self.memory.entities(gid, cid, statuses=(PROPOSED,))
-            chosen = [e for e in waiting if name_key(e.name) in wanted]
-            longer: dict[str, list[str]] = {}
-            for e in chosen:  # (one at a time: each reads the transcript)
-                found = await self._longer_names(gid, cid, e)
-                if found is not None:  # a failed read must not wipe what a first run stored
-                    longer[e.id] = found
-            await self.name_answers.link(gid, cid, job.session_at, [e.id for e in chosen], longer)
+            ids = [e.id for e in waiting if name_key(e.name) in wanted]
+            await self.name_answers.link(gid, cid, job.session_at, ids)
         except Exception as exc:
             log.warning("Couldn't link a recap's names to check: %s", type(exc).__name__)
-
-    async def _longer_names(self, gid: int, cid: str, entity: Entity) -> list[str] | None:
-        """The likely longer names for one waiting suggestion, from the very quotes its Discord
-        card shows (✏️ Change the words, #2570), so the page offers what the card does (#2593).
-        Only lines of people who agree now are read, as for the card. None on any failure (what was
-        stored stays): a name without suggestions is still a name."""
-        try:
-            if self.memory is None or self.transcripts is None:
-                return None
-            from dmbot.ui import name_places
-
-            refs = await self.memory.mentions(gid, cid, entity.id)
-            places = await name_places.first_places(
-                None, self.transcripts, gid, cid, refs, [entity.name],
-                await self.consent.consenting(gid),
-            )  # fmt: skip
-            return longer_names(places.windows, entity.name)
-        except Exception as exc:
-            log.warning("Couldn't read longer names for a suggestion: %s", type(exc).__name__)
-            return None
 
     async def _private_names_note(self, gid: int, cid: str, dm_user_id: int, added: int) -> None:
         """The same note as a private message to the DM, with the same check (#2027): it waits
