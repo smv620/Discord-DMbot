@@ -110,7 +110,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot, HintPeople, Table
-    from dmbot.campaigns import web_backup
+    from dmbot.campaigns import web_backup, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -244,6 +244,7 @@ class RecapFeatures:
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
+        web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
 
@@ -298,6 +299,7 @@ class RecapFeatures:
         async def run_name_actions(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
+        async def run_web_restores(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -1877,6 +1879,10 @@ class RecapFeatures:
                 await self.run_web_backups()
             except Exception as exc:
                 log.warning("The website backups failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_restores()
+            except Exception as exc:
+                log.warning("The website restores failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -1890,6 +1896,8 @@ class RecapFeatures:
                             await self.web_settings.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
+                        if self.web_restores is not None:
+                            await self.web_restores.sweep(guild.id)
                     except Exception as exc:
                         log.warning("The recap request sweep failed: %s", type(exc).__name__)
                 if self.web_delete_notices is not None or self.web_backups is not None:
