@@ -95,7 +95,7 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
     <div class="stack" data-delete-lines={serverId}>
       {(phase.kind === "idle" || phase.kind === "error" || phase.kind === "done" || phase.kind === "gaveup") && (
         <button type="button" class="button secondary" aria-label={w.buttonFor(serverName)} onClick={() => void look()}>
-          {w.button}
+          {phase.kind === "gaveup" ? w.checkAgain : w.button}
         </button>
       )}
       {phase.kind === "looking" && (
