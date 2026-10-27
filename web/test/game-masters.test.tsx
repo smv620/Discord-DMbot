@@ -71,7 +71,7 @@ describe("the list", () => {
     const me = person("Belleros");
     expect(within(me).getByText(`(${w.plan})`)).toBeTruthy();
     expect(within(me).getByText(`(${w.you})`)).toBeTruthy();
-    expect(within(me).getByText(w.planNote)).toBeTruthy();
+    expect(within(me).getByText(w.planNoteSelf)).toBeTruthy(); // it is you: "Your plan runs this campaign"
     expect(within(me).queryByRole("button")).toBeNull();
   });
 
@@ -174,7 +174,7 @@ describe("removing", () => {
   it("sends the removal after the confirmation and drops them from the list", async () => {
     const api = await withDana();
     fireEvent.click(screen.getByRole("button", { name: w.removeLabel("Dana") }));
-    fireEvent.click(within(screen.getByRole("group", { name: w.removeLabel("Dana") })).getByRole("button", { name: w.remove }));
+    fireEvent.click(within(screen.getByRole("group", { name: w.removeLabel("Dana") })).getByRole("button", { name: w.confirmYes }));
     await waitFor(() => expect(calls(api, "setCampaignSetting")).toContain("setCampaignSetting:100.cmp1:co_dm:200000000000000001:off"), slow);
     await waitFor(() => expect(screen.getByText("Dana is no longer a game master.")).toBeTruthy(), slow);
   });

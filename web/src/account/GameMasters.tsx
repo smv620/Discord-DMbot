@@ -53,7 +53,7 @@ function Waiting({ phase }: { phase: Phase | undefined }) {
         />
       )}
       {phase?.kind === "gaveup" && <WorkProgress stage={stageWords(w.stage, "waiting")} state="stalled" frozen whatToDo={w.gaveUp} />}
-      <p class="small muted" role="status">
+      <p class={phase?.kind === "saved" ? "" : "small muted"} role="status">
         {phase?.kind === "saved" ? phase.note : ""}
       </p>
       <p class="warn small" role="alert">
@@ -190,7 +190,7 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
             </button>
           )}
         </span>
-        {g.plan && <span class="small muted block">{w.planNote}</span>}
+        {g.plan && <span class="small muted block">{g.you ? w.planNoteSelf : w.planNote}</span>}
         {p?.kind === "asking" && (
           <div class="stack" role="group" aria-label={w.removeLabel(g.name)}>
             <p>{g.you ? w.confirmSelf : w.confirm(g.name)}</p>
@@ -199,7 +199,7 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
                 {w.cancel}
               </button>
               <button type="button" class="button" onClick={() => void send(g, false)}>
-                {w.remove}
+                {w.confirmYes}
               </button>
             </span>
           </div>
@@ -224,7 +224,7 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
           </label>
           {people === "loading" && (
             <p class="muted small" role="status">
-              {w.searching}
+              {query.trim() === "" ? w.loadingMembers : w.searching}
             </p>
           )}
           {people === "failed" && (
