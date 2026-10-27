@@ -12,7 +12,7 @@ import re
 from collections import Counter
 from collections.abc import Iterable
 
-from dmbot.memory.models import NAME_MAX
+from dmbot.memory.models import NAME_MAX, name_key
 
 MAX_OFFERED = 3
 MAX_EXTRA_WORDS = 2  # "Harrow's keep", "the Hall of Harrow" are two words around it at most
@@ -196,3 +196,12 @@ def widened(lines: Iterable[str], name: str, min_times: int) -> str:
         return ""
     best, times = forms.most_common(1)[0]
     return best if times >= min_times and len(best) <= NAME_MAX else ""
+
+
+def widens(old_name: str, new: str) -> bool:
+    """Is the old name only a part of the new, longer one ("Harrow" in "Harrow's Keep")? Then the
+    old word must not stay an old spelling of the entry: every "Harrow" said alone would turn into
+    the longer name (#2570). The same rule for Discord's form and the website's."""
+    old = name_key(old_name)
+    bare = name_key(re.sub(r"['\u2019]s\b", "", new))  # "Harrow's Keep" holds "Harrow"
+    return f" {old} " in f" {bare} " and name_key(new) != old

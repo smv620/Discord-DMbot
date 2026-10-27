@@ -16,12 +16,13 @@ every query names the campaign, and the table's row-level security and composite
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory.contradictions import Candidate
+from dmbot.memory.store import MemoryStore
 
 MAJOR, MINOR, NOT_GRADED = "major", "minor", "not_graded"
 GRADES = (MAJOR, MINOR, NOT_GRADED)
@@ -67,6 +68,11 @@ class GradeStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    @classmethod
+    def of(cls, memory: MemoryStore) -> GradeStore:
+        """On the memory store's own database (the bot has the one store)."""
+        return cls(memory._db)
 
     async def save(self, guild_id: int, campaign_id: str, graded: Sequence[Graded]) -> int:
         """Keep these grades (a candidate seen again takes the new grade and reason, and keeps
@@ -141,3 +147,32 @@ class GradeStore:
                 )
                 told += cur.rowcount
         return told
+
+    async def drop_except(
+        self, guild_id: int, campaign_id: str, keep: Collection[tuple[str, str, str, str]]
+    ) -> int:
+        """Forget the grades of clashes that are no longer found (a connection ended, was changed
+        or lost its belief, so the two no longer meet): a stale grade must not be told to the DM
+        or counted. Everything else is left as it is."""
+        dropped = 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT perspective_id, kind, first_relation_id, second_relation_id"
+                " FROM memory_contradictions WHERE guild_id = %s AND campaign_id = %s",
+                (guild_id, campaign_id),
+            )
+            for row in await cur.fetchall():
+                key = (
+                    row["perspective_id"], row["kind"],
+                    row["first_relation_id"], row["second_relation_id"],
+                )  # fmt: skip
+                if key in keep:
+                    continue
+                gone = await conn.execute(
+                    "DELETE FROM memory_contradictions WHERE guild_id = %s AND campaign_id = %s"
+                    " AND perspective_id = %s AND kind = %s AND first_relation_id = %s"
+                    " AND second_relation_id = %s",
+                    (guild_id, campaign_id, *key),
+                )
+                dropped += gone.rowcount
+        return dropped

@@ -350,6 +350,9 @@ def hidden_old_pronoun(entity: Entity) -> bool:
     )
 
 
+SPELLING_TAKEN = "Pick another spelling."  # a new name that is another entry's secret name
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -1935,12 +1938,12 @@ class MemoryStore:
                     ALIASES, " AND key = %s AND entity_id <> %s", [key, entity_id]
                 )
                 if any(t["secret"] for t in taken):
-                    raise MemoryRuleError("Pick another spelling.")
+                    raise MemoryRuleError(SPELLING_TAKEN)
             own = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, old_key])
             clash = await w.select(ALIASES, " AND entity_id = %s AND key = %s", [entity_id, key])
             if clash and clash[0]["secret"]:
                 # Never turn a secret name into the name everyone hears.
-                raise MemoryRuleError("Pick another spelling.")
+                raise MemoryRuleError(SPELLING_TAKEN)
             row = await w.update(ENTITIES, entity_id, {"name": name})
             if own and (not clash or clash[0]["id"] == own[0]["id"]):
                 # The same name, spelled right (listened for, and never secret).
