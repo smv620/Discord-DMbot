@@ -85,8 +85,30 @@ export interface CampaignPage {
 /** One of the three choices a game master can change on the Settings tab (#2484). */
 export type CampaignSettingName = "visibility" | "level" | "retention";
 
-/** A choice the queue carries: the three above, or an optional rule switched on or off (#2753). */
-export type QueuedSetting = CampaignSettingName | "optional_rule";
+/** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
+ * added or removed (#2768: `value` is the person's id, `on` true to add). */
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm";
+
+/** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
+ * campaign (cannot be removed); `you` is the person looking (may leave). */
+export interface GameMaster {
+  userId: string;
+  name: string;
+  plan: boolean;
+  you: boolean;
+}
+
+/** The campaign's game masters and the most it can have (#2768). */
+export interface GameMasters {
+  max: number;
+  gameMasters: GameMaster[];
+}
+
+/** Someone a game master can offer as one more: a member who agreed to be recorded (#2768). */
+export interface GameMasterCandidate {
+  userId: string;
+  name: string;
+}
 
 /** One optional rule from another book, as the Settings tab lists it (#2753; core web/optional_rules.py).
  * `changed` is true when the game master chose it, false when it follows the campaign's default. */
@@ -1892,6 +1914,11 @@ export interface AccountApi {
    * from an API older than that. A rule is switched with `setCampaignSetting({setting: "optional_rule",
    * value: <id>, on})`. */
   campaignOptionalRules?(campaignRef: string): Promise<OptionalRules>;
+  /** The campaign's game masters (#2768), for its game masters. Missing from an API older than that. A change is
+   * sent with `setCampaignSetting({setting: "co_dm", value: <userId>, on})`. */
+  campaignGameMasters?(campaignRef: string): Promise<GameMasters>;
+  /** Who can be offered as a game master, searched by name (#2768): at most 25, members who agreed to be recorded. */
+  campaignGameMasterCandidates?(campaignRef: string, query: string): Promise<GameMasterCandidate[]>;
   /** Where a choice sent with `setCampaignSetting` stands. */
   campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
@@ -2494,6 +2521,15 @@ export function httpApi(
       ).answer,
     campaignOptionalRules: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
+    campaignGameMasters: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters`)) as GameMasters,
+    campaignGameMasterCandidates: async (campaignRef, query) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters/candidates?q=${encodeURIComponent(query)}`,
+        )) as { people: GameMasterCandidate[] }
+      ).people,
     campaignSettingAnswer: async (campaignRef, answer) =>
       (await call(
         "GET",
