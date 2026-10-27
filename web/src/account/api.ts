@@ -1662,6 +1662,7 @@ export type ApiErrorKind =
   | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
   | "backup-too-many-files" // more transcripts files than one backup carries (#2772)
   | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
+  | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1669,6 +1670,8 @@ export type ApiErrorKind =
 const BACKUP_POLL_MS = 1500;
 const BACKUP_POLL_MAX_MS = 10_000;
 const BACKUP_GIVE_UP_MS = 16 * 60_000;
+/** One file that has not arrived in this long is a download that is stuck (DMbot keeps the copy 15 minutes). */
+const BACKUP_FILE_TIMEOUT_MS = 3 * 60_000;
 /** What a failed copy's `reason` means to the page (core web/campaign_backup.py REASONS). */
 const backupReasons: Record<string, ApiErrorKind> = {
   plan: "no-backup",
@@ -2321,7 +2324,6 @@ export function httpApi(
         ready: boolean;
         fileName?: string | null;
         fileWaiting?: boolean;
-        size?: number | null;
         parts?: { n: number }[];
         partsTotal?: number;
       };
@@ -2341,20 +2343,23 @@ export function httpApi(
       // a backup with a file missing would restore without part of the story.
       const main = safeBackupName(got.fileName ?? "", "campaign.dmbot.json.gz");
       const stem = main.replace(/\.dmbot\.json\.gz$/, "") || "campaign";
-      // An API without the transcripts files says nothing of them: a main file alone would look complete.
-      if (typeof got.partsTotal !== "number") throw new ApiError("backup-failed");
+      // An API without the transcripts files says nothing of them (no `fileWaiting`, no `partsTotal`): a main file
+      // alone would look complete, so it is refused.
+      if (typeof got.partsTotal !== "number" || typeof got.fileWaiting !== "boolean") throw new ApiError("backup-failed");
       const parts = (got.parts ?? []).map((p) => p.n);
-      // The main file is still to fetch unless core says it was taken (`fileWaiting`, or a size of 0).
-      const mainWaits = got.fileWaiting ?? got.size !== 0;
-      // A copy that lists fewer files than it had, before anything is fetched, is broken: say so now, before the
-      // once-only main file is spent on a set that cannot be complete.
-      if (mainWaits && parts.length !== got.partsTotal) throw new ApiError("backup-part");
-      const total = (mainWaits ? 1 : 0) + parts.length;
+      // A broken set is never resumed: files are handed over once, so a copy whose main file was already taken, or
+      // that lists fewer files than it had, can never be a whole backup. Refused before anything is fetched.
+      if (!got.fileWaiting || parts.length !== got.partsTotal) throw new ApiError("backup-unfinished");
+      const total = 1 + parts.length;
       const files: BackupFile[] = [];
       onFile?.(0, total);
       const take = async (path: string, name: string, first: boolean): Promise<void> => {
         try {
-          files.push({ name, blob: (await call("GET", `${copy}${path}`, undefined, true)) as Blob });
+          // A file that does not arrive in time is a stuck download, said as one (the page keeps its clock running).
+          const arrives = call("GET", `${copy}${path}`, undefined, true) as Promise<Blob>;
+          const late = new Promise<never>((_, reject) => setTimeout(() => reject(new ApiError(first ? "backup-failed" : "backup-part")), BACKUP_FILE_TIMEOUT_MS));
+          arrives.catch(() => undefined); // (a file that arrives after the wait is over is dropped, not an unhandled error)
+          files.push({ name, blob: await Promise.race([arrives, late]) });
         } catch (error) {
           // The main file keeps its own refusals (not yours, gone); a later file that fails is a broken set,
           // unless the trouble is the connection or the sign-in, which are what they are.
@@ -2363,8 +2368,8 @@ export function httpApi(
         }
         onFile?.(files.length, total);
       };
-      if (mainWaits) await take("/file", main, true);
-      for (const n of parts) await take(`/file/${n}`, `${stem}.transcripts-${n}-of-${got.partsTotal ?? parts.length}.dmbot.json.gz`, false);
+      await take("/file", main, true);
+      for (const n of parts) await take(`/file/${n}`, `${stem}.transcripts-${n}-of-${got.partsTotal}.dmbot.json.gz`, false);
       return { files };
     },
     takeBackHandover: async (ref) => {

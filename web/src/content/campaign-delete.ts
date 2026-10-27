@@ -41,7 +41,11 @@ export const campaignDeleteWords = {
       ? `Backup saved: ${files[0]}. Look in your Downloads before you delete.`
       : `Backup saved: ${files.length} files. Keep them all together. If your browser blocked some, allow downloads and press "Download a backup first" again. Look in your Downloads before you delete.`,
   /** A file can be bigger than a server without boosts lets you upload in Discord. */
-  backupBigFile: "If Discord says a file is too big when you load the backup, ask on the Help page. A server needs more Discord boosts for bigger files.",
+  backupBigFile: "A file in your backup is large. If Discord says a file is too big when you load the backup, ask on the Help page. A server needs more Discord boosts for bigger files.",
+  /** A file over this many bytes is large for a server without boosts, so the line above is shown. */
+  bigFileBytes: 10 * 1024 * 1024,
+  /** Said when a file has not arrived for a while (the wait panel shows it as stalled). */
+  fileSlow: "A file is taking a long time. You can wait, or press Download a backup first again later.",
   typeName: "Type the campaign's name to confirm",
   confirm: "Delete it",
   deleting: "Deleting…",
@@ -60,8 +64,9 @@ export const campaignDeleteWords = {
     "no-backup": "Your plan can't make a backup. You can still delete the campaign.",
     "too-big": "This campaign is too big to back up here. Nothing was deleted. Use /dmbot backup in Discord, then try again.",
     "too-soon": "You asked for several backups in the last hour. Try again later. Nothing was deleted.",
-    "backup-too-many-files": "This campaign has too many transcripts to back up here. Nothing was deleted. In Discord, shorten \"Keep transcripts for\" (Settings, then Campaign management) and try again. Or use /dmbot backup in Discord.",
-    "backup-part": "One backup file didn't come through, so the backup is not complete. Nothing was deleted. Press \"Download a backup first\" again, and keep only the new files.",
+    "backup-too-many-files": "This campaign has too many transcripts to back up here. Nothing was deleted. Shorten \"Keep transcripts for\" (in Settings on its page here, or in Discord under Settings, then Campaign management) and try again. That deletes the older transcripts. Or use /dmbot backup in Discord.",
+    "backup-part": "One backup file didn't come through, so the backup is not complete and nothing was saved. Nothing was deleted. Press \"Download a backup first\" again to make a new one.",
+    "backup-unfinished": "That backup couldn't be finished. Nothing was deleted. Press \"Download a backup first\" again.",
     "backup-failed": "DMbot couldn't make the backup, and nothing was deleted. Try again; if it fails again, ask on the Help page.",
     network: "We couldn't reach DMbot, so nothing was deleted. Try again in a moment.",
     server: "That didn't work, and nothing was deleted. Try again in a moment.",

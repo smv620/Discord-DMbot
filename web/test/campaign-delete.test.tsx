@@ -240,7 +240,34 @@ describe("the backup", () => {
       expect(saved).toEqual(files);
       expect(within(box).getByText(/Backup saved: 3 files\. Keep them all together/)).toBeTruthy();
       for (const file of files) expect(within(box).getByText(file, { selector: "li" })).toBeTruthy(); // one to a line, easy to read on a phone
-      expect(within(box).getByText(w.backupBigFile)).toBeTruthy();
+      expect(within(box).queryByText(w.backupBigFile)).toBeNull(); // (none of these files is large)
+    });
+
+    it("says a file is large when any file, the main one included, is over 10 MB", async () => {
+      const api = mockApi("table");
+      const big = new Blob([new Uint8Array(w.bigFileBytes + 1)]);
+      api.campaignBackup = async () => ({ files: [{ name: "x.dmbot.json.gz", blob: big }] });
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(w.backupBigFile, {}, { timeout: 5000 })).toBeTruthy();
+    });
+
+    it("shows the clock from the request, and a stuck file as stalled with what to do", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const api = mockApi("table");
+      api.campaignBackup = (_ref, _progress, onFile) => {
+        onFile?.(1, 3); // one of three files fetched, then nothing
+        return new Promise(() => {});
+      };
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(`1 of 3 ${w.filesUnit(3)}`)).toBeTruthy();
+      expect(within(box).queryByText(w.fileSlow)).toBeNull();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(within(box).getByText(w.fileSlow)).toBeTruthy();
+      vi.useRealTimers();
     });
 
     it("shows how many files are fetched while it goes", async () => {
