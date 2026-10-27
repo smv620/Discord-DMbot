@@ -732,11 +732,12 @@ def keep_connections(
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
-    gone: set[int] = set()  # places in `out` that were offered and then withdrawn
+    # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
+    # the pick itself and the way round it was said, so opposite roles are caught here too
+    kin_picks: dict[tuple[str, str], tuple[Pick, bool]] = {}
     seen_picks: set[tuple[str, str, str, bool]] = set()
     out: list[Connection] = []
     answers = [list(piece) for piece in answers]
-    total = sum(len(piece) for piece in answers)
     looked = 0
     for piece in answers:
         for c in piece:
@@ -766,10 +767,30 @@ def keep_connections(
                     lost["same_pair"] += 1
                     continue
                 seen_picks.add(again)
-                picks.append(
-                    Pick(fixed.name or "", bool(second.ambiguous), word, other.ambiguous
-                         or (), c.how, c.quote, secret, c.words)
+                made_pick = Pick(
+                    fixed.name or "", bool(second.ambiguous), word, other.ambiguous or (),
+                    c.how, c.quote, secret, c.words,
                 )  # fmt: skip
+                if c.how == "kin_of" and kin.directional(c.words):
+                    # The same contradiction check as for a plain connection: a role said both
+                    # ways round, or against a role already offered for one of the candidates, is
+                    # not believed; the two are still family, so the question is plain family.
+                    pk = (name_key(fixed.name or ""), name_key(word))
+                    earlier = kin_picks.get(pk)
+                    if earlier is not None and earlier[1] != bool(second.ambiguous):
+                        picks[picks.index(earlier[0])] = replace(earlier[0], words="")
+                        lost["which_way"] += 1
+                        continue
+                    kin_picks[pk] = (made_pick, bool(second.ambiguous))
+                    for cand in other.ambiguous or ():
+                        ck = name_key(cand)
+                        held = kin_held.get((min(pk[0], ck), max(pk[0], ck)))
+                        said_as = (pk[0], ck) if second.ambiguous else (ck, pk[0])
+                        if held is not None and held[1] and held[2] != said_as:
+                            made_pick = replace(made_pick, words="")
+                            kin_picks[pk] = (made_pick, bool(second.ambiguous))
+                            break
+                picks.append(made_pick)
                 lost["which_waiting"] += 1
                 continue
             if first.ambiguous or second.ambiguous:
@@ -804,20 +825,20 @@ def keep_connections(
             if c.how == "kin_of":
                 # Family connections are stored once for a pair, in the order of a role ("a is the
                 # parent of b"): a role beats plain "family", two roles the same way round are one
-                # fact, and two roles the opposite way round contradict, so neither is believed
-                # (the DM is shown nothing to pick from).
+                # fact, and two roles the opposite way round contradict: neither role is believed,
+                # but the two are still family, so plain "family" is offered (the DM sees no
+                # direction to pick from, and no line is lost).
                 if pair in contradicted:
-                    lost["which_way"] += 1
+                    lost["which_way" if role else "same_pair"] += 1
                     continue
                 held = kin_held.get(pair)
                 if held is not None:
                     where, held_role, held_order = held
                     if role and held_role and held_order != (ka, kb):
                         contradicted.add(pair)
-                        if where is not None:
-                            gone.add(where)
-                            lost["which_way"] += 1  # the first of the two, already offered
-                        lost["which_way"] += 1
+                        if where is not None:  # the first line stays, as plain family
+                            out[where] = replace(out[where], words="")
+                        lost["which_way"] += 1  # and this one is the contradiction
                         continue
                     if not (role and not held_role and where is not None):
                         lost["same_pair"] += 1  # (a plain line, or the same role again)
@@ -839,10 +860,12 @@ def keep_connections(
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
                 lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
+            if len(out) >= cap:
+                # Full. The rest are still read, so a contradiction among family lines is found
+                # whichever side of the cap it falls on, but none of them is offered.
+                lost["over_cap"] += 1
+                continue
             out.append(made)
             if c.how == "kin_of":
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
-            if len(out) - len(gone) >= cap:
-                lost["over_cap"] += total - looked  # the rest are not looked at: all counted
-                return [x for i, x in enumerate(out) if i not in gone]
-    return [x for i, x in enumerate(out) if i not in gone]
+    return out
