@@ -307,7 +307,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
           {words.webLink}
         </a>
         {data.canEdit ? (
-          <p class="small muted">{words.undoNote}</p>
+          <p class="small muted">
+            {words.pressName} {words.undoNote}
+          </p>
         ) : (
           <p class="note" role="note">
             {words.readOnly}
@@ -363,11 +365,10 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
                 {words.kindOption(k.label, k.count)}
               </label>
             ))}
-            {kinds.length > 0 && (
-              <button type="button" class="link-button small" onClick={() => setKinds([])}>
-                {words.allKinds(everything)}
-              </button>
-            )}
+            {/* Always there (and dimmed when nothing is ticked), so pressing it never drops the keyboard. */}
+            <button type="button" class="link-button small" disabled={kinds.length === 0} onClick={() => setKinds([])}>
+              {words.allKinds(everything)}
+            </button>
           </div>
         </fieldset>
       </form>
@@ -582,7 +583,6 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
             class="link-button campaign-name name-open"
             aria-expanded={open}
             aria-controls={panel}
-            aria-label={open ? words.doneFor(row.name) : words.changeFor(row.name)}
             onClick={onToggle}
           >
             {row.name}

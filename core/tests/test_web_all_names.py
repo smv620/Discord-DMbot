@@ -174,7 +174,10 @@ class TheDmsList(Listing):
         both = await self.page(kind="npc,place")
         self.assertEqual(sorted(n["name"] for n in both["names"]), ["Greywater Keep", "Mira Voss"])
         self.assertEqual(both["total"], 2)
-        self.assertEqual(both["kinds"][0]["count"] + sum(k["count"] for k in both["kinds"][1:]), 3)
+        # the counts beside each type ignore which types are ticked
+        self.assertEqual(
+            {k["key"]: k["count"] for k in both["kinds"]}, {"npc": 1, "place": 1, "item": 1}
+        )
         self.assertEqual((await self.page(kind="item,bogus"))["total"], 1)
         self.assertEqual((await self.page(kind=" npc , "))["total"], 1)  # (stray commas and spaces)
         self.assertEqual(await self.refused(self.session, self.cref, kind="x" * 41), "bad_page")
