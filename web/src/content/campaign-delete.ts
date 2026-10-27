@@ -8,7 +8,7 @@ export const CAMPAIGN_DELETE_LIVE = false;
 
 /** Whether a backup holds a campaign's transcripts yet (core #2552). While it does not, the page says so
  * rather than let someone delete a campaign believing the copy is complete. */
-export const BACKUP_HAS_TRANSCRIPTS = false;
+export const BACKUP_HAS_TRANSCRIPTS = true;
 
 export const campaignDeleteWords = {
   /** A campaign on a server DMbot or the person can no longer reach (`serverReachable: false`). */
@@ -28,13 +28,20 @@ export const campaignDeleteWords = {
     waiting: "Waiting for DMbot to start the backup.",
     reading: "DMbot is reading the campaign.",
     packing: "DMbot is packing the file.",
+    fetching: "Getting your backup's files.",
     done: "The backup is ready.",
     failed: "That didn't work.",
   } as Record<string, string>,
   backupNote: "To keep a copy, download it first. It holds everything, secret notes included. Don't share it.",
   backupWithoutTranscripts: "Transcripts aren't in the backup yet, so deleting loses them for good.",
-  backupDone: (file: string): string => `Backup downloaded as ${file}. Check your Downloads before you delete.`,
-  backupFileName: (name: string): string => `${name.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "campaign"}-backup.json`,
+  /** The files unit for the count while they are fetched: "2 of 7 files". */
+  filesUnit: "files",
+  backupDone: (files: string[]): string =>
+    files.length === 1
+      ? `Backup downloaded as ${files[0]}. Check your Downloads before you delete.`
+      : `Your backup is ${files.length} files. Keep them together: ${files.join(", ")}. If your browser asked, allow the downloads. Check your Downloads before you delete.`,
+  /** A file can be bigger than a server without boosts lets you upload in Discord. */
+  backupBigFile: "A file in your backup may be bigger than Discord lets a server without boosts upload. If Discord says a file is too big when you restore, ask on the Help page.",
   typeName: "Type the campaign's name to confirm",
   confirm: "Delete it",
   deleting: "Deleting…",
@@ -53,6 +60,8 @@ export const campaignDeleteWords = {
     "no-backup": "Your plan can't make a backup. You can still delete the campaign.",
     "too-big": "This campaign is too big to back up here. Nothing was deleted. Use /dmbot backup in Discord, then try again.",
     "too-soon": "You asked for several backups in the last hour. Try again later. Nothing was deleted.",
+    "backup-too-many-files": "This campaign has more transcripts than one backup can carry. Nothing was deleted. Shorten \"Keep transcripts for\" in ⚙️ Settings → 🗂️ Campaign management, then try again.",
+    "backup-part": "One of the backup's files didn't come through, so the backup is not complete. Nothing was deleted. Ask for the backup again, and don't rely on the files that did download.",
     "backup-failed": "DMbot couldn't make the backup, and nothing was deleted. Try again; if it fails again, ask on the Help page.",
     network: "We couldn't reach DMbot, so nothing was deleted. Try again in a moment.",
     server: "That didn't work, and nothing was deleted. Try again in a moment.",

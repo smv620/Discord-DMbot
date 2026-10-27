@@ -39,6 +39,10 @@ export default function CampaignDelete({
   const [kept, setKept] = useState(false);
   // How far DMbot has got with the backup (its own answer: stage, how long, last moved).
   const [made, setMade] = useState<JobProgress | null>(null);
+  // Then how many of its files are fetched ("2 of 7 files"), on this browser's own clock.
+  const [fetched, setFetched] = useState<JobProgress | null>(null);
+  const [savedNames, setSavedNames] = useState<string[]>([]);
+  const fetchStart = useRef(0);
   const working = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
   const boxId = `delete-${refId}`;
@@ -56,20 +60,31 @@ export default function CampaignDelete({
     setProblem("");
     setSaved(false);
     setMade(null);
+    setFetched(null);
     try {
-      const blob = await api.campaignBackup(refId, setMade);
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = words.backupFileName(name);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(href);
+      const set = await api.campaignBackup(refId, setMade, (done, total) => {
+        const now = Math.floor(Date.now() / 1000);
+        if (!fetchStart.current) fetchStart.current = now;
+        setFetched({ stage: "fetching", state: "running", done, total, unit: words.filesUnit, startedAt: fetchStart.current, updatedAt: now, serverNow: now });
+      });
+      // One download after another, a moment apart, so a browser does not mistake them for a pile of pop-ups.
+      for (const [i, file] of set.files.entries()) {
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+        const href = URL.createObjectURL(file.blob);
+        const link = document.createElement("a");
+        link.href = href;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(href);
+      }
+      setSavedNames(set.files.map((f) => f.name));
       setSaved(true);
     } catch (error) {
       fail(error);
     } finally {
+      fetchStart.current = 0;
       working.current = false;
       setState("idle");
     }
@@ -121,15 +136,19 @@ export default function CampaignDelete({
           </div>
           {state === "backup" && (
             <WorkProgress
-              stage={made ? stageWords(words.stage, made.stage) : words.backingUp}
-              startedAt={made?.startedAt}
-              updatedAt={made?.updatedAt}
-              serverNow={made?.serverNow}
-              state={made && made.state !== "done" ? made.state : "running"}
+              stage={fetched ? stageWords(words.stage, fetched.stage) : made ? stageWords(words.stage, made.stage) : words.backingUp}
+              done={fetched?.done}
+              total={fetched?.total}
+              unit={fetched?.unit ?? undefined}
+              startedAt={fetched ? fetched.startedAt : made?.startedAt}
+              updatedAt={fetched ? fetched.updatedAt : made?.updatedAt}
+              serverNow={fetched ? fetched.serverNow : made?.serverNow}
+              state={fetched ? "running" : made && made.state !== "done" ? made.state : "running"}
             />
           )}
           <p class="small">{words.backupNote}</p>
-          {saved && <p role="status" class="small">{words.backupDone(words.backupFileName(name))}</p>}
+          {saved && <p role="status" class="small">{words.backupDone(savedNames)}</p>}
+          {saved && savedNames.length > 1 && <p class="small muted">{words.backupBigFile}</p>}
         </>
       )}
       <label class="field">

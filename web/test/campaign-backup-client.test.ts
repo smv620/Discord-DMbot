@@ -39,8 +39,10 @@ describe("the backup before Delete", () => {
     const heard: string[] = [];
     const run = api.campaignBackup!("100.cmp1", (p) => heard.push(p.stage));
     await vi.advanceTimersByTimeAsync(30_000);
-    const blob = await run;
-    expect(blob).toBeInstanceOf(Blob);
+    const set = await run;
+    expect(set.files).toHaveLength(1);
+    expect(set.files[0]!.blob).toBeInstanceOf(Blob);
+    expect(set.files[0]!.name).toBe("campaign.dmbot.json.gz");
     expect(seen.map((c) => `${c.method} ${c.url.replace("https://api.example", "")}`)).toEqual([
       "POST /me/campaigns/100.cmp1/backup",
       `GET /me/campaigns/100.cmp1/backup/${ID}`,
@@ -51,9 +53,53 @@ describe("the backup before Delete", () => {
     expect(heard).toEqual(["waiting", "packing", "done"]);
   });
 
+  it("fetches the main file and every transcripts file, each once, under Discord's names", async () => {
+    const ready = progress("done", {
+      state: "done", ready: true, fileName: "The-Crossing-2026-10-27.dmbot.json.gz", fileWaiting: true,
+      parts: [{ n: 1, size: 10 }, { n: 2, size: 12 }], partsTotal: 2,
+    });
+    const { api, seen } = fake([
+      { status: 202, body: { id: ID } },
+      { status: 200, body: ready },
+      { status: 200, file: true },
+      { status: 200, file: true },
+      { status: 200, file: true },
+    ]);
+    const counted: string[] = [];
+    const set = await api.campaignBackup!("100.cmp1", undefined, (done, total) => counted.push(`${done}/${total}`));
+    expect(set.files.map((f) => f.name)).toEqual([
+      "The-Crossing-2026-10-27.dmbot.json.gz",
+      "The-Crossing-2026-10-27.transcripts-1-of-2.dmbot.json.gz",
+      "The-Crossing-2026-10-27.transcripts-2-of-2.dmbot.json.gz",
+    ]);
+    expect(seen.slice(2).map((c) => c.url.replace("https://api.example", ""))).toEqual([
+      `/me/campaigns/100.cmp1/backup/${ID}/file`,
+      `/me/campaigns/100.cmp1/backup/${ID}/file/1`,
+      `/me/campaigns/100.cmp1/backup/${ID}/file/2`,
+    ]);
+    expect(counted).toEqual(["0/3", "1/3", "2/3", "3/3"]);
+  });
+
+  it("does not fetch the main file again when it was already taken", async () => {
+    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", fileWaiting: false, parts: [{ n: 2, size: 5 }], partsTotal: 2 });
+    const { api, seen } = fake([{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 200, file: true }]);
+    const set = await api.campaignBackup!("100.cmp1");
+    expect(set.files.map((f) => f.name)).toEqual(["x.transcripts-2-of-2.dmbot.json.gz"]);
+    expect(seen.at(-1)!.url).toMatch(/\/file\/2$/);
+  });
+
+  it("a transcripts file that fails fails the whole backup, and the main file's own refusals stay its own", async () => {
+    const ready = progress("done", { state: "done", ready: true, fileName: "x.dmbot.json.gz", parts: [{ n: 1, size: 5 }], partsTotal: 1 });
+    const failing = fake([{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 200, file: true }, { status: 404, body: { error: "not_found" } }]);
+    await expect(failing.api.campaignBackup!("100.cmp1")).rejects.toMatchObject({ kind: "backup-part" });
+    const first = fake([{ status: 202, body: { id: ID } }, { status: 200, body: ready }, { status: 404, body: { error: "not_found" } }]);
+    await expect(first.api.campaignBackup!("100.cmp1")).rejects.toMatchObject({ kind: "not-found" });
+  });
+
   it.each([
     ["plan", "no-backup"],
     ["too_big", "too-big"],
+    ["too_many_files", "backup-too-many-files"],
     ["not_allowed", "not-allowed"],
     ["failed", "backup-failed"],
     ["something else", "backup-failed"],
