@@ -10,7 +10,6 @@ import { readFileSync } from "node:fs";
 import Account from "../src/account/Account";
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
-import { workWords } from "../src/content/work-progress";
 import { campaignDeleteWords as w } from "../src/content/campaign-delete";
 
 const live = vi.hoisted(() => ({ on: false }));
