@@ -20,6 +20,7 @@ from dmbot.memory.entity_text import compose
 from dmbot.memory.voyage import ProviderError, Ranked
 from dmbot.web import names_smart, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordUser
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW
@@ -326,7 +327,8 @@ class TheRoute(Smart):
         self.assertEqual((await self.post("ice", client=anonymous)).status_code, 401)
 
     async def test_a_manager_who_is_not_a_dm_gets_not_found_over_http(self) -> None:
-        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        bob = DiscordUser(id=BOB.id, name=BOB.name, email=BOB.email)
+        token = await sessions.sign_in(self.web, bob, [THURSDAY], now=NOW, days=30)
         client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
         )
