@@ -110,7 +110,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot, HintPeople, Table
-    from dmbot.campaigns import web_backup
+    from dmbot.campaigns import web_backup, web_line_delete
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -244,6 +244,7 @@ class RecapFeatures:
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
+        web_line_deletions: web_line_delete.WebLineDeletions | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
 
@@ -263,6 +264,7 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def run_web_line_deletions(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -1877,6 +1879,10 @@ class RecapFeatures:
                 await self.run_web_backups()
             except Exception as exc:
                 log.warning("The website backups failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_line_deletions()
+            except Exception as exc:
+                log.warning("The website line deletions failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -1888,6 +1894,8 @@ class RecapFeatures:
                             await self.name_actions.sweep(guild.id)
                         if self.web_settings is not None:
                             await self.web_settings.sweep(guild.id)
+                        if self.web_line_deletions is not None:
+                            await self.web_line_deletions.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
