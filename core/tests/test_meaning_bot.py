@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.config import Settings
+from dmbot.memory import meaning
 
 
 def bot(*, on: bool, key: str = "k") -> Any:
@@ -22,6 +23,7 @@ def bot(*, on: bool, key: str = "k") -> Any:
     b.campaigns = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c")))
     b.consent = SimpleNamespace(consenting=AsyncMock(return_value=frozenset()))
     b.plan_allows = AsyncMock(return_value=True)
+    b.meaning_calls = meaning.CallCounter(lambda: 0.0)
     return b
 
 
@@ -63,6 +65,7 @@ class Gating(unittest.IsolatedAsyncioTestCase):
             [type(src).__name__ for src in call.args[2]], ["LineSource", "EntitySource"]
         )
         self.assertIs(call.args[3], b.consent.consenting)  # consent, read for each batch
+        self.assertIs(call.kwargs["count_call"].__func__, meaning.CallCounter.count)  # and counted
 
 
 class Leads(unittest.IsolatedAsyncioTestCase):
@@ -78,10 +81,52 @@ class Leads(unittest.IsolatedAsyncioTestCase):
 
         b.meaning_seeds = SimpleNamespace(find=slow)
         b.settings = SimpleNamespace()
+        b.consent = SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7})))
         with (
             patch("dmbot.bot.MEANING_WAIT_S", 0.01),
             self.assertLogs("dmbot.bot", "INFO") as logged,
         ):
-            leads = await b.meaning_leads(SimpleNamespace(guild_id=1, id="c"), "who?")
+            leads = await b.meaning_leads(SimpleNamespace(guild_id=1, id="c"), "who?", 7)
         self.assertEqual(leads, [])
         self.assertFalse(any("Traceback" in line for line in logged.output))
+
+    async def test_the_asker_must_agree_to_be_recorded_before_the_question_is_sent(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        find = AsyncMock(return_value=["x"])
+        b.meaning_seeds = SimpleNamespace(find=find)
+        b.consent = SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7})))
+        campaign = SimpleNamespace(guild_id=1, id="c")
+        self.assertEqual(await b.meaning_leads(campaign, "who?", 8), [])  # does not agree
+        find.assert_not_awaited()
+        self.assertEqual(await b.meaning_leads(campaign, "who?", 7), ["x"])
+        find.assert_awaited_once_with(1, "c", "who?", for_players=True)  # the players' filter
+
+    async def test_closing_a_bot_with_no_voyage_connection_never_fails(self) -> None:
+        bare: Any = DMBot.__new__(DMBot)  # (no such attribute at all)
+        await bare.close_meaning()
+        closed = AsyncMock()
+        bare._voyage_http = SimpleNamespace(close=closed)
+        await bare.close_meaning()
+        closed.assert_awaited_once()
+        bare._voyage_http = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("x")))
+        await bare.close_meaning()  # a failing close is swallowed
+
+
+class Counting(unittest.IsolatedAsyncioTestCase):
+    async def test_the_tally_counts_each_call_and_starts_again_each_day(self) -> None:
+        now = [0.0]
+        counter = meaning.CallCounter(lambda: now[0])
+        for _ in range(3):
+            await counter.count()
+        self.assertEqual(counter.today, 3)
+        now[0] = 86400.0
+        await counter.count()
+        self.assertEqual(counter.today, 1)
+
+    async def test_the_hundredth_call_of_a_day_is_logged_as_a_count_only(self) -> None:
+        counter = meaning.CallCounter(lambda: 0.0)
+        with self.assertLogs("dmbot.memory.meaning", "INFO") as logged:
+            for _ in range(100):
+                await counter.count()
+        self.assertEqual(len(logged.output), 1)
+        self.assertIn("100 Voyage AI calls today", logged.output[0])

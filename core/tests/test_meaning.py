@@ -80,16 +80,26 @@ class Finding(DatabaseTest):
             await self.add_entry(f"{n + 1:032x}", name, desc)
 
     async def add_entry(
-        self, id_: str, name: str, desc: str, campaign: str | None = None, **flags: bool
+        self, id_: str, name: str, desc: str, campaign: str | None = None, **flags: object
     ) -> None:
         cid = campaign or self.c
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
                 "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
-                " status, source, created_at, hidden_from_players) VALUES (%s, %s, %s,"
-                " 'character', %s, %s, 'confirmed', 'dm', 1, %s)",
-                (GUILD, cid, id_, name, desc, flags.get("hidden", False)),
-            )
+                " status, source, created_at, hidden_from_players, audience_limited) VALUES"
+                " (%s, %s, %s, %s, %s, %s, 'confirmed', 'dm', 1, %s, %s)",
+                (
+                    GUILD, cid, id_, flags.get("type", "character"), name, desc,
+                    bool(flags.get("hidden", False)), bool(flags.get("audience")),
+                ),
+            )  # fmt: skip
+            if flags.get("alias"):
+                await conn.execute(
+                    "INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id, text, key,"
+                    " kind, secret, status, sound_codes, source, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, 'full', true, 'confirmed', '{}', 'dm', 1)",
+                    (GUILD, cid, f"{id_[:-1]}f", id_, name, name.lower()),
+                )
         self.ids[name] = id_
         piece = pieces_of(vs.ASSERTION, id_, f"{name}: {desc}")[0]
         await self.store.save(
@@ -156,6 +166,40 @@ class Finding(DatabaseTest):
         self.assertNotIn("e" * 32, safe)
         self.assertIn(self.ids["Bram"], safe)
 
+    async def test_for_players_matches_the_websites_rules_each_case_live(self) -> None:
+        cases: dict[str, dict[str, object]] = {
+            "secret name": dict(alias="Cook"),
+            "plot note": dict(type="thread"),
+            "quest": dict(type="quest"),
+            "a person's card": dict(type="person"),
+            "clue some know": dict(audience="x"),
+            "hidden": dict(hidden=True),
+        }
+        for label, flags in cases.items():
+            with self.subTest(label):
+                name = f"Cook {label}"
+                id_ = f"{abs(hash(label)) % 10**16:032x}"
+                await self.add_entry(id_, name, "A cook with hemlock soup", **flags)
+                dm = await self.seeds(FakeVoyage()).find(GUILD, self.c, "hemlock cook", keep=20)
+                players = await self.seeds(FakeVoyage()).find(
+                    GUILD, self.c, "hemlock cook", keep=20, for_players=True
+                )
+                self.assertIn(id_, dm)  # the DM's own search still finds it
+                self.assertNotIn(id_, players)
+
+    async def test_the_rule_is_read_live_not_from_when_the_numbers_were_made(self) -> None:
+        bram = self.ids["Bram"]
+        before = await self.seeds(FakeVoyage()).find(
+            GUILD, self.c, "hemlock cook", for_players=True
+        )
+        self.assertEqual(before, [bram])
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", (bram,)
+            )
+        after = await self.seeds(FakeVoyage()).find(GUILD, self.c, "hemlock cook", for_players=True)
+        self.assertEqual(after, [])  # no new numbers were made: the filter is the change
+
     async def test_an_entry_merged_away_since_is_not_a_lead(self) -> None:
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
@@ -201,7 +245,7 @@ class InTheSidebar(DatabaseTest):
     async def test_a_question_with_no_names_still_starts_the_recall_by_meaning(self) -> None:
         seen: list[list[str]] = []
 
-        async def by_meaning(c: object, question: str) -> list[str]:
+        async def by_meaning(c: object, question: str, asker: int) -> list[str]:
             return ["bram-id"]
 
         await self.engine(by_meaning, seen).answer(
@@ -213,7 +257,7 @@ class InTheSidebar(DatabaseTest):
         seen: list[list[str]] = []
         from tests.test_memory_lookup import BELLEROS
 
-        async def by_meaning(c: object, question: str) -> list[str]:
+        async def by_meaning(c: object, question: str, asker: int) -> list[str]:
             return ["bram-id", BELLEROS]
 
         await self.engine(by_meaning, seen).answer(
@@ -226,7 +270,7 @@ class InTheSidebar(DatabaseTest):
     async def test_a_failing_lead_search_never_stops_the_answer(self) -> None:
         seen: list[list[str]] = []
 
-        async def broken(c: object, question: str) -> list[str]:
+        async def broken(c: object, question: str, asker: int) -> list[str]:
             raise RuntimeError("down")
 
         got = await self.engine(broken, seen).answer(campaign(), "what about Belleros", asker_id=7)
@@ -239,7 +283,7 @@ class InTheSidebar(DatabaseTest):
         seen: list[list[str]] = []
         asked: list[str] = []
 
-        async def by_meaning(c: object, question: str) -> list[str]:
+        async def by_meaning(c: object, question: str, asker: int) -> list[str]:
             asked.append(question)
             return []
 
@@ -254,7 +298,7 @@ class InTheSidebar(DatabaseTest):
         seen: list[list[str]] = []
         asked: list[str] = []
 
-        async def by_meaning(c: object, question: str) -> list[str]:
+        async def by_meaning(c: object, question: str, asker: int) -> list[str]:
             asked.append(question)
             return ["bram-id"]
 

@@ -1539,6 +1539,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._voyage_http: voyage.HttpTransport | None = None
         self.voyage: voyage.Voyage | None = None
         self.meaning_seeds: meaning.MeaningSeeds | None = None
+        self.meaning_calls = meaning.CallCounter(time.time)
         if memory is not None and settings.meaning_search_on:
             self._voyage_http = voyage.HttpTransport(settings.voyage_key)
             self.voyage = voyage.Voyage(
@@ -1552,6 +1553,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self.voyage,
                 settings.voyage_embed_model,
                 allowed=self.meaning_allowed,
+                count_call=self.meaning_calls.count,
             )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
@@ -1849,9 +1851,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self._eleven_http is not None:
             with contextlib.suppress(Exception):
                 await self._eleven_http.close()
-        if self._voyage_http is not None:
-            with contextlib.suppress(Exception):
-                await self._voyage_http.close()
+        await self.close_meaning()
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
         self.pipeline.stop_waiting()
@@ -8767,12 +8767,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             log.info(report.line())
 
-    async def meaning_leads(self, campaign: Campaign, question: str) -> list[str]:
+    async def meaning_leads(self, campaign: Campaign, question: str, asker_id: int) -> list[str]:
         """More starting points for the sidebar's recall by what the question means (#2664).
         "Players": the reply can reach the raw transcript, so an entry the players may not know yet
         is never a lead. Optional: it has its own wait, and a slow or failing search is just no
         leads, said in a line and not a traceback."""
         if self.meaning_seeds is None:
+            return []
+        # The question is a person's words, typed or spoken, so it goes to Voyage AI only if that
+        # person agrees to be recorded (the same rule as a line of the transcript).
+        if asker_id not in await self.consent.consenting(campaign.guild_id):
             return []
         try:
             async with asyncio.timeout(MEANING_WAIT_S):
@@ -8782,6 +8786,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except TimeoutError:
             log.info("Meaning search: no answer in time; answering from the names alone")
             return []
+
+    async def close_meaning(self) -> None:
+        """End the connection to Voyage AI, if there is one. (getattr: a bot built without the usual
+        start-up has no such attribute, and closing must never be what fails.)"""
+        http = getattr(self, "_voyage_http", None)
+        if http is not None:
+            with contextlib.suppress(Exception):
+                await http.close()
 
     async def meaning_allowed(self) -> bool:
         """Whether text may go to Voyage AI right now: the switch is on and the key is set. Asked
@@ -8819,6 +8831,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self.settings.voyage_embed_model,
                 allowed=self.meaning_allowed,
                 max_calls=MEANING_RUN_CALLS,
+                count_call=self.meaning_calls.count,
             )
 
     async def tell_contradictions(self, table: Table) -> None:
