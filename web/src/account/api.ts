@@ -2157,7 +2157,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_action: "bad-action",
   bad_setting: "bad-setting",
   bad_value: "bad-value",
-  nothing: "nothing-to-delete",
+  nothing_to_delete: "nothing-to-delete",
 };
 
 /** The recap routes answer 409 `busy` ("being written or sent now"), which the shared code table reads as

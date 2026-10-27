@@ -233,7 +233,7 @@ describe("the real client", () => {
   });
 
   it.each([
-    [409, "nothing", "nothing-to-delete"],
+    [409, "nothing_to_delete", "nothing-to-delete"],
     [429, "too_soon", "too-soon"],
     [404, "not_found", "not-found"],
   ])("reads %s %s as the %s kind", async (status, code, kind) => {
