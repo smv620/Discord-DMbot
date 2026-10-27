@@ -29,6 +29,11 @@ export const makeWords = {
   // is kept until the new one is approved, so the words say that only for those.
   askAgain: (kept: boolean): string =>
     `This session already has a recap. Make a new one?${kept ? " The one you have stays until you approve the new one." : ""}`,
+  // Shown under that question (also when an uploaded recap would replace it) when a scene of the recap has a
+  // "who was there" list the DM saved (#2684): a rewrite or a replacement finds the scenes afresh, so the lists go. `maybe` when the recap could not be read to check.
+  askAgainLists: 'Your saved lists for "Who was in each scene" are deleted right away. The new recap gets new scenes.',
+  askAgainMaybeLists: 'Any saved lists for "Who was in each scene" are deleted right away. The new recap gets new scenes.',
+  checkingLists: "Checking your saved lists…",
   askReplaceExisting: "This session already has a recap. Add this one in its place? The old one is kept as an earlier version.",
   yesAgain: "Yes, make a new one",
   yesReplace: "Yes, add it",

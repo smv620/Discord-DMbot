@@ -8,6 +8,7 @@
 // for a campaign). The API decides everything; this only sends what the DM chose and says what came back.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { PRESENT_PER_SCENE_LIVE } from "../content/present-words";
 import { RECAP_MAKE_LIVE, makeWords as w } from "../content/recap-make";
 import { sessionDay } from "../content/recaps";
 import { stageWords, workWords } from "../content/work-progress";
@@ -21,7 +22,7 @@ export const WATCH_LIMIT_MS = 30 * 60_000;
 const MAX_FILE_BYTES = 1_000_000;
 
 /** What was chosen when the API asked its one question. */
-type Asking = { ref: string; what: "again" | "replace"; kept: boolean; input?: AddRecapInput } | null;
+type Asking = { ref: string; what: "again" | "replace"; kept: boolean; lists?: "yes" | "maybe" | undefined; checking?: boolean | undefined; input?: AddRecapInput } | null;
 
 function kindOf(error: unknown): string {
   return error instanceof ApiError ? error.kind : "server";
@@ -76,6 +77,27 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       </p>
     );
 
+  /** Whether the recap has "who was there" lists the DM saved: "yes", "maybe" when it could not be read, else nothing. */
+  const savedLists = async (s: PastSession): Promise<"yes" | "maybe" | undefined> => {
+    if (!PRESENT_PER_SCENE_LIVE || !api.recap) return undefined;
+    try {
+      return (await api.recap(s.ref)).beats?.some((b) => b.saved) ? "yes" : undefined;
+    } catch {
+      return "maybe";
+    }
+  };
+
+  /** Show the question at once. A rewrite or a replacement clears the "who was there" lists the DM saved, so the
+   * buttons wait (a moment) until the recap has been looked at and the question can say so (#2684). */
+  const ask = (next: NonNullable<Asking>, s: PastSession): void => {
+    if (!PRESENT_PER_SCENE_LIVE || !api.recap) {
+      setAsking(next);
+      return;
+    }
+    setAsking({ ...next, checking: true });
+    void savedLists(s).then((lists) => setAsking((now) => (now && now.ref === next.ref ? { ...now, lists, checking: false } : now)));
+  };
+
   /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
   const start = async (s: PastSession, replace: boolean): Promise<void> => {
     if (inFlight.current || !api.makeRecap) return;
@@ -88,7 +110,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       setRunning({ at: s.sessionAt, ref: got.ref });
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") });
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") }, s);
       else if (kind === "busy") await load(); // the list then shows it being made and watches it
       else {
         setAsking(null);
@@ -114,7 +136,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       return true;
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "replace", kept: false, input });
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "replace", kept: false, input }, s);
       else {
         if (kind === "needs-rights") setNeedRights(true);
         setProblem(say(error));
@@ -169,11 +191,17 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                 ) : question ? (
                   <div class="stack" role="group" aria-label={question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}>
                     <p>{question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}</p>
+                    {question.checking && (
+                      <p class="small muted" role="status">
+                        {w.checkingLists}
+                      </p>
+                    )}
+                    {question.lists && <p>{question.lists === "yes" ? w.askAgainLists : w.askAgainMaybeLists}</p>}
                     <div class="row">
                       <button
                         type="button"
                         class="button"
-                        disabled={busy}
+                        disabled={busy || !!question.checking}
                         onClick={() => void (question.what === "again" ? start(s, true) : submit(s, { ...question.input!, replace: true }))}
                       >
                         {question.what === "again" ? w.yesAgain : w.yesReplace}
