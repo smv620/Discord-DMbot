@@ -14,7 +14,7 @@ from dmbot.campaigns import CampaignError, web_restore
 from dmbot.campaigns import parts as campaign_parts
 from dmbot.campaigns import store as campaign_store
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, NO_ROOM_TO_RESTORE, PartsError, encode_backup
-from dmbot.campaigns.web_restore import Outcome, WebRestores
+from dmbot.campaigns.web_restore import Outcome, Restore, WebRestores
 from tests.test_recap_web import Base
 from tests.test_web_api import ALICE, THURSDAY
 
@@ -510,6 +510,52 @@ class TheUpkeep(Restoring):
         self.assertEqual(done.error, "")
         self.assertEqual(seen, [(start - 600, start + 120)])
         self.assertEqual((await self.row("2" * 32))["state"], "waiting")
+
+    async def test_a_hung_worker_lets_the_queue_show_as_stalled(self) -> None:
+        start = int(time.time())
+        clock = [float(start)]
+        store = WebRestores(self.db, clock=lambda: clock[0])
+        await self.stage_in(GUILD, "2" * 32, "waiting", start - 600)
+        await self.stage_in(GUILD, "4" * 32, "working", start - 600)
+        gone = GUILD + 7
+        await self.install(gone, left=True)
+        await self.stage_in(gone, "5" * 32, "waiting", start - 600)
+        await store.keep_waiting_alive()  # (the worker has shown no sign of life yet)
+        self.assertEqual((await self.row("2" * 32))["updated_at"], start - 600)
+        store.beat()
+        clock[0] += web_restore.STALLED_AFTER_S - 1
+        await store.keep_waiting_alive()  # (a fresh beat: kept alive)
+        self.assertEqual((await self.row("2" * 32))["updated_at"], start + 299)
+        self.assertEqual(
+            (await self.row("4" * 32))["updated_at"], start - 600
+        )  # (working: its own)
+        theirs = await self.state_in(gone, "5" * 32)  # (a server DMbot left: upkeep's)
+        assert theirs is not None
+        self.assertEqual(theirs["updated_at"], start - 600)
+        clock[0] += 2  # no round and no progress for the whole stall time: it hung
+        await store.keep_waiting_alive()
+        self.assertEqual((await self.row("2" * 32))["updated_at"], start + 299)
+
+    async def test_a_round_and_each_progress_call_are_signs_of_life(self) -> None:
+        clock = [1000.0]
+        store = WebRestores(self.db, clock=lambda: clock[0])
+        self.assertIsNone(store._beat)
+        await store.claim_next(GUILD)
+        self.assertEqual(store._beat, 1000.0)
+        clock[0] = 1100.0
+        item = Restore("1" * 32, 1, None, 0, False, 0)  # (nothing to move: only the beat)
+        await store.move(GUILD, item, done_parts=1)
+        self.assertEqual(store._beat, 1100.0)
+
+    async def test_a_server_with_rows_stays_listed_and_an_empty_one_goes(self) -> None:
+        await self.stage_in(GUILD, "3" * 32, "waiting", int(time.time()))
+        await self.restores.forget_if_empty(GUILD)
+        self.assertIn(GUILD, await self.restores.guilds())
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM web_restores WHERE guild_id = %s", (GUILD,))
+        await self.restores.forget_if_empty(GUILD)
+        self.assertNotIn(GUILD, await self.restores.guilds())
+        await self.restores.forget_if_empty(GUILD)  # (nothing listed: nothing to do)
 
     async def test_the_sweep_never_deletes_a_row_being_worked(self) -> None:
         old = int(time.time()) - 86400 - 60

@@ -10154,6 +10154,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.web_restores
         if store is None:
             return
+        store.beat()  # a round began: the worker is alive
         for guild in list(self.guilds):
             for _ in range(web_restore.PER_ROUND):
                 item = await store.claim_next(guild.id)

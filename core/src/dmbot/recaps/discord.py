@@ -345,9 +345,8 @@ class RecapFeatures:
         """Apply the copies DMs uploaded on the website (#2746). Its own loop: a big restore takes
         minutes, and the recap requests, settings and backups must not wait for it. One restore at
         a time in this process, so a row that stopped moving belongs to a bot that stopped."""
-        await (
-            self.wait_until_ready()
-        )  # (no restore is judged before Discord has said where the bot is)
+        # No restore is judged before Discord has said where the bot is.
+        await self.wait_until_ready()
         rounds = 0
         while True:
             if rounds % WEB_RESTORE_TIDY_EVERY == 0:  # about a minute; the first round too

@@ -13398,8 +13398,10 @@ WEB_BACKUPS = (
 # sweep that must reach a server the bot has left (its rows hold whole campaigns) cannot list them
 # itself. A routing table like `campaign_guilds`: server ids and nothing else, so no row-level
 # security (see the rules at the top of this file). A trigger fills it when a row is staged, and
-# the bot's upkeep removes a server once it has no rows left (the trigger's conflict clause takes
-# the row's lock, so a delete racing an insert waits for it). (`web_restores` is new and empty
+# the bot's upkeep removes a server once it has no rows left: it locks the server's row first
+# (`SELECT … FOR UPDATE`), then runs the delete as a second statement, so the check sees every row
+# committed by then; an insert staged meanwhile waits on the same lock (the trigger's conflict
+# clause takes it) and puts the row back. (`web_restores` is new and empty
 # everywhere, so there is nothing to backfill.)
 WEB_RESTORE_GUILDS = """
     CREATE TABLE web_restore_guilds (

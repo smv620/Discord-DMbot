@@ -149,6 +149,13 @@ class WebRestores:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+        # When the worker last showed a sign of life: each round and each progress call. The
+        # keep-alive for the queue trusts it, so a hung worker lets the queue show as stalled.
+        self._beat: float | None = None
+
+    def beat(self) -> None:
+        """The worker is alive: a round began or a restore moved forward."""
+        self._beat = self._now()
 
     async def fail_stalled(self, guild_id: int) -> int:
         """End the rows a stopped bot left `working`, as failed (the page offers another try). Not
@@ -167,6 +174,7 @@ class WebRestores:
     async def claim_next(self, guild_id: int) -> Restore | None:
         """The oldest waiting restore of this server, marked as being read. Rows are in seconds,
         as the website writes them."""
+        self.beat()
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
@@ -219,6 +227,7 @@ class WebRestores:
         done_parts: int | None = None,
     ) -> None:
         """Show progress: the stage and/or the parts done, and that the worker is still going."""
+        self.beat()
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE web_restores SET updated_at = %s,"
@@ -265,8 +274,16 @@ class WebRestores:
             return [int(r["guild_id"]) for r in await cur.fetchall()]
 
     async def forget_if_empty(self, guild_id: int) -> None:
-        """Take a server off the list once none of its rows is left."""
+        """Take a server off the list once none of its rows is left. The routing row is locked
+        first, then the check and the delete run as a second statement that sees every row
+        committed by then: a restore being staged takes the same row (its trigger upserts it), so
+        it either waits for this to finish and puts the row back, or committed first and is seen."""
         async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM web_restore_guilds WHERE guild_id = %s FOR UPDATE", (guild_id,)
+            )
+            if await cur.fetchone() is None:
+                return
             await conn.execute(
                 "DELETE FROM web_restore_guilds g WHERE g.guild_id = %s AND NOT EXISTS"
                 " (SELECT 1 FROM web_restores r WHERE r.guild_id = g.guild_id)",
@@ -285,9 +302,15 @@ class WebRestores:
 
     async def keep_waiting_alive(self) -> None:
         """`touch_waiting` for every server with rows. Run on its own, apart from the restores,
-        so a queue behind a long restore keeps moving; a server it cannot touch is skipped."""
+        so a queue behind a long restore keeps moving; a server it cannot touch is skipped. Only
+        while the worker's own heartbeat is fresh: a hung worker must let the queue show as
+        stalled, not hide it."""
+        if self._beat is None or self._now() - self._beat >= STALLED_AFTER_S:
+            return
         for guild_id in await self.guilds():
             try:
+                if await self.has_left(guild_id):
+                    continue  # (upkeep ends these rows; they are not waiting for a turn)
                 await self.touch_waiting(guild_id)
             except Exception as exc:  # the type only
                 log.warning("Website restore queue touch: %s", type(exc).__name__)
