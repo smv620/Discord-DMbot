@@ -925,19 +925,60 @@ class TheRolesAndDirections(unittest.TestCase):
         )
         self.assertEqual(dict(lost), {"same_pair": 1})
 
-    def test_the_opposite_parent_lines_contradict_so_neither_is_offered(self) -> None:
-        # "a is the parent of b" and "b is the parent of a" cannot both be true: the DM is shown
-        # neither, and both are counted so the summary adds up
+    def test_the_opposite_parent_lines_contradict_so_only_plain_family_is_offered(self) -> None:
+        # "a is the parent of b" and "b is the parent of a" cannot both be true: neither role is
+        # believed, but the two are still family, so plain family is what the DM is offered
         rows = [
             row("Brother Aldric", "parent", "Mira", self.quote()),
             row("Mira", "parent", "Brother Aldric", self.quote()),
         ]
         out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
-        self.assertEqual((out, dict(lost)), ([], {"which_way": 2}))
-        # a third line about the pair is dropped too, whichever way round
+        self.assertEqual([(c.how, c.words) for c in out], [("kin_of", "")])
+        self.assertEqual(dict(lost), {"which_way": 1})
+        self.assertEqual(len(out) + sum(lost.values()), len(rows))  # the lines add up
+        # later lines about the pair: a role is a contradiction too, a plain line is the same fact
         more = [*rows, row("Brother Aldric", "family", "Mira", self.quote())]
         out, lost = kept(more, ["Brother Aldric", "Mira"], FAMILY)
-        self.assertEqual((out, dict(lost)), ([], {"which_way": 3}))
+        self.assertEqual((len(out), dict(lost)), (1, {"which_way": 1, "same_pair": 1}))
+        again = [*rows, row("Brother Aldric", "parent", "Mira", self.quote())]
+        out, lost = kept(again, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual((len(out), dict(lost)), (1, {"which_way": 2}))
+
+    def test_a_contradiction_is_found_even_when_the_second_line_falls_past_the_cap(self) -> None:
+        rows = [
+            row("Brother Aldric", "parent", "Mira", self.quote()),
+            row("Mira", "parent", "Brother Aldric", self.quote()),
+        ]
+        got, _ = connections(rows, FAMILY)
+        found = [bg.Found(n, "npc", (), (), "") for n in ("Brother Aldric", "Mira")]
+        lost: Any = Counter()
+        out = bg.keep_connections([got], found, {}, cap=1, dropped=lost)
+        self.assertEqual([(c.how, c.words) for c in out], [("kin_of", "")])  # not left as a parent
+        self.assertEqual(dict(lost), {"which_way": 1})
+
+    def test_the_summary_counts_a_contradiction_as_left_out(self) -> None:
+        from dmbot.ui import name_background as ui
+
+        note = ui._found_note(2, 1, ready=1, dropped=Counter({"which_way": 1}))
+        self.assertIn("1 left out", note)
+        self.assertNotIn("not read", note)
+
+    def test_opposite_parent_lines_on_a_which_question_end_as_plain_family_too(self) -> None:
+        names = [
+            bg.Found(n, "npc", (), (), "") for n in ("Brother Aldric", "Mara Vale", "Mara Thorn")
+        ]
+        first = bg.Connection("Brother Aldric", "kin_of", "Mara", "q", words="parent")
+        second = bg.Connection("Mara", "kin_of", "Brother Aldric", "q", words="parent")
+        picks: list[bg.Pick] = []
+        lost: Any = Counter()
+        out = bg.keep_connections([[first, second]], names, {}, dropped=lost, picks=picks)
+        self.assertEqual(out, [])
+        self.assertEqual([p.words for p in picks], [""])  # one question, as plain family
+        self.assertEqual(dict(lost), {"which_waiting": 1, "which_way": 1})
+        # a lone role is asked as said
+        picks = []
+        bg.keep_connections([[first]], names, {}, dropped=Counter(), picks=picks)
+        self.assertEqual([p.words for p in picks], ["parent"])
 
     def test_a_role_beats_plain_family_whichever_was_said_first(self) -> None:
         for rows in (

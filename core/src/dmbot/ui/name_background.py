@@ -679,7 +679,7 @@ def _waiting_note(queued: int) -> str:
 KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
 LEFT_OUT = (
     "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
-    "spelling_clash",
+    "spelling_clash", "which_way",
 )  # fmt: skip
 NOT_READ = ("cut_before_check", "over_cap")
 

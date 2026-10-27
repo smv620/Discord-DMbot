@@ -146,7 +146,7 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
 
 
 SECOND_LOOK_NAMES = 80  # names asked about in the second look (the list is data in the request)
-SECOND_LOOK_MIN_CHARS = 1500  # a shorter text (a list of names) has no statements to miss
+SECOND_LOOK_MIN_CHARS = 1200  # a shorter text (a list of names) has no statements to miss
 
 
 def second_look_instructions(own: Mapping[str, str] | None = None) -> str:
