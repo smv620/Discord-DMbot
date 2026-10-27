@@ -491,6 +491,128 @@ class TheReport(Reading):
         return found
 
 
+class TheAnswers(Reading):
+    async def put(self, key: str, action: str, at: int = S1, who: Any = None) -> dict[str, Any]:
+        return await report.answer_item(
+            self.web, who or self.session, self.cref, at, {"id": key, "action": action}
+        )
+
+    async def refused_answer(self, key: str, action: str, at: int = S1, who: Any = None) -> str:
+        with self.assertRaises(RecapError) as err:
+            await self.put(key, action, at, who)
+        return err.exception.code
+
+    async def stored(self, key: str) -> Any:
+        return await self.one_row(
+            "SELECT * FROM report_answers WHERE guild_id = %s AND item_key = %s", GUILD, key
+        )
+
+    async def test_an_answer_is_kept_at_once_and_the_report_shows_it(self) -> None:
+        key = await self.contradiction()
+        for action in ("intended", "not_a_problem"):
+            await self.sql("DELETE FROM report_answers WHERE guild_id = %s", GUILD)
+            got = await self.put(key, action)
+            self.assertEqual(got["answer"]["action"], action)
+            row = await self.stored(key)
+            self.assertEqual(
+                (row["answer"], row["item_kind"], row["answered_by"], row["remind_from"]),
+                (action, "contradiction", ALICE.id, None),
+            )
+            shown = (await self.read())["contradictions"][0]["answer"]
+            self.assertEqual(shown["action"], action)
+
+    async def test_a_difference_is_answered_as_a_difference(self) -> None:
+        key = await self.difference()
+        await self.put(key, "intended")
+        self.assertEqual((await self.stored(key))["item_kind"], "difference")
+
+    async def test_remind_me_keeps_where_it_was_asked_and_can_be_answered_again_later(self) -> None:
+        key = await self.difference(at=S1)
+        await self.put(key, "remind")
+        self.assertEqual((await self.stored(key))["remind_from"], S1)
+        # it comes back in the next session's report, where it can get a final answer
+        await self.put(key, "intended", at=S2)
+        row = await self.stored(key)
+        self.assertEqual((row["answer"], row["remind_from"]), ("intended", None))
+
+    async def test_undo_puts_the_item_back_to_open_and_a_second_undo_is_gone(self) -> None:
+        key = await self.contradiction()
+        await self.put(key, "intended")
+        self.assertEqual((await self.put(key, "undo"))["answer"], None)
+        self.assertIsNone(await self.stored(key))
+        self.assertIsNone((await self.read())["contradictions"][0]["answer"])
+        self.assertEqual(await self.refused_answer(key, "undo"), "gone")
+
+    async def test_a_second_final_answer_is_gone_and_changes_nothing(self) -> None:
+        key = await self.contradiction()
+        await self.put(key, "intended")
+        self.assertEqual(await self.refused_answer(key, "not_a_problem"), "gone")
+        self.assertEqual((await self.stored(key))["answer"], "intended")
+
+    async def test_fix_writes_nothing(self) -> None:
+        key = await self.difference()
+        self.assertEqual((await self.put(key, "fix"))["answer"], None)
+        self.assertIsNone(await self.stored(key))
+
+    async def test_a_key_that_is_in_no_report_of_this_session_is_gone(self) -> None:
+        key = await self.contradiction(at=S2)  # (found in session 2)
+        self.assertEqual(await self.refused_answer(key, "intended", at=S1), "gone")
+        self.assertEqual(await self.refused_answer("a" * 32, "intended"), "gone")
+        self.assertEqual(await self.refused_answer("not a key", "intended"), "gone")
+        self.assertIsNone(await self.stored(key))
+
+    async def test_a_major_or_unsorted_item_cannot_be_answered(self) -> None:
+        major = await self.contradiction("major")
+        self.assertEqual(await self.refused_answer(major, "intended"), "gone")
+        await self.sql("DELETE FROM memory_contradictions WHERE guild_id = %s", GUILD)
+        unsorted = await self.difference("not_sorted")
+        self.assertEqual(await self.refused_answer(unsorted, "intended"), "gone")
+
+    async def test_another_campaigns_item_key_is_gone(self) -> None:
+        other_a, other_b = await self.pair(self.two.id)
+        rel = await self.memory.add_relation(
+            GUILD, self.two.id, other_a, "ally_of", other_b,
+            source=DM_SOURCE, confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        party_two = await self.perspective("party", self.two.id)
+        await self.sql(
+            "INSERT INTO memory_differences (guild_id, campaign_id, perspective_id, relation_id,"
+            " truth_relation_id, kind, sort, reason, found_at, session_started_at)"
+            " VALUES (%s, %s, %s, %s, NULL, 'denied', 'false', 'x', 1, %s)",
+            GUILD, self.two.id, party_two, str(rel.value[0].id), S1,
+        )  # fmt: skip
+        key = rs.difference_key(party_two, str(rel.value[0].id))
+        self.assertEqual(await self.refused_answer(key, "intended"), "gone")
+        self.assertIsNone(await self.stored(key))
+
+    async def test_a_bad_action_is_refused_and_a_player_cannot_answer(self) -> None:
+        key = await self.contradiction()
+        self.assertEqual(await self.refused_answer(key, "delete"), "bad_action")
+        bob = await self.signed(BOB)
+        self.assertEqual(await self.refused_answer(key, "intended", who=bob), "not_allowed")
+        self.assertIsNone(await self.stored(key))
+        with self.assertRaises(RecapError):
+            await report.answer_item(self.web, self.session, self.cref, S1, "intended")
+
+    async def test_the_door_does_nothing_for_anyone_who_is_not_a_dm_even_by_sql(self) -> None:
+        key = await self.contradiction()
+        bob = await self.signed(BOB)
+        async with self.db.user(bob.user_id, session=bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(GUILD),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_report_answer(%s, %s, %s, %s, 'intended') AS r",
+                (GUILD, self.one.id, S1, key),
+            )
+            self.assertIsNone((await cur.fetchone() or {}).get("r"))
+        self.assertIsNone(await self.stored(key))
+
+    async def signed(self, user: Any) -> Any:
+        token = await sessions.sign_in(self.web, user, [THURSDAY], now=NOW, days=30)
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
+
+
 class TheRoute(Reading):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -506,10 +628,29 @@ class TheRoute(Reading):
             transport=httpx.ASGITransport(app=self.app),
             base_url="https://web-api.internal.test",
             follow_redirects=False,
+            headers={"X-DMbot-Request": "1"},  # (the cross-site check every write passes)
         )
         client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(client.aclose)
         return client
+
+    async def test_answering_over_http(self) -> None:
+        key = await self.difference()
+        url = f"/me/campaigns/{self.cref}/sessions/{S1}/report"
+        got = await self.client.post(url, json={"id": key, "action": "not_a_problem"})
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(got.json()["answer"]["action"], "not_a_problem")
+        again = await self.client.post(url, json={"id": key, "action": "intended"})
+        self.assertEqual((again.status_code, again.json()), (409, {"error": "gone"}))
+        bad = await self.client.post(url, json={"id": key, "action": "x"})
+        self.assertEqual((bad.status_code, bad.json()), (400, {"error": "bad_action"}))
+        undone = await self.client.post(url, json={"id": key, "action": "undo"})
+        self.assertEqual((undone.status_code, undone.json()), (200, {"answer": None}))
+        bob = await self.client_for(BOB)
+        refused = await bob.post(url, json={"id": key, "action": "intended"})
+        self.assertEqual(refused.status_code, 403)
+        nothing = await self.client.post(url, content=b"not json")
+        self.assertIn(nothing.status_code, (400, 422))
 
     async def test_the_report_over_http(self) -> None:
         await self.difference("disguised")

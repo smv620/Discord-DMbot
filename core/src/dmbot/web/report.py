@@ -14,6 +14,7 @@ shared progress shape while a report is being made.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dmbot.db import Database
@@ -211,3 +212,41 @@ async def read_report(db: Database, session: Session, ref: str, at: object) -> d
     if got is None:
         raise RecapError("not_allowed")
     return shape(got, when, listed)
+
+
+ACTIONS = ("intended", "not_a_problem", "remind", "fix", "undo")
+ITEM_KEY = re.compile(r"[0-9a-f]{32}")
+
+
+async def answer_item(
+    db: Database, session: Session, ref: str, at: object, body: object
+) -> dict[str, Any]:
+    """The DM's answer to one item: `{id, action}`, action one of `intended`, `not_a_problem`,
+    `remind`, `fix` or `undo`. Written at once by the database door, which checks the caller is a DM
+    of the campaign and that the item is in this session's report of this campaign (a key from
+    anywhere else is `gone`, and so is a second answer: the page reads the report again). `fix`
+    writes nothing (the page opens the Story graph); `undo` puts the item back to open. Returns
+    `{answer}`: the answer as it now stands, or null. Bookkeeping only: nothing in the story
+    changes here, so there is no bot round trip (Supervisor, #2661)."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    when = _parse_at(at)
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    key, action = body.get("id"), body.get("action")
+    if action not in ACTIONS:
+        raise RecapError("bad_action")
+    if not isinstance(key, str) or not ITEM_KEY.fullmatch(key):
+        raise RecapError("gone")  # (a key that is no item's: the same plain answer as any other)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_report_answer(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, when, key, action),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError("gone" if got["status"] == "gone" else "bad_action")
+    return {"answer": got["answer"]}

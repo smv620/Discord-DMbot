@@ -2326,11 +2326,10 @@ export function httpApi(
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`)) as SessionReport,
     makeSessionReport: async (campaignRef, at) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report/make`, {})) as SessionReport,
+    // Written at once by the API (an answer is the DM's bookkeeping, not a change to the story: Supervisor on
+    // #2661), so there is nothing to wait for or poll; the page reads the report again.
     answerReport: async (campaignRef, at, id, action) => {
-      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}`;
-      const queued = (await call("POST", `${base}/sessions/${at}/report`, { id, action })) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`, { id, action });
     },
     setBeatPresent: async (recapRef, n, present) =>
       (await call("PUT", `/me/recaps/${encodeURIComponent(recapRef)}/beats/${n}/present`, { present })) as RecapBeat,
