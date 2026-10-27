@@ -532,3 +532,16 @@ class TheWaits(Smart):
         from dmbot.web import __main__ as web_main
 
         self.assertIn("statement_timeout=5000", inspect.getsource(web_main))
+
+
+class TheStoryTypes(Smart):
+    def test_the_sql_list_of_story_planning_types_is_the_one_the_players_rules_use(self) -> None:
+        import re
+
+        from dmbot.memory.meaning import PLAYER_HIDDEN_TYPES
+        from dmbot.schema import NAMES_SMART
+
+        listed = re.findall(r"o\.type NOT IN \(([^)]*)\)", NAMES_SMART)
+        self.assertEqual(len(listed), 1)
+        in_sql = tuple(re.findall(r"'([a-z_]+)'", listed[0]))
+        self.assertEqual(in_sql, PLAYER_HIDDEN_TYPES)
