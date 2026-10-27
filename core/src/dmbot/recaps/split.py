@@ -528,5 +528,29 @@ def without_ai(said: Sequence[Said], earlier: Earlier, previous_recap: str = "")
     return all_play(said, "fallback")
 
 
+# The same task for the draft pass of the structured-output adapter (#2714): the answer in plain
+# lines, which a second, smaller pass puts into the schema. Built from SYSTEM, so the two paths ask
+# the same question; the guards fail at import, loudly, if SYSTEM is reworded so that it no longer
+# splits where this expects.
+_HEAD, _JSON_SEP, _AFTER = SYSTEM.partition("Reply with JSON only")
+_RULES_SEP = "\nRules:"
+_REPLY, _RULES_FOUND, _RULES = _AFTER.partition(_RULES_SEP)
+assert _JSON_SEP and _RULES_FOUND, "split.SYSTEM changed: update DRAFT_SYSTEM"
+DRAFT_SYSTEM = (
+    _HEAD
+    + """\
+Reply with one line for each part that is there, in order, like `talk: last line 7`, \
+`catchup: last line 14`, `recap: last line 31`: its label, and the number of the last line of that \
+part. Write no line for a part that is not there. If the opening has none of them, reply `none`.
+"""
+    + _RULES_SEP
+    + _RULES
+)
+
+
 def system() -> str:
     return SYSTEM
+
+
+def draft_system() -> str:
+    return DRAFT_SYSTEM
