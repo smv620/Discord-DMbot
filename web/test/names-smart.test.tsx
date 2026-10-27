@@ -77,6 +77,23 @@ describe("Search by meaning", () => {
     expect(screen.getByRole("button", { name: "Sister Ilse" })).toBeTruthy(); // the same press-the-name rows
   });
 
+  it("says only the newest notes were searched, when the API says so, and takes it away with Back", async () => {
+    await open("/account/names/100.cmp1.smart-capped");
+    fireEvent.input(box(), { target: { value: "holy healer" } });
+    fireEvent.submit(box().closest("form") as HTMLFormElement);
+    expect(await screen.findByText(s.capped)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: s.back }));
+    await waitFor(() => expect(screen.queryByText(s.capped)).toBeNull());
+  });
+
+  it("says nothing about newest notes when everything was searched", async () => {
+    await open();
+    fireEvent.input(box(), { target: { value: "holy healer" } });
+    fireEvent.submit(box().closest("form") as HTMLFormElement);
+    await waitFor(() => expect(screen.getByText(s.found(1))).toBeTruthy());
+    expect(screen.queryByText(s.capped)).toBeNull();
+  });
+
   it("finds a relationship phrase, best match first", async () => {
     await open();
     fireEvent.input(box(), { target: { value: "river friend of Brask" } });

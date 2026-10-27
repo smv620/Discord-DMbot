@@ -1403,6 +1403,8 @@ export interface NamesPage {
  * without it the API refuses with `not-available` and the page says so. */
 export interface SmartNamesAnswer {
   names: NameRow[];
+  /** True when only the newest notes were searched (the search looks at the newest 10,000 at most; core #2756). */
+  capped?: boolean;
 }
 
 export interface NamesQuery {
