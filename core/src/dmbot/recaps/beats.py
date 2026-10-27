@@ -15,6 +15,7 @@ import json
 import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from dmbot.memory.extractor import quoted, transcript_of
 from dmbot.recaps import unknown_names
@@ -100,8 +101,67 @@ class Beat:
 WHERE_MAX = 80  # characters of a place
 
 
+# The answer's shape for structured outputs (#2039, #2714). `who` and `lines` may be empty: the
+# checks, not the shape, decide whether a beat is good enough (a beat with no line is cut there).
+SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "beats": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string"},
+                    "who": {"type": "array", "items": {"type": "string"}},
+                    "lines": {"type": "array", "items": {"type": "integer"}},
+                    "where": {"type": "string"},
+                    "kind": {"type": "string", "enum": list(KINDS)},
+                },
+                "required": ["what", "who", "lines", "where", "kind"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["beats"],
+    "additionalProperties": False,
+}
+
+# The same task for the draft pass of the structured-output adapter (#2714): the beats as plain
+# lines, which a second, smaller pass puts into SCHEMA. Built from SYSTEM, so the rules (including
+# the one on paraphrasing, #2713) are the same words in both; the guards fail at import, loudly, if
+# SYSTEM is reworded so that it no longer splits where this expects.
+# (the two markers are named `*_PROMPT` so the plain-words check reads them as the AI's own words)
+_JSON_PROMPT = "Reply with JSON only"
+_RULES_PROMPT = "\nRules:"
+_HEAD, _JSON_SEP, _AFTER = SYSTEM.partition(_JSON_PROMPT)
+_REPLY, _RULES_FOUND, _RULES = _AFTER.partition(_RULES_PROMPT)
+if not (_JSON_SEP and _RULES_FOUND):  # (a raise: `python -O` drops an assert)
+    raise RuntimeError("beats.SYSTEM changed: update DRAFT_SYSTEM")
+DRAFT_SYSTEM = (
+    _HEAD
+    + """\
+Reply with one line for each beat, nothing else, in this form:
+<kind> | lines <line numbers, comma-separated> | who <names, separated by semicolons> | \
+where <the place, or nothing> | <one sentence>
+For example: event | lines 12,13 | who Mira; Oskar | where Greywater Keep | Mira and Oskar forced \
+the cellar door.
+"""
+    + _RULES_PROMPT
+    + _RULES
+)
+
+
 def system(part: int = 1, parts: int = 1) -> str:
     """The instructions; for a long session, which part of it this call reads."""
+    return _filled(SYSTEM, part, parts)
+
+
+def draft_system(part: int = 1, parts: int = 1) -> str:
+    """The same for the draft pass of the structured-output way (#2714)."""
+    return _filled(DRAFT_SYSTEM, part, parts)
+
+
+def _filled(template: str, part: int, parts: int) -> str:
     if parts <= 1:
         note = "The last beat is where the session stopped."
     else:
@@ -110,7 +170,7 @@ def system(part: int = 1, parts: int = 1) -> str:
             "end of the part before, so skip what they show. "
             + ("The last beat is where the session stopped." if part == parts else "")
         ).strip()
-    return SYSTEM.replace("{limit}", str(WINDOW_BEATS)).replace("{part_note}", note)
+    return template.replace("{limit}", str(WINDOW_BEATS)).replace("{part_note}", note)
 
 
 def windows(

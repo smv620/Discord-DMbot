@@ -72,6 +72,8 @@ class Settings:
     # The split of a session's opening through the three-pass structured-output adapter (#2714):
     # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
     recap_structured_output_split: bool = False
+    # The same for the beat sheet. Off unless RECAP_STRUCTURED_OUTPUT_BEATS.
+    recap_structured_output_beats: bool = False
     gemini_key: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
@@ -426,6 +428,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
+        recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
         memory_keep_days=keep_days,
         free_users=free_users,
