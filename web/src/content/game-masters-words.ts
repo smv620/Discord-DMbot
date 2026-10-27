@@ -6,6 +6,7 @@ export const gameMasterWords = {
   lead: (max: number): string =>
     `Game masters see the DM screen and change this campaign's settings. Up to ${max}. (plan) = whose plan runs this campaign.`,
   loading: "Loading the game masters…",
+  left: "You are no longer a game master of this campaign, so the list is not yours to see any more.",
   failedToLoad: "We couldn't load the game masters. Reload the page, or try again in a minute.",
   plan: "plan",
   planNote: "Their plan runs this campaign, so they can't be removed. They can hand the campaign over first.",

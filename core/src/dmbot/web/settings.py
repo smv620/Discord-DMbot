@@ -112,6 +112,9 @@ class WebSettings:
     imports_on: bool = False
     # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
     handover_email_on: bool = False
+    # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
+    # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
+    co_dms_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -305,9 +308,13 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
         )
+    co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
+    if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
     return WebSettings(
         database_url=get("DATABASE_URL"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
+        co_dms_on=co_dms_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),

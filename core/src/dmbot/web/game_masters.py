@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.campaigns.store import MAX_DMS
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -66,14 +67,15 @@ async def read_game_masters(db: Database, session: Session, ref: str) -> dict[st
 
 async def read_candidates(db: Database, session: Session, ref: str, q: str) -> dict[str, Any]:
     """Who a DM can offer as a new game master, searched by name: the campaign's own people and the
-    server's members who agreed to be recorded, not game masters already, at most 25."""
+    server's members who agreed to be recorded under the current terms, not game masters already,
+    at most 25."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_game_master_candidates(%s, %s, %s) AS r",
-            (guild_id, campaign_id, q.strip()[:SEARCH_MAX]),
+            "SELECT dmbot_web_game_master_candidates(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, q.strip()[:SEARCH_MAX], TERMS_VERSION),
         )
         found = await cur.fetchone()
     got = found["r"] if found else None

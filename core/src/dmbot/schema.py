@@ -3504,9 +3504,12 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_report", "dmbot_web_report(BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_report_answer", "dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     # A campaign's game masters, and the people who can be offered as one more (#2768).
-    ("dmbot_web_co_dm_add", "dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN)"),
+    ("dmbot_web_co_dm_add", "dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT)"),
     ("dmbot_web_game_masters", "dmbot_web_game_masters(BIGINT, TEXT)"),
-    ("dmbot_web_game_master_candidates", "dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT)"),
+    (
+        "dmbot_web_game_master_candidates",
+        "dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT, INT)",
+    ),
     ("dmbot_recap_names_fixed", "dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)"),  # (#2684)
     ("dmbot_recap_present", "dmbot_recap_present(BIGINT, TEXT, BIGINT)"),  # (#2684, #2577)
     (
@@ -15878,8 +15881,9 @@ GAME_MASTERS_READ = r"""
     -- account if there is one, else the name the bot last saw in the server, else the website's.
     -- The website's name table is opened for the one call (as the import page's member search
     -- does) and shut again. The candidates are the campaign's own people and the server's members
-    -- who agreed to be recorded, never a game master already, at most 25: no free-typed account
-    -- ever reaches the queue, and nobody who never agreed is listed.
+    -- who agreed to be recorded under the current terms (`terms`, as the import page's search
+    -- passes it; an older agreement is not one), never a game master already, at most 25: no
+    -- free-typed account ever reaches the queue, and nobody who has not agreed is listed.
     CREATE FUNCTION dmbot_web_game_masters(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -15933,7 +15937,8 @@ GAME_MASTERS_READ = r"""
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_game_masters(BIGINT, TEXT) FROM PUBLIC;
 
-    CREATE FUNCTION dmbot_web_game_master_candidates(g BIGINT, c TEXT, q TEXT) RETURNS JSONB
+    CREATE FUNCTION dmbot_web_game_master_candidates(g BIGINT, c TEXT, q TEXT, terms INT)
+    RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         listed JSONB;
@@ -15971,7 +15976,8 @@ GAME_MASTERS_READ = r"""
                       WHERE m.guild_id = g AND (m.display_name <> '' OR m.username <> '')
                   ) n
                   WHERE EXISTS (SELECT 1 FROM consent x
-                                WHERE x.guild_id = g AND x.user_id = n.user_id)
+                                WHERE x.guild_id = g AND x.user_id = n.user_id
+                                  AND x.terms_version = terms)
                     AND NOT EXISTS (SELECT 1 FROM campaign_dms d
                                     WHERE d.guild_id = g AND d.campaign_id = c
                                       AND d.user_id = n.user_id)
@@ -15987,11 +15993,11 @@ GAME_MASTERS_READ = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT)'
+            'ALTER FUNCTION dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT, INT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT, INT) FROM PUBLIC;
 """
 
 GAME_MASTER_SETTING = r"""
@@ -16017,7 +16023,7 @@ GAME_MASTER_SETTING = r"""
     -- 'ok' with the id, 'bad_value' for a malformed id or no yes/no, 'plan_holder' for removing
     -- the one whose plan runs the campaign, 'too_many' for an add at the limit (5, the store's
     -- MAX_DMS), 'unknown_person', 'too_soon'; NULL for anyone not a DM.
-    CREATE FUNCTION dmbot_web_co_dm_add(g BIGINT, c TEXT, uid TEXT, on_ BOOLEAN)
+    CREATE FUNCTION dmbot_web_co_dm_add(g BIGINT, c TEXT, uid TEXT, on_ BOOLEAN, terms INT)
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -16034,6 +16040,8 @@ GAME_MASTER_SETTING = r"""
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
+        -- The lock first, so two quick adds cannot both pass the limit check below.
+        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
         IF uid IS NULL OR uid !~ '^[1-9][0-9]{0,18}$' OR on_ IS NULL THEN
             RETURN jsonb_build_object('status', 'bad_value');
         END IF;
@@ -16051,11 +16059,11 @@ GAME_MASTER_SETTING = r"""
                                            AND d.user_id = who) THEN
                 RETURN jsonb_build_object('status', 'too_many');
             END IF;
-            IF NOT EXISTS (SELECT 1 FROM consent x WHERE x.guild_id = g AND x.user_id = who) THEN
+            IF NOT EXISTS (SELECT 1 FROM consent x WHERE x.guild_id = g AND x.user_id = who
+                           AND x.terms_version = terms) THEN
                 RETURN jsonb_build_object('status', 'unknown_person');
             END IF;
         END IF;
-        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
         DELETE FROM setting_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
         IF (SELECT count(*) FROM setting_actions a
@@ -16072,11 +16080,11 @@ GAME_MASTER_SETTING = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN)'
+            'ALTER FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT) FROM PUBLIC;
 """
 
 MIGRATIONS: tuple[Migration, ...] = (

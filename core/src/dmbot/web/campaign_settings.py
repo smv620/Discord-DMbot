@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.rules import optional
 from dmbot.web.names import _parse
@@ -79,7 +80,9 @@ def _co_dm(body: object) -> tuple[str, bool] | None:
     return person, add
 
 
-async def queue_setting(db: Database, session: Session, ref: str, body: object) -> str:
+async def queue_setting(
+    db: Database, session: Session, ref: str, body: object, *, co_dms_on: bool = False
+) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
     transcript limit deletes old sessions, so the page asks first and sends `confirm`; the bot
@@ -88,6 +91,8 @@ async def queue_setting(db: Database, session: Session, ref: str, body: object) 
     _guild_of(session, guild_id)
     rule = _optional_rule(body)
     master = _co_dm(body)
+    if master and not co_dms_on:  # off until the bot applies it too (DMBOT_WEB_CO_DMS, #2768)
+        raise RecapError("not_found")
     setting, value, confirmed = ("", "", False) if rule or master else _arguments(body)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
@@ -98,8 +103,8 @@ async def queue_setting(db: Database, session: Session, ref: str, body: object) 
             )
         elif master:
             cur = await conn.execute(
-                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s) AS r",
-                (guild_id, campaign_id, master[0], master[1]),
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, master[0], master[1], TERMS_VERSION),
             )
         else:
             cur = await conn.execute(

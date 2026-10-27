@@ -1808,7 +1808,11 @@ def create_app(
         except ValueError:
             body = None
         try:
-            return {"answer": await campaign_settings.queue_setting(db, session, ref, body)}
+            return {
+                "answer": await campaign_settings.queue_setting(
+                    db, session, ref, body, co_dms_on=settings.co_dms_on
+                )
+            }
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1842,6 +1846,8 @@ def create_app(
         name, plan, you}]}`. A player or another campaign's DM gets 403 `not_allowed`; a bad
         address 404."""
         session, _token = signed
+        if not settings.co_dms_on:  # off until the bot can apply a change (#2768)
+            raise HTTPException(status_code=404, detail="not_found")
         try:
             return await game_masters.read_game_masters(db, session, ref)
         except RecapError as err:
@@ -1856,6 +1862,8 @@ def create_app(
         [{userId, name}]}`, at most 25, the campaign's own people and the server's members who
         agreed to be recorded. DM only, as the list."""
         session, _token = signed
+        if not settings.co_dms_on:
+            raise HTTPException(status_code=404, detail="not_found")
         try:
             return await game_masters.read_candidates(db, session, ref, q)
         except RecapError as err:

@@ -64,7 +64,7 @@ function Waiting({ phase }: { phase: Phase | undefined }) {
 }
 
 export default function GameMastersSection({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
-  const [list, setList] = useState<GameMasters | "loading" | "failed">("loading");
+  const [list, setList] = useState<GameMasters | "loading" | "failed" | "left">("loading");
   const [people, setPeople] = useState<GameMasterCandidate[] | "loading" | "failed">("loading");
   const [query, setQuery] = useState("");
   const [phases, setPhases] = useState<Record<string, Phase>>({});
@@ -82,7 +82,9 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
     try {
       const found = await api.campaignGameMasters(campaignRef);
       if (live.current) setList(found);
-    } catch {
+    } catch (error) {
+      // A game master who removed themselves may not read the list any more: say so, not "failed".
+      if (live.current && error instanceof ApiError && error.kind === "not-allowed") return setList("left");
       if (live.current) setList((before) => (typeof before === "object" ? before : "failed"));
     }
   };
@@ -160,6 +162,12 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
     return (
       <p class="muted" role="status">
         {w.loading}
+      </p>
+    );
+  if (list === "left")
+    return (
+      <p role="status" id="game-masters">
+        {w.left}
       </p>
     );
   if (list === "failed")

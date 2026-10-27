@@ -180,6 +180,29 @@ describe("removing", () => {
   });
 });
 
+it("says so when a game master who removed themselves can no longer read the list", async () => {
+  const api = mockApi("table");
+  let reads = 0;
+  api.campaignGameMasters = async () => {
+    if (reads++ > 0) throw new ApiError("not-allowed"); // after the removal the campaign is no longer theirs
+    return {
+      max: 5,
+      gameMasters: [
+        { userId: "1", name: "Belleros", plan: true, you: false },
+        { userId: "100000000000000009", name: "Pat", plan: false, you: true },
+      ],
+    };
+  };
+  api.campaignSettingAnswer = async () => ({ state: "done", error: "", setting: "co_dm", value: "100000000000000009", note: "" });
+  render(<GameMastersSection api={api} campaignRef="100.cmp1" />);
+  await screen.findByRole("heading", { name: w.heading });
+  fireEvent.click(screen.getByRole("button", { name: w.removeLabel("Pat") }));
+  expect(screen.getByText(w.confirmSelf)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: w.confirmYes }));
+  expect(await screen.findByText(w.left, {}, slow)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: w.removeLabel("Pat") })).toBeNull();
+});
+
 it("has no serious accessibility problem", async () => {
   await section();
   await screen.findByText("Dana", { selector: "strong" });

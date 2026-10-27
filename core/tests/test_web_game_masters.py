@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from dmbot.campaigns.store import MAX_DMS
+from dmbot.consent import TERMS_VERSION
 from dmbot.members import MemberDirectory
 from dmbot.web import campaign_settings, game_masters, sessions
 from dmbot.web.app import create_app
@@ -38,7 +39,7 @@ class GameMastersBase(Base):
             await conn.execute(
                 "INSERT INTO consent (guild_id, user_id, granted_at, terms_version)"
                 " VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                (guild_id, user_id, NOW, 1),
+                (guild_id, user_id, NOW, TERMS_VERSION),
             )
         await MemberDirectory(self.db).remember(guild_id, user_id, name, name.lower())
 
@@ -60,7 +61,7 @@ class GameMastersBase(Base):
 
     async def queue(self, body: object, ref: str | None = None, session: Any = None) -> str:
         return await campaign_settings.queue_setting(
-            self.web, session or self.session, ref or self.cref(), body
+            self.web, session or self.session, ref or self.cref(), body, co_dms_on=True
         )
 
     async def queue_refused(self, body: object, session: Any = None, ref: str | None = None) -> str:
@@ -80,8 +81,8 @@ class GameMastersBase(Base):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s) AS r",
-                (THURSDAY.id, self.one.id, uid, on),
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s) AS r",
+                (THURSDAY.id, self.one.id, uid, on, TERMS_VERSION),
             )
             row = await cur.fetchone()
         assert row is not None
@@ -170,6 +171,15 @@ class TheCandidates(GameMastersBase):
             await self.agreed(7000 + i, f"Member {i:02d}")
         self.assertEqual(len(await self.people()), 25)
 
+    async def test_an_agreement_under_older_terms_is_not_an_agreement(self) -> None:
+        await self.agreed(DANA, "Dana")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = %s",
+                (TERMS_VERSION - 1, DANA),
+            )
+        self.assertEqual(await self.people(), [])
+
     async def test_an_answer_carries_only_an_id_and_a_name(self) -> None:
         await self.agreed(DANA, "Dana")
         got = await game_masters.read_candidates(self.web, self.session, self.cref(), "")
@@ -234,6 +244,72 @@ class Queueing(GameMastersBase):
         )  # (a member who never agreed is not offered, so cannot be queued by a made-up id either)
         self.assertEqual(await self.rows(), [])
 
+    async def test_an_agreement_under_older_terms_cannot_be_queued(self) -> None:
+        await self.agreed(DANA, "Dana")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE user_id = %s",
+                (TERMS_VERSION - 1, DANA),
+            )
+        self.assertEqual(
+            await self.queue_refused({"setting": "co_dm", "value": str(DANA), "on": True}),
+            "unknown_person",
+        )
+
+    async def test_it_is_off_until_the_switch_is_on(self) -> None:
+        await self.agreed(DANA, "Dana")
+        with self.assertRaises(RecapError) as caught:
+            await campaign_settings.queue_setting(
+                self.web,
+                self.session,
+                self.cref(),
+                {"setting": "co_dm", "value": str(DANA), "on": True},
+            )  # (the default is off)
+        self.assertEqual(caught.exception.code, "not_found")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_removing_yourself_is_queued_and_removing_a_stranger_is_left_to_the_bot(
+        self,
+    ) -> None:
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, DANA)
+        dana = await self.signed(SimpleNamespace(id=DANA, name="Dana", email="d@example.com"), True)
+        await self.queue({"setting": "co_dm", "value": str(DANA), "on": False}, session=dana)
+        await self.queue({"setting": "co_dm", "value": str(ELI), "on": False})  # not a game master
+        self.assertEqual([(r["value"], r["turn_on"]) for r in await self.rows()],
+                         [(str(DANA), False), (str(ELI), False)])  # fmt: skip
+
+    async def test_a_campaign_with_ten_changes_waiting_says_too_soon(self) -> None:
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, DANA)
+        for _ in range(10):
+            await self.queue({"setting": "co_dm", "value": str(DANA), "on": False})
+        self.assertEqual(
+            await self.queue_refused({"setting": "co_dm", "value": str(DANA), "on": False}),
+            "too_soon",
+        )
+
+    async def test_a_game_master_change_needs_its_yes_or_no_and_the_others_cannot_carry_one(
+        self,
+    ) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            for setting, value, turn_on in (("co_dm", "1", None), ("visibility", "open", True)):
+                with self.assertRaises(Exception):  # noqa: B017 (a CHECK refusing the row)
+                    async with conn.transaction():
+                        await conn.execute(
+                            "INSERT INTO setting_actions (guild_id, campaign_id, id, user_id,"
+                            " setting, value, turn_on, created_at)"
+                            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                            (
+                                THURSDAY.id,
+                                self.one.id,
+                                "e" * 32,
+                                ALICE.id,
+                                setting,
+                                value,
+                                turn_on,
+                                NOW,
+                            ),
+                        )
+
     async def test_an_agreement_in_another_server_does_not_count(self) -> None:
         await self.agreed(FAY, "Fay", guild_id=OTHER_SERVER)
         self.assertEqual(
@@ -274,22 +350,12 @@ class Queueing(GameMastersBase):
         (row,) = await self.rows()
         self.assertEqual((row["setting"], row["turn_on"]), ("visibility", None))
 
-    async def test_a_choice_that_is_not_a_game_master_change_cannot_carry_a_yes_or_no(self) -> None:
-        async with self.db.guild(THURSDAY.id) as conn:
-            with self.assertRaises(Exception):  # noqa: B017 (a CHECK refusing the row)
-                await conn.execute(
-                    "INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting,"
-                    " value, turn_on, created_at) VALUES (%s, %s, %s, %s, 'visibility',"
-                    " 'open', true, %s)",
-                    (THURSDAY.id, self.one.id, "f" * 32, ALICE.id, NOW),
-                )
-
 
 class TheRoutes(GameMastersBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
-            settings(), self.web, FakeDiscord(),
+            settings(co_dms_on=True), self.web, FakeDiscord(),
             payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
@@ -334,3 +400,31 @@ class TheRoutes(GameMastersBase):
     async def test_a_bad_address_is_not_found(self) -> None:
         got = await self.client.get("/me/campaigns/nonsense/game-masters")
         self.assertEqual(got.status_code, 404)
+
+
+class WhileSwitchedOff(GameMastersBase):
+    async def test_the_routes_answer_not_found(self) -> None:
+        app = create_app(
+            settings(), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=API, follow_redirects=False
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+            base = f"/me/campaigns/{self.cref()}"
+            for path in (f"{base}/game-masters", f"{base}/game-masters/candidates"):
+                self.assertEqual((await client.get(path)).status_code, 404)
+            posted = await client.post(
+                f"{base}/settings",
+                json={"setting": "co_dm", "value": str(DANA), "on": True},
+                headers=HEADERS,
+            )
+            self.assertEqual((posted.status_code, posted.json()["error"]), (404, "not_found"))
+            other = await client.post(
+                f"{base}/settings", json={"setting": "visibility", "value": "open"}, headers=HEADERS
+            )
+            self.assertEqual(
+                other.status_code, 202, other.text
+            )  # (the other settings are not held)
