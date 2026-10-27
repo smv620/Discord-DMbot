@@ -22,7 +22,7 @@ export const WATCH_LIMIT_MS = 30 * 60_000;
 const MAX_FILE_BYTES = 1_000_000;
 
 /** What was chosen when the API asked its one question. */
-type Asking = { ref: string; what: "again" | "replace"; kept: boolean; lists?: "yes" | "maybe" | undefined; input?: AddRecapInput } | null;
+type Asking = { ref: string; what: "again" | "replace"; kept: boolean; lists?: "yes" | "maybe" | undefined; checking?: boolean | undefined; input?: AddRecapInput } | null;
 
 function kindOf(error: unknown): string {
   return error instanceof ApiError ? error.kind : "server";
@@ -87,6 +87,17 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     }
   };
 
+  /** Show the question at once. A rewrite or a replacement clears the "who was there" lists the DM saved, so the
+   * buttons wait (a moment) until the recap has been looked at and the question can say so (#2684). */
+  const ask = (next: NonNullable<Asking>, s: PastSession): void => {
+    if (!PRESENT_PER_SCENE_LIVE || !api.recap) {
+      setAsking(next);
+      return;
+    }
+    setAsking({ ...next, checking: true });
+    void savedLists(s).then((lists) => setAsking((now) => (now && now.ref === next.ref ? { ...now, lists, checking: false } : now)));
+  };
+
   /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
   const start = async (s: PastSession, replace: boolean): Promise<void> => {
     if (inFlight.current || !api.makeRecap) return;
@@ -99,10 +110,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       setRunning({ at: s.sessionAt, ref: got.ref });
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") {
-        // A saved "who was there" list is cleared by a rewrite: the question says so, so no one loses work unseen (#2684).
-        setAsking({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted"), lists: await savedLists(s) });
-      }
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") }, s);
       else if (kind === "busy") await load(); // the list then shows it being made and watches it
       else {
         setAsking(null);
@@ -128,7 +136,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
       return true;
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") setAsking({ ref: s.ref, what: "replace", kept: false, input });
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "replace", kept: false, input }, s);
       else {
         if (kind === "needs-rights") setNeedRights(true);
         setProblem(say(error));
@@ -183,14 +191,17 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                 ) : question ? (
                   <div class="stack" role="group" aria-label={question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}>
                     <p>{question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}</p>
-                    {question.what === "again" && question.lists && (
-                      <p>{question.lists === "yes" ? w.askAgainLists : w.askAgainMaybeLists}</p>
+                    {question.checking && (
+                      <p class="small muted" role="status">
+                        {w.checkingLists}
+                      </p>
                     )}
+                    {question.lists && <p>{question.lists === "yes" ? w.askAgainLists : w.askAgainMaybeLists}</p>}
                     <div class="row">
                       <button
                         type="button"
                         class="button"
-                        disabled={busy}
+                        disabled={busy || !!question.checking}
                         onClick={() => void (question.what === "again" ? start(s, true) : submit(s, { ...question.input!, replace: true }))}
                       >
                         {question.what === "again" ? w.yesAgain : w.yesReplace}

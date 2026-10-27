@@ -49,9 +49,9 @@ describe("Who was in each scene", () => {
     await waitFor(() => expect(document.activeElement?.getAttribute("data-scene")).toBe("2"));
   });
 
-  it("says the list is kept for this recap and that making it again starts the scenes over, and offers no rewrite", async () => {
+  it("says the list is kept for this recap and that making it again deletes it, and offers no rewrite", async () => {
     const api = await open();
-    expect(screen.getByText(w.lead).textContent).toContain("Making the recap again starts the scenes over");
+    expect(screen.getByText(w.lead).textContent).toContain("your saved lists are deleted");
     fireEvent.click(screen.getByRole("button", { name: w.changeScene(2) }));
     fireEvent.click(screen.getByLabelText("Tavian"));
     fireEvent.click(screen.getByRole("button", { name: w.save }));

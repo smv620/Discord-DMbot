@@ -170,6 +170,71 @@ class Present(Setup):
                 )
                 self.assertIsNone((await cur.fetchone() or {})["r"])
 
+    async def test_two_characters_with_one_name_are_listed_once_and_can_be_picked(self) -> None:
+        await self.memory.add_entity(
+            THURSDAY.id, self.one.id, name="Mira", type="player_character", source="dm",
+            played_by=15, status="confirmed",
+        )  # fmt: skip
+        got = await recaps.read_recap(self.web, self.session, self.ref)
+        self.assertEqual(got["characters"], ["Dorrin", "Kes", "Mira"])
+        self.assertEqual((await self.save(1, ["Mira"]))["present"], ["Mira"])
+
+    async def test_a_character_not_confirmed_or_without_a_player_is_not_offered(self) -> None:
+        await self.memory.add_entity(
+            THURSDAY.id, self.one.id, name="Pell", type="player_character", source="dm",
+            played_by=16, status="proposed",
+        )  # fmt: skip
+        await self.memory.add_entity(
+            THURSDAY.id, self.one.id, name="Quill", type="player_character", source="dm",
+            status="confirmed",
+        )  # fmt: skip
+        got = await recaps.read_recap(self.web, self.session, self.ref)
+        self.assertEqual(got["characters"], ["Dorrin", "Kes", "Mira"])
+        await self.refused(1, ["Pell"], "bad_present")
+        await self.refused(1, ["Quill"], "bad_present")
+
+    async def test_an_odd_sheet_reads_safely_and_refuses_the_odd_scene(self) -> None:
+        await self.store.update(
+            THURSDAY.id, self.one.id, AT,
+            beats=[7, {"what": "x", "present": "Mira", "saved": "true"}, {"what": "y"}],
+        )  # fmt: skip
+        got = await recaps.read_recap(self.web, self.session, self.ref)
+        self.assertEqual(
+            got["beats"],
+            [{"n": 2, "present": [], "saved": False}, {"n": 3, "present": [], "saved": False}],
+        )
+        await self.refused(1, ["Mira"], "stale")  # position 1 is not a scene
+        self.assertEqual((await self.save(2, ["Kes"]))["present"], ["Kes"])
+
+    async def test_a_big_sheet_changes_only_the_scene_saved(self) -> None:
+        await self.sheet([scene(n) for n in range(1, 121)])
+        await self.save(120, ["Mira"])
+        await self.refused(121, ["Mira"], "stale")
+        kept = await self.stored()
+        self.assertEqual(len(kept), 120)
+        self.assertEqual([b.number for b in kept if b.saved], [120])
+        self.assertEqual(kept[119].present, ("Mira",))
+
+    async def test_two_saves_at_once_both_stay(self) -> None:
+        import asyncio
+
+        await asyncio.gather(self.save(1, ["Kes"]), self.save(3, ["Mira"]))
+        kept = await self.stored()
+        self.assertEqual((kept[0].present, kept[2].present), (("Kes",), ("Mira",)))
+        self.assertEqual([b.saved for b in kept], [True, False, True])
+
+    async def test_the_save_door_refuses_a_campaign_or_server_the_caller_is_not_a_dm_of(
+        self,
+    ) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            for guild, campaign in ((THURSDAY.id, self.two.id), (999, self.one.id)):
+                cur = await conn.execute(
+                    "SELECT dmbot_recap_set_present(%s, %s, %s, 1, '[]'::jsonb) AS r",
+                    (guild, campaign, AT),
+                )
+                self.assertEqual((await cur.fetchone() or {})["r"], {"error": "not_found"})
+
     async def test_the_shared_link_never_carries_the_scenes(self) -> None:
         got = await recaps.read_recap(self.web, self.session, self.ref)
         self.assertIn("beats", got)

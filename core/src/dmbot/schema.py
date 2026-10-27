@@ -14928,6 +14928,9 @@ NAMES_FIXED_UNDO = (
 # nothing works it out again; "Make it again" clears the beats, and so the lists (the page says
 # so first). A new function pair: no row changes.
 RECAP_PRESENT_DOORS = r"""
+    -- (A scene's number `n` is its place in the stored sheet's array, as the page reads it back.
+    -- DMbot writes the sheet as objects only; anything else is skipped here and refused below.
+    -- Two characters of one campaign with the same name are listed once.)
     CREATE FUNCTION dmbot_recap_present(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE sheet JSONB;
@@ -14957,7 +14960,7 @@ RECAP_PRESENT_DOORS = r"""
                      ) WITH ORDINALITY AS t(b, ord)
                 WHERE jsonb_typeof(t.b) = 'object'), '[]'::jsonb),
             'characters', COALESCE((
-                SELECT jsonb_agg(e.name ORDER BY e.name) FROM memory_entities e
+                SELECT jsonb_agg(DISTINCT e.name) FROM memory_entities e
                 WHERE e.guild_id = g AND e.campaign_id = c AND e.role = 'player_character'
                   AND e.played_by IS NOT NULL AND e.status = 'confirmed'), '[]'::jsonb));
     END
@@ -15000,7 +15003,7 @@ RECAP_PRESENT_DOORS = r"""
             RETURN jsonb_build_object('error', 'bad_present');
         END IF;
         SELECT count(DISTINCT x) INTO asked FROM jsonb_array_elements_text(names) x;
-        SELECT COALESCE(array_agg(e.name ORDER BY e.name), '{}') INTO chosen
+        SELECT COALESCE(array_agg(DISTINCT e.name), '{}') INTO chosen
           FROM memory_entities e
          WHERE e.guild_id = g AND e.campaign_id = c AND e.role = 'player_character'
            AND e.played_by IS NOT NULL AND e.status = 'confirmed'
