@@ -259,6 +259,7 @@ from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import (
+    contradiction_run,
     definitions,
     document_reader,
     extractor,
@@ -273,6 +274,7 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.contradiction_grades import GradeStore
 from dmbot.memory.exposures import (
     ExposureStore,
     dedupe,
@@ -526,6 +528,7 @@ from dmbot.ui.transcripts import (
 )
 from dmbot.web import accounts
 
+CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
@@ -3058,6 +3061,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # After the extractor (its readings are beliefs too); off unless the switch is on.
+            ("contradiction grades", lambda: self.grade_contradictions(table)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -8656,6 +8661,67 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     held_back_text(report.new_names),
                     view=review_view(cid),
                 )
+
+    async def grade_contradictions(self, table: Table) -> None:
+        """After a session, only with DMBOT_STORY_CONTRADICTIONS on (and the extractor): PlotBot
+        grades the clashes one point of view holds, major or minor (#2660), and the grades are kept
+        for the DM. It reads no transcript line: the AI is shown only the campaign's own names and
+        relationship words. Inside the extractor's plan check and call limits (its calls are
+        counted there), and at most `CONTRADICTION_CALLS` a session. Nothing here changes a belief
+        or tells the DM; the log gets counts only.
+
+        No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
+        DM-confirmed names and relationships the campaign already stores, so there is no
+        speaker's consent for a step to depend on."""
+        if (
+            not self.settings.story_contradictions_on
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return  # closed: a plan that can't be checked is not run
+            sid = table.transcript_session_id
+            session = await self.transcripts.session(gid, sid)
+            _, used = await self.transcripts.extraction(gid, sid)
+            day_used = await self.transcripts.extractor_calls_since(
+                gid, cid, int(time.time()) - 86400
+            )
+            allowed = min(
+                CONTRADICTION_CALLS,
+                extractor.calls_left(
+                    self.settings.story_extractor_max_calls,
+                    used,
+                    self.settings.story_extractor_max_calls_day,
+                    day_used,
+                ),
+            )
+            if allowed == 0:
+                log.info("Contradictions: not run, the extractor's call limit is used")
+                return
+            transcripts = self.transcripts
+            report = await contradiction_run.run(
+                self.memory,
+                GradeStore.of(self.memory),
+                self.extractor_ai,
+                gid,
+                cid,
+                session_started_at=session.started_at if session is not None else None,
+                max_calls=allowed,
+                count_call=lambda: transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
+            )
+            log.info(report.line())
 
     async def log_steward_tally(self, table: Table) -> None:
         """After the session's other work: one line in the server log of what the ontology

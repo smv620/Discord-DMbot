@@ -29,6 +29,8 @@ STATUS: dict[str, tuple[int, str]] = {
     "bad_clip": (422, "bad_clip"),
     "busy": (409, "busy"),  # an answer for that name is already on its way
     "bad_action": (422, "bad_action"),
+    "empty": (422, "empty"),  # change the words: no words (#2593)
+    "too_long": (422, "too_long"),  # change the words: more than the name limit
     "bad_target": (422, "bad_target"),  # the known name is not one the page offers
     "no_consent": (403, "no_consent"),  # the DM has not agreed to be recorded in Discord
 }

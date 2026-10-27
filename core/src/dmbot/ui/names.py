@@ -34,7 +34,7 @@ from dmbot.memory.models import (
     MemoryRuleError,
     name_key,
 )
-from dmbot.memory.name_longer import longer_names
+from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_places
@@ -1711,11 +1711,9 @@ class SuggestionReview(_Menu):
             if clash is not None:
                 await _tell(interaction, already_known(new, clash))
                 return
-        old = name_key(entity.name)
         # The old word is part of the new name: keeping it as an old spelling would turn every
         # "Harrow" said alone into "Harrow's Keep".
-        bare = name_key(re.sub(r"['\u2019]s\b", "", new))  # "Harrow's Keep" holds "Harrow"
-        part = f" {old} " in f" {bare} " and name_key(new) != old
+        part = widens(entity.name, new)
         try:  # one change, so one Undo: the new name and how it was heard
             await memory.rename_entity(
                 campaign.guild_id,
