@@ -144,6 +144,25 @@ CHARS_PER_TOKEN = 3
 TRANSCRIPT_SHARE = 0.5  # of the smaller input room, for the transcript and the guide
 
 UNMATCHED = "Couldn't write a recap that matched the session."
+# Problems a draft may still have after the fact check's flagged sentences were cut out of it (the
+# flagged sentence may have been the ending): only the ending (#2741). Every other check stays.
+CUT_MAY_LEAVE = frozenset({"ending"})
+# What the DM reads on the recap when the fact check took out its last lines, or could not be had.
+ENDING_CUT_NOTE = (
+    "The last lines were taken out because the session didn't say them. Check the ending."
+)
+NOT_FACT_CHECKED_NOTE = (
+    "This recap was not fact-checked: the check could not be had. Read it against the session."
+)
+DM_TOLD = (ENDING_CUT_NOTE, NOT_FACT_CHECKED_NOTE)  # kept through the critics (#2741)
+
+
+def hard_after_cut(problems: Sequence[str]) -> list[str]:
+    """The problems of a draft that had flagged sentences cut out that still count: all but the
+    ending (`CUT_MAY_LEAVE`). One rule for every place a cut draft is checked (#2741)."""
+    return [p for p in problems if cl.problem_kind(p) not in CUT_MAY_LEAVE]
+
+
 # Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
 SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and keep every word"
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
@@ -151,6 +170,11 @@ FACTS_ROOM_MAX = (
     16_000  # after doubling too: a run of one-word sentences stays under the output limit
 )
 FACTS_TOKENS_PER_SENTENCE = 60  # one flag as JSON: the sentence number, the kind, the beat numbers
+
+
+def _kinds_line(counts: Mapping[str, int]) -> str:
+    """`ordinary_word 2, unknown 1`: fixed words and counts, never the names (#2741)."""
+    return ", ".join(f"{k} {n}" for k, n in sorted(counts.items()))
 
 
 def facts_room(sentences: int) -> int:
@@ -328,6 +352,9 @@ class RecapWorker:
         # The last rejected draft of each job and stage, so a retry can send it back (#2026). Kept
         # in memory only: after a restart the retry just goes without it. Dropped when the stage
         # passes or the job fails.
+        # What the DM is told about the draft that is about to stand (the last lines taken out, a
+        # fact check that could not be had), kept until the draft is accepted (#2741).
+        self._dm_notes: dict[tuple[int, str, int], list[str]] = {}
         self._rejected_prose: dict[tuple[int, str, int], rd.Prose] = {}
         self._rejected_finish: dict[tuple[int, str, int], tuple[str, list[str]]] = {}
         # A draft that passed every check but was graded below the bar, kept while its revision is
@@ -1134,7 +1161,10 @@ class RecapWorker:
 
         draft: rd.Prose = prose  # (the closure below reads this one; `prose` may be cut later)
 
+        name_counts: dict[str, int] = {}
+
         def checked(last_try: bool) -> list[str]:
+            name_counts.clear()
             return rd.check_prose(
                 draft,
                 beats=sheet,
@@ -1150,6 +1180,8 @@ class RecapWorker:
                 corrections=inputs.corrections,
                 pcs=inputs.pcs,
                 identity_ties=inputs.identity_ties,
+                name_counts=name_counts,
+                aliases=inputs.aliases,
             )
 
         problems = checked(False)
@@ -1157,8 +1189,14 @@ class RecapWorker:
             # A draft that passes everything but a doubtful scene check stands on the last try.
             problems = []
         count = len(words(narration_of(prose.summary)))
-        self._annotate(gid, cid, job, stage, checks=lambda: cl.kinds(problems))
+        self._annotate(
+            gid, cid, job, stage, checks=lambda: cl.kinds(problems), names=lambda: dict(name_counts)
+        )
         if problems:
+            if name_counts:
+                log.info(
+                    "Recap: names outside the beat sheet, by kind: %s", _kinds_line(name_counts)
+                )
             log.info(
                 "Recap: a draft failed %d check(s): %s (%d words, %d wanted, %d section(s) "
                 "of at most %d, about %.2f hours)",
@@ -1183,6 +1221,15 @@ class RecapWorker:
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
+        if not set(job.speakers) <= set(await consenting()):
+            # (the fact check sends nothing and answers None when a speaker stopped, #2064: that is
+            # a recap to start over, never one to stand "not fact-checked")
+            return await self._restart(gid, cid, job)
+        if not asked and key not in self._flags:
+            # The fact check could not be had (a failed, unreadable or cut-off answer even after
+            # its retry): the recap stands, marked, never passed as if nothing were flagged.
+            log.info("Recap: not fact-checked (the check could not be had)")
+            self._dm_notes.setdefault(key, []).append(NOT_FACT_CHECKED_NOTE)
         if not asked and key in self._flags:
             # The revision cannot be checked (the call failed or was unreadable): do not ship it
             # unverified; the first draft stands with its flagged sentences cut.
@@ -1216,9 +1263,10 @@ class RecapWorker:
                     gid, cid, job.session_at, attempt=job.attempt + 1, problems=problems
                 )
                 return await self._store.get(gid, cid, job.session_at)
-            cut = await self._cut(prose, facts, sheet, inputs, transcript, length)
+            cut, why = await self._cut(prose, facts, sheet, inputs, transcript, length)
             if cut is None:
-                return await self._fail(gid, cid, job, UNMATCHED)
+                return await self._fail(gid, cid, job, UNMATCHED, check=why, ours=True)
+            self._tell_if_unended(key, cut, sheet)
             prose = cut
         self._flags.pop(key, None)
         self._revised.discard(key)
@@ -1312,28 +1360,32 @@ class RecapWorker:
                 transcript=transcript,
                 aliases=inputs.aliases,
             )
-            if not rd.check_prose(
-                prose,
-                beats=sheet,
-                transcript=transcript,
-                allowed_names=inputs.allowed_names,
-                secret_names=inputs.secret_names,
-                previous=inputs.previous,
-                setting=inputs.setting,
-                length=length,
-                last=True,
-                refused=refused,
-                style=inputs.style,
-                corrections=inputs.corrections,
-                pcs=inputs.pcs,
-                identity_ties=inputs.identity_ties,
+            # (a kept draft whose flagged ending was already cut stands without it: #2741)
+            if not hard_after_cut(
+                rd.check_prose(
+                    prose,
+                    beats=sheet,
+                    transcript=transcript,
+                    allowed_names=inputs.allowed_names,
+                    secret_names=inputs.secret_names,
+                    previous=inputs.previous,
+                    setting=inputs.setting,
+                    length=length,
+                    last=True,
+                    refused=refused,
+                    style=inputs.style,
+                    corrections=inputs.corrections,
+                    pcs=inputs.pcs,
+                    identity_ties=inputs.identity_ties,
+                )
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
                 if flags is not None:  # the kept draft still has its flagged sentences: cut them
-                    cut = await self._cut(prose, flags, sheet, inputs, transcript, length)
+                    cut, why = await self._cut(prose, flags, sheet, inputs, transcript, length)
                     if cut is None:
-                        return await self._fail(gid, cid, job, UNMATCHED)
+                        return await self._fail(gid, cid, job, UNMATCHED, check=why, ours=True)
+                    self._tell_if_unended(key, cut, sheet)
                     prose = cut
                     try:
                         grade = await self._grade(gid, cid, job, sheet, prose.summary)
@@ -1384,6 +1436,13 @@ class RecapWorker:
         if event is not None:
             event.outcome = outcome
         self._rejected_prose.pop(key, None)
+        told = self._dm_notes.pop(key, [])
+        extra: dict[str, Any] = {}
+        if told:  # kept with the critics' own notes, which the page already shows the DM
+            loop = cr.loop_from_json(job.critics)
+            extra["critics"] = replace(
+                loop, notes=tuple(dict.fromkeys([*loop.notes, *told]))
+            ).to_json()
         log.info("Recap: graded %s", ",".join(f"{k}={v}" for k, v in sorted(grade.items())))
         await self._store.update(
             gid,
@@ -1408,6 +1467,7 @@ class RecapWorker:
             errors=0,
             problems=[],
             last_error="",
+            **extra,
         )
         return await self._store.get(gid, cid, job.session_at)
 
@@ -1512,6 +1572,15 @@ class RecapWorker:
         )  # fmt: skip
         return facts
 
+    def _tell_if_unended(
+        self, key: tuple[int, str, int], cut: rd.Prose, sheet: Sequence[bt.Beat]
+    ) -> None:
+        """The DM is told when a cut took the ending off the draft that stands (#2741): it is kept,
+        and the page says to check it."""
+        narration = narration_of(cut.summary)
+        if sheet and not rd.ends_on(narration, sheet[-2:]):
+            self._dm_notes.setdefault(key, []).append(ENDING_CUT_NOTE)
+
     async def _cut(
         self,
         prose: rd.Prose,
@@ -1520,16 +1589,24 @@ class RecapWorker:
         inputs: Inputs,
         transcript: str,
         length: rd.Length,
-    ) -> rd.Prose | None:
-        """The draft without the sentences still flagged, done in code. None when what is left
-        no longer meets the checks: then there is no recap."""
+        *,
+        keep_unended: bool = True,
+    ) -> tuple[rd.Prose | None, str]:
+        """The draft without the sentences still flagged, done in code, and ""; or None and the
+        kinds of check the rest still fails (a fixed word each, never the text), so a failure says
+        why. A few flagged sentences cost the recap those sentences, not the whole recap (#2741):
+        what is left is held to every check that is about the words (a secret, a name that is not
+        allowed, a copy, quotation marks, an empty recap, the layout) but not to the one the cut
+        itself causes, ending where the session stopped, because the flagged sentence may well
+        have been the ending (logged, and noted in a test report). `keep_unended=False`: a
+        revision that lost its ending is still refused, so a better draft that has one stands."""
         cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
         if self._on_note is not None and facts.unsupported:
             self._on_note(
                 f"Cut {len(facts.unsupported)} sentence(s) the fact check still flagged "
                 "after the one revision."
             )
-        if rd.check_prose(
+        problems = rd.check_prose(
             cut,
             beats=sheet,
             transcript=transcript,
@@ -1544,9 +1621,18 @@ class RecapWorker:
             corrections=inputs.corrections,
             pcs=inputs.pcs,
             identity_ties=inputs.identity_ties,
-        ):
-            return None
-        return cut
+        )
+        hard = problems if not keep_unended else hard_after_cut(problems)
+        if hard:
+            return None, ", ".join(cl.kinds(hard))
+        if problems:
+            log.info("Recap: the fact check cut the sentence that ended the recap; it stands")
+            if self._on_note is not None:
+                self._on_note(
+                    "The recap no longer ends exactly where the session stopped: the sentence "
+                    "that did was cut by the fact check."
+                )
+        return cut, ""
 
     async def _grade(
         self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str,
@@ -1616,7 +1702,11 @@ class RecapWorker:
             sentences_now, left = self._away(job.summary, sheet, inputs)
             return await self._save_loop(
                 gid, cid, job,
-                replace(loop, done=True, notes=unchecked + away.notes(left, sentences_now)),
+                replace(
+                    loop,
+                    done=True,
+                    notes=self._told(loop) + unchecked + away.notes(left, sentences_now),
+                ),
             )  # fmt: skip
         room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
         # (a revision that waits for its try is off the job's calls, so the room is not looked at)
@@ -1625,6 +1715,12 @@ class RecapWorker:
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
         )
+
+    @staticmethod
+    def _told(loop: cr.Loop) -> tuple[str, ...]:
+        """The notes `_accept_prose` told the DM about the draft that stands (the last lines cut,
+        no fact check), which the critics' own notes must not replace (#2741)."""
+        return tuple(n for n in DM_TOLD if n in loop.notes)
 
     def _away_notes(
         self, summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
@@ -1896,7 +1992,9 @@ class RecapWorker:
                 revised = None
                 unavailable = True
             elif facts is not None and not facts.clean:
-                revised = await self._cut(revised, facts, sheet, inputs, transcript, length)
+                revised, _ = await self._cut(
+                    revised, facts, sheet, inputs, transcript, length, keep_unended=False
+                )
             if revised is not None:
                 try:
                     grade = await self._grade(gid, cid, job, sheet, revised.summary, loop.waits > 0)
@@ -1916,7 +2014,10 @@ class RecapWorker:
             grade=grade, errors=0,
             to_confirm=self._to_confirm(revised.summary, sheet, transcript, inputs),
             critics=replace(
-                loop, pending=None, motives=None, waits=0, since=0, told=False
+                loop, pending=None, motives=None, waits=0, since=0, told=False,
+                # (the new text passed its own ending check and was fact-checked: those notes were
+                # about the text it replaces)
+                notes=tuple(n for n in loop.notes if n not in DM_TOLD),
             ).to_json(),
         )  # fmt: skip
         self._forget_draft(key)
@@ -2016,6 +2117,9 @@ class RecapWorker:
             return await self._hold(gid, cid, job, loop, why)
         prose = rd.Prose(best.summary, best.music)
         cut = 0
+        # What the DM was told about the draft that stands holds only while the critics' best draft
+        # is that same text (a different one was fact-checked and ended on its own).
+        told = self._told(loop) if best.summary == job.summary else ()
         # The critics stopped because the service did not answer (or the day's tally): that is ours,
         # so what would fail the recap waits for its check instead, and is tried again (#2365). Only
         # the job's own ceiling still ends in a failure.
@@ -2036,6 +2140,9 @@ class RecapWorker:
                 pcs=inputs.pcs,
                 identity_ties=inputs.identity_ties,
             )  # fmt: skip
+            if problems and not hard_after_cut(problems) and ENDING_CUT_NOTE not in told:
+                told += (ENDING_CUT_NOTE,)  # the cut took the ending off: say so
+            problems = hard_after_cut(problems)  # (the cut sentence may have been the ending)
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
                 log.info(
@@ -2053,8 +2160,10 @@ class RecapWorker:
                 )  # fmt: skip
             cut = len(best.cuts)
         # (the away notes are read again from the text that is kept, cuts and all)
-        kept_notes = tuple(n for n in best.notes if not away.is_note(n)) + self._away_notes(
-            prose.summary, sheet, inputs
+        kept_notes = (
+            told
+            + tuple(n for n in best.notes if not away.is_note(n) and n not in told)
+            + self._away_notes(prose.summary, sheet, inputs)
         )
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
@@ -2130,6 +2239,7 @@ class RecapWorker:
             for text in (parsed[0], *parsed[1])
         ]
         parsed = (fixed[0][0].summary, [f.summary for f, _ in fixed[1:]])
+        title_names: dict[str, int] = {}
         finish, problems = rd.check_finish(
             parsed,
             beats=sheet,
@@ -2138,7 +2248,13 @@ class RecapWorker:
             secret_names=inputs.secret_names,
             previous=inputs.previous,
             transcript=transcript,
+            name_counts=title_names,
+            pcs=inputs.pcs,
+            aliases=inputs.aliases,
         )
+        if title_names:
+            log.info("Recap: names outside the beat sheet, by kind: %s", _kinds_line(title_names))
+            self._annotate(gid, cid, job, "title", names=dict(title_names))
         if finish is not None and any(r for _, r in fixed):
             finish, problems = None, ["a name is too like one the DM keeps secret: leave it out"]
         self._annotate(
@@ -2339,6 +2455,7 @@ class RecapWorker:
         self._forget_reads((gid, cid, job.session_at))
         self._rejected_prose.pop((gid, cid, job.session_at), None)
         self._rejected_finish.pop((gid, cid, job.session_at), None)
+        self._dm_notes.pop((gid, cid, job.session_at), None)
         self._fallback.pop((gid, cid, job.session_at), None)
         self._flags.pop((gid, cid, job.session_at), None)
         self._revised.discard((gid, cid, job.session_at))

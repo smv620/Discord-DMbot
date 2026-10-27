@@ -3500,6 +3500,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The recap's names to check, answered on its page (#2113): the read door and the queue door.
     ("dmbot_recap_names_read", "dmbot_recap_names_read(BIGINT, TEXT, BIGINT)"),
     ("dmbot_recap_name_places", "dmbot_recap_name_places(BIGINT, TEXT, BIGINT)"),
+    # One session's after-session report, the DM's alone (#2661).
+    ("dmbot_web_report", "dmbot_web_report(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_report_answer", "dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
     ("dmbot_recap_names_fixed", "dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)"),  # (#2684)
     ("dmbot_recap_present", "dmbot_recap_present(BIGINT, TEXT, BIGINT)"),  # (#2684, #2577)
     (
@@ -15449,6 +15452,316 @@ NAMES_READ_CAMPAIGN = (
     """
 )
 
+# One session's after-session report for the website (#2661; docs/STORY_MEMORY.md 9a): the DM's
+# alone. Items are the minor contradictions and the differences PlotBot sorted as disguised,
+# misunderstood or false, plus what the DM answered. An item belongs to a session when it was found
+# in it (`session_started_at`); "That's intended", "Not a problem" and a fix are not raised again
+# once answered before the session began, and "Remind me" comes back in the report of the session
+# after the one it was answered in. The key an answer is kept under is the same hash as
+# `memory/report_store.py` makes (sha256 of the item's kind and ids, 32 hex). Only ids, DMbot's own
+# words (the connections' names and relationship) and numbers leave: evidence is its kind, its
+# session and whether it still stands (a link whose words were removed has no target), never a
+# line, a speaker or a quote. Items found but not sorted (the call limit stopped the run) are only
+# counted. At most 200 of each list.
+_REPORT_RELATION = """
+        (SELECT jsonb_build_object(
+            'id', r.id, 'subject', s.name, 'predicate', r.predicate, 'detail', r.detail,
+            'directional', r.directional, 'object', o.name,
+            'beliefAt', (SELECT b.session_at FROM memory_beliefs b
+                         WHERE b.guild_id = g AND b.campaign_id = c
+                           AND b.perspective_id = {persp} AND b.relation_id = r.id
+                         ORDER BY b.seq DESC LIMIT 1),
+            'evidence', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'kind', e.kind, 'at', e.session_started_at,
+                           'available', e.target_id IS NOT NULL) ORDER BY e.added_at, e.id)
+                FROM (SELECT u.* FROM (
+                          SELECT DISTINCT ON (x.kind, x.session_started_at, x.target_id) x.*
+                          FROM (
+                              SELECT e0.* FROM memory_evidence e0
+                              WHERE e0.guild_id = g AND e0.campaign_id = c
+                                AND e0.relation_id = r.id
+                              UNION ALL
+                              SELECT e1.* FROM memory_beliefs b2
+                              JOIN memory_evidence e1
+                                ON e1.guild_id = g AND e1.campaign_id = c
+                               AND e1.belief_id = b2.id
+                              WHERE b2.guild_id = g AND b2.campaign_id = c
+                                AND b2.perspective_id = {persp} AND b2.relation_id = r.id) x
+                          ORDER BY x.kind, x.session_started_at, x.target_id,
+                                   x.added_at, x.id) u
+                      ORDER BY u.added_at, u.id LIMIT 10) e), '[]'::jsonb))
+         FROM memory_relations r
+         JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c AND s.id = r.subject_id
+         JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c AND o.id = r.object_id
+         WHERE r.guild_id = g AND r.campaign_id = c AND r.id = {rel}
+           AND (r.status = 'confirmed'
+                OR (m.involves_guess AND r.status = 'proposed' AND r.secret
+                    AND r.source = 'extractor')))"""
+_REPORT_ANSWER = """
+        CASE WHEN a.item_key IS NULL THEN NULL ELSE jsonb_build_object(
+            'action', a.answer, 'at', a.answered_at, 'remindFrom', a.remind_from) END"""
+_REPORT_WHO = """
+        (SELECT jsonb_build_object('kind', p.kind, 'name', pe.name)
+         FROM memory_perspectives p
+         LEFT JOIN memory_entities pe
+           ON pe.guild_id = g AND pe.campaign_id = c AND pe.id = p.entity_id
+         WHERE p.guild_id = g AND p.campaign_id = c AND p.id = {persp})"""
+# which items this session's report holds (the row is `m`, its answer `a`)
+_REPORT_HERE = """
+        ((m.session_started_at = at_
+          AND NOT COALESCE(
+                  a.answer IN ('intended', 'not_a_problem', 'fixed') AND a.answered_at < at_,
+                  false))
+         OR (a.answer = 'remind' AND m.session_started_at IS DISTINCT FROM at_
+             AND at_ = (SELECT min(t.started_at) FROM transcript_sessions t
+                        WHERE t.guild_id = g AND t.campaign_id = c
+                          AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)
+                          AND t.started_at > a.remind_from)))"""
+_REPORT_KEY_C = (
+    "left(encode(sha256(convert_to('contradiction|' || m.perspective_id || '|' || m.kind"
+    " || '|' || m.first_relation_id || '|' || m.second_relation_id, 'UTF8')), 'hex'), 32)"
+)
+_REPORT_KEY_D = (
+    "left(encode(sha256(convert_to('difference|' || m.perspective_id || '|' || m.relation_id,"
+    " 'UTF8')), 'hex'), 32)"
+)
+_TRUTH = (
+    "(SELECT tp.id FROM memory_perspectives tp"
+    " WHERE tp.guild_id = g AND tp.campaign_id = c AND tp.kind = 'truth')"
+)
+REPORT_READ_DOOR = (
+    r"""
+    CREATE FUNCTION dmbot_web_report(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'now', extract(epoch FROM now())::BIGINT,
+            'run', (SELECT jsonb_build_object(
+                        'state', r.state, 'stage', r.stage, 'done', r.done, 'total', r.total,
+                        'startedAt', r.started_at, 'updatedAt', r.updated_at, 'reason', r.reason)
+                    FROM memory_report_runs r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.session_at = at_),
+            'contradictions', COALESCE((
+                SELECT jsonb_agg(x.item ORDER BY x.reminded DESC, x.found_at DESC, x.key)
+                FROM (
+                    SELECT """
+    + _REPORT_KEY_C
+    + r""" AS key, m.found_at,
+                           COALESCE(a.answer = 'remind' AND a.remind_from < at_, false)
+                               AS reminded,
+                           jsonb_build_object(
+                               'key', """
+    + _REPORT_KEY_C
+    + r""", 'kind', m.kind, 'reason', m.reason,
+                               'timesUnknown', m.times_unknown,
+                               'remindFrom', CASE WHEN a.answer = 'remind'
+                                                       AND a.remind_from < at_
+                                                  THEN a.remind_from END,
+                               'who', """
+    + _REPORT_WHO.format(persp="m.perspective_id")
+    + r""",
+                               'first', """
+    + _REPORT_RELATION.format(persp="m.perspective_id", rel="m.first_relation_id")
+    + r""",
+                               'second', """
+    + _REPORT_RELATION.format(persp="m.perspective_id", rel="m.second_relation_id")
+    + r""",
+                               'answer', """
+    + _REPORT_ANSWER
+    + r""") AS item
+                    FROM memory_contradictions m
+                    LEFT JOIN report_answers a
+                      ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_C
+    + r"""
+                    WHERE m.guild_id = g AND m.campaign_id = c AND m.grade = 'minor'
+                      AND """
+    + _REPORT_HERE
+    + r"""
+                    ORDER BY reminded DESC, m.found_at DESC, key
+                    LIMIT 200) x), '[]'::jsonb),
+            'differences', COALESCE((
+                SELECT jsonb_agg(x.item ORDER BY x.reminded DESC, x.found_at DESC, x.key)
+                FROM (
+                    SELECT """
+    + _REPORT_KEY_D
+    + r""" AS key, m.found_at,
+                           COALESCE(a.answer = 'remind' AND a.remind_from < at_, false)
+                               AS reminded,
+                           jsonb_build_object(
+                               'key', """
+    + _REPORT_KEY_D
+    + r""", 'sort', m.sort, 'kind', m.kind, 'reason', m.reason,
+                               'timesUnknown', m.times_unknown,
+                               'remindFrom', CASE WHEN a.answer = 'remind'
+                                                       AND a.remind_from < at_
+                                                  THEN a.remind_from END,
+                               'who', """
+    + _REPORT_WHO.format(persp="m.perspective_id")
+    + r""",
+                               'believes', """
+    + _REPORT_RELATION.format(persp="m.perspective_id", rel="m.relation_id")
+    + r""",
+                               'truth', CASE WHEN m.truth_relation_id IS NULL THEN NULL ELSE """
+    + _REPORT_RELATION.format(persp=_TRUTH, rel="m.truth_relation_id")
+    + r""" END,
+                               'open', (SELECT jsonb_build_object('a', r2.subject_id,
+                                                                 'b', r2.object_id)
+                                        FROM memory_relations r2
+                                        WHERE r2.guild_id = g AND r2.campaign_id = c
+                                          AND r2.id = m.relation_id
+                                          AND (r2.status = 'confirmed'
+                                               OR (m.involves_guess AND r2.status = 'proposed'
+                                                   AND r2.secret
+                                                   AND r2.source = 'extractor'))),
+                               'answer', """
+    + _REPORT_ANSWER
+    + r""") AS item
+                    FROM memory_differences m
+                    LEFT JOIN report_answers a
+                      ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_D
+    + r"""
+                    WHERE m.guild_id = g AND m.campaign_id = c
+                      AND m.sort IN ('disguised', 'misunderstood', 'false')
+                      AND """
+    + _REPORT_HERE
+    + r"""
+                    ORDER BY reminded DESC, m.found_at DESC, key
+                    LIMIT 200) x), '[]'::jsonb),
+            'notSorted', (
+                (SELECT count(*) FROM memory_differences m
+                 WHERE m.guild_id = g AND m.campaign_id = c AND m.sort = 'not_sorted'
+                   AND m.session_started_at = at_)
+                + (SELECT count(*) FROM memory_contradictions m
+                   WHERE m.guild_id = g AND m.campaign_id = c AND m.grade = 'not_graded'
+                     AND m.session_started_at = at_)));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_report(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_report(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    """
+)
+
+# The DM's answer to one item of a session's after-session report (#2661, slice 4b): a direct
+# door, not the bot's queue (Supervisor, 2026-10-27), because an answer is the DM's bookkeeping and
+# changes nothing in the story. It records "intended", "not a problem" or "remind me" in
+# `report_answers`, or deletes the row for Undo, and answers at once. Inside itself it checks the
+# item is in THAT session's report of THIS campaign (the same rule the read door lists by), so a
+# key from another session, campaign or server is "gone"; an item that already has a final answer
+# is "gone" too (a second press changes nothing), and "remind me" can be answered again. "fix"
+# writes nothing: the page opens the Story graph, and recording "fixed" is for when the connection
+# changes.
+REPORT_ANSWER_DOOR = (
+    r"""
+    CREATE FUNCTION dmbot_web_report_answer(g BIGINT, c TEXT, at_ BIGINT, k TEXT, act TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        kind_ TEXT;
+        had report_answers%ROWTYPE;
+        wrote INT;
+        now_ BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF k !~ '^[0-9a-f]{32}$'
+           OR act NOT IN ('intended', 'not_a_problem', 'remind', 'fix', 'undo') THEN
+            RETURN jsonb_build_object('status', 'bad');
+        END IF;
+        IF EXISTS (SELECT 1 FROM memory_contradictions m
+                   LEFT JOIN report_answers a
+                     ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_C
+    + r"""
+                   WHERE m.guild_id = g AND m.campaign_id = c AND m.grade = 'minor'
+                     AND """
+    + _REPORT_KEY_C
+    + r""" = k
+                     AND """
+    + _REPORT_HERE
+    + r""") THEN
+            kind_ := 'contradiction';
+        ELSIF EXISTS (SELECT 1 FROM memory_differences m
+                      LEFT JOIN report_answers a
+                        ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_D
+    + r"""
+                      WHERE m.guild_id = g AND m.campaign_id = c
+                        AND m.sort IN ('disguised', 'misunderstood', 'false')
+                        AND """
+    + _REPORT_KEY_D
+    + r""" = k
+                        AND """
+    + _REPORT_HERE
+    + r""") THEN
+            kind_ := 'difference';
+        ELSE
+            RETURN jsonb_build_object('status', 'gone');
+        END IF;
+        SELECT * INTO had FROM report_answers
+            WHERE guild_id = g AND campaign_id = c AND item_key = k;
+        IF act = 'undo' THEN
+            IF had.item_key IS NULL THEN
+                RETURN jsonb_build_object('status', 'gone');
+            END IF;
+            DELETE FROM report_answers WHERE guild_id = g AND campaign_id = c AND item_key = k;
+            RETURN jsonb_build_object('status', 'ok', 'answer', NULL);
+        END IF;
+        IF act = 'fix' THEN
+            RETURN jsonb_build_object('status', 'ok', 'answer', CASE WHEN had.item_key IS NULL
+                THEN NULL ELSE jsonb_build_object('action', had.answer, 'at', had.answered_at) END);
+        END IF;
+        -- One atomic write: a first answer inserts, a "remind me" may be replaced, and anything
+        -- else (a final answer another press or another DM just made) writes nothing. Two
+        -- presses at once cannot both win: the second one's conflict finds a final answer.
+        INSERT INTO report_answers AS r (guild_id, campaign_id, item_key, item_kind, answer,
+                                         answered_by, answered_at, remind_from)
+        VALUES (g, c, k, kind_, act, dmbot_current_user(), now_,
+                CASE WHEN act = 'remind' THEN at_ END)
+        ON CONFLICT (guild_id, campaign_id, item_key) DO UPDATE SET
+            item_kind = EXCLUDED.item_kind, answer = EXCLUDED.answer,
+            answered_by = EXCLUDED.answered_by, answered_at = EXCLUDED.answered_at,
+            remind_from = EXCLUDED.remind_from
+        WHERE r.answer = 'remind';
+        GET DIAGNOSTICS wrote = ROW_COUNT;
+        IF wrote = 0 THEN
+            RETURN jsonb_build_object('status', 'gone');  -- already answered: a second press
+        END IF;
+        RETURN jsonb_build_object('status', 'ok',
+                                  'answer', jsonb_build_object('action', act, 'at', now_));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -15743,6 +16056,8 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0248_memory_vectors",
         MEMORY_VECTORS,
     ),  # meaning search: numbers made from campaign text (#2664)
+    ("0249_report_read_door", REPORT_READ_DOOR),  # a session's after-session report (#2661)
+    ("0250_report_answer_door", REPORT_ANSWER_DOOR),  # the DM's answer to one item (#2661)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

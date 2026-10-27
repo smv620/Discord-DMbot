@@ -25,6 +25,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory.store import MemoryStore
 from dmbot.memory.voyage import cosine
 
 log = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ class Item:
 @dataclass(frozen=True, slots=True)
 class Match:
     kind: str
-    owner_id: str
+    owner_id: str  # as stored: a long text's parts are `id#n` (`embedding.owner_of` strips it)
     score: float  # cosine: 1.0 the same direction
 
 
@@ -61,6 +62,11 @@ class VectorStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+
+    @classmethod
+    def of(cls, memory: MemoryStore) -> VectorStore:
+        """On the memory store's own database (the bot has the one store)."""
+        return cls(memory._db)
 
     async def save(self, guild_id: int, campaign_id: str, model: str, items: Sequence[Item]) -> int:
         """Keep these vectors for the campaign's own text (every kind but a line). One for a kind
@@ -95,12 +101,13 @@ class VectorStore:
         kept = 0
         async with self._db.guild(guild_id) as conn:
             for item in items:
-                if item.kind != LINE or not item.owner_id.isdecimal() or not _fits(item.vector):
+                line_id = item.owner_id.split("#", 1)[0]  # "12" or "12#2": a long line in parts
+                if item.kind != LINE or not line_id.isdecimal() or not _fits(item.vector):
                     continue
                 cur = await conn.execute(
                     "INSERT INTO memory_vectors (guild_id, campaign_id, owner_kind, owner_id,"
                     " line_id, model, text_hash, vector, made_at)"
-                    " SELECT l.guild_id, s.campaign_id, 'line', l.id::text, l.id, %s, %s,"
+                    " SELECT l.guild_id, s.campaign_id, 'line', %s, l.id, %s, %s,"
                     " %s::real[], %s"
                     " FROM transcript_lines l JOIN transcript_sessions s"
                     "  ON s.id = l.session_id AND s.guild_id = l.guild_id"
@@ -112,12 +119,23 @@ class VectorStore:
                     " model = EXCLUDED.model, text_hash = EXCLUDED.text_hash,"
                     " vector = EXCLUDED.vector, made_at = EXCLUDED.made_at",
                     (
-                        model, item.hash, [float(x) for x in item.vector], int(self._now()),
-                        guild_id, campaign_id, int(item.owner_id),
+                        item.owner_id, model, item.hash, [float(x) for x in item.vector],
+                        int(self._now()), guild_id, campaign_id, int(line_id),
                     ),
                 )  # fmt: skip
                 kept += cur.rowcount
         return kept
+
+    async def has_any(self, guild_id: int, campaign_id: str, model: str, kind: str) -> bool:
+        """Whether this campaign has any numbers of this kind for this model: the cheap check
+        before a search sends a question anywhere with nothing to compare it to."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM memory_vectors WHERE guild_id = %s AND campaign_id = %s"
+                " AND model = %s AND owner_kind = %s LIMIT 1",
+                (guild_id, campaign_id, model, kind),
+            )
+            return await cur.fetchone() is not None
 
     async def kept(
         self, guild_id: int, campaign_id: str, model: str, *, kind: str | None = None
@@ -180,6 +198,20 @@ class VectorStore:
                 "DELETE FROM memory_vectors WHERE guild_id = %s AND campaign_id = %s"
                 " AND owner_kind = %s AND owner_id = ANY(%s)",
                 (guild_id, campaign_id, kind, list(owner_ids)),
+            )
+            return cur.rowcount
+
+    async def drop_lines(self, guild_id: int, campaign_id: str, owner_ids: Collection[str]) -> int:
+        """The numbers of lines that still exist but must not be searched any more: their speaker
+        no longer agrees to be recorded, or the line is off topic. (A line that is deleted loses
+        its numbers by itself.)"""
+        if not owner_ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM memory_vectors WHERE guild_id = %s AND campaign_id = %s"
+                " AND owner_kind = 'line' AND owner_id = ANY(%s)",
+                (guild_id, campaign_id, list(owner_ids)),
             )
             return cur.rowcount
 
