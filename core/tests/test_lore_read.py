@@ -907,19 +907,47 @@ class TheRolesAndDirections(unittest.TestCase):
         )
         self.assertEqual(dict(lost), {"same_pair": 1})
 
-    def test_the_opposite_parent_lines_are_two_facts_not_one(self) -> None:
-        # "a is the parent of b" and "b is the parent of a" contradict: both are offered, in their
-        # own order, for the rules to flag, never merged into one
+    def test_the_opposite_parent_lines_contradict_so_neither_is_offered(self) -> None:
+        # "a is the parent of b" and "b is the parent of a" cannot both be true: the DM is shown
+        # neither, and both are counted so the summary adds up
         rows = [
             row("Brother Aldric", "parent", "Mira", self.quote()),
             row("Mira", "parent", "Brother Aldric", self.quote()),
         ]
         out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual((out, dict(lost)), ([], {"which_way": 2}))
+        # a third line about the pair is dropped too, whichever way round
+        more = [*rows, row("Brother Aldric", "family", "Mira", self.quote())]
+        out, lost = kept(more, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual((out, dict(lost)), ([], {"which_way": 3}))
+
+    def test_a_role_beats_plain_family_whichever_was_said_first(self) -> None:
+        for rows in (
+            [row("Mira", "family", "Brother Aldric", self.quote()),
+             row("Brother Aldric", "parent", "Mira", self.quote())],
+            [row("Brother Aldric", "parent", "Mira", self.quote()),
+             row("Mira", "family", "Brother Aldric", self.quote())],
+        ):  # fmt: skip
+            out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+            self.assertEqual(
+                [(c.a, c.b, c.words) for c in out], [("Brother Aldric", "Mira", "parent")]
+            )
+            self.assertEqual(dict(lost), {"same_pair": 1})
+
+    def test_the_queue_has_no_words_so_a_pair_is_offered_once_per_kind(self) -> None:
+        # (kept + dropped always adds up to the lines looked at)
+        rows = [
+            row("Brother Aldric", "mentor", "Mira", self.quote()),
+            row("Brother Aldric", "rival", "Mira", self.quote()),
+            row("Brother Aldric", "family", "Mira", self.quote()),
+        ]
+        out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
+        self.assertEqual(len(out) + sum(lost.values()), len(rows))
         self.assertEqual(
-            [(c.a, c.b, c.words) for c in out],
-            [("Brother Aldric", "Mira", "parent"), ("Mira", "Brother Aldric", "parent")],
+            sorted((c.how, c.words) for c in out),
+            [(FALLBACK_PREDICATE, "mentors"), ("kin_of", "")],
         )
-        self.assertFalse(lost)
+        self.assertEqual(dict(lost), {"same_pair": 1})  # the rival line, after the mentor line
 
     def test_a_plain_family_line_is_still_one_fact_either_way_round(self) -> None:
         rows = [
@@ -939,15 +967,6 @@ class TheRolesAndDirections(unittest.TestCase):
         )
         self.assertEqual(back_words("kin_of", "parent", kin.directional("parent")), "has a parent")
         self.assertEqual(link_words("kin_of", "", kin.directional("")), "is family of")
-
-    def test_two_different_relationships_between_one_pair_both_stand(self) -> None:
-        rows = [
-            row("Brother Aldric", "mentor", "Mira", self.quote()),
-            row("Brother Aldric", "rival", "Mira", self.quote()),
-        ]
-        out, lost = kept(rows, ["Brother Aldric", "Mira"], FAMILY)
-        self.assertEqual(sorted(c.words for c in out), ["is a rival of", "mentors"])
-        self.assertFalse(lost)
 
     def test_the_first_name_is_the_one_the_relationship_is_about(self) -> None:
         # a mentors b / b mentors a are two different facts and keep their own direction
@@ -1093,7 +1112,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c["args"][3:5] for c in calls], [("kin_of", "o")] * 2)  # (order as given)
 
     def test_a_paragraph_break_of_any_kind_stops_the_widening(self) -> None:
-        for sep in ("\n\n", "\r\n", "\u2029", "\u2028"):
+        for sep in ("\n\n", "\r\n", "\r", "\u2029", "\u2028", "\x85"):
             text = f"Brother Aldric ruled Greyfen.{sep}His sister, Mira, ran the farm."
             got, lost = connections(
                 [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text

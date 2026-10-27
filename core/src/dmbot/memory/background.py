@@ -728,6 +728,10 @@ def keep_connections(
     both_ways = {"kin_of", "ally_of", "enemy_of"}
     reader = Ends(ends, {*ends.values()})
     seen: set[tuple[str, str, str]] = set()
+    # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
+    kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
+    contradicted: set[tuple[str, str]] = set()
+    gone: set[int] = set()  # places in `out` that were offered and then withdrawn
     seen_picks: set[tuple[str, str, str, bool]] = set()
     out: list[Connection] = []
     answers = [list(piece) for piece in answers]
@@ -784,36 +788,60 @@ def keep_connections(
                 lost["spelling_clash"] += 1
                 continue
             ka, kb = name_key(a), name_key(b)
+            made = Connection(
+                a,
+                c.how,
+                b,
+                c.quote,
+                # secret when the end was written under a secret spelling, with a title in
+                # front of it too ("Lady Nightshade", #2591): the matched key counts
+                bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
+                c.words,
+            )
             role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
-            # A family role true of one name only ("a is the parent of b") has an order: "b is the
-            # parent of a" is a different fact (and a contradiction the rules will flag).
-            if c.how in both_ways and kb < ka and not role:
-                ka, kb = kb, ka
-            # One fact per pair and kind; two different catch-all relationships between one pair
-            # (a mentor who is also a rival) are two facts, told apart by their words.
-            kind = f"{c.how}|{name_key(c.words)}" if c.how == FALLBACK_PREDICATE else c.how
-            if role:
-                kind = f"kin_of|{role}"
-            if (ka, kind, kb) in seen:
-                lost["same_pair"] += 1
-                continue
-            seen.add((ka, kind, kb))
+            pair = (min(ka, kb), max(ka, kb))
+            if c.how == "kin_of":
+                # Family connections are stored once for a pair, in the order of a role ("a is the
+                # parent of b"): a role beats plain "family", two roles the same way round are one
+                # fact, and two roles the opposite way round contradict, so neither is believed
+                # (the DM is shown nothing to pick from).
+                if pair in contradicted:
+                    lost["which_way"] += 1
+                    continue
+                held = kin_held.get(pair)
+                if held is not None:
+                    where, held_role, held_order = held
+                    if role and held_role and held_order != (ka, kb):
+                        contradicted.add(pair)
+                        if where is not None:
+                            gone.add(where)
+                            lost["which_way"] += 1  # the first of the two, already offered
+                        lost["which_way"] += 1
+                        continue
+                    if not (role and not held_role and where is not None):
+                        lost["same_pair"] += 1  # (a plain line, or the same role again)
+                        continue
+                    lost["same_pair"] += 1  # the plain line is dropped for the role
+                    out[where] = made
+                    kin_held[pair] = (where, role, (ka, kb))
+                    continue
+                kin_held[pair] = (None, role, (ka, kb))
+            else:
+                if c.how in both_ways and kb < ka:
+                    ka, kb = kb, ka
+                # One fact per pair and kind: the queue's key has no words, so a second
+                # catch-all line for the pair (a mentor who is also a rival) is not offered.
+                if (ka, c.how, kb) in seen:
+                    lost["same_pair"] += 1
+                    continue
+                seen.add((ka, c.how, kb))
             if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
                 lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
-            out.append(
-                Connection(
-                    a,
-                    c.how,
-                    b,
-                    c.quote,
-                    # secret when the end was written under a secret spelling, with a title in
-                    # front of it too ("Lady Nightshade", #2591): the matched key counts
-                    bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
-                    c.words,
-                )
-            )
-            if len(out) >= cap:
+            out.append(made)
+            if c.how == "kin_of":
+                kin_held[pair] = (len(out) - 1, role, (ka, kb))
+            if len(out) - len(gone) >= cap:
                 lost["over_cap"] += total - looked  # the rest are not looked at: all counted
-                return out
-    return out
+                return [x for i, x in enumerate(out) if i not in gone]
+    return [x for i, x in enumerate(out) if i not in gone]
