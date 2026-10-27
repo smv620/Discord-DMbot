@@ -66,6 +66,7 @@ CONNECTIONS = {
     "owns": "owns",
     "works for": "serves",
     "knows": "knows",
+    "sworn to": "sworn_to",  # an oath, vow, pact or fealty
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"

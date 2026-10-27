@@ -520,6 +520,24 @@ class TheLoreWords(unittest.TestCase):
             self.assertEqual([(c.how, c.words) for c in got], [(FALLBACK_PREDICATE, label)], word)
             self.assertFalse(lost)
 
+    def test_sworn_to_is_the_kind_the_core_has_for_an_oath(self) -> None:
+        got, lost = connections(
+            [
+                row(
+                    "Mira",
+                    "sworn to",
+                    "Brother Aldric",
+                    "Mira, called the Fox, is the niece of Brother Aldric",
+                )
+            ]
+        )
+        self.assertEqual([(c.how, c.words) for c in got], [("sworn_to", "")])
+        self.assertFalse(lost)
+        enum = bg.schema()["properties"]["connections"]["items"]["properties"]["how"]["enum"]
+        self.assertIn("sworn to", enum)
+        self.assertIn("is sworn to (an oath, vow, pact or fealty)", lr.read_instructions())
+        self.assertIn("sworn to = a is sworn to b", lr.shape_instructions({}))
+
     def test_serves_and_ally_are_the_kinds_dmbot_keeps_already(self) -> None:
         got, _ = connections(
             [
