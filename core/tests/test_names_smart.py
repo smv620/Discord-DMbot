@@ -433,8 +433,8 @@ class ThePrivacy(Smart):
         await self.link("enemy_of", self.mira, self.auril)
         await self.sql(
             "UPDATE memory_relations SET unrevealed = true"
-            " WHERE subject_id = %s AND object_id = %s",
-            self.mira, self.auril,
+            " WHERE (subject_id, object_id) IN ((%s, %s), (%s, %s))",
+            self.mira, self.auril, self.auril, self.mira,
         )  # fmt: skip
         self.assertNotIn("Auril", await self.text_of(self.mira))
 
