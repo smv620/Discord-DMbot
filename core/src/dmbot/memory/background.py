@@ -22,6 +22,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from dmbot.memory import kin
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
@@ -81,10 +82,10 @@ LORE_WORDS = {
 }
 # Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
 # parent of b" (the role belongs to the first name, as `kin` reads it).
-LORE_KIN = ("parent", "child")
-# "a is an apprentice of b" is "b mentors a": kept that way round, so the two ways of saying it are
-# one fact and are never offered twice.
-LORE_REVERSED = {"apprentice": "mentor"}
+LORE_KIN = ("parent",)
+# "a is an apprentice of b" is "b mentors a", and "a is a child of b" is "b is the parent of a":
+# kept that way round, so the two ways of saying it are one fact and are never offered twice.
+LORE_REVERSED = {"apprentice": "mentor", "child": "parent"}
 ALL_WORDS = (*CONNECTIONS, *LORE_KEPT, *LORE_WORDS, *LORE_KIN, *LORE_REVERSED)  # `how` answers
 MAX_OWN_KINDS = 20  # the campaign's own relationships offered to the AI as well
 # A stated relationship no fixed kind and no campaign term fits (#2454): kept on the catch-all
@@ -293,6 +294,9 @@ PRONOUNS = frozenset(
      "them", "its", "who", "whose", "whom"}
 )  # fmt: skip
 _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
+# Every way a document ends a paragraph or a line, not only "\n" (a pasted text may use the
+# Unicode separators).
+_BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 
 def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
@@ -311,9 +315,10 @@ def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
     pattern = r"\s+".join(re.escape(w) for w in words)
     for hit in re.finditer(pattern, piece, re.I):  # (a quote may stand in the text more than once)
         start, end = hit.start(), hit.end()
-        if "\n" in piece[start:end]:
+        if _BREAK.search(piece[start:end]):
             continue
-        paragraph = piece.rfind("\n", 0, start) + 1
+        breaks = list(_BREAK.finditer(piece, 0, start))
+        paragraph = breaks[-1].end() if breaks else 0
         before = piece[paragraph:start]
         starts = [0] + [m.end() for m in _SENTENCE_END.finditer(before)]
         cut = starts[-2] if len(starts) >= 2 else 0
@@ -779,11 +784,16 @@ def keep_connections(
                 lost["spelling_clash"] += 1
                 continue
             ka, kb = name_key(a), name_key(b)
-            if c.how in both_ways and kb < ka:
+            role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
+            # A family role true of one name only ("a is the parent of b") has an order: "b is the
+            # parent of a" is a different fact (and a contradiction the rules will flag).
+            if c.how in both_ways and kb < ka and not role:
                 ka, kb = kb, ka
             # One fact per pair and kind; two different catch-all relationships between one pair
             # (a mentor who is also a rival) are two facts, told apart by their words.
             kind = f"{c.how}|{name_key(c.words)}" if c.how == FALLBACK_PREDICATE else c.how
+            if role:
+                kind = f"kin_of|{role}"
             if (ka, kind, kb) in seen:
                 lost["same_pair"] += 1
                 continue
