@@ -2221,7 +2221,7 @@ class RecapFeatures:
             return await self.recaps.saved_lists(campaign.guild_id, campaign.id, session_at)
         except Exception:
             log.exception("Recap again: couldn't read whether lists were saved")
-            return SavedLists(None, False)
+            return SavedLists(None, None)  # (neither is known: warn, and do not claim an old one)
 
     async def recap_again(
         self, campaign: Campaign, session_at: int, user_id: int, *, replace_ok: bool = False

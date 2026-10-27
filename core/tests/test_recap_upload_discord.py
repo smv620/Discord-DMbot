@@ -7,7 +7,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.recaps.discord import RecapFeatures
 from dmbot.ui import recap_upload as ru
@@ -20,7 +20,7 @@ OTHER = 4242
 
 
 def talk(store: Any, campaign: Any, user: int = fx.DM) -> tuple[Any, Any]:
-    bot = SimpleNamespace(recaps=store)
+    bot: Any = SimpleNamespace(recaps=store)
 
     async def saved_lists(campaign: Any, at: int, user: int) -> Any:
         return await RecapFeatures.recap_saved_lists(bot, campaign, at, user)
@@ -148,9 +148,33 @@ class Adding(Base):
         async def broken(*args: Any) -> Any:
             raise RuntimeError("down")
 
-        interaction.client.recap_saved_lists = broken
+        with patch.object(self.store, "saved_lists", broken):
+            await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
+        # (not known whether a finished recap stands, so no promise about an old one)
+        self.assertEqual(said(send), ru.ASK_LISTS + "\n" + lists_warning(None))
+
+    async def test_a_failed_recap_with_saved_lists_is_asked_about_before_the_door_replaces_it(
+        self,
+    ) -> None:
+        interaction, send = talk(self.store, self.one)
+        await ru.submit(interaction, self.draft(rights=True))
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET state = 'failed', beats = %s::jsonb"
+                " WHERE guild_id = 1 AND session_at = 700",
+                ('[{"saved": true, "present": ["Mira"]}]',),
+            )
         await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
-        self.assertEqual(said(send), ru.ASK_REPLACE + "\n" + lists_warning(None))
+        self.assertEqual(said(send), ru.ASK_LISTS + "\n" + lists_warning(1))
+        job = await self.store.get(1, self.one.id, 700)
+        assert job is not None
+        self.assertEqual(job.summary, TEXT)  # (the door was not reached: nothing was replaced)
+        view = send.await_args.kwargs["view"]
+        yes = next(c for c in view.children if getattr(c, "label", "") == "Replace it")
+        await yes.callback(interaction)
+        job = await self.store.get(1, self.one.id, 700)
+        assert job is not None
+        self.assertEqual(job.summary, "A new telling.")
 
     async def test_somebody_who_is_not_a_dm_adds_nothing(self) -> None:
         interaction, send = talk(self.store, self.one, user=OTHER)

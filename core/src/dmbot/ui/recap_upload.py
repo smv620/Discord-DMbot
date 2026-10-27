@@ -21,7 +21,6 @@ import discord
 from discord import app_commands
 
 from dmbot.recaps import uploaded
-from dmbot.recaps.store import SavedLists
 from dmbot.ui.dmbot_commands import NOT_IN_SERVER, _bot, _tell, dmbot_group
 from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS, TIMEOUT_S, date_label, lists_warning
 from dmbot.ui.recap_share import session_numbers
@@ -44,6 +43,7 @@ STORED = (
 )
 ASK_RIGHTS = uploaded.RIGHTS_ASK + " Is that so?"
 ASK_REPLACE = "This session already has a recap. Replace it? The old one is kept as an earlier one."
+ASK_LISTS = "This session's recap will be replaced by the one you are adding."
 OUTCOMES = {
     "busy": "DMbot is writing or sending this session's recap right now. Try again when it's done.",
     "bad_text": uploaded.BAD_TEXT,
@@ -82,6 +82,19 @@ async def submit(interaction: discord.Interaction, draft: Draft) -> None:
         return
     given = " ".join(draft.title.split())[: uploaded.TITLE_MAX]
     title = given or uploaded.title_for(clean, author)
+    held = replace(draft, text=clean, author=author, title=title)
+    if not draft.replace_ok:
+        # Replacing starts the scenes afresh and so deletes the "who was there" lists the DM saved
+        # (#2727). Asked before the door is, because the door asks about a finished recap only: a
+        # failed or held one with saved lists would otherwise be replaced without a word.
+        found = await bot.recap_saved_lists(draft.campaign, draft.session_at, interaction.user.id)
+        if found is not None and (found.count is None or found.count > 0):
+            await _tell(
+                interaction,
+                (ASK_REPLACE if found.finished else ASK_LISTS) + "\n" + lists_warning(found.count),
+                view=AskView(held, "Replace it", rights=False),
+            )
+            return
     try:
         outcome = await bot.recaps.upload(
             draft.campaign.guild_id,
@@ -98,29 +111,12 @@ async def submit(interaction: discord.Interaction, draft: Draft) -> None:
         log.exception("Add a recap from Discord failed")
         await _tell(interaction, FAILED)
         return
-    held = replace(draft, text=clean, author=author, title=title)
     if outcome == "stored":
         await _tell(interaction, STORED.format(author=discord.utils.escape_markdown(author)))
     elif outcome == "needs_rights":
         await _tell(interaction, ASK_RIGHTS, view=AskView(held, "Yes, they said OK", rights=True))
     elif outcome == "needs_confirm":
-        # Replacing starts the scenes afresh and so deletes the "who was there" lists the DM saved
-        # (#2727): said in the same question, as the website's is.
-        warning = ""
-        try:
-            found = await bot.recap_saved_lists(
-                draft.campaign, draft.session_at, interaction.user.id
-            )
-        except Exception:
-            log.exception("Add a recap from Discord: couldn't ask what is saved")
-            found = SavedLists(None, False)
-        if found is not None and (found.count is None or found.count > 0):
-            warning = "\n" + lists_warning(found.count)
-        await _tell(
-            interaction,
-            ASK_REPLACE + warning,
-            view=AskView(held, "Replace it", rights=False),
-        )
+        await _tell(interaction, ASK_REPLACE, view=AskView(held, "Replace it", rights=False))
     else:
         await _tell(interaction, OUTCOMES.get(outcome, NOT_YOURS))
 

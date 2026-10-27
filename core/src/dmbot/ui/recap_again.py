@@ -20,7 +20,6 @@ from typing import Any
 
 import discord
 
-from dmbot.recaps.store import SavedLists
 from dmbot.ui.dmbot_commands import NOT_IN_SERVER, _bot, _tell, dmbot_group
 from dmbot.ui.recap_share import session_numbers
 
@@ -36,6 +35,7 @@ ASK = (
     "The old one stays until you approve the new one."
 )
 KEPT_OLD = "👍 Nothing was changed. The recap stays as it is."
+NOTHING_CHANGED = "👍 Nothing was changed."
 LISTS_ONE = "You saved who was in 1 scene of this recap. Making it again deletes that list."
 LISTS_MANY = "You saved who was in {n} scenes of this recap. Making it again deletes those lists."
 LISTS_UNREADABLE = (
@@ -43,6 +43,7 @@ LISTS_UNREADABLE = (
     "If you did, making it again deletes those lists."
 )
 LISTS_ASK = "Make it again anyway?"
+OLD_STAYS = "The old one stays until you approve the new one."
 QUEUED = (
     "📜 Writing the recap of this session. It's on your recap page when it's ready. "
     "Nothing goes to the table until you say so."
@@ -129,21 +130,22 @@ async def start(
     *,
     replace_ok: bool = False,
     lists_ok: bool = False,
+    keeps_old: bool | None = None,
 ) -> None:
     """Ask for the recap and say what happened, privately. An existing one is asked about first,
     and so is a recap whose saved "who was there" lists would be deleted (#2727): that question
-    comes before anything is started, and "no" changes nothing."""
+    comes before anything is started, and "no" changes nothing. `keeps_old`: whether a finished
+    recap stays until the new one is approved (None: say what `replace_ok` says)."""
     bot = _bot(interaction)
     if not lists_ok:
-        try:
-            found = await bot.recap_saved_lists(campaign, session_at, interaction.user.id)
-        except Exception:
-            log.exception("Make the recap again: couldn't ask what is saved")
-            found = SavedLists(None, False)
+        found = await bot.recap_saved_lists(campaign, session_at, interaction.user.id)
         if found is not None and (found.count is None or found.count > 0):
+            ask = lists_warning(found.count) + "\n" + LISTS_ASK
+            if found.finished:
+                ask += "\n" + OLD_STAYS
             await _tell(
                 interaction,
-                lists_warning(found.count) + "\n" + LISTS_ASK,
+                ask,
                 view=ConfirmView(campaign.id, session_at, lists=True, finished=found.finished),
             )
             return
@@ -158,7 +160,8 @@ async def start(
     if outcome == "needs_confirm":
         await _tell(interaction, ASK, view=ConfirmView(campaign.id, session_at))
     elif outcome == "queued":
-        await _tell(interaction, QUEUED_KEEPING if replace_ok else QUEUED)
+        keeping = replace_ok if keeps_old is None else keeps_old
+        await _tell(interaction, QUEUED_KEEPING if keeping else QUEUED)
     else:
         await _tell(interaction, WORDS.get(outcome) or FAILED)
 
@@ -241,14 +244,22 @@ class ConfirmView(discord.ui.View):
     """Asked once before an existing recap is started over, or before saved "who was there" lists
     are deleted (#2727). `lists`: the question is the lists one, so a yes does not ask again;
     `finished`: a finished recap stands too, which the same yes may replace (the old one stays
-    until the new one is approved)."""
+    until the new one is approved). False or None: there is nothing finished to keep, so the
+    words do not talk about an old recap."""
 
     def __init__(
-        self, campaign_id: str, session_at: int, *, lists: bool = False, finished: bool = True
+        self,
+        campaign_id: str,
+        session_at: int,
+        *,
+        lists: bool = False,
+        finished: bool | None = True,
     ) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id, self.session_at = campaign_id, session_at
         self.lists, self.finished = lists, finished
+        if lists and not finished:
+            self.yes.label, self.no.label = "Make it again", "Leave it"
 
     @discord.ui.button(label="Make a new one", style=discord.ButtonStyle.primary)
     async def yes(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
@@ -258,13 +269,17 @@ class ConfirmView(discord.ui.View):
                 interaction,
                 campaign,
                 self.session_at,
-                replace_ok=self.finished if self.lists else True,
+                # The one yes also answers the replace question, so it is not asked twice. Where
+                # it is not known whether a recap stands, replacing is allowed and nothing is
+                # promised about an old one.
+                replace_ok=True if self.finished is None or not self.lists else self.finished,
                 lists_ok=self.lists,
+                keeps_old=bool(self.finished) if self.lists else None,
             )
 
     @discord.ui.button(label="Keep the old one", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
-        await _tell(interaction, KEPT_OLD)
+        await _tell(interaction, KEPT_OLD if self.finished else NOTHING_CHANGED)
 
 
 class SessionPick(discord.ui.View):

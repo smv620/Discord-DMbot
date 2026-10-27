@@ -33,7 +33,7 @@ class Lists(Again):
 
     def me(self, *, again: str = "queued") -> Any:
         """The bot as the question sees it: the real read, a recorded start."""
-        me = SimpleNamespace(recaps=self.store, campaigns=self.campaigns, started=[])
+        me: Any = SimpleNamespace(recaps=self.store, campaigns=self.campaigns, started=[])
 
         async def recap_again(
             campaign: Any, at: int, user: int, *, replace_ok: bool = False
@@ -133,6 +133,7 @@ class TheQuestion(Lists):
         )
         self.assertEqual(me.started, [])  # (nothing is started by asking)
         self.assertTrue(view.lists and view.finished)
+        self.assertTrue(text.endswith(ra.OLD_STAYS))  # (a finished recap stands: said once)
 
     async def test_one_scene_is_said_in_the_singular(self) -> None:
         self.assertIn("1 scene of this recap", ra.lists_warning(1))
@@ -168,11 +169,16 @@ class TheQuestion(Lists):
         said, interaction = await self.asked(me)
         view = said[0][1]
         self.assertFalse(view.finished)
+        self.assertNotIn(ra.OLD_STAYS, said[0][0])
+        self.assertEqual((view.yes.label, view.no.label), ("Make it again", "Leave it"))
         told: list[str] = []
 
         async def tell(i: Any, text: str, *, view: Any = None) -> None:
             told.append(text)
 
+        with patch.object(ra, "_tell", tell):
+            await view.no.callback(interaction)
+        self.assertEqual((told, me.started), ([ra.NOTHING_CHANGED], []))
         with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
             await view.yes.callback(interaction)
         self.assertEqual(me.started, [(SESSION, fx.DM, False)])
@@ -208,7 +214,18 @@ class TheQuestion(Lists):
         ((text, view),) = said
         self.assertIn(ra.LISTS_UNREADABLE, text)
         self.assertEqual(me.started, [])
-        self.assertFalse(view.finished)  # (not known: the next step asks about a stand-in recap)
+        self.assertIsNone(view.finished)  # (not known whether a recap stands)
+        told: list[str] = []
+
+        async def tell(i: Any, text: str, *, view: Any = None) -> None:
+            told.append(text)
+
+        me.recaps = self.store  # (readable again by the time the DM answers)
+        with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
+            await view.yes.callback(self.interaction())
+        # one question, not two: the yes also allows replacing, promising nothing about an old one
+        self.assertEqual(me.started, [(SESSION, fx.DM, True)])
+        self.assertEqual(told[-1], ra.QUEUED)
 
     async def test_only_a_dm_can_answer_the_question(self) -> None:
         await self.lines(SESSION)

@@ -279,10 +279,10 @@ _PLOT_OPEN = (
 class SavedLists:
     """What making a recap again would throw away (#2727): how many scenes have a "who was there"
     list the DM saved (None: it could not be read, so the question warns anyway) and whether a
-    finished recap stands (which the DM is asked about anyway)."""
+    finished recap stands (which the DM is asked about anyway; None: not known)."""
 
     count: int | None
-    finished: bool
+    finished: bool | None
 
 
 class RecapStore:
