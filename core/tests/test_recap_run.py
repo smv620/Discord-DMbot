@@ -105,11 +105,9 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         beats = [x for x in lines if x.startswith("Beats: ")]
         self.assertEqual(len(away), 1)
         self.assertEqual(len(beats), 1)
-        import re
-
-        self.assertRegex(away[0], r"^Away: notes \d+, fixed \d+, rounds \d+$")
+        self.assertRegex(away[0], r"^Away: (notes \d+, fixed \d+, rounds \d+|not run)$")
         self.assertRegex(beats[0], r"^Beats: windows \d+, parts \d+, beats \d+$")
-        self.assertIsNotNone(re.search(r"beats [1-9]\d*$", beats[0]))  # the sheet had beats
+        self.assertRegex(beats[0], r"beats [1-9]\d*$")  # the sheet had beats
         for word in ("Mira", "Oskar", "Greywater", "keep", "torch"):
             self.assertNotIn(word, away[0] + beats[0])
 
@@ -131,6 +129,22 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         )
         # not reported: nothing is claimed fixed
         self.assertEqual(rv.count_lines(job, None)[0], "Away: notes 1, fixed 0, rounds 2")
+        # the exact count of what the final text still has wins over the notes
+        self.assertEqual(rv.count_lines(job, 4, 0)[0], "Away: notes 0, fixed 4, rounds 2")
+
+    def test_a_check_that_never_ran_says_so_and_odd_stored_data_never_breaks_the_report(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+
+        job = SimpleNamespace(critics=None, split={"parts": "x"}, window_count=1, beats=None)
+        self.assertEqual(
+            rv.count_lines(job, None), ["Away: not run", "Beats: windows 1, parts 0, beats 0"]
+        )
+
+    async def test_a_run_with_the_critics_off_says_the_away_check_was_not_run(self) -> None:
+        out = await run.run_text(inputs(), happy(), fx.Canned())
+        self.assertIn("Away: not run", run.report(out, {}))
 
     async def test_a_run_that_fails_its_beat_sheet_twice_says_why_for_each_try(self) -> None:
         # Both tries cite no real line, so the sheet is refused twice (#1997).

@@ -156,7 +156,7 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
 
 def count_lines(out: Outcome) -> list[str]:
     """The away check's and the beat sheet's counts (#2738): see `review.count_lines`."""
-    return rv.count_lines(out.job, out.counts.get("away_found"))
+    return rv.count_lines(out.job, out.counts.get("away_found"), out.counts.get("away_left"))
 
 
 def split_lines(out: Outcome) -> list[str]:
@@ -241,7 +241,7 @@ async def run_text(
         ),
         on_note=notes.append,
         on_call=calls.append,
-        on_count=lambda name, n: counts.__setitem__(name, counts.get(name, 0) + n),
+        on_count=counts.__setitem__,
         creative=creative_c,
         formatting=formatting_c,
         critics=critics,

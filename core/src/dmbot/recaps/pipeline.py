@@ -1616,6 +1616,7 @@ class RecapWorker:
             # What a reader who was away could still not follow, after the writer's one fix: a
             # note for the DM, never another round (#2680).
             sentences_now, left = self._away(job.summary, sheet, inputs)
+            self._count("away_left", len(left))
             return await self._save_loop(
                 gid, cid, job,
                 replace(loop, done=True, notes=unchecked + away.notes(left, sentences_now)),
@@ -1627,6 +1628,15 @@ class RecapWorker:
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
         )
+
+    def _count(self, name: str, number: int) -> None:
+        """A count for a test run's report (#2738); a callback that fails never fails the recap."""
+        if self._on_count is None:
+            return
+        try:
+            self._on_count(name, number)
+        except Exception:
+            log.exception("Recap: a test run's count hook failed")
 
     def _away_notes(
         self, summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
@@ -1778,8 +1788,7 @@ class RecapWorker:
                 "Recap: the away-reader check found %d: %s",
                 len(found_away), sorted({f.kind for f in found_away}),
             )  # fmt: skip
-            if self._on_count is not None:
-                self._on_count("away_found", len(found_away))
+            self._count("away_found", len(found_away))
         changes = [*(loop.motives or ()), *plot, *style, *asked_away]
         hard, soft = cr.count(changes)
         log.info("Recap: critics reading %d: %d hard, %d soft", loop.round + 1, hard, soft)
@@ -2057,9 +2066,9 @@ class RecapWorker:
                 )  # fmt: skip
             cut = len(best.cuts)
         # (the away notes are read again from the text that is kept, cuts and all)
-        kept_notes = tuple(n for n in best.notes if not away.is_note(n)) + self._away_notes(
-            prose.summary, sheet, inputs
-        )
+        away_left = self._away_notes(prose.summary, sheet, inputs)
+        self._count("away_left", len(away_left))
+        kept_notes = tuple(n for n in best.notes if not away.is_note(n)) + away_left
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
             why, loop.round, len(kept_notes), cut,

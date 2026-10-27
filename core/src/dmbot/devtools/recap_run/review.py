@@ -503,21 +503,28 @@ def write_page(folder: Path) -> Path:
     return target
 
 
-def count_lines(job: Any, away_found: int | None) -> list[str]:
+def count_lines(job: Any, away_found: int | None, away_left: int | None = None) -> list[str]:
     """The away check's and the beat sheet's counts (#2738), numbers only: how many notes are left
-    for the DM, how many of the first finds the writer's fix cleared, how many readings; how many
-    windows of the transcript, parts of the opening and beats. Never a word of the draft or the
-    transcript, so two variants can be compared. `away_found`: what the first reading found (None
-    when not reported: then nothing is claimed fixed)."""
+    for the DM, how many of the first finds the writer's fix cleared (net: found minus left, as the
+    check read the text that stands), how many readings; how many windows of the transcript, parts
+    of the opening and beats. Never a word of the draft or the transcript, so two variants can be
+    compared. `away_found`: what the first reading found; None when the check never ran (critics
+    off, or the job ended before its first reading): then it says so, and does not look like a
+    run that found nothing. `away_left`: what the final text still has, when reported."""
     from dmbot.recaps import away, critics
     from dmbot.recaps import split as sp
 
     loop = critics.loop_from_json(job.critics)
-    left = sum(1 for n in loop.notes if away.is_note(n))
-    found = left if away_found is None else away_found
+    if away_found is None and loop.round == 0:
+        away_line = "Away: not run"
+    else:
+        left = away_left if away_left is not None else sum(1 for n in loop.notes if away.is_note(n))
+        found = left if away_found is None else away_found
+        away_line = f"Away: notes {left}, fixed {max(found - left, 0)}, rounds {loop.round}"
     split = sp.from_json(job.split)
+    beats = job.beats if isinstance(job.beats, list) else []
     return [
-        f"Away: notes {left}, fixed {max(found - left, 0)}, rounds {loop.round}",
+        away_line,
         f"Beats: windows {job.window_count}, parts {len(split.parts) if split else 0}, "
-        f"beats {len(job.beats)}",
+        f"beats {len(beats)}",
     ]
