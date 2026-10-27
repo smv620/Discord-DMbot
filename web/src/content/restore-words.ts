@@ -3,11 +3,6 @@
 // checks what it can see in the file; DMbot checks the plan, the free campaign slot and the rights again when it
 // loads it, and says what to do if it can't.
 //
-// Switched off until the bot applies a website restore (#2746) and the website server is deployed with the
-// matching change (core web/restores.py, migration 0251). Flip it with the What's new entry "Load a backup from the
-// website" (docs/GO_LIVE.md).
-export const WEB_RESTORE_LIVE = false;
-
 /** The limits Discord's `/dmbot restore` has (core campaigns/store.py MAX_BACKUP_BYTES, campaigns/parts.py
  * PART_READ_BYTES, web/restores.py MAX_PARTS). The API says no past them; the page says so first. */
 export const RESTORE_MAX_MB = 25;
@@ -46,6 +41,7 @@ export const restoreWords = {
   withoutParts: "Bring it back without the transcripts",
   noTranscriptsNote:
     "It will come back without its transcripts. To add them later, load the copy again with all of its files.",
+  theCampaign: "the campaign you picked",
   confirmHeading: "Ready to load it",
   confirmNew: (name: string): string => `This will make a new campaign from the copy of ${name}. You will be its DM.`,
   confirmReplace: (name: string, target: string): string =>
