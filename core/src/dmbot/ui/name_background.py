@@ -533,7 +533,12 @@ class BackgroundOffer(_Menu):
                 queued,
                 ", an answer cut off" if cut else "",
                 read.stats.links_listed,
-                ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
+                ", ".join(
+                    f"{k}={n}"
+                    for k, n in sorted(read.stats.dropped.items())
+                    if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
+                )
+                or "nothing",
             )  # (counts only: the questions are the DM's own words, shown only to them)
             await summary(
                 interaction,
@@ -637,6 +642,7 @@ def _waiting_note(queued: int) -> str:
 KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
 LEFT_OUT = (
     "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
+    "spelling_clash",
 )  # fmt: skip
 NOT_READ = ("cut_before_check", "over_cap")
 
