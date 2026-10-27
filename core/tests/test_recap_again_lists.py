@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from dmbot.recaps.discord import RecapFeatures
 from dmbot.recaps.store import SavedLists
@@ -258,16 +258,45 @@ class TheQuestion(Lists):
         self.assertEqual(me.started, [(SESSION, fx.DM, False)])
         self.assertEqual(told[-1], ra.QUEUED)  # (no "the recap you had stays")
 
-    async def test_a_recap_without_saved_lists_is_asked_as_before(self) -> None:
+    async def test_an_unapproved_draft_without_lists_is_said_to_be_replaced_not_kept(self) -> None:
         await self.lines(SESSION)
-        await self.written(SESSION)
+        await self.written(SESSION)  # (a draft nobody approved: the door wipes it)
         await self.beats(False, False)
         me = self.me(again="needs_confirm")
-        said, _ = await self.asked(me)
+        said, interaction = await self.asked(me)
         ((text, view),) = said
-        self.assertEqual(text, ra.ASK)
+        self.assertEqual(text, ra.ASK_DRAFT)
+        self.assertNotIn("stays", text)
         self.assertFalse(view.lists)
         self.assertEqual(me.started, [(SESSION, fx.DM, False)])
+        told: list[str] = []
+
+        async def tell(i: Any, text: str, *, view: Any = None) -> None:
+            told.append(text)
+
+        me.recap_again = AsyncMock(return_value="queued")
+        with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
+            await view.yes.callback(interaction)
+        self.assertEqual(told[-1], ra.QUEUED)  # (no "the recap you had stays")
+
+    async def test_an_approved_recap_without_lists_is_asked_with_the_stays_promise(self) -> None:
+        await self.lines(SESSION)
+        await self.written(SESSION, approved=True)
+        await self.beats(False)
+        me = self.me(again="needs_confirm")
+        said, interaction = await self.asked(me)
+        ((text, view),) = said
+        self.assertEqual(text, ra.ASK_KEPT)
+        self.assertIn("The old one stays until you approve the new one.", text)
+        told: list[str] = []
+
+        async def tell(i: Any, text: str, *, view: Any = None) -> None:
+            told.append(text)
+
+        me.recap_again = AsyncMock(return_value="queued")
+        with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
+            await view.yes.callback(interaction)
+        self.assertEqual(told[-1], ra.QUEUED_KEEPING)
 
     async def test_a_session_with_no_recap_goes_straight_ahead(self) -> None:
         await self.lines(SESSION)
