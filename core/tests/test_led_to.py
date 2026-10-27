@@ -12,6 +12,7 @@ from dmbot.memory import threads as th
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import OPEN, MemoryRuleError
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
+from dmbot.memory.store import LED_TO_LOOP, UNDO_LED_TO_LOOP
 from dmbot.ui import threads as ui
 from tests import speed
 from tests.test_memory_store import DM, GUILD_A, GUILD_B, ConfirmedMemoryTest
@@ -243,23 +244,43 @@ class Chain(ConfirmedMemoryTest):
             self.assertEqual((await self.memory.entity(GUILD_A, self.c, name)).status, "confirmed")  # type: ignore[union-attr]
 
     async def test_an_undo_that_would_bring_back_a_loop_is_refused(self) -> None:
-        from dmbot.memory.store import CHANGED_SINCE
-
         first = (await self.link(self.heir, self.tower)).value
         removed = await self.memory.update_relation(
             GUILD_A, self.c, first.id, source="dm", status="rejected"
         )
+        assert removed.batch is not None
         await self.link(self.tower, self.heir)  # allowed: heir → tower is no longer live
         with self.assertRaises(MemoryRuleError) as refused:
             await self.memory.undo(GUILD_A, self.c, removed.batch)
-        self.assertEqual(str(refused.exception), CHANGED_SINCE)
+        self.assertEqual(str(refused.exception), UNDO_LED_TO_LOOP)
         self.assertEqual([e.name for e in (await self.info(self.heir)).led_to], [])
+
+    async def test_keeping_a_waiting_guess_that_would_close_a_loop_is_refused(self) -> None:
+        first = (await self.link(self.heir, self.tower)).value
+        await self.memory.update_relation(GUILD_A, self.c, first.id, source="dm", status="rejected")
+        back = (await self.link(self.tower, self.heir)).value
+        async with self.db.guild(GUILD_A) as conn:  # the extractor's guess, waiting for the DM
+            await conn.execute(
+                "UPDATE memory_relations SET status = 'proposed', secret = true,"
+                " source = 'extractor' WHERE id = %s",
+                (back.id,),
+            )
+        await self.memory.update_relation(
+            GUILD_A, self.c, first.id, source="dm", status="confirmed"
+        )  # heir → tower is live again; the guess is not
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.update_relation(
+                GUILD_A, self.c, back.id, source="dm", status="confirmed"
+            )
+        self.assertEqual(str(refused.exception), LED_TO_LOOP)
+        self.assertEqual([e.name for e in (await self.info(self.tower)).led_to], [])
 
     async def test_an_undo_with_no_loop_still_brings_the_link_back(self) -> None:
         first = (await self.link(self.heir, self.tower)).value
         removed = await self.memory.update_relation(
             GUILD_A, self.c, first.id, source="dm", status="rejected"
         )
+        assert removed.batch is not None
         await self.memory.undo(GUILD_A, self.c, removed.batch)
         self.assertEqual([e.name for e in (await self.info(self.heir)).led_to], ["The tower"])
 

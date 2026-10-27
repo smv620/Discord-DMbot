@@ -193,6 +193,7 @@ PARTY_NAME = "The party"
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
+UNDO_LED_TO_LOOP = "Undoing this would make a loop of 'led to' links. Take one of them away first."
 MERGE_LED_TO_LOOP = (
     "These two can't be joined yet: one led to something that led to the other, and joining them "
     "would make a loop. Take away one of those “led to” links first."
@@ -4930,8 +4931,12 @@ async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:
         if _live_led_to_link(link):
             try:
                 await _check_led_to_live(w, link.id, link.subject_id, link.object_id)
-            except MemoryRuleError:
-                raise MemoryRuleError(CHANGED_SINCE) from None
+            except MemoryRuleError as refused:
+                # The loop gets its own words so the DM knows what to do; any other refusal
+                # (an end no longer confirmed) is the usual "changed since".
+                raise MemoryRuleError(
+                    UNDO_LED_TO_LOOP if str(refused) == LED_TO_LOOP else CHANGED_SINCE
+                ) from None
 
 
 async def _check_led_to_live(w: Changes, relation_id: str | None, start: str, end: str) -> None:
