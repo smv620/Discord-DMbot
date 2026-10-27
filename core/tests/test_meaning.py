@@ -6,6 +6,7 @@ A fake Voyage that puts words about the same thing at the same point. Invented n
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 from dmbot.ai import AIOutOfFunds
 from dmbot.memory import meaning as mn
@@ -167,7 +168,7 @@ class Finding(DatabaseTest):
         self.assertIn(self.ids["Bram"], safe)
 
     async def test_for_players_matches_the_websites_rules_each_case_live(self) -> None:
-        cases: dict[str, dict[str, object]] = {
+        cases: dict[str, dict[str, Any]] = {
             "secret name": dict(alias="Cook"),
             "plot note": dict(type="thread"),
             "quest": dict(type="quest"),
