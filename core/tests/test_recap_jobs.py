@@ -21,6 +21,7 @@ from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.recaps.store import Job, RecapSection, RecapStore
+from dmbot.recaps.text import CUE
 from dmbot.transcript.models import Line
 from tests import recap_fixtures as fx
 from tests import test_recap_significance as st_sig
@@ -1070,6 +1071,80 @@ class Working(WorkerHarness):
         self.assertEqual(len(self.careful.sent), 1)  # one revision, never two
         self.assertEqual(job.grade["faithful"], 4)  # one flag: not below the bar
         self.assertTrue(any("Cut 1 sentence" in x for x in notes))
+
+    async def test_a_flagged_ending_is_cut_and_the_recap_still_stands(self) -> None:
+        """#2741: the flagged sentence may be the one that ends the session. The recap loses it,
+        and is not lost with it."""
+        last = len(rd.sentences_of(fx.SUMMARY))
+        flag = fx.facts_answer([(last, "invented")])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        self.assertNotIn("Neither of them moved", job.summary)
+        self.assertIn("Mira lifted her blade", job.summary)  # the rest stands
+        self.assertEqual(job.last_error, "")
+
+    async def test_several_flagged_sentences_cost_those_sentences_not_the_recap(self) -> None:
+        wanted = [self.sentence(f) for f in ("The torch burned", "Time passed", "Nothing answered")]
+        flag = fx.facts_answer([(n, "invented") for n in wanted])
+        await self.setUpWorker(
+            fx.Canned(fx.BEATS_ANSWER, fx.PROSE_ANSWER, fx.GRADE_ANSWER, fx.FINISH_ANSWER),
+            fx.Canned(fx.PROSE_ANSWER, facts=[flag, flag]),
+        )
+        job = await self.go()
+        self.assertEqual(job.state, "ready")
+        for gone in ("The torch burned", "Time passed", "Nothing answered"):
+            self.assertNotIn(gone, job.summary)
+        self.assertIn("Mira counted her breaths", job.summary)
+        self.assertIn("Mira lifted her blade", job.summary)
+
+    async def test_a_revision_that_lost_its_ending_is_still_refused(self) -> None:
+        """The critics' revision path: a better draft that has its ending is not replaced."""
+        from unittest.mock import patch
+
+        await self.setUpWorker(self.happy())
+        prose = rd.Prose(fx.SUMMARY, ("1. Low strings.",) * len(CUE.findall(fx.SUMMARY)))
+        flags = rd.Facts(((self.sentence("The torch burned"), "invented"),))
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="", day=4
+        )
+        ending = ["it must end exactly where the session stopped: the last beat"]
+        with patch.object(rd, "check_prose", return_value=ending):
+            cut, why = await self.worker._cut(
+                prose, flags, [], inputs, "", rd.length_for(2.0), keep_unended=False
+            )
+        self.assertEqual((cut, why), (None, "ending"))
+
+    def test_only_the_ending_may_be_left_after_a_cut(self) -> None:
+        self.assertEqual(pl.hard_after_cut(["it must end exactly where the session stopped"]), [])
+        secret = "it names something the DM keeps secret: leave it out"
+        self.assertEqual(
+            pl.hard_after_cut(["it must end exactly where the session stopped", secret]), [secret]
+        )
+
+    async def test_the_cut_keeps_every_check_but_the_ending_and_says_which_one_failed(self) -> None:
+        from unittest.mock import patch
+
+        await self.setUpWorker(self.happy())
+        prose = rd.Prose(fx.SUMMARY, ("1. Low strings.",) * len(CUE.findall(fx.SUMMARY)))
+        flags = rd.Facts(((self.sentence("The torch burned"), "invented"),))
+        inputs = pl.Inputs(
+            lines=fx.lines(), dm_ids={fx.DM}, allowed_names=[], secret_names=[], previous="", day=4
+        )
+        args: tuple[Any, ...] = (prose, flags, [], inputs, "", rd.length_for(2.0))
+        ending = ["it must end exactly where the session stopped: the last beat"]
+        with patch.object(rd, "check_prose", return_value=ending):
+            cut, why = await self.worker._cut(*args)
+        self.assertIsNotNone(cut)  # the ending alone does not end a recap
+        self.assertEqual(why, "")
+        secret = ["it names something the DM keeps secret: leave it out"]
+        with patch.object(rd, "check_prose", return_value=[*ending, *secret]):
+            cut, why = await self.worker._cut(*args)
+        self.assertIsNone(cut)
+        self.assertEqual(why, "secret")  # a fixed word, never the text
 
     async def test_a_revision_that_fails_its_checks_leaves_the_first_draft_with_cuts(self) -> None:
         n = self.sentence("The torch burned")

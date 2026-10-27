@@ -144,6 +144,17 @@ CHARS_PER_TOKEN = 3
 TRANSCRIPT_SHARE = 0.5  # of the smaller input room, for the transcript and the guide
 
 UNMATCHED = "Couldn't write a recap that matched the session."
+# Problems a draft may still have after the fact check's flagged sentences were cut out of it (the
+# flagged sentence may have been the ending): only the ending (#2741). Every other check stays.
+CUT_MAY_LEAVE = frozenset({"ending"})
+
+
+def hard_after_cut(problems: Sequence[str]) -> list[str]:
+    """The problems of a draft that had flagged sentences cut out that still count: all but the
+    ending (`CUT_MAY_LEAVE`). One rule for every place a cut draft is checked (#2741)."""
+    return [p for p in problems if cl.problem_kind(p) not in CUT_MAY_LEAVE]
+
+
 # Why a try fails when the formatter changed the written words twice (#2074); its kind is "shape".
 SHAPE_FAILED = "answer with the mood and music lines in the form asked for, and keep every word"
 FACTS_TOKENS = 800  # the fact check's room: sentence and beat numbers, no text
@@ -1216,9 +1227,9 @@ class RecapWorker:
                     gid, cid, job.session_at, attempt=job.attempt + 1, problems=problems
                 )
                 return await self._store.get(gid, cid, job.session_at)
-            cut = await self._cut(prose, facts, sheet, inputs, transcript, length)
+            cut, why = await self._cut(prose, facts, sheet, inputs, transcript, length)
             if cut is None:
-                return await self._fail(gid, cid, job, UNMATCHED)
+                return await self._fail(gid, cid, job, UNMATCHED, check=why, ours=True)
             prose = cut
         self._flags.pop(key, None)
         self._revised.discard(key)
@@ -1312,28 +1323,31 @@ class RecapWorker:
                 transcript=transcript,
                 aliases=inputs.aliases,
             )
-            if not rd.check_prose(
-                prose,
-                beats=sheet,
-                transcript=transcript,
-                allowed_names=inputs.allowed_names,
-                secret_names=inputs.secret_names,
-                previous=inputs.previous,
-                setting=inputs.setting,
-                length=length,
-                last=True,
-                refused=refused,
-                style=inputs.style,
-                corrections=inputs.corrections,
-                pcs=inputs.pcs,
-                identity_ties=inputs.identity_ties,
+            # (a kept draft whose flagged ending was already cut stands without it: #2741)
+            if not hard_after_cut(
+                rd.check_prose(
+                    prose,
+                    beats=sheet,
+                    transcript=transcript,
+                    allowed_names=inputs.allowed_names,
+                    secret_names=inputs.secret_names,
+                    previous=inputs.previous,
+                    setting=inputs.setting,
+                    length=length,
+                    last=True,
+                    refused=refused,
+                    style=inputs.style,
+                    corrections=inputs.corrections,
+                    pcs=inputs.pcs,
+                    identity_ties=inputs.identity_ties,
+                )
             ):
                 flags = self._flags.pop(key, None)
                 self._revised.discard(key)
                 if flags is not None:  # the kept draft still has its flagged sentences: cut them
-                    cut = await self._cut(prose, flags, sheet, inputs, transcript, length)
+                    cut, why = await self._cut(prose, flags, sheet, inputs, transcript, length)
                     if cut is None:
-                        return await self._fail(gid, cid, job, UNMATCHED)
+                        return await self._fail(gid, cid, job, UNMATCHED, check=why, ours=True)
                     prose = cut
                     try:
                         grade = await self._grade(gid, cid, job, sheet, prose.summary)
@@ -1520,16 +1534,24 @@ class RecapWorker:
         inputs: Inputs,
         transcript: str,
         length: rd.Length,
-    ) -> rd.Prose | None:
-        """The draft without the sentences still flagged, done in code. None when what is left
-        no longer meets the checks: then there is no recap."""
+        *,
+        keep_unended: bool = True,
+    ) -> tuple[rd.Prose | None, str]:
+        """The draft without the sentences still flagged, done in code, and ""; or None and the
+        kinds of check the rest still fails (a fixed word each, never the text), so a failure says
+        why. A few flagged sentences cost the recap those sentences, not the whole recap (#2741):
+        what is left is held to every check that is about the words (a secret, a name that is not
+        allowed, a copy, quotation marks, an empty recap, the layout) but not to the one the cut
+        itself causes, ending where the session stopped, because the flagged sentence may well
+        have been the ending (logged, and noted in a test report). `keep_unended=False`: a
+        revision that lost its ending is still refused, so a better draft that has one stands."""
         cut = rd.cut_sentences(prose, [n for n, _ in facts.unsupported])
         if self._on_note is not None and facts.unsupported:
             self._on_note(
                 f"Cut {len(facts.unsupported)} sentence(s) the fact check still flagged "
                 "after the one revision."
             )
-        if rd.check_prose(
+        problems = rd.check_prose(
             cut,
             beats=sheet,
             transcript=transcript,
@@ -1544,9 +1566,18 @@ class RecapWorker:
             corrections=inputs.corrections,
             pcs=inputs.pcs,
             identity_ties=inputs.identity_ties,
-        ):
-            return None
-        return cut
+        )
+        hard = problems if not keep_unended else hard_after_cut(problems)
+        if hard:
+            return None, ", ".join(cl.kinds(hard))
+        if problems:
+            log.info("Recap: the fact check cut the sentence that ended the recap; it stands")
+            if self._on_note is not None:
+                self._on_note(
+                    "The recap no longer ends exactly where the session stopped: the sentence "
+                    "that did was cut by the fact check."
+                )
+        return cut, ""
 
     async def _grade(
         self, gid: int, cid: str, job: Job, sheet: Sequence[bt.Beat], summary: str,
@@ -1896,7 +1927,9 @@ class RecapWorker:
                 revised = None
                 unavailable = True
             elif facts is not None and not facts.clean:
-                revised = await self._cut(revised, facts, sheet, inputs, transcript, length)
+                revised, _ = await self._cut(
+                    revised, facts, sheet, inputs, transcript, length, keep_unended=False
+                )
             if revised is not None:
                 try:
                     grade = await self._grade(gid, cid, job, sheet, revised.summary, loop.waits > 0)
@@ -2036,6 +2069,7 @@ class RecapWorker:
                 pcs=inputs.pcs,
                 identity_ties=inputs.identity_ties,
             )  # fmt: skip
+            problems = hard_after_cut(problems)  # (the cut sentence may have been the ending)
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
                 log.info(

@@ -84,12 +84,13 @@ class Smart(fx.Canned):
 
 def ending_fails_after_the_draft(real: Any) -> Any:
     """A `check_prose` that finds the draft clean (the closure `checked`) and every later check
-    failing on the ending: the check that fails only once the critics have had their say."""
+    failing on a secret: a check that fails only once the critics have had their say. (Not the
+    ending: a cut that takes the ending off a draft is allowed to stand, #2741.)"""
 
     def check(*a: Any, **k: Any) -> list[str]:
         if sys._getframe(1).f_code.co_name == "checked":
             return list(real(*a, **k))
-        return ["the recap must end exactly where the session stopped"]
+        return ["it names something the DM keeps secret: leave it out"]
 
     return check
 
@@ -323,7 +324,7 @@ class Criticising(WorkerHarness):
         self.assertNotEqual(job.state, "failed", job.last_error)  # it waits for its check
         self.assertEqual(job.last_error, pl.CHECK_WAIT)
         # (the reason shown is only CHECK_WAIT: the log is where the failed rule is named)
-        self.assertTrue(any("the draft fails" in m and "ending" in m for m in logged.output))
+        self.assertTrue(any("the draft fails" in m and "secret" in m for m in logged.output))
 
     async def test_a_long_hold_tells_the_dm_once_and_never_fails(self) -> None:
         real = rd.check_prose
@@ -612,14 +613,14 @@ class Criticising(WorkerHarness):
         with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped("no agreement", tries=1)
         self.assertEqual(job.state, "failed")
-        self.assertIn("(check: ending)", job.last_error)
+        self.assertIn("(check: secret)", job.last_error)
         self.assertEqual(job.tries, 0)  # given back
 
     async def test_the_job_ceiling_with_a_failed_check_fails_and_keeps_the_try(self) -> None:
         with patch.object(rd, "check_prose", ending_fails_after_the_draft(rd.check_prose)):
             job = await self.stopped(pl.STOP_CEILING, tries=1)
         self.assertEqual((job.state, job.tries), ("failed", 1))
-        self.assertIn("(check: ending)", job.last_error)
+        self.assertIn("(check: secret)", job.last_error)
 
     async def test_an_unfixable_draft_with_no_agreement_fails_and_gives_the_try_back(self) -> None:
         job = await self.stopped("no agreement", unfixable=True, tries=1)
