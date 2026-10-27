@@ -19,6 +19,7 @@ import type {
   NameRow,
   NamesPage,
   NamesQuery,
+  SmartNamesAnswer,
   Offer,
   Person,
   CampaignName,
@@ -482,6 +483,33 @@ const NAME_KINDS: { key: string; label: string }[] = [
   { key: "item", label: "Items" },
   { key: "event", label: "Events" },
 ];
+
+// What the pretend meaning search "knows" about a few names, and words that mean the same: a stand-in for
+// the real embeddings (#2733), so the page can be built and tested before they exist.
+const MEANINGS: Record<string, string> = {
+  "Mira Voss": "ferrywoman boatwoman river friend of Captain Brask",
+  "Captain Brask": "soldier guard captain friend of Mira Voss leader of Brask's Company",
+  "The Tide Wardens": "sea guards tide watchers soldiers",
+  "Ashen Crown Keep": "castle fortress stronghold burned ruin",
+  "Sister Ilse": "priest cleric nun temple healer",
+  Stormglass: "weather glass storm magic item",
+};
+const SAME_MEANING = [
+  ["priest", "cleric", "nun", "holy", "temple"],
+  ["castle", "fortress", "keep", "stronghold"],
+  ["ferry", "ferrywoman", "boatwoman", "boat"],
+  ["soldier", "guard", "guards", "warden", "wardens", "captain"],
+];
+const STOP = new Set(["of", "the", "a", "an", "and", "to", "is", "who", "that"]);
+function meaningTokens(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().split(/[^a-z']+/)) {
+    if (!w || STOP.has(w)) continue;
+    out.add(w);
+    for (const group of SAME_MEANING) if (group.includes(w)) group.forEach((g) => out.add(g));
+  }
+  return out;
+}
 
 function startNames(): NameRow[] {
   const people = ["Mira Voss", "Aldric Thorn", "Sister Ilse", "Captain Brask", "Old Pell", "Tamsin Reed", "Gorrak", "The Ferryman", "Lady Orsolya", "Dunmar", "Hobb Fenwick", "Yselle", "Corvin", "Brother Anselm", "Nadia Quill"];
@@ -1639,6 +1667,23 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         pages,
         pageSize,
       };
+    },
+    async smartNames(ref, words): Promise<SmartNamesAnswer> {
+      calls.push(`smartNames:${ref}`); // (never the words: they are the DM's own typing)
+      await reachable();
+      signedIn();
+      const view = namesView(ref);
+      if (view !== "dm") throw new ApiError("not-found");
+      if (/\.smart-off$/.test(ref)) throw new ApiError("not-available");
+      const wanted = meaningTokens(words);
+      const scored = memory
+        .map((n) => {
+          const have = meaningTokens([n.name, ...n.others, MEANINGS[n.name] ?? ""].join(" "));
+          return { n, score: [...wanted].filter((w) => have.has(w)).length };
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || a.n.name.localeCompare(b.n.name));
+      return { names: scored.slice(0, 50).map(({ n }) => ({ ...n, others: [...n.others], aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null })) };
     },
     async changeName(ref, id, change: NameChange): Promise<NameChanged> {
       calls.push(`changeName:${ref}:${id}:${JSON.stringify(change)}`);

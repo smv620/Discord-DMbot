@@ -10,6 +10,24 @@ export const NAME_LIMIT = 100;
 // `PAGE_SIZE` (web/all_names.py) refuse any other size: keep them equal.
 export const NAMES_PAGE_SIZES = [20, 50, 200, 500] as const;
 export const NAMES_PAGE_SIZE = 50;
+// NAMES_SMART_LIVE is "Search by meaning" on the Names page (#2733): "ice goddess" finds the frost goddess,
+// "friend of Brannoc" finds who is connected. It needs the meaning search (core, after #2664's embeddings)
+// deployed and seen to work, and moves with the What's new entry "Search names by what they mean".
+export const NAMES_SMART_LIVE = false;
+export const smartWords = {
+  label: "Search by meaning",
+  region: "Search names by meaning",
+  hint: "Say what it is or who it is connected to, like “ice goddess” or “friend of Brannoc”. Press Search. It can take a few seconds.",
+  button: "Search",
+  // The stage shown while it works (counts and stages only: never the words typed).
+  stage: "Looking for names that mean this",
+  found: (n: number): string => (n === 1 ? "1 name found." : `${n} names found, the closest first.`),
+  none: "No names are close to that. Try other words, or use Find a name.",
+  back: "Back to all names",
+  notReady: "Search by meaning isn't ready for this campaign yet. Use Find a name for now.",
+  failed: "That search didn't work. Press Search to try again, or use Find a name.",
+  tooLong: "Use 100 letters or fewer.",
+} as const;
 
 export const namesPage = {
   heading: "Names",

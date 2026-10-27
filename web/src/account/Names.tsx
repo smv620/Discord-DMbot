@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, namesPage as words } from "../content/names-words";
+import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words, smartWords } from "../content/names-words";
 import {
   type AccountApi,
   ApiError,
@@ -21,6 +21,7 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import SayIt from "./SayIt";
+import WorkProgress from "./WorkProgress";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -75,6 +76,15 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const kind = kinds.join(",");
   const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
+  // "Search by meaning" (#2733): the words in the box, what the last search found (replacing the list until
+  // "Back to all names"), whether one is running and since when, and why the last one did not work. It only
+  // searches when Search is pressed (each search costs a call), never as you type.
+  const [meaning, setMeaning] = useState("");
+  const [smart, setSmart] = useState<NameRow[] | null>(null);
+  const [smartRun, setSmartRun] = useState<{ since: number } | null>(null);
+  const [smartProblem, setSmartProblem] = useState<string | null>(null);
+  const smartLatest = useRef(0);
+  const smartWords_ = useRef("");
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -147,6 +157,50 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     } finally {
       if (mine === latest.current) setBusy(false);
     }
+  }
+
+  /** One meaning search. A newer search, or going back to the list, makes an older answer be ignored. */
+  async function searchByMeaning(words_: string): Promise<void> {
+    const text = words_.trim();
+    if (!ref || !api.smartNames || text === "" || smartRun) return;
+    if (text.length > 100) {
+      setSmartProblem(smartWords.tooLong);
+      return;
+    }
+    const mine = ++smartLatest.current;
+    smartWords_.current = text;
+    setSmartProblem(null);
+    setSmartRun({ since: Date.now() / 1000 });
+    try {
+      const got = await api.smartNames(ref, text);
+      if (mine !== smartLatest.current) return;
+      setSmart(got.names);
+    } catch (error) {
+      if (mine !== smartLatest.current) return;
+      const kindOf = error instanceof ApiError ? error.kind : "network";
+      if (kindOf === "signed-out") setView("signed-out");
+      else setSmartProblem(kindOf === "not-available" ? smartWords.notReady : kindOf === "network" ? words.errors.network ?? smartWords.failed : smartWords.failed);
+    } finally {
+      if (mine === smartLatest.current) setSmartRun(null);
+    }
+  }
+
+  /** After a change to a name: read the same search again, quietly, so the rows are not out of date. */
+  async function refreshSmart(): Promise<void> {
+    if (!ref || !api.smartNames || smartWords_.current === "") return;
+    try {
+      setSmart((await api.smartNames(ref, smartWords_.current)).names);
+    } catch {
+      // (the rows stay as they were; the next Search says what is wrong)
+    }
+  }
+
+  function backToList(): void {
+    smartLatest.current++; // (an answer still on its way is no longer wanted)
+    setSmart(null);
+    setSmartRun(null);
+    setSmartProblem(null);
+    setMeaning("");
   }
 
   // Search as you type, filter and sort: a new read from page 1 (the first one at once).
@@ -264,6 +318,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       setTimeout(() => newsBox.current?.focus(), 0);
     }
     await load(pageNow.current, true);
+    if (smart !== null) await refreshSmart();
     return null;
   }
 
@@ -295,7 +350,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
   // The API never sends a secret name to someone who isn't a DM; this keeps one from showing if
   // it ever did (the rule is the API's, this is only a backstop).
-  const shown = data.names.filter((n) => data.canEdit || !n.secret);
+  const shown = (smart ?? data.names).filter((n) => data.canEdit || !n.secret);
+  const smartOn = NAMES_SMART_LIVE && data.canEdit && api.smartNames !== undefined;
   const everything = data.kinds.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
@@ -379,9 +435,57 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </fieldset>
       </form>
 
+      {smartOn && (
+        <form
+          class="names-smart stack"
+          role="search"
+          aria-label={smartWords.region}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void searchByMeaning(meaning);
+          }}
+          noValidate
+        >
+          <label class="field">
+            {smartWords.label}
+            <input
+              type="search"
+              name="meaning"
+              value={meaning}
+              autoComplete="off"
+              spellcheck={false}
+              maxLength={100}
+              aria-describedby="names-smart-hint"
+              onInput={(e) => setMeaning((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          <p id="names-smart-hint" class="small muted">
+            {smartWords.hint}
+          </p>
+          <div class="row">
+            <button type="submit" class="button" disabled={smartRun !== null || meaning.trim() === ""}>
+              {smartWords.button}
+            </button>
+            {smart !== null && (
+              <button type="button" class="button secondary" onClick={backToList}>
+                {smartWords.back}
+              </button>
+            )}
+          </div>
+          {smartRun !== null && (
+            <WorkProgress stage={smartWords.stage} state="running" startedAt={smartRun.since} progressUnknown />
+          )}
+          {smartProblem !== null && (
+            <p class="warn" role="alert">
+              {smartProblem}
+            </p>
+          )}
+        </form>
+      )}
+
       {/* Always on the page, so a screen reader hears each new count and each result. */}
       <p class="small" role="status" aria-live="polite" aria-busy={busy}>
-        {words.howMany(data.total)}
+        {smart !== null ? (smart.length === 0 ? smartWords.none : smartWords.found(smart.length)) : words.howMany(data.total)}
       </p>
       {/* Two boxes that are always there, each with one role for good: a role that changes is
           missed by screen readers. A result that repeats ("Saved." twice) is a new node, so it is
@@ -426,7 +530,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
 
       {shown.length === 0 ? (
-        <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
+        smart !== null ? null : <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
       ) : (
         <ul class="names-list" aria-label={words.listLabel} aria-busy={busy}>
           {shown.map((row) => (
@@ -449,7 +553,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </ul>
       )}
 
-      <PageBar
+      {smart === null && <PageBar
         id="names-page"
         label={words.pagesNav}
         moves={{ first: words.pageFirst, previous: words.pagePrevious, next: words.pageNext, last: words.pageLast }}
@@ -458,7 +562,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         busy={busy}
         notice={pageNotice}
         onGo={(wanted) => load(wanted)}
-      />
+      />}
     </div>
   );
 }
