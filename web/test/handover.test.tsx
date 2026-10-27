@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import Account from "../src/account/Account";
-import Handover, { handoverToken } from "../src/account/Handover";
+import Handover from "../src/account/Handover";
+import { handoverToken } from "../src/account/handover-token";
 import { mockApi } from "../src/account/mock";
 import { handoverOwnerWords as o, handoverWords as w } from "../src/content/handover-words";
 

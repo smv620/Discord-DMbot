@@ -54,6 +54,7 @@ from dmbot.web import (
     optional_rules,
     past_sessions,
     relationships,
+    report,
     sessions,
     shared_recaps,
     sharing,
@@ -1149,6 +1150,44 @@ def create_app(
         except RecapError as err:
             if err.code == "not_allowed":
                 raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report(ref: str, at: str, signed: Signed) -> dict[str, Any]:
+        """One session's after-session report (#2661): the minor contradictions and what the party
+        has wrong, sorted, with the DM's answers. DM only: a player, a peek or another campaign's
+        DM gets 403 `not_allowed`; a time that is not a time, or a campaign that is not there, 404.
+        Nothing here is ever in a players' view."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        try:
+            return await report.read_report(db, session, ref, when)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report_answer(
+        ref: str, at: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The DM's answer to one item of a session's report (#2661): `{id, action}` with action
+        `intended`, `not_a_problem`, `remind`, `fix` or `undo`. Written at once (it records a
+        decision and changes nothing in the story), answered `{answer}`. 409 `gone` when the item is
+        no longer in that session's report or already has an answer; 403 for anyone but the
+        campaign's DM."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        body = await bounded_json(request)
+        try:
+            return await report.answer_item(db, session, ref, when, body)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            if err.code == "gone":
+                raise HTTPException(status_code=409, detail="gone") from None
+            if err.code == "bad_action":
+                raise HTTPException(status_code=400, detail="bad_action") from None
             raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recaps/{ref}/again")

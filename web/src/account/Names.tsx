@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, namesPage as words } from "../content/names-words";
+import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import {
   type AccountApi,
   ApiError,
@@ -21,6 +21,7 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import SayIt from "./SayIt";
+import LazyPanel from "./LazyPanel";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -75,6 +76,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const kind = kinds.join(",");
   const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
+  // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
+  // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
+  // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).
+  const [smart, setSmart] = useState<NameRow[] | null>(null);
+  const [smartRefresh, setSmartRefresh] = useState(0);
+  const [smartLeave, setSmartLeave] = useState(0);
+  const smartNow = useRef<NameRow[] | null>(null);
+  smartNow.current = smart;
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -155,6 +164,11 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     const wait = first.current ? 0 : SEARCH_MS;
     first.current = false;
     setNews(null);
+    if (smartNow.current !== null) {
+      // (typing in Find a name, or a type, sort or size, is back to the list)
+      setSmart(null);
+      setSmartLeave((n) => n + 1);
+    }
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
     // `load` reads the latest query through a ref, so only these restart the read.
@@ -204,7 +218,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       setMerging(false);
       setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
       setTimeout(() => newsBox.current?.focus(), 0);
-      await load(pageNow.current, true);
+      await reload();
     } catch (error) {
       const said = refusal(error);
       if (said === null) {
@@ -217,12 +231,20 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         // It may have happened, or a name is gone: read the list again and start the ticking over.
         setPicked([]);
         setMerging(false);
-        await load(pageNow.current, true);
+        await reload();
       }
     } finally {
       mergeFlight.current = false;
       setMergeBusy(false);
     }
+  }
+
+  /** The list as it is now, and the search results too when they are showing (they would be out of date). */
+  function reload(): Promise<unknown> {
+    const read = load(pageNow.current, true);
+    // (no extra step when no search is showing: the editor stays busy only as long as the list read takes)
+    if (smartNow.current !== null) void read.then(() => setSmartRefresh((n) => n + 1)); // (the search is read again)
+    return read;
   }
 
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
@@ -243,7 +265,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       if (error instanceof ApiError && error.kind === "still-waiting") {
         // It may still happen: say so, and read the list again so it shows if it did.
         setNews({ ok: false, text: said, n: ++sayings.current });
-        await load(pageNow.current, true);
+        await reload();
         return null;
       }
       if (error instanceof ApiError && error.kind === "not-found") {
@@ -252,7 +274,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         setNews({ ok: false, text: said, n: ++sayings.current });
         // The editor is gone: the keyboard goes to the news, as after a remove or a merge.
         setTimeout(() => newsBox.current?.focus(), 0);
-        await load(pageNow.current, true);
+        await reload();
         return null;
       }
       return said;
@@ -263,7 +285,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       // The editor is gone: the keyboard goes to the news, where the result is said.
       setTimeout(() => newsBox.current?.focus(), 0);
     }
-    await load(pageNow.current, true);
+    await reload();
     return null;
   }
 
@@ -295,7 +317,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
   // The API never sends a secret name to someone who isn't a DM; this keeps one from showing if
   // it ever did (the rule is the API's, this is only a backstop).
-  const shown = data.names.filter((n) => data.canEdit || !n.secret);
+  const shown = (smart ?? data.names).filter((n) => data.canEdit || !n.secret);
+  const smartOn = NAMES_SMART_LIVE && data.canEdit && api.smartNames !== undefined;
   const everything = data.kinds.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
@@ -379,9 +402,26 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </fieldset>
       </form>
 
+      {smartOn && (
+        <LazyPanel
+          load={() => import("./NamesSmart")}
+          what="the search by meaning"
+          props={{
+            api,
+            campaignRef: ref,
+            onResults: setSmart,
+            showing: smart !== null,
+            refreshKey: smartRefresh,
+            leaveKey: smartLeave,
+            count: smart?.length ?? 0,
+            onSignedOut: () => setView("signed-out"),
+          }}
+        />
+      )}
+
       {/* Always on the page, so a screen reader hears each new count and each result. */}
       <p class="small" role="status" aria-live="polite" aria-busy={busy}>
-        {words.howMany(data.total)}
+        {words.howMany(smart !== null ? smart.length : data.total)}
       </p>
       {/* Two boxes that are always there, each with one role for good: a role that changes is
           missed by screen readers. A result that repeats ("Saved." twice) is a new node, so it is
@@ -426,7 +466,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
 
       {shown.length === 0 ? (
-        <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
+        smart !== null ? null : <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
       ) : (
         <ul class="names-list" aria-label={words.listLabel} aria-busy={busy}>
           {shown.map((row) => (
@@ -449,7 +489,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </ul>
       )}
 
-      <PageBar
+      {smart === null && <PageBar
         id="names-page"
         label={words.pagesNav}
         moves={{ first: words.pageFirst, previous: words.pagePrevious, next: words.pageNext, last: words.pageLast }}
@@ -458,7 +498,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         busy={busy}
         notice={pageNotice}
         onGo={(wanted) => load(wanted)}
-      />
+      />}
     </div>
   );
 }

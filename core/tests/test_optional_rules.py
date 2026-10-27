@@ -69,7 +69,7 @@ class Catalog(unittest.TestCase):
         for r in left_out:
             self.assertIn(r.name[1:], ui.COVERED_2024)
         self.assertNotIn("Spotting a spell"[1:], ui.COVERED_2024)
-        self.assertEqual(ui.covered_note("2014"), "")  # 2014 leaves nothing out
+        self.assertEqual(optional.covered_note("2014"), "")  # 2014 leaves nothing out
 
     def test_a_rule_follows_the_default_until_the_dm_switches_it(self) -> None:
         self.assertTrue(optional.is_on("xge-sleep", {}, True))

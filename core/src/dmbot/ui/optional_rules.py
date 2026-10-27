@@ -11,11 +11,11 @@ import logging
 
 import discord
 
-from dmbot.campaigns import RULESETS, Campaign, CampaignError
+from dmbot.campaigns import Campaign, CampaignError
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
-from dmbot.rules.optional import NO_SCREEN_NOTE, screen_line
+from dmbot.rules.optional import NO_SCREEN_NOTE, covered_note, main_rules, screen_line
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -39,14 +39,6 @@ DISCLAIMER = (
 )
 
 
-def covered_note(target: str) -> str:
-    """The rules left out for these main rules, built from the catalog so it can't drift."""
-    names = [r.name[0].lower() + r.name[1:] for r in optional.covered_by(target)]
-    if not names:
-        return ""
-    return "Not listed, because the 2024 rules have their own version: " + ", ".join(names) + "."
-
-
 COVERED_2024 = covered_note("2024")
 
 
@@ -65,16 +57,11 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
     return campaign
 
 
-def _main_rules(target: str) -> str:
-    """The main rules' name without "(newest)", which reads oddly mid-sentence."""
-    return f"{target} rules" if target in RULESETS else logic.ruleset_label(target)
-
-
 def rules_text(campaign: Campaign, overrides: dict[str, bool], news: str = "") -> str:
     """The list, grouped by book: ✅ on, ⬜ off, and what each rule does. The catalog
     lists each book's rules together, so each book gets one heading. `news` (what just
     changed) goes first, where a phone shows it."""
-    main = _main_rules(campaign.target_ruleset)
+    main = main_rules(campaign.target_ruleset)
     rules = optional.applying(campaign.target_ruleset)
     lines = [news] if news else []
     lines.append(f"📚 **Optional rules: {campaign.name}**")

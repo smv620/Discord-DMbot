@@ -10,7 +10,6 @@ import { readFileSync } from "node:fs";
 import Account from "../src/account/Account";
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
-import { workWords } from "../src/content/work-progress";
 import { campaignDeleteWords as w } from "../src/content/campaign-delete";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -196,11 +195,16 @@ describe("the backup", () => {
     const api = await page();
     const box = await open("The Brynwater Crossing");
     let finish: (blob: Blob) => void = () => {};
-    api.campaignBackup = () => new Promise<Blob>((resolve) => (finish = resolve));
+    api.campaignBackup = (_ref, onProgress) => {
+      const now = Math.floor(Date.now() / 1000);
+      onProgress?.({ stage: "reading", state: "running", startedAt: now - 20, updatedAt: now - 8, serverNow: now });
+      return new Promise<Blob>((resolve) => (finish = resolve));
+    };
     fireEvent.click(within(box).getByRole("button", { name: w.backup }));
-    expect(await within(box).findByText(/Running for/)).toBeTruthy();
-    expect(within(box).queryByText(workWords.noChangeYet)).toBeNull(); // a download has no "last progress" to claim
-    expect(within(box).getAllByText(w.backingUp).length).toBeGreaterThan(0);
+    // DMbot's own words: the stage it is at, how long it has run, and when it last moved.
+    expect(await within(box).findByText(w.stage["reading"] as string)).toBeTruthy();
+    expect(within(box).getByText(/Running for/)).toBeTruthy();
+    expect(within(box).getByText(/Last progress/)).toBeTruthy();
     finish(new Blob(["{}"]));
     await waitFor(() => expect(within(box).queryByText(/Running for/)).toBeNull());
   });
@@ -220,15 +224,14 @@ describe("the backup", () => {
 });
 
 describe("the real client", () => {
-  it("posts the typed name to the campaign's own address, and fetches the backup with GET", async () => {
+  it("posts the typed name to the campaign's own address", async () => {
     const seen: string[] = [];
     const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
       seen.push(`${init?.method} ${new URL(url).pathname} ${init?.body ?? ""}`);
       return new Response(JSON.stringify({ status: "deleted", channelsLeft: true }), { status: 200 });
     }) as typeof fetch);
     expect(await api.deleteCampaign!("100.cmp1", "Brynwater")).toEqual({ status: "deleted", channelsLeft: true });
-    await api.campaignBackup!("100.cmp1");
-    expect(seen).toEqual(['POST /me/campaigns/100.cmp1/delete {"name":"Brynwater"}', "GET /me/campaigns/100.cmp1/backup "]);
+    expect(seen).toEqual(['POST /me/campaigns/100.cmp1/delete {"name":"Brynwater"}']);
   });
 
   it.each([

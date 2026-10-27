@@ -4,21 +4,28 @@ in the answer. Invented names throughout."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 
 from dmbot.rules import optional
 from dmbot.ui import logic
+from dmbot.ui import optional_rules as ui_optional
 from dmbot.web import campaign_settings, optional_rules, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
 from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
 
+CARL = SimpleNamespace(id=3003, name="Carl", email="carl@example.com")  # plays; runs nothing
 
-class Reading(Base):
+
+class OptionalBase(Base):
+    """Helpers only (no tests here, so none are run twice by the classes that build on it)."""
+
     def cref(self, campaign: Any = None) -> str:
         return f"{THURSDAY.id}.{(campaign or self.one).id}"
 
@@ -31,6 +38,40 @@ class Reading(Base):
             await optional_rules.read_rules(self.web, session, ref)
         return str(caught.exception.code)
 
+    async def signed(self, user: Any, manage: bool) -> Any:
+        """A session for this person with the server on their list, able (or not) to manage it."""
+        guild = DiscordGuild(THURSDAY.id, THURSDAY.name, manage)
+        token = await sessions.sign_in(self.web, user, [guild], now=NOW, days=30)
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
+
+    async def queue(self, body: object, ref: str | None = None, session: Any = None) -> str:
+        return await campaign_settings.queue_setting(
+            self.web, session or self.session, ref or self.cref(), body
+        )
+
+    async def rows(self) -> list[dict[str, Any]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT setting, value, turn_on, flag, user_id FROM setting_actions ORDER BY seq"
+            )
+            return list(await cur.fetchall())
+
+    async def door(self, rule: str | None, on: bool | None) -> Any:
+        """Call the queue door itself, as the website's role does, to run its own refusals."""
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_optional_rule_add(%s, %s, %s, %s) AS r",
+                (THURSDAY.id, self.one.id, rule, on),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return row["r"]
+
+
+class Reading(OptionalBase):
     async def test_every_rule_that_applies_is_listed_with_the_campaign_default(self) -> None:
         got = await optional_rules.read_rules(self.web, self.session, self.cref())
         target = (await self.campaigns.get(THURSDAY.id, self.one.id)).target_ruleset  # type: ignore[union-attr]
@@ -38,7 +79,7 @@ class Reading(Base):
         self.assertEqual([r["id"] for r in got["rules"]], [r.id for r in applying])
         self.assertTrue(got["default"])
         self.assertTrue(all(r["on"] and not r["changed"] for r in got["rules"]))
-        self.assertEqual(got["main"], optional_rules._main_rules(target))
+        self.assertEqual(got["main"], optional.main_rules(target))
 
     async def test_a_choice_the_dm_made_shows_and_follows_the_catalog_words(self) -> None:
         first = optional.applying("2024")[0]
@@ -59,27 +100,27 @@ class Reading(Base):
         self.assertTrue(all(not r["on"] for r in got["rules"]))
 
     async def test_the_note_names_the_rules_the_2024_main_rules_cover(self) -> None:
-        note = optional_rules.covered_note("2024")
-        self.assertEqual(
-            note.startswith("Not listed, because the 2024 rules have their own"), bool(note)
-        )
-        self.assertEqual(optional_rules.covered_note("2014"), "")
+        note = optional.covered_note("2024")
+        self.assertTrue(note.startswith("Not listed, because the 2024 rules have their own"))
+        self.assertEqual(optional.covered_note("2014"), "")
+        got = await optional_rules.read_rules(self.web, self.session, self.cref())
+        self.assertEqual(got["note"], note)
 
-    async def test_the_words_are_the_discord_ones(self) -> None:
-        self.assertEqual(optional_rules._main_rules("2024"), "2024 rules")
-        self.assertEqual(optional_rules._main_rules("none"), logic.ruleset_label("none"))
+    async def test_the_words_are_the_ones_discord_uses(self) -> None:
+        """Both sides call `rules.optional`, so the words cannot drift apart."""
+        self.assertEqual(optional.main_rules("2024"), "2024 rules")
+        self.assertEqual(optional.main_rules("none"), logic.ruleset_label("none"))
+        self.assertEqual(ui_optional.COVERED_2024, optional.covered_note("2024"))
 
-    async def test_a_player_and_another_campaigns_dm_are_not_allowed(self) -> None:
-        bob = await sessions.find(
-            self.web,
-            await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30),  # type: ignore[arg-type]
-            now=NOW,
-        )
-        assert bob is not None
-        self.assertEqual(await self.refused(bob, self.cref()), "not_allowed")  # Alice's campaign
-        self.assertEqual(
-            await self.refused(self.session, self.cref(self.two)), "not_allowed"
-        )  # Bob's
+    async def test_a_player_a_manager_who_is_not_a_dm_and_another_campaigns_dm_cannot_read(
+        self,
+    ) -> None:
+        player = await self.signed(CARL, manage=False)
+        manager = await self.signed(CARL, manage=True)  # may manage the server, runs nothing
+        bob = await self.signed(BOB, manage=True)  # a DM, but of Bob's campaign only
+        for who in (player, manager, bob):
+            self.assertEqual(await self.refused(who, self.cref()), "not_allowed")
+        self.assertEqual(await self.refused(self.session, self.cref(self.two)), "not_allowed")
 
     async def test_a_server_the_session_does_not_have_is_not_found(self) -> None:
         self.assertEqual(await self.refused(self.session, f"999.{self.one.id}"), "not_found")
@@ -106,20 +147,8 @@ class Reading(Base):
         self.assertFalse(row["can"])
 
 
-class Choosing(Reading):
+class Choosing(OptionalBase):
     """A rule switched on the website is queued like the other settings, and read back alike."""
-
-    async def queue(self, body: object, ref: str | None = None, session: Any = None) -> str:
-        return await campaign_settings.queue_setting(
-            self.web, session or self.session, ref or self.cref(), body
-        )
-
-    async def rows(self) -> list[dict[str, Any]]:
-        async with self.db.guild(THURSDAY.id) as conn:
-            cur = await conn.execute(
-                "SELECT setting, value, turn_on, flag, user_id FROM setting_actions ORDER BY seq"
-            )
-            return list(await cur.fetchall())
 
     async def test_a_choice_is_queued_with_its_rule_and_which_way(self) -> None:
         rule = optional.applying("2024")[0].id
@@ -156,20 +185,37 @@ class Choosing(Reading):
         self.assertEqual([r["turn_on"] for r in rows], [None, None])
         self.assertEqual([r["flag"] for r in rows], [False, True])
 
-    async def test_only_a_dm_of_the_campaign_may_queue_one(self) -> None:
+    async def test_a_player_a_manager_who_is_not_a_dm_and_another_campaigns_dm_cannot_queue(
+        self,
+    ) -> None:
         rule = optional.applying("2024")[0].id
         body = {"setting": "optional_rule", "value": rule, "on": True}
-        bob = await sessions.find(
-            self.web,
-            await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30),  # type: ignore[arg-type]
-            now=NOW,
-        )
-        assert bob is not None
-        for session, ref in ((bob, self.cref()), (self.session, self.cref(self.two))):
+        player = await self.signed(CARL, manage=False)
+        manager = await self.signed(CARL, manage=True)
+        bob = await self.signed(BOB, manage=True)
+        for who, ref in (
+            (player, self.cref()),
+            (manager, self.cref()),
+            (bob, self.cref()),
+            (self.session, self.cref(self.two)),  # Alice, in Bob's campaign
+        ):
             with self.assertRaises(RecapError) as caught:
-                await self.queue(body, ref, session)
+                await self.queue(body, ref, who)
             self.assertEqual(caught.exception.code, "not_allowed")
         self.assertEqual(await self.rows(), [])
+
+    async def test_the_door_refuses_a_missing_yes_or_no_and_a_malformed_id_itself(self) -> None:
+        good = optional.applying("2024")[0].id
+        for rule, on in (
+            (good, None),
+            (None, True),
+            ("Not A Rule!", True),
+            ("a" * 41, True),
+            ("", True),
+        ):
+            self.assertEqual(await self.door(rule, on), {"status": "bad_value"}, (rule, on))
+        self.assertEqual(await self.rows(), [])
+        self.assertEqual((await self.door(good, True))["status"], "ok")
 
     async def test_ten_waiting_choices_is_too_many(self) -> None:
         rule = optional.applying("2024")[0].id
@@ -212,7 +258,7 @@ class Choosing(Reading):
         await self.queue({"setting": "optional_rule", "value": rule, "on": False})  # still allowed
 
 
-class TheRoute(Choosing):
+class TheRoute(OptionalBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
