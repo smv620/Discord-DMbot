@@ -746,6 +746,17 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   Still to build: the PlotBot grade (major or minor, with a reason), the cap of 3 said on the DM screen,
   and the minor ones kept for the after-session report.
 
+**Built (#2661 slice 2, migration 0244): the report's storage.** `memory_differences` keeps what the
+party (or a player's character) believes that differs from The truth, with PlotBot's sort (disguised,
+misunderstood, false, or `not_sorted` when the answer was cut or unreadable: never "false") and its
+one-line reason. `report_answers` keeps the DM's answer to each item (`intended`, `not_a_problem`,
+`remind`, `fixed`), apart from the items and under a key made from the item's own ids, so an item that is
+made again meets its answer again, and one that is no longer found is dropped without losing the DM's
+decision. `memory_report_runs` keeps how far making a session's report has got (stage, done of total,
+started, last moved), counts and codes only. The items are made again by each check and are not in a
+backup; the answers cannot be made again, so they are (the `report_answers` backup section). Nothing here
+holds a transcript word or a speaker.
+
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;
 - **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,

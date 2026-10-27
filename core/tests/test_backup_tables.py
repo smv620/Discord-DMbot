@@ -214,6 +214,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 1)",
                 (g, c),
             ),
+            "report_answers": (
+                "INSERT INTO report_answers (guild_id, campaign_id, item_key, item_kind, answer,"
+                " answered_by, answered_at) VALUES (%s, %s, repeat('c', 32), 'difference',"
+                " 'intended', %s, 1)",
+                (g, c, DM),
+            ),
             "plot_fine": (
                 "INSERT INTO plot_fine (guild_id, campaign_id, fine_key, note, by_user, at)"
                 " VALUES (%s, %s, 'k', 'fine', %s, 1)",
