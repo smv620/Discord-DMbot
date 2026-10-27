@@ -9556,6 +9556,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.transcripts, lookup, ask, gid, cid, session_id,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
+            consenting=lambda: self.consent.consenting(gid),
         )  # fmt: skip
         # The words PlotBot was not sure of, and the ones it says are new names, are name questions
         # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they

@@ -69,6 +69,7 @@ async def run(
     forget_before: int,
     dry_run: bool = False,
     game_only: bool = False,
+    consenting: Callable[[], Awaitable[Collection[int]]] | None = None,
 ) -> np.Report:
     texts = await pass_lines(store, guild_id, session_id, agreed, game_only)
     found = np.survey(texts, lookup, people)
@@ -80,6 +81,10 @@ async def run(
     # and dev1's tool print the same numbers (#2655).
     skip = set(known) | set(people)
     reply = await ask(np.SYSTEM, np.question(found.items))
+    if agreed is not None and consenting is not None:
+        # Consent is read again after the AI call (CLAUDE.md): a person who withdrew while it was
+        # answering has none of their lines written.
+        agreed = set(agreed) & set(await consenting())
     cut = bool(getattr(reply, "cut", False))
     verdict = np.decide(reply if isinstance(reply, str) else str(reply.text), found.items)
     hidden = [n.text for n in lookup.names if n.secret or n.entity_id in lookup.hidden]

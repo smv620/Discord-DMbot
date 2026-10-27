@@ -47,6 +47,7 @@ class ThePass(NamesTest):
         self.ai = SimpleNamespace(complete=AsyncMock(return_value=reply()))
         self.bot.name_pass_ai = self.ai  # type: ignore[assignment]
         await self.campaigns.set_dm_screen(GUILD, self.campaign.id, 3)
+        await self.consent.grant(GUILD, PLAYER)  # (the pass reads consent again after its AI call)
         await ui.save_name(self.memory, self.campaign, "Kethrandil", "player_character", [], [])
         self.session = await self.transcripts.open_session(GUILD, self.campaign.id, START)
         await self.transcripts.end_session(GUILD, self.session, START + 100)
@@ -421,6 +422,29 @@ class ThePass(NamesTest):
 
         batch = np.batch_of(self.session, await self._entity())
         await self.transcripts.undo_respell(GUILD, self.campaign.id, batch)
+        self.assertEqual(await self.texts(), before)
+
+    async def test_a_person_who_withdraws_while_the_ai_answers_has_no_line_written(self) -> None:
+        """#2655 review: consent is read again after the AI call."""
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        agreed = {PLAYER}
+
+        async def ask(_system: str, _question: str) -> str:
+            agreed.discard(PLAYER)  # withdrawn while the model answers
+            return str(reply({"n": 1, "answer": "is", "name": "Kethrandil"}).text)
+
+        async def now_agreed() -> set[int]:
+            return set(agreed)
+
+        before = await self.texts()
+        report = await name_pass_run.run(
+            self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed,
+        )  # fmt: skip
+        self.assertEqual(report.fixed, ())
         self.assertEqual(await self.texts(), before)
 
     async def test_an_imported_sessions_off_topic_line_is_not_written_either(self) -> None:
