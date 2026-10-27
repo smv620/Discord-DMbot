@@ -749,8 +749,13 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   extractor) runs it after the extractor in the after-session steps: the campaign's plan must include
   story memory (closed if it can't be checked), it makes at most 3 AI calls a session, counted in the
   extractor's session and day limits, and the log gets counts only.
-  Still to build: the PlotBot grade (major or minor, with a reason), the cap of 3 said on the DM screen,
-  and the minor ones kept for the after-session report.
+  **Built (#2660 slice 2e): the DM screen.** After the grading, with the same switches and plan check, the
+  DM screen says the `major` clashes not yet told, at most 3 a session, as one private message (one plain
+  line each, saying when the game times aren't known or one side is a guess, and "Nothing was changed. You
+  decide what is true."). It makes no AI call, and a clash is marked told only after the message went out.
+  The line is posted as DM-screen content, so it is pulled back if the screen opens up. The minor ones are
+  not told here; they wait for the after-session report. Still to build: that report, and the point-of-view
+  reading in `continuity.conflicts_in` (not wired until Supervisor says).
 
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;

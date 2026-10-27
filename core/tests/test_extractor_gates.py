@@ -15,6 +15,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns.store import CampaignStore
 from dmbot.memory import contradiction_run, extractor
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.contradiction_grades import GradeStore
 from dmbot.memory.store import MemoryStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
@@ -317,6 +318,73 @@ class Contradictions(unittest.IsolatedAsyncioTestCase):
             with patch.object(contradiction_run, "run", AsyncMock()) as run:
                 await DMBot.grade_contradictions(me, self.table())
             run.assert_not_called()
+
+
+class TellingContradictions(unittest.IsolatedAsyncioTestCase):
+    """`DMBot.tell_contradictions` (#2660): the big ones to the DM screen, three at most."""
+
+    def stored(self, n: int, *, grade: str = "major") -> Any:
+        return SimpleNamespace(
+            perspective_id="p", kind="k", first_relation_id=f"a{n}", second_relation_id=f"b{n}",
+            grade=grade, reason=f"Clash {n}", times_unknown=False, involves_guess=False,
+        )  # fmt: skip
+
+    def fake(
+        self, rows: list[Any], *, on: bool = True, allowed: bool = True, sent: bool = True
+    ) -> Any:
+        return SimpleNamespace(
+            settings=SimpleNamespace(story_extractor_on=True, story_contradictions_on=on),
+            memory=SimpleNamespace(_db=object()),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
+            plan_allows=AsyncMock(return_value=allowed),
+            post=AsyncMock(return_value=sent),
+            rows=rows,
+        )  # fmt: skip
+
+    def table(self, channel: int | None = 55) -> Any:
+        return SimpleNamespace(campaign_id="c", guild_id=1, screen_channel_id=channel)
+
+    async def tell(self, me: Any, table: Any = None) -> Any:
+        grades = SimpleNamespace(
+            rows=AsyncMock(return_value=me.rows), mark_said=AsyncMock(return_value=0)
+        )
+        with patch.object(GradeStore, "of", return_value=grades):
+            await DMBot.tell_contradictions(me, table or self.table())
+        return grades
+
+    async def test_three_of_five_are_told_in_one_private_message_and_marked(self) -> None:
+        me = self.fake([self.stored(n) for n in range(5)])
+        grades = await self.tell(me)
+        me.post.assert_awaited_once()
+        args = me.post.await_args
+        self.assertEqual(args.args[0], 55)
+        self.assertEqual(args.kwargs["secret_of"], (1, "c"))  # pulled back if the screen opens
+        self.assertEqual(args.args[1].count("•"), 3)
+        self.assertNotIn("Clash 3", args.args[1])  # the rest wait for the report
+        told = grades.mark_said.await_args.args[2]
+        self.assertEqual([t[2] for t in told], ["a0", "a1", "a2"])
+        self.assertEqual(grades.rows.await_args.kwargs, {"grade": "major", "unsaid": True})
+
+    async def test_nothing_waiting_posts_nothing(self) -> None:
+        me = self.fake([])
+        grades = await self.tell(me)
+        me.post.assert_not_called()
+        grades.mark_said.assert_not_called()
+
+    async def test_a_post_that_failed_marks_nothing_so_it_is_tried_again(self) -> None:
+        me = self.fake([self.stored(1)], sent=False)
+        grades = await self.tell(me)
+        me.post.assert_awaited_once()
+        grades.mark_said.assert_not_called()
+
+    async def test_off_by_default_closed_plan_or_no_screen_say_nothing(self) -> None:
+        for me, table in (
+            (self.fake([self.stored(1)], on=False), None),
+            (self.fake([self.stored(1)], allowed=False), None),
+            (self.fake([self.stored(1)]), self.table(channel=None)),
+        ):
+            await self.tell(me, table)
+            me.post.assert_not_called()
 
 
 if __name__ == "__main__":
