@@ -19,6 +19,7 @@ import type {
   NameRow,
   NamesPage,
   NamesQuery,
+  SmartNamesAnswer,
   Offer,
   Person,
   CampaignName,
@@ -41,7 +42,8 @@ import type {
   WebQuery,
   CampaignPage,
   CampaignSettingAnswer,
-  CampaignSettingName,
+  OptionalRules,
+  QueuedSetting,
   Timeline,
   WebRevealTarget,
   Reading,
@@ -76,6 +78,13 @@ export type Scenario = (typeof scenarios)[number];
 export function pickScenario(value: string | null): Scenario {
   return scenarios.find((s) => s === value) ?? "table";
 }
+
+/** Invented optional rules for the pretend API (#2753); the real list comes from the API's catalog. */
+const PRETEND_RULES = [
+  { id: "pretend-rest", book: "A Pretend Guide", name: "Going without a rest", summary: "After a long day without rest, make a save or gain a level of tiredness." },
+  { id: "pretend-bones", book: "A Pretend Guide", name: "Brittle bones", summary: "A hard fall can break a bone." },
+  { id: "pretend-cart", book: "Another Pretend Book", name: "Carts and loads", summary: "A cart carries as much as the party can push." },
+];
 
 const user: Person = { id: "100000000000000001", name: "Belleros" };
 
@@ -483,6 +492,33 @@ const NAME_KINDS: { key: string; label: string }[] = [
   { key: "event", label: "Events" },
 ];
 
+// What the pretend meaning search "knows" about a few names, and words that mean the same: a stand-in for
+// the real embeddings (#2733), so the page can be built and tested before they exist.
+const MEANINGS: Record<string, string> = {
+  "Mira Voss": "ferrywoman boatwoman river friend of Captain Brask",
+  "Captain Brask": "soldier guard captain friend of Mira Voss leader of Brask's Company",
+  "The Tide Wardens": "sea guards tide watchers soldiers",
+  "Ashen Crown Keep": "castle fortress stronghold burned ruin",
+  "Sister Ilse": "priest cleric nun temple healer",
+  Stormglass: "weather glass storm magic item",
+};
+const SAME_MEANING = [
+  ["priest", "cleric", "nun", "holy", "temple"],
+  ["castle", "fortress", "keep", "stronghold"],
+  ["ferry", "ferrywoman", "boatwoman", "boat"],
+  ["soldier", "guard", "guards", "warden", "wardens", "captain"],
+];
+const STOP = new Set(["of", "the", "a", "an", "and", "to", "is", "who", "that"]);
+function meaningTokens(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().split(/[^a-z']+/)) {
+    if (!w || STOP.has(w)) continue;
+    out.add(w);
+    for (const group of SAME_MEANING) if (group.includes(w)) group.forEach((g) => out.add(g));
+  }
+  return out;
+}
+
 function startNames(): NameRow[] {
   const people = ["Mira Voss", "Aldric Thorn", "Sister Ilse", "Captain Brask", "Old Pell", "Tamsin Reed", "Gorrak", "The Ferryman", "Lady Orsolya", "Dunmar", "Hobb Fenwick", "Yselle", "Corvin", "Brother Anselm", "Nadia Quill"];
   const places = ["Brynwater Crossing", "The Gilded Hook", "Ashen Crown Keep", "Varrow Shrine", "Saltmarsh", "Greywatch", "The Low Docks", "Thorn Hollow", "Windmere"];
@@ -790,7 +826,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   const lateLooks = new Map<string, number>();
-  const settingAnswers = new Map<string, { ref: string; setting: CampaignSettingName; value: string; confirm?: boolean }>();
+  const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
+  // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
+  const ruleChoices = new Map<string, Map<string, boolean>>();
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
   };
@@ -867,6 +905,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       got.looks += 1;
       return { session, state: "making", progress: { stage: got.looks === 1 ? "reading" : "grading", done: got.looks === 1 ? null : 2, total: got.looks === 1 ? null : 5, unit: "items", startedAt: 1791000000, updatedAt: 1791000000 + got.looks * 10, serverNow: 1791000000 + got.looks * 12, state: "running" }, counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
     }
+    // A ready report the call limit cut short: never "nothing to check" (core `left_for_next_time`).
+    if (campaignRef.endsWith(".report-cut")) return { session, state: "ready", counts: none, notSorted: 3, leftForNextTime: true, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
     if (campaignRef.endsWith(".report-empty")) return { session, state: "ready", counts: none, contradictions: [], differences: { disguised: [], misunderstood: [], false: [] } };
     const items = reportItems();
     const withAnswer = <T extends { id: string; answer: ReportAnswer | null }>(x: T): T => ({ ...x, answer: got.answers.get(x.id) ?? null });
@@ -1543,7 +1583,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     // seconds. A ref ending `.cs-offline` is never answered (the bot is away), `.cs-refused` is
     // refused by Discord's rules, `.cs-failed` goes wrong; a shorter keep-time needs `confirm`.
     async setCampaignSetting(ref, choice): Promise<string> {
-      calls.push(`setCampaignSetting:${ref}:${choice.setting}:${choice.value}${choice.confirm ? ":confirm" : ""}`);
+      calls.push(`setCampaignSetting:${ref}:${choice.setting}:${choice.value}${choice.on === undefined ? "" : choice.on ? ":on" : ":off"}${choice.confirm ? ":confirm" : ""}`);
       await reachable();
       signedIn();
       if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
@@ -1551,6 +1591,19 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const id = `a${settingAnswers.size + 1}`;
       settingAnswers.set(id, { ref, ...choice });
       return id;
+    },
+    // Invented rules, not the real catalog's text. A campaign ending `.or-none` has no rules to offer; `.or-failed` fails to save.
+    async campaignOptionalRules(ref): Promise<OptionalRules> {
+      calls.push(`campaignOptionalRules:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
+      const chosen = ruleChoices.get(ref) ?? new Map<string, boolean>();
+      const rules = /\.or-none$/.test(ref)
+        ? []
+        : PRETEND_RULES.map((r) => ({ ...r, on: chosen.get(r.id) ?? true, changed: chosen.has(r.id) }));
+      return { main: "2024 rules", rules, note: "", default: true };
     },
     async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
       calls.push(`campaignSettingAnswer:${ref}:${answer}`);
@@ -1564,7 +1617,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
         return { ...base, state: "waiting" };
       if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
-      if (/\.cs-failed$/.test(ref)) return { ...base, state: "failed", error: "failed" };
+      if (/\.cs-failed$/.test(ref) || (asked.setting === "optional_rule" && /\.or-failed$/.test(ref)))
+        return { ...base, state: "failed", error: "failed" };
+      if (asked.setting === "optional_rule") {
+        const rule = PRETEND_RULES.find((r) => r.id === asked.value);
+        if (!rule) return { ...base, state: "failed", error: "bad_value" };
+        const mine = ruleChoices.get(ref) ?? new Map<string, boolean>();
+        mine.set(rule.id, asked.on === true);
+        ruleChoices.set(ref, mine);
+        return { ...base, state: "done", note: `${rule.name} is now ${asked.on ? "on" : "off"}.` };
+      }
       if (asked.setting === "retention" && asked.value === "30" && asked.confirm !== true)
         return { ...base, state: "failed", error: "needs_confirm" };
       const note =
@@ -1657,6 +1719,23 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         pages,
         pageSize,
       };
+    },
+    async smartNames(ref, words): Promise<SmartNamesAnswer> {
+      calls.push(`smartNames:${ref}`); // (never the words: they are the DM's own typing)
+      await reachable();
+      signedIn();
+      const view = namesView(ref);
+      if (view !== "dm") throw new ApiError("not-found");
+      if (/\.smart-off$/.test(ref)) throw new ApiError("not-available");
+      const wanted = meaningTokens(words);
+      const scored = memory
+        .map((n) => {
+          const have = meaningTokens([n.name, ...n.others, MEANINGS[n.name] ?? ""].join(" "));
+          return { n, score: [...wanted].filter((w) => have.has(w)).length };
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || a.n.name.localeCompare(b.n.name));
+      return { names: scored.slice(0, 50).map(({ n }) => ({ ...n, others: [...n.others], aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null })) };
     },
     async changeName(ref, id, change: NameChange): Promise<NameChanged> {
       calls.push(`changeName:${ref}:${id}:${JSON.stringify(change)}`);
@@ -2468,11 +2547,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (!found || found.id !== id || (found.stageNo >= 0 && found.state === "running")) throw new ApiError("not-found");
       restores.delete(serverId);
     },
-    async campaignBackup(ref) {
+    async campaignBackup(ref, onProgress) {
       calls.push(`campaignBackup:${ref}`);
       await reachable();
       signedIn();
       if (me?.plan?.id === "try-it") throw new ApiError("no-backup");
+      // DMbot's own answers while it builds the copy (stage, times), as the real API gives them.
+      const now = Math.floor(Date.now() / 1000);
+      for (const stage of ["waiting", "reading", "packing"]) {
+        onProgress?.({ stage, state: "running", startedAt: now, updatedAt: now, serverNow: now });
+      }
       return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
     },
     async takeBackHandover(ref) {

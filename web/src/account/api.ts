@@ -85,13 +85,37 @@ export interface CampaignPage {
 /** One of the three choices a game master can change on the Settings tab (#2484). */
 export type CampaignSettingName = "visibility" | "level" | "retention";
 
+/** A choice the queue carries: the three above, or an optional rule switched on or off (#2753). */
+export type QueuedSetting = CampaignSettingName | "optional_rule";
+
+/** One optional rule from another book, as the Settings tab lists it (#2753; core web/optional_rules.py).
+ * `changed` is true when the game master chose it, false when it follows the campaign's default. */
+export interface OptionalRule {
+  id: string;
+  book: string;
+  name: string;
+  summary: string;
+  on: boolean;
+  changed: boolean;
+}
+
+/** The optional rules that apply to the campaign's main rules (#2753). */
+export interface OptionalRules {
+  /** The main rules in words, e.g. "2024 rules". */
+  main: string;
+  rules: OptionalRule[];
+  /** A sentence about rules left out because the main rules have their own version, or "". */
+  note: string;
+  default: boolean;
+}
+
 /** Where a choice sent to the bot stands. `error` is the bot's word when it failed (`needs_confirm`,
  * `refused` with Discord's words in `note`, `not_allowed`, `not_found`, `bad_value`, `failed`); `note`
  * is what Discord would say about it. */
 export interface CampaignSettingAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error: string;
-  setting: CampaignSettingName;
+  setting: QueuedSetting;
   value: string;
   note: string;
 }
@@ -507,6 +531,10 @@ export interface SessionReport {
   /** While `making` or `failed`: the shared wait shape (counts and codes only). */
   progress?: JobProgress | null;
   counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };
+  /** Found but not sorted or graded (the call limit stopped the run): a count, never read as "nothing found". */
+  notSorted?: number;
+  /** A ready report the call limit cut short: the rest is checked after the next session. */
+  leftForNextTime?: boolean;
   contradictions: ReportContradiction[];
   differences: { disguised: ReportDifference[]; misunderstood: ReportDifference[]; false: ReportDifference[] };
 }
@@ -1348,6 +1376,13 @@ export interface NamesPage {
   pageSize: number;
 }
 
+/** The answer to "Search by meaning" (#2733): the campaign's names nearest in meaning to the words, best
+ * first, at most 50, in the same row shape as the list. Needs the meaning search deployed (core, after #2664):
+ * without it the API refuses with `not-available` and the page says so. */
+export interface SmartNamesAnswer {
+  names: NameRow[];
+}
+
 export interface NamesQuery {
   q: string;
   /** Kind keys joined with commas ("npc,place"), or "" for every kind. */
@@ -1543,6 +1578,7 @@ export type ApiErrorKind =
   | "plot-is-known" // the secret plot is already known (#2412)
   | "already-known" // the belief is already kept (#2412)
   | "stale" // the recap changed since the page read it, so its scenes were read again (#2577)
+  | "not-available" // the meaning search can't be used for this campaign yet (no vectors made, or switched off) (#2733)
   | "bad-present" // a name that isn't one of the campaign's characters (#2577)
   | "not-in-server" // an NPC page is for the people in the campaign's Discord server (#2266)
   | "bad-type" // a spoken note in a format the API doesn't read (#2113)
@@ -1623,6 +1659,7 @@ export type ApiErrorKind =
   | "session-running" // a session is running, so the campaign can't be deleted (#2555)
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
+  | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "not-a-backup" // the file is not a DMbot backup (#2745)
   | "too-many-parts" // the copy asks for more transcripts files than the restore takes (#2745)
@@ -1654,6 +1691,18 @@ export interface RestoreStatus extends JobProgress {
   /** Unix seconds the staged copy is deleted if nothing happened. */
   expiresAt: number;
 }
+
+/** How the page asks for a copy being made on DMbot's side (#2751): first after 1.5 s, then slower, to 10 s. */
+const BACKUP_POLL_MS = 1500;
+const BACKUP_POLL_MAX_MS = 10_000;
+const BACKUP_GIVE_UP_MS = 16 * 60_000;
+/** What a failed copy's `reason` means to the page (core web/campaign_backup.py REASONS). */
+const backupReasons: Record<string, ApiErrorKind> = {
+  plan: "no-backup",
+  too_big: "too-big",
+  not_allowed: "not-allowed",
+  not_found: "not-found",
+};
 
 export class ApiError extends Error {
   constructor(
@@ -1720,8 +1769,12 @@ export interface AccountApi {
   restoreStatus?(serverId: string, id?: string): Promise<RestoreStatus | null>;
   /** Take a staged copy back before DMbot starts it, or clear one that has ended. */
   restoreCancel?(serverId: string, id: string): Promise<void>;
-  /** The whole campaign as a JSON backup file, offered before Delete (owner and co-DMs; not Try It). */
-  campaignBackup?(ref: string): Promise<Blob>;
+  /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
+   * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
+   * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
+   * `too-big`, `not-allowed`, `not-found`, `too-soon`, and `backup-failed` (it could not be made, or took longer
+   * than the 15 minutes it is kept). */
+  campaignBackup?(ref: string, onProgress?: (progress: JobProgress) => void): Promise<Blob>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
   /** `{moving: true}` (HTTP 202) when the campaign has to move to another server first: the bot does it within
@@ -1804,6 +1857,9 @@ export interface AccountApi {
   /** One page of a campaign's names, searched, filtered and sorted (#2295). `ref` is
    * `<server>.<campaign>`. Missing from an API older than that. */
   allNames?(ref: string, query: NamesQuery): Promise<NamesPage>;
+  /** Names by meaning, for "ice goddess" or "friend of Brannoc" (#2733). The words go in a POST body, never the
+   * address (a query string is written to logs). Missing from an API older than that. */
+  smartNames?(ref: string, words: string): Promise<SmartNamesAnswer>;
   /** One change to one name (DMs only); the same action as the name card in Discord. */
   /** One campaign's page (#2416). Missing from an API older than that. */
   campaignPage?(campaignRef: string): Promise<CampaignPage>;
@@ -1876,8 +1932,12 @@ export interface AccountApi {
    * deletes old sessions, so it goes with `confirm: true` once the game master has said yes. */
   setCampaignSetting?(
     campaignRef: string,
-    choice: { setting: CampaignSettingName; value: string; confirm?: boolean },
+    choice: { setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean },
   ): Promise<string>;
+  /** The optional rules that apply to the campaign and which are on (#2753), for its game masters. Missing
+   * from an API older than that. A rule is switched with `setCampaignSetting({setting: "optional_rule",
+   * value: <id>, on})`. */
+  campaignOptionalRules?(campaignRef: string): Promise<OptionalRules>;
   /** Where a choice sent with `setCampaignSetting` stands. */
   campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
@@ -2021,6 +2081,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   plot_is_known: "plot-is-known",
   already_known: "already-known",
   bad_present: "bad-present",
+  not_available: "not-available",
   no_lines: "no-lines",
   needs_rights: "needs-rights",
   not_a_google_doc: "not-a-google-doc",
@@ -2317,8 +2378,24 @@ export function httpApi(
     restoreCancel: async (serverId, id) => {
       await call("DELETE", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}`);
     },
-    campaignBackup: async (ref) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/backup`, undefined, true)) as Blob,
+    campaignBackup: async (ref, onProgress) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
+      const asked = (await call("POST", base)) as { id: string };
+      const began = Date.now();
+      let wait = BACKUP_POLL_MS;
+      for (;;) {
+        const got = (await call("GET", `${base}/${encodeURIComponent(asked.id)}`)) as JobProgress & { ready: boolean };
+        onProgress?.(got);
+        if (got.state === "failed") throw new ApiError(backupReasons[got.reason ?? ""] ?? "backup-failed");
+        if (got.ready) break;
+        // DMbot keeps a copy 15 minutes; a copy not ready by then is not coming.
+        if (Date.now() - began > BACKUP_GIVE_UP_MS) throw new ApiError("backup-failed");
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        wait = Math.min(wait * 1.5, BACKUP_POLL_MAX_MS);
+      }
+      // Once: DMbot deletes the copy as it is sent.
+      return (await call("GET", `${base}/${encodeURIComponent(asked.id)}/file`, undefined, true)) as Blob;
+    },
     takeBackHandover: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
     },
@@ -2413,11 +2490,10 @@ export function httpApi(
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`)) as SessionReport,
     makeSessionReport: async (campaignRef, at) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report/make`, {})) as SessionReport,
+    // Written at once by the API (an answer is the DM's bookkeeping, not a change to the story: Supervisor on
+    // #2661), so there is nothing to wait for or poll; the page reads the report again.
     answerReport: async (campaignRef, at, id, action) => {
-      const base = `/me/campaigns/${encodeURIComponent(campaignRef)}`;
-      const queued = (await call("POST", `${base}/sessions/${at}/report`, { id, action })) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/sessions/${at}/report`, { id, action });
     },
     setBeatPresent: async (recapRef, n, present) =>
       (await call("PUT", `/me/recaps/${encodeURIComponent(recapRef)}/beats/${n}/present`, { present })) as RecapBeat,
@@ -2502,8 +2578,11 @@ export function httpApi(
           setting: choice.setting,
           value: choice.value,
           ...(choice.confirm ? { confirm: true } : {}),
+          ...(choice.on === undefined ? {} : { on: choice.on }),
         })) as { answer: string }
       ).answer,
+    campaignOptionalRules: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
     campaignSettingAnswer: async (campaignRef, answer) =>
       (await call(
         "GET",
@@ -2755,6 +2834,8 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
       )) as NamesPage;
     },
+    smartNames: async (ref, words) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names/search`, { q: words })) as SmartNamesAnswer,
     // The bot applies a name change, so the POST only queues it (202 {answer}); this waits for the
     // answer by asking about once a second, up to a minute (#2294).
     changeName: async (ref, id, change) => {

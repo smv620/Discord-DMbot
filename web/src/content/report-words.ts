@@ -21,6 +21,7 @@ export const reportWords = {
   failed: "The report couldn't be made. Nothing was changed. Try again, and if it fails again, tell us on the Say hello page.",
   stoppedWatching: "This is taking longer than usual, so the page stopped checking. The report is still being made and nothing is lost. Open this page again in a little while.",
   empty: "Nothing to check from this session.",
+  leftForNextTime: "Some of this will be checked after the next session.",
   counts: (c: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number }): string => {
     const parts: string[] = [];
     if (c.contradictions) parts.push(`${c.contradictions} that may not fit`);

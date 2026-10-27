@@ -80,6 +80,12 @@ describe("the report", () => {
     expect(document.body.textContent).not.toContain("THE WORDS A PLAYER SAID");
   });
 
+  it("a report the call limit cut short never reads as nothing to check", async () => {
+    await open("100.cmp1.report-cut");
+    await screen.findByText(w.leftForNextTime);
+    expect(screen.queryByText(w.empty)).toBeNull();
+  });
+
   it("says there is nothing to check when the report is empty", async () => {
     await open("100.cmp1.report-empty");
     await screen.findByText(w.empty);

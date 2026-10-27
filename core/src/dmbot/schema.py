@@ -3490,14 +3490,6 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_backup_add", "dmbot_web_backup_add(BIGINT, TEXT)"),
     ("dmbot_web_backup_read", "dmbot_web_backup_read(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_backup_take", "dmbot_web_backup_take(BIGINT, TEXT, TEXT)"),
-    # A backup loaded from the website, staged for the bot to apply (#2745).
-    ("dmbot_web_restore_target", "dmbot_web_restore_target(BIGINT, TEXT)"),
-    ("dmbot_web_restore_add", "dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)"),
-    ("dmbot_web_restore_part", "dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)"),
-    ("dmbot_web_restore_go", "dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)"),
-    ("dmbot_web_restore_read", "dmbot_web_restore_read(BIGINT, TEXT)"),
-    ("dmbot_web_restore_pending", "dmbot_web_restore_pending(BIGINT)"),
-    ("dmbot_web_restore_cancel", "dmbot_web_restore_cancel(BIGINT, TEXT)"),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -3508,6 +3500,16 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     # The recap's names to check, answered on its page (#2113): the read door and the queue door.
     ("dmbot_recap_names_read", "dmbot_recap_names_read(BIGINT, TEXT, BIGINT)"),
     ("dmbot_recap_name_places", "dmbot_recap_name_places(BIGINT, TEXT, BIGINT)"),
+    # One session's after-session report, the DM's alone (#2661).
+    ("dmbot_web_report", "dmbot_web_report(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_web_report_answer", "dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_restore_target", "dmbot_web_restore_target(BIGINT, TEXT)"),
+    ("dmbot_web_restore_add", "dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)"),
+    ("dmbot_web_restore_part", "dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)"),
+    ("dmbot_web_restore_go", "dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)"),
+    ("dmbot_web_restore_read", "dmbot_web_restore_read(BIGINT, TEXT)"),
+    ("dmbot_web_restore_pending", "dmbot_web_restore_pending(BIGINT)"),
+    ("dmbot_web_restore_cancel", "dmbot_web_restore_cancel(BIGINT, TEXT)"),
     ("dmbot_recap_names_fixed", "dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)"),  # (#2684)
     ("dmbot_recap_present", "dmbot_recap_present(BIGINT, TEXT, BIGINT)"),  # (#2684, #2577)
     (
@@ -3591,9 +3593,13 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
     # How a listed name is said, for the DM's row editor (#2317).
     ("dmbot_web_all_names_said", "dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])"),
+    # The Names page's search by meaning (#2733): the names nearest in meaning, DMs only.
+    ("dmbot_web_names_near", "dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)"),
     # The Settings page's choices (#2463), queued for the bot the same way.
     ("dmbot_web_setting_add", "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"),
     ("dmbot_web_setting_read", "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_optional_rules", "dmbot_web_optional_rules(BIGINT, TEXT)"),
+    ("dmbot_web_optional_rule_add", "dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN)"),
     # The All names page's list (#2294): DMs, and managers without what only a DM sees.
     (
         "dmbot_web_all_names",
@@ -10808,6 +10814,150 @@ ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
     1,
 ).replace("GREATEST(size, 1)", "LEAST(GREATEST(size, 1), 500)")
 
+# Search by meaning on the Names page (#2733, migration 0253).
+# `only_id` takes a short comma-separated list of ids as well as one (entry ids are 32 hex digits,
+# so a comma never belongs to one): the page asks for the rows of the names the search found, in
+# the rows' usual shape, with one call instead of one for each name.
+assert ALL_NAMES_KINDS.count("(only_id IS NULL OR v.id = only_id)") == 1
+ALL_NAMES_LIST = ALL_NAMES_KINDS.replace(
+    "(only_id IS NULL OR v.id = only_id)",
+    "(only_id IS NULL OR v.id = ANY (string_to_array(only_id, ',')))",
+    1,
+)
+NAMES_SMART = (
+    r"""
+    -- What an entry is searched by (#2733), as parts: the name and the description, the other
+    -- names it is called (not the secret ones) and its connections, each as the relationship's
+    -- key, the campaign's own label for it (NULL for a core relationship, whose words are in
+    -- code: `memory/entity_text.py` puts the text together), the other name, which way it runs
+    -- and whether it reads the same both ways. A connection the DM keeps secret, or one to an
+    -- entry the players don't know yet, is left out, so nothing a player may not know is in the
+    -- text of a name they may. NULL when the entry has no description (nothing is searched by a
+    -- bare name). The bot's numbers and the Names page's reranker both read it, so they read the
+    -- same words. The rules for what a name's text may hold are the players' own (the same as
+    -- `meaning.entry_texts` and the website's readers): a connection the DM has not revealed, one
+    -- to a story-planning entry, or one to an entry whose own name is a secret never goes in. Text
+    -- already made can lag until the next embedding run after an entry becomes hidden.
+    CREATE FUNCTION dmbot_entity_parts(g BIGINT, c TEXT, eid TEXT) RETURNS JSONB
+    LANGUAGE sql STABLE AS $fn$
+        SELECT jsonb_build_object(
+            'name', e.name,
+            'description', e.description,
+            'aliases', COALESCE((
+                SELECT jsonb_agg(t.text ORDER BY t.text)
+                FROM (SELECT DISTINCT a.text FROM memory_aliases a
+                      WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                        AND a.status = 'confirmed' AND NOT a.secret
+                        AND lower(a.text) <> lower(e.name)
+                      ORDER BY a.text LIMIT 6) t), '[]'::jsonb),
+            'links', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'predicate', k.predicate, 'label', k.label, 'symmetric', k.symmetric,
+                           'other', k.other, 'outgoing', k.outgoing)
+                       ORDER BY k.other, k.predicate)
+                FROM (SELECT DISTINCT r.predicate, p.label, p.is_symmetric AS symmetric,
+                             o.name AS other, (r.subject_id = e.id) AS outgoing
+                      FROM memory_relations r
+                      LEFT JOIN memory_predicates p
+                        ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
+                       AND p.key = r.predicate
+                      JOIN memory_entities o
+                        ON o.guild_id = r.guild_id AND o.campaign_id = r.campaign_id
+                       AND o.id = CASE WHEN r.subject_id = e.id THEN r.object_id
+                                       ELSE r.subject_id END
+                      WHERE r.guild_id = g AND r.campaign_id = c
+                        AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed
+                        AND (r.subject_id = e.id OR r.object_id = e.id)
+                        AND o.status = 'confirmed' AND o.merged_into IS NULL
+                        AND o.type <> 'person' AND NOT o.audience_limited
+                        AND NOT o.hidden_from_players
+                        AND o.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                           'promise', 'deed')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM memory_aliases sa
+                            WHERE sa.guild_id = o.guild_id AND sa.campaign_id = o.campaign_id
+                              AND sa.entity_id = o.id AND sa.secret AND sa.status <> 'rejected'
+                              AND regexp_replace(lower(sa.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(o.name), '[^[:alnum:]]', '', 'g'))
+                      ORDER BY other, predicate LIMIT 40) k), '[]'::jsonb))
+        FROM memory_entities e
+        WHERE e.guild_id = g AND e.campaign_id = c AND e.id = eid
+          AND char_length(btrim(e.description)) > 0
+    $fn$;
+    REVOKE ALL ON FUNCTION dmbot_entity_parts(BIGINT, TEXT, TEXT) FROM PUBLIC;
+
+    -- The Names page's search by meaning (#2733): the entries whose kept numbers are closest to the
+    -- search's numbers (`q`, made by the website's server from the DM's own words), best first,
+    -- with the parts of the text each was made from (`dmbot_entity_parts`) so the reranker can read
+    -- it. The comparing is done here because the website's role has no right on the numbers. A DM
+    -- of the campaign only (NULL for anyone else, a server manager who is not a DM included: the
+    -- text holds descriptions, which a manager does not see on the page). One campaign, one
+    -- model, the same number of numbers; the vectors are unit length, but the length is divided
+    -- out anyway. At most `pool` (60) rows, from the newest 10,000 numbers (about 3 seconds of one
+    -- core for 20,000 rows, measured); `capped` says there were more. An empty `q` only proves who
+    -- is asking.
+    CREATE FUNCTION dmbot_web_names_near(g BIGINT, c TEXT, m TEXT, q REAL[], pool INT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        qn DOUBLE PRECISION;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        qn := sqrt((SELECT sum(x::DOUBLE PRECISION * x) FROM unnest(q) AS x));
+        IF qn IS NULL OR qn = 0 OR cardinality(q) > 4096 THEN
+            RETURN jsonb_build_object('capped', false, 'rows', '[]'::jsonb);
+        END IF;
+        RETURN jsonb_build_object('capped', EXISTS (
+            SELECT 1 FROM memory_vectors x
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.owner_kind = 'assertion'
+              AND x.model = m AND cardinality(x.vector) = cardinality(q)
+            OFFSET 9999), 'rows', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', n.id, 'parts', n.parts, 'score', n.score)
+                             ORDER BY n.score DESC, n.id)
+            FROM (
+                SELECT best.id, dmbot_entity_parts(g, c, best.id) AS parts, best.score
+                FROM (
+                    SELECT split_part(v.owner_id, '#', 1) AS id,
+                           max(d.dot / (qn * d.len)) AS score
+                    FROM (SELECT x.owner_id, x.vector FROM memory_vectors x
+                          WHERE x.guild_id = g AND x.campaign_id = c
+                            AND x.owner_kind = 'assertion' AND x.model = m
+                            AND cardinality(x.vector) = cardinality(q)
+                          ORDER BY x.made_at DESC, x.owner_id LIMIT 10000) v
+                    CROSS JOIN LATERAL (
+                        SELECT sum(a::DOUBLE PRECISION * b) AS dot,
+                               sqrt(sum(a::DOUBLE PRECISION * a)) AS len
+                        FROM unnest(v.vector, q) AS u(a, b)) d
+                    WHERE d.len > 0
+                    GROUP BY 1
+                    ORDER BY 2 DESC, 1
+                    LIMIT LEAST(GREATEST(pool, 1), 60)
+                ) best
+                JOIN memory_entities e
+                  ON e.guild_id = g AND e.campaign_id = c AND e.id = best.id
+                 AND e.status = 'confirmed' AND e.merged_into IS NULL AND e.type <> 'person'
+            ) n
+            WHERE n.parts IS NOT NULL), '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT) FROM PUBLIC;
+    """
+    + ALL_NAMES_LIST
+)
+
 
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
@@ -13394,343 +13544,108 @@ WEB_BACKUPS = (
     """
 )
 
-WEB_RESTORES = (
-    """
-    -- A backup loaded from the website (#2745), waiting for the bot. The website's role cannot
-    -- write the campaign tables, so it stages the file here through the doors below, and the bot
-    -- applies it with the same code as Discord's `/dmbot restore`: after checking again the plan,
-    -- the free campaign slot, that the person is still in the server and (to replace a campaign)
-    -- still one of its DMs, and that the campaign is not playing. `main` is the copy and
-    -- `web_restore_parts` its transcripts files (all of them or none, as in Discord). One row is
-    -- one restore: `receiving` while the person's own files are still arriving, then `waiting`,
-    -- `working` (with `stage`, `done_parts` of `parts_wanted` and `updated_at` for the shared
-    -- progress shape of #2564), then `done` or `failed` with a plain reason word. The bytes are
-    -- emptied when the bot has applied or refused it, and the row goes 24 hours after it began,
-    -- whichever is first (the bot sweeps; the doors also do). A copy holds the campaign's secrets,
-    -- like any backup, so it is never logged. Isolated per server, read by the person who made it
-    -- only, one pending restore per person per server, and not itself in a backup.
-    CREATE TABLE web_restores (
-        guild_id      BIGINT NOT NULL,
-        id            TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
-        user_id       BIGINT NOT NULL CHECK (user_id > 0),
-        -- The campaign to replace, or NULL for a new one. Not a foreign key: the bot judges whether
-        -- it still exists and is the person's, and a row must outlive a deleted campaign to say so.
-        replace_id    TEXT,
-        name          TEXT NOT NULL CHECK (char_length(name) <= 100),
-        parts_wanted  INT NOT NULL CHECK (parts_wanted BETWEEN 0 AND 24),
-        main          BYTEA,
-        state         TEXT NOT NULL DEFAULT 'receiving'
-            CHECK (state IN ('receiving', 'waiting', 'working', 'done', 'failed')),
-        stage         TEXT NOT NULL DEFAULT 'restore_receiving'
-            CHECK (stage IN ('restore_receiving', 'restore_waiting', 'restore_reading',
-                             'restore_writing', 'done', 'failed')),
-        error         TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
-        done_parts    INT NOT NULL DEFAULT 0,
-        left_out      INT NOT NULL DEFAULT 0,
-        without_parts BOOLEAN NOT NULL DEFAULT FALSE,
-        result_id     TEXT,
-        created_at    BIGINT NOT NULL,
-        claimed_at    BIGINT NOT NULL DEFAULT 0,
-        updated_at    BIGINT NOT NULL,
-        PRIMARY KEY (guild_id, id)
-    );
-    CREATE INDEX web_restores_open ON web_restores (guild_id, created_at)
-        WHERE state IN ('waiting', 'working');
-    -- One restore on its way per person across every server (a copy can be 625 MB): the index sees
-    -- all servers' rows even though a door sees one server's.
-    CREATE UNIQUE INDEX web_restores_one_each ON web_restores (user_id)
-        WHERE state IN ('receiving', 'waiting', 'working');
-    CREATE TABLE web_restore_parts (
-        guild_id   BIGINT NOT NULL,
-        restore_id TEXT NOT NULL,
-        n          INT NOT NULL CHECK (n BETWEEN 1 AND 24),
-        data       BYTEA,
-        -- ON UPDATE CASCADE: a foreign key that carries guild_id (CLAUDE.md, #2550).
-        FOREIGN KEY (guild_id, restore_id)
-            REFERENCES web_restores (guild_id, id) ON DELETE CASCADE ON UPDATE CASCADE,
-        PRIMARY KEY (guild_id, restore_id, n)
-    );
-    """
-    + _isolate("web_restores")
-    + _isolate("web_restore_parts")
-    + r"""
-    -- The bytes never outlive the end of a restore, whatever the bot does: the moment a row turns
-    -- done or failed, the copy is emptied and its transcripts files go (the 24-hour sweep catches
-    -- the rows that never ended).
-    CREATE FUNCTION web_restores_empty() RETURNS trigger
-    LANGUAGE plpgsql AS $fn$
-    BEGIN
-        IF NEW.state IN ('done', 'failed') THEN
-            NEW.main := NULL;
-            DELETE FROM web_restore_parts p
-                WHERE p.guild_id = NEW.guild_id AND p.restore_id = NEW.id;
-        END IF;
-        RETURN NEW;
-    END
-    $fn$;
-    CREATE TRIGGER web_restores_empty BEFORE UPDATE ON web_restores
-        FOR EACH ROW EXECUTE FUNCTION web_restores_empty();
-
-    -- Stage a restore: the copy itself, already checked by the API (a backup of this name, asking
-    -- for this many transcripts files). `replace_` is a campaign of the caller's to swap for the
-    -- copy, or NULL for a new campaign. The door checks what it can see: the caller is in the
-    -- server (and, to replace, a DM of that campaign), no other restore of theirs is still pending
-    -- in any server, and fewer than 5 in the last hour here. Answers 'ok' with the id and the state
-    -- (`receiving`), 'busy' with the id of the one pending, 'too_soon', or 'bad_target'; NULL for
-    -- anyone not in the server.
-    CREATE FUNCTION dmbot_web_restore_add(
-        g BIGINT, replace_ TEXT, nm TEXT, wanted INT, copy BYTEA
-    ) RETURNS JSONB
+OPTIONAL_RULES_READ = r"""
+    -- A campaign's optional-rule choices for the website's Settings tab (#2753): the main rules it
+    -- plays by, the campaign-wide default, and the choices the DM made rule by rule. Read only, DM
+    -- of the campaign only (as the other Settings reads), and nothing else leaves it; the API joins
+    -- it with the rules catalog. NULL for anyone else.
+    CREATE FUNCTION dmbot_web_optional_rules(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
-        me BIGINT := dmbot_current_user();
-        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
-        have TEXT;
-        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        camp campaigns%ROWTYPE;
     BEGIN
-        IF me IS NULL OR g IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
-           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
-            RETURN NULL;
-        END IF;
-        IF copy IS NULL OR nm IS NULL OR wanted IS NULL OR wanted < 0 OR wanted > 24 THEN
-            RETURN jsonb_build_object('status', 'bad_target');
-        END IF;
-        IF replace_ IS NOT NULL AND NOT EXISTS (
-               SELECT 1 FROM campaign_dms d
-               WHERE d.guild_id = g AND d.campaign_id = replace_ AND d.user_id = me) THEN
-            RETURN jsonb_build_object('status', 'bad_target');
-        END IF;
-        PERFORM pg_advisory_xact_lock(hashtextextended('web_restore:' || me::TEXT, 0));
-        DELETE FROM web_restores r WHERE r.guild_id = g AND r.created_at < now_s - 86400;
-        SELECT r.id INTO have FROM web_restores r
-            WHERE r.guild_id = g AND r.user_id = me
-              AND r.state IN ('receiving', 'waiting', 'working')
-            ORDER BY r.created_at DESC LIMIT 1;
-        IF FOUND THEN
-            RETURN jsonb_build_object('status', 'busy', 'id', have);
-        END IF;
-        -- (Counted in this server only; the API's per-person rate limit is the real one.)
-        IF (SELECT count(*) FROM web_restores r
-            WHERE r.guild_id = g AND r.user_id = me AND r.created_at > now_s - 3600) >= 5 THEN
-            RETURN jsonb_build_object('status', 'too_soon');
-        END IF;
-        -- Always `receiving` first: nothing goes to the bot until the person has seen what it
-        -- will do and pressed Load it (`dmbot_web_restore_go`), even with no transcripts files.
-        BEGIN
-            INSERT INTO web_restores (guild_id, id, user_id, replace_id, name, parts_wanted, main,
-                                      created_at, updated_at)
-                VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, now_s, now_s);
-        EXCEPTION WHEN unique_violation THEN
-            -- Pending in another server (this server's was found above): no id to give.
-            RETURN jsonb_build_object('status', 'busy');
-        END;
-        RETURN jsonb_build_object('status', 'ok', 'id', rid, 'state', 'receiving');
-    END
-    $fn$;
-
-    -- One transcripts file of a restore that is still receiving, numbered 1 to the count the copy
-    -- asked for; sending a number again replaces it. 'ok' with how many have arrived, 'bad_part'
-    -- for a number outside the count, 'not_receiving' once it is on its way; NULL when it is not
-    -- the caller's.
-    CREATE FUNCTION dmbot_web_restore_part(g BIGINT, rid TEXT, num INT, blob BYTEA) RETURNS JSONB
-    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
-    DECLARE
-        r web_restores%ROWTYPE;
-        got INT;
-    BEGIN
-        IF dmbot_current_user() IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
-            RETURN NULL;
-        END IF;
-        SELECT * INTO r FROM web_restores x
-            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
-            FOR UPDATE;
-        IF NOT FOUND THEN
-            RETURN NULL;
-        END IF;
-        IF r.state <> 'receiving' THEN
-            RETURN jsonb_build_object('status', 'not_receiving');
-        END IF;
-        IF num IS NULL OR num < 1 OR num > r.parts_wanted OR blob IS NULL THEN
-            RETURN jsonb_build_object('status', 'bad_part');
-        END IF;
-        INSERT INTO web_restore_parts (guild_id, restore_id, n, data) VALUES (g, rid, num, blob)
-            ON CONFLICT (guild_id, restore_id, n) DO UPDATE SET data = EXCLUDED.data;
-        SELECT count(*) INTO got FROM web_restore_parts p
-            WHERE p.guild_id = g AND p.restore_id = rid;
-        RETURN jsonb_build_object('status', 'ok', 'received', got);
-    END
-    $fn$;
-
-    -- Send it to the bot: with every transcripts file in (`without` false), or restoring without
-    -- them (`without` true, as Discord allows: all of them or none). 'ok', 'missing' when files
-    -- are still to come, 'not_receiving' if it already went; NULL when it is not the caller's.
-    CREATE FUNCTION dmbot_web_restore_go(g BIGINT, rid TEXT, without BOOLEAN) RETURNS JSONB
-    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
-    DECLARE
-        r web_restores%ROWTYPE;
-        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
-        got INT;
-    BEGIN
-        IF dmbot_current_user() IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
-            RETURN NULL;
-        END IF;
-        SELECT * INTO r FROM web_restores x
-            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
-            FOR UPDATE;
-        IF NOT FOUND THEN
-            RETURN NULL;
-        END IF;
-        IF r.state <> 'receiving' THEN
-            RETURN jsonb_build_object('status', 'not_receiving');
-        END IF;
-        SELECT count(*) INTO got FROM web_restore_parts p
-            WHERE p.guild_id = g AND p.restore_id = rid;
-        IF COALESCE(without, false) THEN
-            DELETE FROM web_restore_parts p WHERE p.guild_id = g AND p.restore_id = rid;
-        ELSIF got <> r.parts_wanted THEN
-            RETURN jsonb_build_object('status', 'missing', 'received', got);
-        END IF;
-        UPDATE web_restores x SET state = 'waiting', stage = 'restore_waiting',
-               without_parts = COALESCE(without, false), updated_at = now_s
-            WHERE x.guild_id = g AND x.id = rid;
-        RETURN jsonb_build_object('status', 'ok');
-    END
-    $fn$;
-
-    -- Where a restore stands, for the person who made it (nobody else): the progress fields, the
-    -- name of the copy (the campaign's own name, which they supplied), how many transcripts files
-    -- it asks for and has, and, once it has ended, the plain reason word and how many lines were
-    -- left out for people who had deleted theirs. NULL when it is not theirs.
-    CREATE FUNCTION dmbot_web_restore_read(g BIGINT, rid TEXT) RETURNS JSONB
-    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
-    DECLARE
-        r RECORD;
-        got INT;
-    BEGIN
-        IF dmbot_current_user() IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
-            RETURN NULL;
-        END IF;
-        -- Named columns, so a poll never reads the copy itself.
-        SELECT x.state, x.stage, x.error, x.name, x.parts_wanted, x.done_parts, x.left_out,
-               x.replace_id, x.result_id, x.without_parts, x.created_at, x.updated_at INTO r
-            FROM web_restores x
-            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
-              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400;
-        IF NOT FOUND THEN
-            RETURN NULL;
-        END IF;
-        SELECT count(*) INTO got FROM web_restore_parts p
-            WHERE p.guild_id = g AND p.restore_id = rid;
-        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
-            'name', r.name, 'partsWanted', r.parts_wanted, 'partsReceived', got,
-            'doneParts', r.done_parts, 'leftOut', r.left_out, 'replaceId', r.replace_id,
-            'resultId', r.result_id, 'withoutParts', r.without_parts,
-            'createdAt', r.created_at, 'updatedAt', r.updated_at);
-    END
-    $fn$;
-
-    -- The caller's own pending restore in this server, if any (id only), so a page that was
-    -- closed can find its way back.
-    CREATE FUNCTION dmbot_web_restore_pending(g BIGINT) RETURNS TEXT
-    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
-    DECLARE
-        out TEXT;
-    BEGIN
-        IF dmbot_current_user() IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
-            RETURN NULL;
-        END IF;
-        SELECT x.id INTO out FROM web_restores x
-            WHERE x.guild_id = g AND x.user_id = dmbot_current_user()
-              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400
-            ORDER BY x.created_at DESC LIMIT 1;
-        RETURN out;
-    END
-    $fn$;
-
-    -- Take it back: the person's own restore, while the bot has not started it. The bytes go with
-    -- the row. True when something was removed.
-    CREATE FUNCTION dmbot_web_restore_cancel(g BIGINT, rid TEXT) RETURNS TEXT
-    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
-    DECLARE
-        st TEXT;
-    BEGIN
-        IF dmbot_current_user() IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
-            RETURN NULL;
-        END IF;
-        SELECT x.state INTO st FROM web_restores x
-            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
-            FOR UPDATE;
-        IF NOT FOUND THEN
-            RETURN 'gone';
-        END IF;
-        -- The bot has it: it cannot be taken back, and the page must go on showing it.
-        IF st = 'working' THEN
-            RETURN 'working';
-        END IF;
-        DELETE FROM web_restores x WHERE x.guild_id = g AND x.id = rid;
-        RETURN 'ok';
-    END
-    $fn$;
-    -- Who owns the campaign a restore would replace, for the plan check made before any bytes are
-    -- stored: the owner's id as text (or '' when it has none), only for a DM of that campaign in
-    -- this server. NULL for anyone else.
-    CREATE FUNCTION dmbot_web_restore_target(g BIGINT, c TEXT) RETURNS TEXT
-    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
-    DECLARE
-        own BIGINT;
-    BEGIN
-        IF dmbot_current_user() IS NULL
-           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
+        IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
            OR NOT EXISTS (SELECT 1 FROM campaign_dms d
                           WHERE d.guild_id = g AND d.campaign_id = c
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        SELECT k.owner_user_id INTO own FROM campaigns k WHERE k.guild_id = g AND k.id = c;
-        RETURN COALESCE(own::TEXT, '');
+        SELECT * INTO camp FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'target', camp.target_ruleset,
+            'default', camp.optional_rules_default,
+            'overrides', COALESCE((
+                SELECT jsonb_object_agg(o.rule_id, o.enabled)
+                FROM campaign_optional_rules o
+                WHERE o.guild_id = g AND o.campaign_id = c), '{}'::jsonb));
     END
     $fn$;
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_target(BIGINT, TEXT)'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_read(BIGINT, TEXT)'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_pending(BIGINT)'
-            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_restore_cancel(BIGINT, TEXT)'
+            'ALTER FUNCTION dmbot_web_optional_rules(BIGINT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_target(BIGINT, TEXT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_read(BIGINT, TEXT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_pending(BIGINT) FROM PUBLIC;
-    REVOKE ALL ON FUNCTION dmbot_web_restore_cancel(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_optional_rules(BIGINT, TEXT) FROM PUBLIC;
 """
-)
+
+OPTIONAL_RULE_SETTING = r"""
+    -- A fourth choice on the website's Settings queue (#2753): an optional rule switched on or off.
+    -- The queue already carries the three settings (0197); here `setting` also accepts
+    -- 'optional_rule', `value` may be the rule's id (the longest is 18 characters), and a new
+    -- `turn_on` column says which way. `turn_on` is set exactly for an optional rule and is NULL
+    -- for every other setting (so it never shares a meaning with `flag`, the DM's yes to a shorter
+    -- transcript limit). No row changes: no backfill policy is needed.
+    ALTER TABLE setting_actions DROP CONSTRAINT IF EXISTS setting_actions_setting_check;
+    ALTER TABLE setting_actions DROP CONSTRAINT IF EXISTS setting_actions_value_check;
+    ALTER TABLE setting_actions
+        ADD CONSTRAINT setting_actions_setting_check
+            CHECK (setting IN ('visibility', 'level', 'retention', 'optional_rule')),
+        ADD CONSTRAINT setting_actions_value_check CHECK (char_length(value) <= 40),
+        ADD COLUMN turn_on BOOLEAN,
+        ADD CONSTRAINT setting_actions_turn_on_check
+            CHECK ((setting = 'optional_rule') = (turn_on IS NOT NULL));
+
+    -- Queue one optional-rule choice. Same guard as `dmbot_web_setting_add`: the caller is a DM of
+    -- the campaign in a server on the session's list, and the campaign's queue is not full. The
+    -- API has already checked the id against the catalog (a rule list that lives in Python); the
+    -- bot checks again, with the campaign's main rules, when it applies it. 'ok' with the id,
+    -- 'bad_value' for a malformed id or no on/off, 'too_soon'; NULL for anyone not a DM.
+    CREATE FUNCTION dmbot_web_optional_rule_add(g BIGINT, c TEXT, rid TEXT, on_ BOOLEAN)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        qid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF rid IS NULL OR rid !~ '^[a-z0-9-]{1,40}$' OR on_ IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_value');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('setting_action:' || g::TEXT || c, 0));
+        DELETE FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 3600;
+        IF (SELECT count(*) FROM setting_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 10
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting, value, turn_on,
+                                     created_at)
+            VALUES (g, c, qid, dmbot_current_user(), 'optional_rule', rid, on_, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', qid);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
+"""
 
 TOPIC_CHOICES = """
     -- Who put a line back (or left it out again) after the session, and what the off-topic filter
@@ -15795,6 +15710,654 @@ NAMES_READ_CAMPAIGN = (
     """
 )
 
+# One session's after-session report for the website (#2661; docs/STORY_MEMORY.md 9a): the DM's
+# alone. Items are the minor contradictions and the differences PlotBot sorted as disguised,
+# misunderstood or false, plus what the DM answered. An item belongs to a session when it was found
+# in it (`session_started_at`); "That's intended", "Not a problem" and a fix are not raised again
+# once answered before the session began, and "Remind me" comes back in the report of the session
+# after the one it was answered in. The key an answer is kept under is the same hash as
+# `memory/report_store.py` makes (sha256 of the item's kind and ids, 32 hex). Only ids, DMbot's own
+# words (the connections' names and relationship) and numbers leave: evidence is its kind, its
+# session and whether it still stands (a link whose words were removed has no target), never a
+# line, a speaker or a quote. Items found but not sorted (the call limit stopped the run) are only
+# counted. At most 200 of each list.
+_REPORT_RELATION = """
+        (SELECT jsonb_build_object(
+            'id', r.id, 'subject', s.name, 'predicate', r.predicate, 'detail', r.detail,
+            'directional', r.directional, 'object', o.name,
+            'beliefAt', (SELECT b.session_at FROM memory_beliefs b
+                         WHERE b.guild_id = g AND b.campaign_id = c
+                           AND b.perspective_id = {persp} AND b.relation_id = r.id
+                         ORDER BY b.seq DESC LIMIT 1),
+            'evidence', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'kind', e.kind, 'at', e.session_started_at,
+                           'available', e.target_id IS NOT NULL) ORDER BY e.added_at, e.id)
+                FROM (SELECT u.* FROM (
+                          SELECT DISTINCT ON (x.kind, x.session_started_at, x.target_id) x.*
+                          FROM (
+                              SELECT e0.* FROM memory_evidence e0
+                              WHERE e0.guild_id = g AND e0.campaign_id = c
+                                AND e0.relation_id = r.id
+                              UNION ALL
+                              SELECT e1.* FROM memory_beliefs b2
+                              JOIN memory_evidence e1
+                                ON e1.guild_id = g AND e1.campaign_id = c
+                               AND e1.belief_id = b2.id
+                              WHERE b2.guild_id = g AND b2.campaign_id = c
+                                AND b2.perspective_id = {persp} AND b2.relation_id = r.id) x
+                          ORDER BY x.kind, x.session_started_at, x.target_id,
+                                   x.added_at, x.id) u
+                      ORDER BY u.added_at, u.id LIMIT 10) e), '[]'::jsonb))
+         FROM memory_relations r
+         JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c AND s.id = r.subject_id
+         JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c AND o.id = r.object_id
+         WHERE r.guild_id = g AND r.campaign_id = c AND r.id = {rel}
+           AND (r.status = 'confirmed'
+                OR (m.involves_guess AND r.status = 'proposed' AND r.secret
+                    AND r.source = 'extractor')))"""
+_REPORT_ANSWER = """
+        CASE WHEN a.item_key IS NULL THEN NULL ELSE jsonb_build_object(
+            'action', a.answer, 'at', a.answered_at, 'remindFrom', a.remind_from) END"""
+_REPORT_WHO = """
+        (SELECT jsonb_build_object('kind', p.kind, 'name', pe.name)
+         FROM memory_perspectives p
+         LEFT JOIN memory_entities pe
+           ON pe.guild_id = g AND pe.campaign_id = c AND pe.id = p.entity_id
+         WHERE p.guild_id = g AND p.campaign_id = c AND p.id = {persp})"""
+# which items this session's report holds (the row is `m`, its answer `a`)
+_REPORT_HERE = """
+        ((m.session_started_at = at_
+          AND NOT COALESCE(
+                  a.answer IN ('intended', 'not_a_problem', 'fixed') AND a.answered_at < at_,
+                  false))
+         OR (a.answer = 'remind' AND m.session_started_at IS DISTINCT FROM at_
+             AND at_ = (SELECT min(t.started_at) FROM transcript_sessions t
+                        WHERE t.guild_id = g AND t.campaign_id = c
+                          AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)
+                          AND t.started_at > a.remind_from)))"""
+_REPORT_KEY_C = (
+    "left(encode(sha256(convert_to('contradiction|' || m.perspective_id || '|' || m.kind"
+    " || '|' || m.first_relation_id || '|' || m.second_relation_id, 'UTF8')), 'hex'), 32)"
+)
+_REPORT_KEY_D = (
+    "left(encode(sha256(convert_to('difference|' || m.perspective_id || '|' || m.relation_id,"
+    " 'UTF8')), 'hex'), 32)"
+)
+_TRUTH = (
+    "(SELECT tp.id FROM memory_perspectives tp"
+    " WHERE tp.guild_id = g AND tp.campaign_id = c AND tp.kind = 'truth')"
+)
+REPORT_READ_DOOR = (
+    r"""
+    CREATE FUNCTION dmbot_web_report(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object(
+            'now', extract(epoch FROM now())::BIGINT,
+            'run', (SELECT jsonb_build_object(
+                        'state', r.state, 'stage', r.stage, 'done', r.done, 'total', r.total,
+                        'startedAt', r.started_at, 'updatedAt', r.updated_at, 'reason', r.reason)
+                    FROM memory_report_runs r
+                    WHERE r.guild_id = g AND r.campaign_id = c AND r.session_at = at_),
+            'contradictions', COALESCE((
+                SELECT jsonb_agg(x.item ORDER BY x.reminded DESC, x.found_at DESC, x.key)
+                FROM (
+                    SELECT """
+    + _REPORT_KEY_C
+    + r""" AS key, m.found_at,
+                           COALESCE(a.answer = 'remind' AND a.remind_from < at_, false)
+                               AS reminded,
+                           jsonb_build_object(
+                               'key', """
+    + _REPORT_KEY_C
+    + r""", 'kind', m.kind, 'reason', m.reason,
+                               'timesUnknown', m.times_unknown,
+                               'remindFrom', CASE WHEN a.answer = 'remind'
+                                                       AND a.remind_from < at_
+                                                  THEN a.remind_from END,
+                               'who', """
+    + _REPORT_WHO.format(persp="m.perspective_id")
+    + r""",
+                               'first', """
+    + _REPORT_RELATION.format(persp="m.perspective_id", rel="m.first_relation_id")
+    + r""",
+                               'second', """
+    + _REPORT_RELATION.format(persp="m.perspective_id", rel="m.second_relation_id")
+    + r""",
+                               'answer', """
+    + _REPORT_ANSWER
+    + r""") AS item
+                    FROM memory_contradictions m
+                    LEFT JOIN report_answers a
+                      ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_C
+    + r"""
+                    WHERE m.guild_id = g AND m.campaign_id = c AND m.grade = 'minor'
+                      AND """
+    + _REPORT_HERE
+    + r"""
+                    ORDER BY reminded DESC, m.found_at DESC, key
+                    LIMIT 200) x), '[]'::jsonb),
+            'differences', COALESCE((
+                SELECT jsonb_agg(x.item ORDER BY x.reminded DESC, x.found_at DESC, x.key)
+                FROM (
+                    SELECT """
+    + _REPORT_KEY_D
+    + r""" AS key, m.found_at,
+                           COALESCE(a.answer = 'remind' AND a.remind_from < at_, false)
+                               AS reminded,
+                           jsonb_build_object(
+                               'key', """
+    + _REPORT_KEY_D
+    + r""", 'sort', m.sort, 'kind', m.kind, 'reason', m.reason,
+                               'timesUnknown', m.times_unknown,
+                               'remindFrom', CASE WHEN a.answer = 'remind'
+                                                       AND a.remind_from < at_
+                                                  THEN a.remind_from END,
+                               'who', """
+    + _REPORT_WHO.format(persp="m.perspective_id")
+    + r""",
+                               'believes', """
+    + _REPORT_RELATION.format(persp="m.perspective_id", rel="m.relation_id")
+    + r""",
+                               'truth', CASE WHEN m.truth_relation_id IS NULL THEN NULL ELSE """
+    + _REPORT_RELATION.format(persp=_TRUTH, rel="m.truth_relation_id")
+    + r""" END,
+                               'open', (SELECT jsonb_build_object('a', r2.subject_id,
+                                                                 'b', r2.object_id)
+                                        FROM memory_relations r2
+                                        WHERE r2.guild_id = g AND r2.campaign_id = c
+                                          AND r2.id = m.relation_id
+                                          AND (r2.status = 'confirmed'
+                                               OR (m.involves_guess AND r2.status = 'proposed'
+                                                   AND r2.secret
+                                                   AND r2.source = 'extractor'))),
+                               'answer', """
+    + _REPORT_ANSWER
+    + r""") AS item
+                    FROM memory_differences m
+                    LEFT JOIN report_answers a
+                      ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_D
+    + r"""
+                    WHERE m.guild_id = g AND m.campaign_id = c
+                      AND m.sort IN ('disguised', 'misunderstood', 'false')
+                      AND """
+    + _REPORT_HERE
+    + r"""
+                    ORDER BY reminded DESC, m.found_at DESC, key
+                    LIMIT 200) x), '[]'::jsonb),
+            'notSorted', (
+                (SELECT count(*) FROM memory_differences m
+                 WHERE m.guild_id = g AND m.campaign_id = c AND m.sort = 'not_sorted'
+                   AND m.session_started_at = at_)
+                + (SELECT count(*) FROM memory_contradictions m
+                   WHERE m.guild_id = g AND m.campaign_id = c AND m.grade = 'not_graded'
+                     AND m.session_started_at = at_)));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_report(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_report(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    """
+)
+
+# The DM's answer to one item of a session's after-session report (#2661, slice 4b): a direct
+# door, not the bot's queue (Supervisor, 2026-10-27), because an answer is the DM's bookkeeping and
+# changes nothing in the story. It records "intended", "not a problem" or "remind me" in
+# `report_answers`, or deletes the row for Undo, and answers at once. Inside itself it checks the
+# item is in THAT session's report of THIS campaign (the same rule the read door lists by), so a
+# key from another session, campaign or server is "gone"; an item that already has a final answer
+# is "gone" too (a second press changes nothing), and "remind me" can be answered again. "fix"
+# writes nothing: the page opens the Story graph, and recording "fixed" is for when the connection
+# changes.
+REPORT_ANSWER_DOOR = (
+    r"""
+    CREATE FUNCTION dmbot_web_report_answer(g BIGINT, c TEXT, at_ BIGINT, k TEXT, act TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        kind_ TEXT;
+        had report_answers%ROWTYPE;
+        wrote INT;
+        now_ BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF k !~ '^[0-9a-f]{32}$'
+           OR act NOT IN ('intended', 'not_a_problem', 'remind', 'fix', 'undo') THEN
+            RETURN jsonb_build_object('status', 'bad');
+        END IF;
+        IF EXISTS (SELECT 1 FROM memory_contradictions m
+                   LEFT JOIN report_answers a
+                     ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_C
+    + r"""
+                   WHERE m.guild_id = g AND m.campaign_id = c AND m.grade = 'minor'
+                     AND """
+    + _REPORT_KEY_C
+    + r""" = k
+                     AND """
+    + _REPORT_HERE
+    + r""") THEN
+            kind_ := 'contradiction';
+        ELSIF EXISTS (SELECT 1 FROM memory_differences m
+                      LEFT JOIN report_answers a
+                        ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
+    + _REPORT_KEY_D
+    + r"""
+                      WHERE m.guild_id = g AND m.campaign_id = c
+                        AND m.sort IN ('disguised', 'misunderstood', 'false')
+                        AND """
+    + _REPORT_KEY_D
+    + r""" = k
+                        AND """
+    + _REPORT_HERE
+    + r""") THEN
+            kind_ := 'difference';
+        ELSE
+            RETURN jsonb_build_object('status', 'gone');
+        END IF;
+        SELECT * INTO had FROM report_answers
+            WHERE guild_id = g AND campaign_id = c AND item_key = k;
+        IF act = 'undo' THEN
+            IF had.item_key IS NULL THEN
+                RETURN jsonb_build_object('status', 'gone');
+            END IF;
+            DELETE FROM report_answers WHERE guild_id = g AND campaign_id = c AND item_key = k;
+            RETURN jsonb_build_object('status', 'ok', 'answer', NULL);
+        END IF;
+        IF act = 'fix' THEN
+            RETURN jsonb_build_object('status', 'ok', 'answer', CASE WHEN had.item_key IS NULL
+                THEN NULL ELSE jsonb_build_object('action', had.answer, 'at', had.answered_at) END);
+        END IF;
+        -- One atomic write: a first answer inserts, a "remind me" may be replaced, and anything
+        -- else (a final answer another press or another DM just made) writes nothing. Two
+        -- presses at once cannot both win: the second one's conflict finds a final answer.
+        INSERT INTO report_answers AS r (guild_id, campaign_id, item_key, item_kind, answer,
+                                         answered_by, answered_at, remind_from)
+        VALUES (g, c, k, kind_, act, dmbot_current_user(), now_,
+                CASE WHEN act = 'remind' THEN at_ END)
+        ON CONFLICT (guild_id, campaign_id, item_key) DO UPDATE SET
+            item_kind = EXCLUDED.item_kind, answer = EXCLUDED.answer,
+            answered_by = EXCLUDED.answered_by, answered_at = EXCLUDED.answered_at,
+            remind_from = EXCLUDED.remind_from
+        WHERE r.answer = 'remind';
+        GET DIAGNOSTICS wrote = ROW_COUNT;
+        IF wrote = 0 THEN
+            RETURN jsonb_build_object('status', 'gone');  -- already answered: a second press
+        END IF;
+        RETURN jsonb_build_object('status', 'ok',
+                                  'answer', jsonb_build_object('action', act, 'at', now_));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT) FROM PUBLIC;
+    """
+)
+
+WEB_RESTORES = (
+    """
+    -- A backup loaded from the website (#2745), waiting for the bot. The website's role cannot
+    -- write the campaign tables, so it stages the file here through the doors below, and the bot
+    -- applies it with the same code as Discord's `/dmbot restore`: after checking again the plan,
+    -- the free campaign slot, that the person is still in the server and (to replace a campaign)
+    -- still one of its DMs, and that the campaign is not playing. `main` is the copy and
+    -- `web_restore_parts` its transcripts files (all of them or none, as in Discord). One row is
+    -- one restore: `receiving` while the person's own files are still arriving, then `waiting`,
+    -- `working` (with `stage`, `done_parts` of `parts_wanted` and `updated_at` for the shared
+    -- progress shape of #2564), then `done` or `failed` with a plain reason word. The bytes are
+    -- emptied when the bot has applied or refused it, and the row goes 24 hours after it began,
+    -- whichever is first (the bot sweeps; the doors also do). A copy holds the campaign's secrets,
+    -- like any backup, so it is never logged. Isolated per server, read by the person who made it
+    -- only, one pending restore per person per server, and not itself in a backup.
+    CREATE TABLE web_restores (
+        guild_id      BIGINT NOT NULL,
+        id            TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        user_id       BIGINT NOT NULL CHECK (user_id > 0),
+        -- The campaign to replace, or NULL for a new one. Not a foreign key: the bot judges whether
+        -- it still exists and is the person's, and a row must outlive a deleted campaign to say so.
+        replace_id    TEXT,
+        name          TEXT NOT NULL CHECK (char_length(name) <= 100),
+        parts_wanted  INT NOT NULL CHECK (parts_wanted BETWEEN 0 AND 24),
+        main          BYTEA,
+        state         TEXT NOT NULL DEFAULT 'receiving'
+            CHECK (state IN ('receiving', 'waiting', 'working', 'done', 'failed')),
+        stage         TEXT NOT NULL DEFAULT 'restore_receiving'
+            CHECK (stage IN ('restore_receiving', 'restore_waiting', 'restore_reading',
+                             'restore_writing', 'done', 'failed')),
+        error         TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        done_parts    INT NOT NULL DEFAULT 0,
+        left_out      INT NOT NULL DEFAULT 0,
+        without_parts BOOLEAN NOT NULL DEFAULT FALSE,
+        result_id     TEXT,
+        created_at    BIGINT NOT NULL,
+        claimed_at    BIGINT NOT NULL DEFAULT 0,
+        updated_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX web_restores_open ON web_restores (guild_id, created_at)
+        WHERE state IN ('waiting', 'working');
+    -- One restore on its way per person across every server (a copy can be 625 MB): the index sees
+    -- all servers' rows even though a door sees one server's.
+    CREATE UNIQUE INDEX web_restores_one_each ON web_restores (user_id)
+        WHERE state IN ('receiving', 'waiting', 'working');
+    CREATE TABLE web_restore_parts (
+        guild_id   BIGINT NOT NULL,
+        restore_id TEXT NOT NULL,
+        n          INT NOT NULL CHECK (n BETWEEN 1 AND 24),
+        data       BYTEA,
+        -- ON UPDATE CASCADE: a foreign key that carries guild_id (CLAUDE.md, #2550).
+        FOREIGN KEY (guild_id, restore_id)
+            REFERENCES web_restores (guild_id, id) ON DELETE CASCADE ON UPDATE CASCADE,
+        PRIMARY KEY (guild_id, restore_id, n)
+    );
+    """
+    + _isolate("web_restores")
+    + _isolate("web_restore_parts")
+    + r"""
+    -- The bytes never outlive the end of a restore, whatever the bot does: the moment a row turns
+    -- done or failed, the copy is emptied and its transcripts files go (the 24-hour sweep catches
+    -- the rows that never ended).
+    CREATE FUNCTION web_restores_empty() RETURNS trigger
+    LANGUAGE plpgsql AS $fn$
+    BEGIN
+        IF NEW.state IN ('done', 'failed') THEN
+            NEW.main := NULL;
+            DELETE FROM web_restore_parts p
+                WHERE p.guild_id = NEW.guild_id AND p.restore_id = NEW.id;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER web_restores_empty BEFORE UPDATE ON web_restores
+        FOR EACH ROW EXECUTE FUNCTION web_restores_empty();
+
+    -- Stage a restore: the copy itself, already checked by the API (a backup of this name, asking
+    -- for this many transcripts files). `replace_` is a campaign of the caller's to swap for the
+    -- copy, or NULL for a new campaign. The door checks what it can see: the caller is in the
+    -- server (and, to replace, a DM of that campaign), no other restore of theirs is still pending
+    -- in any server, and fewer than 5 in the last hour here. Answers 'ok' with the id and the state
+    -- (`receiving`), 'busy' with the id of the one pending, 'too_soon', or 'bad_target'; NULL for
+    -- anyone not in the server.
+    CREATE FUNCTION dmbot_web_restore_add(
+        g BIGINT, replace_ TEXT, nm TEXT, wanted INT, copy BYTEA
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        have TEXT;
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+    BEGIN
+        IF me IS NULL OR g IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF copy IS NULL OR nm IS NULL OR wanted IS NULL OR wanted < 0 OR wanted > 24 THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        IF replace_ IS NOT NULL AND NOT EXISTS (
+               SELECT 1 FROM campaign_dms d
+               WHERE d.guild_id = g AND d.campaign_id = replace_ AND d.user_id = me) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('web_restore:' || me::TEXT, 0));
+        DELETE FROM web_restores r WHERE r.guild_id = g AND r.created_at < now_s - 86400;
+        SELECT r.id INTO have FROM web_restores r
+            WHERE r.guild_id = g AND r.user_id = me
+              AND r.state IN ('receiving', 'waiting', 'working')
+            ORDER BY r.created_at DESC LIMIT 1;
+        IF FOUND THEN
+            RETURN jsonb_build_object('status', 'busy', 'id', have);
+        END IF;
+        -- (Counted in this server only; the API's per-person rate limit is the real one.)
+        IF (SELECT count(*) FROM web_restores r
+            WHERE r.guild_id = g AND r.user_id = me AND r.created_at > now_s - 3600) >= 5 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        -- Always `receiving` first: nothing goes to the bot until the person has seen what it
+        -- will do and pressed Load it (`dmbot_web_restore_go`), even with no transcripts files.
+        BEGIN
+            INSERT INTO web_restores (guild_id, id, user_id, replace_id, name, parts_wanted, main,
+                                      created_at, updated_at)
+                VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, now_s, now_s);
+        EXCEPTION WHEN unique_violation THEN
+            -- Pending in another server (this server's was found above): no id to give.
+            RETURN jsonb_build_object('status', 'busy');
+        END;
+        RETURN jsonb_build_object('status', 'ok', 'id', rid, 'state', 'receiving');
+    END
+    $fn$;
+
+    -- One transcripts file of a restore that is still receiving, numbered 1 to the count the copy
+    -- asked for; sending a number again replaces it. 'ok' with how many have arrived, 'bad_part'
+    -- for a number outside the count, 'not_receiving' once it is on its way; NULL when it is not
+    -- the caller's.
+    CREATE FUNCTION dmbot_web_restore_part(g BIGINT, rid TEXT, num INT, blob BYTEA) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r web_restores%ROWTYPE;
+        got INT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO r FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF r.state <> 'receiving' THEN
+            RETURN jsonb_build_object('status', 'not_receiving');
+        END IF;
+        IF num IS NULL OR num < 1 OR num > r.parts_wanted OR blob IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_part');
+        END IF;
+        INSERT INTO web_restore_parts (guild_id, restore_id, n, data) VALUES (g, rid, num, blob)
+            ON CONFLICT (guild_id, restore_id, n) DO UPDATE SET data = EXCLUDED.data;
+        SELECT count(*) INTO got FROM web_restore_parts p
+            WHERE p.guild_id = g AND p.restore_id = rid;
+        RETURN jsonb_build_object('status', 'ok', 'received', got);
+    END
+    $fn$;
+
+    -- Send it to the bot: with every transcripts file in (`without` false), or restoring without
+    -- them (`without` true, as Discord allows: all of them or none). 'ok', 'missing' when files
+    -- are still to come, 'not_receiving' if it already went; NULL when it is not the caller's.
+    CREATE FUNCTION dmbot_web_restore_go(g BIGINT, rid TEXT, without BOOLEAN) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r web_restores%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        got INT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO r FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF r.state <> 'receiving' THEN
+            RETURN jsonb_build_object('status', 'not_receiving');
+        END IF;
+        SELECT count(*) INTO got FROM web_restore_parts p
+            WHERE p.guild_id = g AND p.restore_id = rid;
+        IF COALESCE(without, false) THEN
+            DELETE FROM web_restore_parts p WHERE p.guild_id = g AND p.restore_id = rid;
+        ELSIF got <> r.parts_wanted THEN
+            RETURN jsonb_build_object('status', 'missing', 'received', got);
+        END IF;
+        UPDATE web_restores x SET state = 'waiting', stage = 'restore_waiting',
+               without_parts = COALESCE(without, false), updated_at = now_s
+            WHERE x.guild_id = g AND x.id = rid;
+        RETURN jsonb_build_object('status', 'ok');
+    END
+    $fn$;
+
+    -- Where a restore stands, for the person who made it (nobody else): the progress fields, the
+    -- name of the copy (the campaign's own name, which they supplied), how many transcripts files
+    -- it asks for and has, and, once it has ended, the plain reason word and how many lines were
+    -- left out for people who had deleted theirs. NULL when it is not theirs.
+    CREATE FUNCTION dmbot_web_restore_read(g BIGINT, rid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r RECORD;
+        got INT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        -- Named columns, so a poll never reads the copy itself.
+        SELECT x.state, x.stage, x.error, x.name, x.parts_wanted, x.done_parts, x.left_out,
+               x.replace_id, x.result_id, x.without_parts, x.created_at, x.updated_at INTO r
+            FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        SELECT count(*) INTO got FROM web_restore_parts p
+            WHERE p.guild_id = g AND p.restore_id = rid;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'name', r.name, 'partsWanted', r.parts_wanted, 'partsReceived', got,
+            'doneParts', r.done_parts, 'leftOut', r.left_out, 'replaceId', r.replace_id,
+            'resultId', r.result_id, 'withoutParts', r.without_parts,
+            'createdAt', r.created_at, 'updatedAt', r.updated_at);
+    END
+    $fn$;
+
+    -- The caller's own pending restore in this server, if any (id only), so a page that was
+    -- closed can find its way back.
+    CREATE FUNCTION dmbot_web_restore_pending(g BIGINT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out TEXT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT x.id INTO out FROM web_restores x
+            WHERE x.guild_id = g AND x.user_id = dmbot_current_user()
+              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400
+            ORDER BY x.created_at DESC LIMIT 1;
+        RETURN out;
+    END
+    $fn$;
+
+    -- Take it back: the person's own restore, while the bot has not started it. The bytes go with
+    -- the row. True when something was removed.
+    CREATE FUNCTION dmbot_web_restore_cancel(g BIGINT, rid TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        st TEXT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT x.state INTO st FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'gone';
+        END IF;
+        -- The bot has it: it cannot be taken back, and the page must go on showing it.
+        IF st = 'working' THEN
+            RETURN 'working';
+        END IF;
+        DELETE FROM web_restores x WHERE x.guild_id = g AND x.id = rid;
+        RETURN 'ok';
+    END
+    $fn$;
+    -- Who owns the campaign a restore would replace, for the plan check made before any bytes are
+    -- stored: the owner's id as text (or '' when it has none), only for a DM of that campaign in
+    -- this server. NULL for anyone else.
+    CREATE FUNCTION dmbot_web_restore_target(g BIGINT, c TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        own BIGINT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT k.owner_user_id INTO own FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        RETURN COALESCE(own::TEXT, '');
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_target(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_read(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_pending(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_cancel(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_target(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_read(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_pending(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_cancel(BIGINT, TEXT) FROM PUBLIC;
+"""
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -16089,6 +16652,14 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0248_memory_vectors",
         MEMORY_VECTORS,
     ),  # meaning search: numbers made from campaign text (#2664)
+    ("0249_report_read_door", REPORT_READ_DOOR),  # a session's after-session report (#2661)
+    ("0250_report_answer_door", REPORT_ANSWER_DOOR),  # the DM's answer to one item (#2661)
+    ("0252_optional_rules_read", OPTIONAL_RULES_READ),  # the Settings tab reads the choices (#2753)
+    ("0253_names_smart", NAMES_SMART),  # the Names page's search by meaning (#2733)
+    (
+        "0254_optional_rule_setting",
+        OPTIONAL_RULE_SETTING,
+    ),  # a rule switched on the website is queued for the bot (#2753)
     (
         "0251_web_restores",
         WEB_RESTORES,
@@ -16098,6 +16669,8 @@ MIGRATIONS: tuple[Migration, ...] = (
 # Tables that must have row-level security. A test checks every table in the schema
 # except these is listed here, so a new table can't forget its policy.
 ISOLATED_TABLES = (
+    "web_restores",
+    "web_restore_parts",
     "memory_differences",
     "report_answers",
     "memory_report_runs",
@@ -16193,8 +16766,6 @@ ISOLATED_TABLES = (
     "name_actions",
     "setting_actions",
     "web_peeks",
-    "web_restores",
-    "web_restore_parts",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
 # Database.user(). Sessions can also be found by their cookie hash (Database.session()),

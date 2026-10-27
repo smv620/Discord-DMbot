@@ -17,6 +17,7 @@ stop or a failure is reported as failed, with a code."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -157,5 +158,12 @@ async def make(
     except Exception as exc:  # never fatal: the run is reported failed, with a code and no words
         log.warning("Report: making it failed (%s)", type(exc).__name__)
         made.failed = FAILED
+    except asyncio.CancelledError:
+        # A restart or shutdown in the middle: the run is closed as failed now, so the page does not
+        # show "making" for a quarter of an hour (the takeover after STALLED_S covers a hard kill).
+        await asyncio.shield(
+            reports.finish(guild_id, campaign_id, session_at, token, failed=FAILED)
+        )
+        raise
     await reports.finish(guild_id, campaign_id, session_at, token, failed=made.failed, left=left)
     return made

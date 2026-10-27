@@ -49,10 +49,13 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    names_smart,
     npc_pages,
     offers,
+    optional_rules,
     past_sessions,
     relationships,
+    report,
     restores,
     sessions,
     shared_recaps,
@@ -185,6 +188,8 @@ def create_app(
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
+    smart_names: names_smart.SmartNames | None = None,
+    smart_limit: RateLimit | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -207,6 +212,10 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    if smart_limit is None:
+        # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
+        # so one person gets 20 a minute, counted by account.
+        smart_limit = RateLimit(60, count=20)
     # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
     if route_limits is None:
         route_limits = {
@@ -834,6 +843,7 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
@@ -1155,6 +1165,44 @@ def create_app(
                 raise HTTPException(status_code=403, detail="not_allowed") from None
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    @app.get("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report(ref: str, at: str, signed: Signed) -> dict[str, Any]:
+        """One session's after-session report (#2661): the minor contradictions and what the party
+        has wrong, sorted, with the DM's answers. DM only: a player, a peek or another campaign's
+        DM gets 403 `not_allowed`; a time that is not a time, or a campaign that is not there, 404.
+        Nothing here is ever in a players' view."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        try:
+            return await report.read_report(db, session, ref, when)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/campaigns/{ref}/sessions/{at}/report")
+    async def me_session_report_answer(
+        ref: str, at: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The DM's answer to one item of a session's report (#2661): `{id, action}` with action
+        `intended`, `not_a_problem`, `remind`, `fix` or `undo`. Written at once (it records a
+        decision and changes nothing in the story), answered `{answer}`. 409 `gone` when the item is
+        no longer in that session's report or already has an answer; 403 for anyone but the
+        campaign's DM."""
+        session, _token = signed
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        body = await bounded_json(request)
+        try:
+            return await report.answer_item(db, session, ref, when, body)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            if err.code == "gone":
+                raise HTTPException(status_code=409, detail="gone") from None
+            if err.code == "bad_action":
+                raise HTTPException(status_code=400, detail="bad_action") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.post("/me/recaps/{ref}/again")
     async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         """Make the recap of a session, or make it again (#2608): `{"replace": true}` once the DM
@@ -1439,6 +1487,34 @@ def create_app(
                 db, session, ref, q=q, kind=kind, sort=sort, page=number, size=wanted
             )
         except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/all-names/search")
+    async def me_campaign_all_names_search(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The Names page's search by meaning (#2733): the names closest in meaning to the DM's
+        words, best first, with `capped` (the campaign has more numbers than one search compares).
+        The words are in the body, never the address: an address is written to logs on the way.
+        A DM only ("not found" for anyone else). When the search cannot run (off, no credit,
+        Voyage AI not answering, too slow) the refusal is "not_available" and the page falls back
+        to the letters search."""
+        session, _token = signed
+        taken = smart_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("q") if isinstance(body, dict) else None
+        try:
+            if not isinstance(words, str):
+                raise RecapError("bad_text")
+            return await names_smart.search(db, session, ref, words, smart_names)
+        except RecapError as err:
+            smart_limit.give_back(f"user-{session.user_id}")  # a refused search costs no turn
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
@@ -1928,6 +2004,18 @@ def create_app(
             body = None
         try:
             return {"answer": await campaign_settings.queue_setting(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/optional-rules")
+    async def me_campaign_optional_rules(ref: str, signed: Signed) -> dict[str, Any]:
+        """The optional rules that apply to the campaign's main rules and which are on (#2753), for
+        its DMs only: `{main, rules: [{id, book, name, summary, on, changed}], note, default}`.
+        A player or another campaign's DM gets 403 `not_allowed`; a bad address 404."""
+        session, _token = signed
+        try:
+            return await optional_rules.read_rules(db, session, ref)
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

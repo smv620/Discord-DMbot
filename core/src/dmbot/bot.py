@@ -262,9 +262,14 @@ from dmbot.memory import (
     contradiction_run,
     definitions,
     document_reader,
+    embed_sources,
+    embedding,
     extractor,
     lore_context,
+    meaning,
     plan_reader,
+    report_make,
+    voyage,
     web_actions,
 )
 from dmbot.memory import health as memory_health
@@ -302,6 +307,7 @@ from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
+from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
@@ -318,6 +324,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
+from dmbot.memory.vectors import VectorStore
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.recaps import discord as recaps_discord
@@ -535,6 +542,8 @@ from dmbot.ui.transcripts import (
 )
 from dmbot.web import accounts
 
+REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
+MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
@@ -620,6 +629,9 @@ IDLE_CHECK_S = 60  # how often a running session is checked for being empty or q
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
+MEANING_WAIT_S = (
+    1.5  # the lead search by meaning: a database read and two calls to Voyage AI (#2664)
+)
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
@@ -1526,6 +1538,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        # Meaning search (#2664): built only with the switch on and the Voyage key set. With
+        # neither, nothing is sent anywhere and the sidebar and recall work from names alone.
+        self._voyage_http: voyage.HttpTransport | None = None
+        self.voyage: voyage.Voyage | None = None
+        self.meaning_seeds: meaning.MeaningSeeds | None = None
+        self.meaning_calls = meaning.CallCounter(time.time)
+        if memory is not None and settings.meaning_search_on:
+            self._voyage_http = voyage.HttpTransport(settings.voyage_key)
+            self.voyage = voyage.Voyage(
+                self._voyage_http,
+                embed_model=settings.voyage_embed_model,
+                rerank_model=settings.voyage_rerank_model,
+            )
+            self.meaning_seeds = meaning.MeaningSeeds(
+                memory._db,
+                VectorStore.of(memory),
+                self.voyage,
+                settings.voyage_embed_model,
+                allowed=self.meaning_allowed,
+                count_call=self.meaning_calls.count,
+            )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
         # without an AI key.
@@ -1822,6 +1855,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self._eleven_http is not None:
             with contextlib.suppress(Exception):
                 await self._eleven_http.close()
+        await self.close_meaning()
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
         self.pipeline.stop_waiting()
@@ -3070,6 +3104,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             # After the extractor (its readings are beliefs too); off unless the switch is on.
             ("contradiction grades", lambda: self.grade_contradictions(table)),
+            # The report for the website (#2661): reuses those grades, then sorts the differences.
+            ("after-session report", lambda: self.make_report(table)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -3091,6 +3127,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             ("steward numbers", lambda: self.log_steward_tally(table)),
             ("memory health", lambda: self.log_memory_health(table, ended_at)),
+            # Last, on purpose: up to `MEANING_RUN_CALLS` calls to another company, and nothing
+            # above reads the numbers, so a slow or failing call never delays what players see
+            # (#2664). Off unless the switch is on and the key is set.
+            ("meaning search numbers", lambda: self.embed_campaign(table)),
         ]
         for name, step in steps:
             try:
@@ -3601,6 +3641,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             names=names,
             people=people,
             recall=recall if self.settings.sidebar_recall else None,
+            meaning=self.meaning_leads if recall_service is not None else None,
             brews=brews,
             second_try=careful,
             settled=settled,
@@ -8731,6 +8772,138 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
+
+    async def make_report(self, table: Table) -> None:
+        """After a session, only with DMBOT_STORY_REPORT on (and the extractor): make the report
+        the recap page shows (#2661): grade the clashes not graded yet, find what the party has
+        wrong and have PlotBot sort it. It reads no transcript line: the AI is shown only the
+        campaign's own names and relationship words. Inside the extractor's plan check and call
+        limits (its calls are counted there), and at most `REPORT_CALLS` a session; what the limit
+        leaves is made next time and the report says so. The run shows its stage and counts to the
+        page, and the log gets counts only. Nothing here changes a belief or tells a player.
+
+        No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
+        DM-confirmed names and relationships the campaign already stores."""
+        if (
+            not self.settings.story_report_on
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return  # closed: a plan that can't be checked is not run
+            sid = table.transcript_session_id
+            session = await self.transcripts.session(gid, sid)
+            if session is None:
+                return
+            _, used = await self.transcripts.extraction(gid, sid)
+            day_used = await self.transcripts.extractor_calls_since(
+                gid, cid, int(time.time()) - 86400
+            )
+            allowed = min(
+                REPORT_CALLS,
+                extractor.calls_left(
+                    self.settings.story_extractor_max_calls,
+                    used,
+                    self.settings.story_extractor_max_calls_day,
+                    day_used,
+                ),
+            )
+            if allowed == 0:
+                log.info("Report: not made, the extractor's call limit is used")
+                return
+            transcripts = self.transcripts
+            made = await report_make.make(
+                self.memory,
+                GradeStore.of(self.memory),
+                ReportStore.of(self.memory),
+                self.extractor_ai,
+                gid,
+                cid,
+                session.started_at,
+                session_started_at=session.started_at,
+                max_calls=allowed,
+                count_call=lambda: transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
+            )
+            log.info(made.line())
+
+    async def meaning_leads(self, campaign: Campaign, question: str, asker_id: int) -> list[str]:
+        """More starting points for the sidebar's recall by what the question means (#2664).
+        "Players": the reply can reach the raw transcript, so an entry the players may not know yet
+        is never a lead. Optional: it has its own wait, and a slow or failing search is just no
+        leads, said in a line and not a traceback."""
+        if self.meaning_seeds is None:
+            return []
+        # The question is a person's words, typed or spoken, so it goes to Voyage AI only if that
+        # person agrees to be recorded (the same rule as a line of the transcript).
+        if asker_id not in await self.consent.consenting(campaign.guild_id):
+            return []
+        try:
+            async with asyncio.timeout(MEANING_WAIT_S):
+                return await self.meaning_seeds.find(
+                    campaign.guild_id, campaign.id, question, for_players=True
+                )
+        except TimeoutError:
+            log.info("Meaning search: no answer in time; answering from the names alone")
+            return []
+
+    async def close_meaning(self) -> None:
+        """End the connection to Voyage AI, if there is one. (getattr: a bot built without the usual
+        start-up has no such attribute, and closing must never be what fails.)"""
+        http = getattr(self, "_voyage_http", None)
+        if http is not None:
+            with contextlib.suppress(Exception):
+                await http.close()
+
+    async def meaning_allowed(self) -> bool:
+        """Whether text may go to Voyage AI right now: the switch is on and the key is set. Asked
+        before every call, so turning the switch off stops a run at its next batch."""
+        return self.settings.meaning_search_on
+
+    async def embed_campaign(self, table: Table) -> None:
+        """After a session, only with DMBOT_MEANING_SEARCH on and a Voyage key (#2664): bring the
+        campaign's numbers for meaning search up to date. What is sent is the campaign's own
+        entries and the game talk of people who agree to be recorded (checked before every batch
+        and again after the call); nothing else. Inside the story plan, at most
+        `MEANING_RUN_CALLS` calls. The log gets counts only."""
+        if (
+            not self.settings.meaning_search_on
+            or self.voyage is None
+            or self.memory is None
+            or table.campaign_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return  # closed: a plan that can't be checked is not run
+            db = self.memory._db
+            await embedding.run(
+                VectorStore.of(self.memory),
+                self.voyage,
+                [embed_sources.LineSource(db), embed_sources.EntitySource(db)],
+                self.consent.consenting,
+                gid,
+                cid,
+                self.settings.voyage_embed_model,
+                allowed=self.meaning_allowed,
+                max_calls=MEANING_RUN_CALLS,
+                count_call=self.meaning_calls.count,
+            )
 
     async def tell_contradictions(self, table: Table) -> None:
         """After the grading, with the same switches (#2660): the major clashes PlotBot graded that
