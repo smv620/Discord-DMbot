@@ -791,6 +791,12 @@ the plan's limits with the shared progress, and the doors.
   it in story time. A guess The truth neither holds nor denies is not a difference, nor is the DM's own
   doubt. Ids and numbers only (the sort into disguised, misunderstood and false is PlotBot's, a later
   slice); each point of view and connection is reported once.
+  **Built (#2661 slice 3b): the make job.** `memory/report_make.py` makes one session's report in the
+  order reading, grading, sorting: it finds the differences, grades the clashes (the contradiction
+  pass, with its progress), drops differences that no longer hold, sorts the rest, then marks the run
+  ready. One run at a time per session; one call limit shared by both steps; a step that could not
+  finish leaves its items for the next run, never as "nothing found". A failure keeps only a code
+  (`out_of_funds`, `failed`); the log line and the progress are counts and stages, never words.
 
 Everything after a session is built on the **website first**. A Discord version is added only when
 the owner chooses it, one at a time.
