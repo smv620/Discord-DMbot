@@ -17,6 +17,12 @@ plain word (`plan`, `not_allowed`, `not_found`, `playing`, `not_a_backup`, `too_
 the table's own trigger the moment the row is `done` or `failed`; rows older than 24 hours go
 whether or not they ended (`sweep`). A copy holds the campaign's secrets like any backup, so it is
 never logged; only the outcome word is.
+
+Two safety rules from review: a copy that is already in is never reported as failed because the
+tidying after it failed (a second try would make a second campaign), and a row a stopped bot left
+`working` is ended as failed, never taken up again (it may be in already, and a copy that took the
+bot down would loop). Memory: the copy and its files are read whole, as Discord's restore holds
+them: at most 25 MB for the copy and 24 files of 25 MB each, about 625 MB at the ceiling.
 """
 
 from __future__ import annotations
@@ -45,7 +51,11 @@ from dmbot.ui import logic
 log = logging.getLogger(__name__)
 
 PER_ROUND = 1  # restores applied in one round for one server (each can be large)
-RETAKE_AFTER_S = 300  # a claim whose row has not moved for this long belongs to a bot that stopped
+STALLED_AFTER_S = (
+    300  # a working row that has not moved for this long belongs to a bot that stopped
+)
+FINISH_TRIES = 3  # writing the outcome: a database blip must not leave a finished copy "working"
+FINISH_PAUSE_S = 1.0
 KEEP_FOR_S = 86400  # a row and its files go 24 hours after it began
 
 PLAN = "plan"  # the plan has no copies, or no room for another campaign
@@ -136,19 +146,33 @@ class WebRestores:
         self._db = db
         self._now = clock
 
+    async def fail_stalled(self, guild_id: int) -> int:
+        """End the rows a stopped bot left `working`, as failed (the page offers another try). Not
+        taken up again: the copy may already be in, and applying it twice would make two
+        campaigns; a copy that took the bot down would loop. Only called by the one worker that
+        runs restores, between its own restores, so it never ends a row it is working on."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE web_restores SET state = 'failed', stage = 'failed', error = 'failed',"
+                " updated_at = %s WHERE guild_id = %s AND state = 'working' AND updated_at < %s",
+                (now, guild_id, now - STALLED_AFTER_S),
+            )
+            return int(cur.rowcount)
+
     async def claim_next(self, guild_id: int) -> Restore | None:
-        """The oldest waiting restore of this server (or one whose worker stopped), marked as
-        being read. Rows are in seconds, as the website writes them."""
+        """The oldest waiting restore of this server, marked as being read. Rows are in seconds,
+        as the website writes them."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE web_restores SET state = 'working', stage = 'restore_reading',"
                 " claimed_at = %s, updated_at = %s, done_parts = 0"
                 " WHERE (guild_id, id) = (SELECT guild_id, id FROM web_restores"
-                " WHERE guild_id = %s AND (state = 'waiting' OR (state = 'working'"
-                " AND updated_at < %s)) ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
+                " WHERE guild_id = %s AND state = 'waiting' ORDER BY created_at LIMIT 1"
+                " FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, user_id, replace_id, parts_wanted, without_parts",
-                (now, now, guild_id, now - RETAKE_AFTER_S),
+                (now, now, guild_id),
             )
             row = await cur.fetchone()
         if row is None:
@@ -287,7 +311,12 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
             )
         except CampaignError as exc:
             return Outcome(refusal_word(str(exc)))
-    await host.after_restore(guild_id, campaign.id, item.replace_id is not None)
+    # The copy is in. What follows (the planner's statistics, the rules channel) is tidying: if it
+    # fails the restore still happened, and saying "failed" would invite a second copy.
+    try:
+        await host.after_restore(guild_id, campaign.id, item.replace_id is not None)
+    except Exception as exc:
+        log.warning("After a website restore: %s", type(exc).__name__)
     return Outcome(result_id=campaign.id, left_out=erased.lines)
 
 
@@ -300,11 +329,18 @@ async def run_one(host: Host, store: WebRestores, guild_id: int, item: Restore) 
     except Exception as exc:
         log.warning("A website restore failed: %s", type(exc).__name__)
         done = Outcome(FAILED)
-    try:
-        if not await store.finish(guild_id, item, done):
-            log.info("A website restore was taken over by another worker")
-    except Exception as exc:
-        log.warning("A website restore could not be marked: %s", type(exc).__name__)
+    marked: bool | None = None
+    for attempt in range(FINISH_TRIES):
+        try:
+            marked = await store.finish(guild_id, item, done)
+            break
+        except Exception as exc:
+            log.warning("A website restore could not be marked: %s", type(exc).__name__)
+            if attempt + 1 < FINISH_TRIES:
+                await asyncio.sleep(FINISH_PAUSE_S)
+    if marked is None:
         return False
+    if not marked:
+        log.info("A website restore was no longer this worker's to mark")
     log.info("Website restore: %s", done.error or "done")
     return True

@@ -10155,6 +10155,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if store is None:
             return
         for guild in list(self.guilds):
+            await store.fail_stalled(
+                guild.id
+            )  # (a stopped bot's leftovers, before this round's own)
             for _ in range(web_restore.PER_ROUND):
                 item = await store.claim_next(guild.id)
                 if item is None:

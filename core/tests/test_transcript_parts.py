@@ -123,6 +123,28 @@ class TheSet(_Base):
         # the plain export is the main file only, as before
         self.assertNotIn("parts", await self.campaigns.export(GUILD_A, self.cid))
 
+    async def test_a_restore_tells_its_progress_per_file_and_a_failing_line_never_fails_it(
+        self,
+    ) -> None:
+        await self.session(1000, 3)
+        main, files = await self.campaigns.export_set(GUILD_A, self.cid)
+        seen: list[tuple[int, int]] = []
+
+        async def progress(done: int, total: int) -> None:
+            seen.append((done, total))
+
+        await self.campaigns.import_backup(GUILD_B, main, DM_B, parts=files, progress=progress)
+        self.assertEqual(seen, [(1, len(files))])
+
+        async def broken(done: int, total: int) -> None:
+            raise RuntimeError("the progress line failed")
+
+        restored = await self.campaigns.import_backup(
+            GUILD_B, main, DM_B, parts=files, progress=broken
+        )
+        got = await self.everything(GUILD_B, restored.id)
+        self.assertEqual(got, await self.everything(GUILD_A, self.cid))  # (all there)
+
     async def test_a_campaign_with_no_transcripts_is_one_file(self) -> None:
         main, files = await self.campaigns.export_set(GUILD_A, self.cid)
         self.assertEqual((files, "parts" in main), ([], False))

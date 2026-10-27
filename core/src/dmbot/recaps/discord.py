@@ -319,6 +319,11 @@ class RecapFeatures:
                 else []
             ),
             *(
+                [self._watched(self._web_restore_loop(), "web-restores")]
+                if self.web_restores is not None
+                else []
+            ),
+            *(
                 [
                     self._watched(self._recap_request_loop(), "recap-requests"),
                     self._watched(self._recap_voice_loop(), "recap-voice"),
@@ -327,6 +332,17 @@ class RecapFeatures:
                 else []
             ),
         ]
+
+    async def _web_restore_loop(self) -> None:
+        """Apply the copies DMs uploaded on the website (#2746). Its own loop: a big restore takes
+        minutes, and the recap requests, settings and backups must not wait for it. One restore at
+        a time in this process, so a row that stopped moving belongs to a bot that stopped."""
+        while True:
+            try:
+                await self.run_web_restores()
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The website restores failed: %s", type(exc).__name__)
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
@@ -1879,10 +1895,6 @@ class RecapFeatures:
                 await self.run_web_backups()
             except Exception as exc:
                 log.warning("The website backups failed: %s", type(exc).__name__)
-            try:
-                await self.run_web_restores()
-            except Exception as exc:
-                log.warning("The website restores failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):

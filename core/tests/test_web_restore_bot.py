@@ -185,6 +185,79 @@ class TheRestore(Restoring):
         self.assertEqual(await self.parts_left(), 0)  # (the files go with the end)
 
 
+class TheAftermath(Restoring):
+    async def test_tidying_that_fails_after_the_copy_is_in_is_still_a_done_restore(self) -> None:
+        host = self.host()
+
+        async def after_restore(g: int, c: str, replaced: bool) -> None:
+            raise RuntimeError("analyze failed")
+
+        host.after_restore = after_restore
+        await self.stage(await self.copy_of(self.one))
+        got = await self.run_marked(host)
+        self.assertEqual((got["state"], got["error"]), ("done", ""))
+        self.assertIsNotNone(await self.campaigns.get(GUILD, got["result_id"]))
+
+    async def test_a_blip_writing_the_outcome_is_tried_again(self) -> None:
+        from unittest.mock import patch
+
+        real = self.restores.finish
+        calls = 0
+
+        async def flaky(*args: Any) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("blip")
+            return await real(*args)
+
+        await self.stage(await self.copy_of(self.one))
+        with (
+            patch.object(web_restore, "FINISH_PAUSE_S", 0),
+            patch.object(self.restores, "finish", flaky),
+        ):
+            got = await self.run_marked()
+        self.assertEqual((calls, got["state"]), (2, "done"))
+
+    async def test_an_outcome_that_cannot_be_written_stops_the_round(self) -> None:
+        from unittest.mock import patch
+
+        async def broken(*args: Any) -> bool:
+            raise RuntimeError("down")
+
+        await self.stage(await self.copy_of(self.one))
+        item = await self.restores.claim_next(GUILD)
+        assert item is not None
+        with (
+            patch.object(web_restore, "FINISH_PAUSE_S", 0),
+            patch.object(self.restores, "finish", broken),
+        ):
+            self.assertFalse(await web_restore.run_one(self.host(), self.restores, GUILD, item))
+
+    async def test_the_session_lock_is_held_for_the_playing_check_and_the_import(self) -> None:
+        lock = asyncio.Lock()
+        held: list[bool] = []
+        host = self.host()
+        host.session_lock = lambda g: lock
+
+        async def playing(g: int, c: str) -> bool:
+            held.append(lock.locked())
+            return False
+
+        real = host.import_backup
+
+        async def importing(g: int, data: object, importer: int, **kw: Any) -> Any:
+            held.append(lock.locked())
+            return await real(g, data, importer, **kw)
+
+        host.is_campaign_playing = playing
+        host.import_backup = importing
+        await self.stage(await self.copy_of(self.two), replace=self.one.id)
+        await self.run_marked(host)
+        self.assertEqual(held, [True, True])
+        self.assertFalse(lock.locked())
+
+
 class TheRefusals(Restoring):
     async def refused(self, word: str, *, host: Any = None, **stage: Any) -> None:
         main = stage.pop("main", None)
@@ -266,17 +339,27 @@ class TheQueue(Restoring):
         self.assertIsNone(await self.restores.claim_next(GUILD))
         self.assertEqual((await self.row("2" * 32))["stage"], "restore_reading")
 
-    async def test_a_row_whose_worker_stopped_is_taken_again_a_working_one_is_not(self) -> None:
+    async def test_a_row_a_stopped_bot_left_working_is_failed_never_applied_again(self) -> None:
         now = int(time.time())
         await self.stage(b"1", restore_id="1" * 32, user=11, state="working", updated=now - 10)
         await self.stage(
             b"2", restore_id="2" * 32, user=12, state="working",
-            updated=now - web_restore.RETAKE_AFTER_S - 5,
+            updated=now - web_restore.STALLED_AFTER_S - 5,
         )  # fmt: skip
-        taken = await self.restores.claim_next(GUILD)
-        assert taken is not None
-        self.assertEqual(taken.id, "2" * 32)
-        self.assertIsNone(await self.restores.claim_next(GUILD))
+        self.assertEqual(await self.restores.fail_stalled(GUILD), 1)
+        stalled = await self.row("2" * 32)
+        self.assertEqual(
+            (stalled["state"], stalled["error"], stalled["main"]), ("failed", "failed", None)
+        )
+        self.assertEqual((await self.row("1" * 32))["state"], "working")  # (still moving)
+        self.assertIsNone(await self.restores.claim_next(GUILD))  # (nothing is retaken)
+
+    async def test_a_waiting_row_of_another_server_is_never_claimed_or_read(self) -> None:
+        await self.stage(b"mine")
+        self.assertIsNone(await self.restores.claim_next(GUILD + 1))
+        item = await self.restores.claim_next(GUILD)
+        assert item is not None
+        self.assertEqual(await self.restores.read(GUILD + 1, item), (None, []))
 
     async def test_only_the_worker_holding_the_claim_can_write_or_read_the_copy(self) -> None:
         await self.stage(b"secret copy", parts=(b"a", b"b"))
@@ -303,6 +386,15 @@ class TheQueue(Restoring):
         with self.assertLogs("dmbot.campaigns.web_restore", level="INFO") as logged:
             await self.run_marked()
         self.assertEqual(logged.output, ["INFO:dmbot.campaigns.web_restore:Website restore: done"])
+
+    async def test_a_restore_has_its_own_loop_beside_the_other_website_work(self) -> None:
+        import inspect
+
+        from dmbot.recaps.discord import RecapFeatures as RecapDiscord
+
+        shared = inspect.getsource(RecapDiscord._recap_request_loop)
+        self.assertNotIn("run_web_restores", shared)  # (a long restore must not hold them up)
+        self.assertIn("run_web_restores", inspect.getsource(RecapDiscord._web_restore_loop))
 
 
 class TheBot(Restoring):
