@@ -111,6 +111,8 @@ def shape(got: dict[str, Any], at: int, listed: list[dict[str, Any]]) -> dict[st
     now = int(got["now"])
     contradictions = []
     for c in got["contradictions"]:
+        if not c.get("first") or not c.get("second"):
+            continue  # (a connection gone since: one bad row never takes the report down)
         view = _who(c.get("who"))
         stated = []
         for side in (c["first"], c["second"]):
@@ -137,7 +139,9 @@ def shape(got: dict[str, Any], at: int, listed: list[dict[str, Any]]) -> dict[st
     for d in got["differences"]:
         if d["sort"] not in by_sort:
             continue
-        believes = d["believes"]
+        believes = d.get("believes")
+        if not believes:
+            continue
         truth = d.get("truth")
         by_sort[d["sort"]].append(
             {
@@ -165,8 +169,11 @@ def shape(got: dict[str, Any], at: int, listed: list[dict[str, Any]]) -> dict[st
         "counts": {
             "contradictions": len(contradictions),
             **{s: len(by_sort[s]) for s in SORT_ORDER},
-            "open": sum(1 for i in items if i["answer"] is None),
-            "answered": sum(1 for i in items if i["answer"] is not None),
+            # a reminded item has come back: it is open again
+            "open": sum(1 for i in items if i["answer"] is None or i["remindedFrom"] is not None),
+            "answered": sum(
+                1 for i in items if i["answer"] is not None and i["remindedFrom"] is None
+            ),
         },
         "contradictions": contradictions,
         "differences": by_sort,

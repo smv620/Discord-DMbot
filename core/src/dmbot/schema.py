@@ -15428,14 +15428,22 @@ _REPORT_RELATION = """
                 SELECT jsonb_agg(jsonb_build_object(
                            'kind', e.kind, 'at', e.session_started_at,
                            'available', e.target_id IS NOT NULL) ORDER BY e.added_at, e.id)
-                FROM (SELECT e0.* FROM memory_evidence e0
-                      WHERE e0.guild_id = g AND e0.campaign_id = c
-                        AND (e0.relation_id = r.id
-                             OR e0.belief_id IN (
-                                 SELECT b2.id FROM memory_beliefs b2
-                                 WHERE b2.guild_id = g AND b2.campaign_id = c
-                                   AND b2.perspective_id = {persp} AND b2.relation_id = r.id))
-                      ORDER BY e0.added_at, e0.id LIMIT 10) e), '[]'::jsonb))
+                FROM (SELECT u.* FROM (
+                          SELECT DISTINCT ON (x.kind, x.session_started_at, x.target_id) x.*
+                          FROM (
+                              SELECT e0.* FROM memory_evidence e0
+                              WHERE e0.guild_id = g AND e0.campaign_id = c
+                                AND e0.relation_id = r.id
+                              UNION ALL
+                              SELECT e1.* FROM memory_beliefs b2
+                              JOIN memory_evidence e1
+                                ON e1.guild_id = g AND e1.campaign_id = c
+                               AND e1.belief_id = b2.id
+                              WHERE b2.guild_id = g AND b2.campaign_id = c
+                                AND b2.perspective_id = {persp} AND b2.relation_id = r.id) x
+                          ORDER BY x.kind, x.session_started_at, x.target_id,
+                                   x.added_at, x.id) u
+                      ORDER BY u.added_at, u.id LIMIT 10) e), '[]'::jsonb))
          FROM memory_relations r
          JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c AND s.id = r.subject_id
          JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c AND o.id = r.object_id
@@ -15458,6 +15466,7 @@ _REPORT_HERE = """
          OR (a.answer = 'remind' AND m.session_started_at IS DISTINCT FROM at_
              AND at_ = (SELECT min(t.started_at) FROM transcript_sessions t
                         WHERE t.guild_id = g AND t.campaign_id = c
+                          AND (t.line_count > 0 OR t.transcripts_deleted_at IS NOT NULL)
                           AND t.started_at > a.remind_from)))"""
 _REPORT_KEY_C = (
     "left(encode(sha256(convert_to('contradiction|' || m.perspective_id || '|' || m.kind"
@@ -15496,7 +15505,8 @@ REPORT_READ_DOOR = (
                     SELECT """
     + _REPORT_KEY_C
     + r""" AS key, m.found_at,
-                           (a.answer = 'remind' AND a.remind_from < at_) AS reminded,
+                           COALESCE(a.answer = 'remind' AND a.remind_from < at_, false)
+                               AS reminded,
                            jsonb_build_object(
                                'key', """
     + _REPORT_KEY_C
@@ -15526,6 +15536,7 @@ REPORT_READ_DOOR = (
                       AND """
     + _REPORT_HERE
     + r"""
+                    ORDER BY reminded DESC, m.found_at DESC, key
                     LIMIT 200) x), '[]'::jsonb),
             'differences', COALESCE((
                 SELECT jsonb_agg(x.item ORDER BY x.reminded DESC, x.found_at DESC, x.key)
@@ -15533,7 +15544,8 @@ REPORT_READ_DOOR = (
                     SELECT """
     + _REPORT_KEY_D
     + r""" AS key, m.found_at,
-                           (a.answer = 'remind' AND a.remind_from < at_) AS reminded,
+                           COALESCE(a.answer = 'remind' AND a.remind_from < at_, false)
+                               AS reminded,
                            jsonb_build_object(
                                'key', """
     + _REPORT_KEY_D
@@ -15569,13 +15581,10 @@ REPORT_READ_DOOR = (
                       AND """
     + _REPORT_HERE
     + r"""
+                    ORDER BY reminded DESC, m.found_at DESC, key
                     LIMIT 200) x), '[]'::jsonb),
             'notSorted', (
                 (SELECT count(*) FROM memory_differences m
-                 LEFT JOIN report_answers a
-                   ON a.guild_id = g AND a.campaign_id = c AND a.item_key = """
-    + _REPORT_KEY_D
-    + r"""
                  WHERE m.guild_id = g AND m.campaign_id = c AND m.sort = 'not_sorted'
                    AND m.session_started_at = at_)
                 + (SELECT count(*) FROM memory_contradictions m

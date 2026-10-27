@@ -253,6 +253,117 @@ class TheReport(Reading):
         self.assertEqual(got["contradictions"][0]["remindedFrom"], 1)
         self.assertEqual(len(got["differences"]["false"]), 1)
 
+    async def test_a_reminded_item_comes_before_a_new_one_in_the_same_list(self) -> None:
+        old = await self.difference(at=S1)
+        await self.answer(old, "difference", "remind", when=S1 + 5, remind_from=S1)
+        await self.sql(
+            "INSERT INTO memory_differences (guild_id, campaign_id, perspective_id, relation_id,"
+            " truth_relation_id, kind, sort, reason, found_at, session_started_at)"
+            " VALUES (%s, %s, %s, %s, NULL, 'denied', 'false', 'Newer.', 99999, %s)",
+            GUILD, self.one.id, self.party, self.enemy, S2,
+        )  # fmt: skip
+        reasons = [d["reason"] for d in (await self.read(S2))["differences"]["false"]]
+        self.assertEqual(reasons, ["Not so.", "Newer."])  # the reminded one first, though older
+
+    async def test_a_reminded_item_counts_as_open_again(self) -> None:
+        key = await self.difference(at=S1)
+        await self.answer(key, "difference", "remind", when=S1 + 5, remind_from=S1)
+        here = (await self.read(S1))["counts"]
+        self.assertEqual((here["open"], here["answered"]), (0, 1))  # just answered
+        later = (await self.read(S2))["counts"]
+        self.assertEqual((later["open"], later["answered"]), (1, 0))  # it has come back
+
+    async def test_a_reminded_item_found_again_in_the_same_later_session_shows_once(self) -> None:
+        key = await self.difference(at=S1)
+        await self.answer(key, "difference", "remind", when=S1 + 5, remind_from=S1)
+        await self.sql(
+            "UPDATE memory_differences SET session_started_at = %s WHERE guild_id = %s", S2, GUILD
+        )  # (found again in session 2)
+        got = (await self.read(S2))["differences"]["false"]
+        self.assertEqual((len(got), got[0]["remindedFrom"]), (1, 1))
+
+    async def test_the_reminder_waits_for_the_next_session_the_page_lists(self) -> None:
+        key = await self.difference(at=S1)
+        await self.answer(key, "difference", "remind", when=S1 + 5, remind_from=S1)
+        await self.sql(
+            "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at, line_count)"
+            " VALUES (%s, %s, %s, %s, 0)",
+            f"{9:032x}",
+            GUILD,
+            self.one.id,
+            S1 + 10,
+        )  # (an empty session in between, which the transcripts page never lists)
+        self.assertEqual(len((await self.read(S2))["differences"]["false"]), 1)
+
+    async def test_a_list_is_cut_at_200_keeping_the_newest(self) -> None:
+        for n in range(201):  # (one point of view each: a connection holds one row per view)
+            who = await self.name(f"Watcher {n}", self.one.id)
+            await self.sql(
+                "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+                " created_at) VALUES (%s, %s, %s, 'npc', %s, 1)",
+                GUILD, self.one.id, f"{n + 1:032x}", who,
+            )  # fmt: skip
+            await self.sql(
+                "INSERT INTO memory_differences (guild_id, campaign_id, perspective_id,"
+                " relation_id, truth_relation_id, kind, sort, reason, found_at,"
+                " session_started_at) VALUES (%s, %s, %s, %s, NULL, 'denied', 'false', %s, %s, %s)",
+                GUILD, self.one.id, f"{n + 1:032x}", self.ally, f"r{n}", n, S1,
+            )  # fmt: skip
+        got = (await self.read())["differences"]["false"]
+        self.assertEqual(len(got), 200)
+        self.assertEqual(got[0]["reason"], "r200")  # the newest first
+        self.assertNotIn("r0", [d["reason"] for d in got])  # the oldest is the one left out
+
+    async def test_evidence_through_a_belief_counts_for_that_view_only_and_is_capped_at_10(
+        self,
+    ) -> None:
+        await self.contradiction()
+        await self.sql(
+            "INSERT INTO memory_beliefs (guild_id, campaign_id, id, perspective_id, relation_id,"
+            " confidence, status, seq, recorded_at, session_at) VALUES"
+            " (%s, %s, %s, %s, %s, 1, 'revealed_fact', 9999, 1, NULL),"
+            " (%s, %s, %s, %s, %s, 0.8, 'theory', 9998, 1, %s)",
+            GUILD, self.one.id, "e" * 32, self.truth, self.ally,
+            GUILD, self.one.id, "d" * 32, self.party, self.ally, S1,
+        )  # fmt: skip
+        for owner, kind, at in (
+            ("d" * 32, "clue", S1),
+            ("e" * 32, "event", S2),  # (another view's: must not appear)
+        ):
+            await self.sql(
+                "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
+                " session_started_at, added_at) VALUES (%s, %s, %s, %s, 'x', %s, 1)",
+                GUILD, self.one.id, owner, kind, at,
+            )  # fmt: skip
+        for n in range(12):  # twelve more on the connection itself
+            await self.sql(
+                "INSERT INTO memory_evidence (guild_id, campaign_id, relation_id, kind, target_id,"
+                " session_started_at, added_at) VALUES (%s, %s, %s, 'claim', %s, %s, %s)",
+                GUILD, self.one.id, self.ally, f"t{n}", S3, 10 + n,
+            )  # fmt: skip
+        got = await self.read()
+        sides = [got["contradictions"][0]["first"], got["contradictions"][0]["second"]]
+        side = max(sides, key=lambda x: len(x["evidence"]))  # (the side that is the ally link)
+        kinds = [e["kind"] for e in side["evidence"]]
+        self.assertEqual(len(kinds), 10)
+        self.assertIn("clue", kinds)  # through this view's belief
+        self.assertNotIn("event", kinds)  # another view's belief never leaks in
+
+    async def test_an_item_whose_connection_is_gone_is_skipped_not_fatal(self) -> None:
+        shaped = report.shape(
+            {
+                "now": 5,
+                "run": None,
+                "notSorted": 0,
+                "contradictions": [{"key": "a" * 32, "first": None, "second": None}],
+                "differences": [{"key": "b" * 32, "sort": "false", "believes": None}],
+            },
+            S1,
+            [],
+        )
+        self.assertEqual((shaped["contradictions"], shaped["differences"]["false"]), ([], []))
+        self.assertEqual(shaped["state"], "none")
+
     async def test_evidence_is_kinds_and_placeholders_never_a_line_or_a_speaker(self) -> None:
         await self.contradiction()
         owner = {"relation_id": self.ally}  # (a connection's own evidence)
