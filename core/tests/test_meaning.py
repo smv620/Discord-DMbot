@@ -215,6 +215,25 @@ class Finding(DatabaseTest):
         self.assertLessEqual(len(voyage.embedded[0]), mn.QUESTION_MAX)
 
 
+class Drift(DatabaseTest):
+    def test_the_plot_note_kinds_are_the_websites(self) -> None:
+        """The leads' filter and the website's reading doors hide the same kinds from members; if
+        one list changes and not the other, a player-facing answer could start from a plot note."""
+        import re
+        from pathlib import Path
+
+        from dmbot import schema
+
+        source = Path(schema.__file__).read_text()
+        found = {
+            tuple(re.findall(r"'(\w+)'", m))
+            for m in re.findall(r"e\.type NOT IN \(([^)]*)\)", source)
+            if "'thread'" in m  # (the lists that hide the plot notes; others hide other kinds)
+        }
+        self.assertTrue(found)
+        self.assertEqual(found, {tuple(mn.PLAYER_HIDDEN_TYPES)})
+
+
 class InTheSidebar(DatabaseTest):
     """The leads are added to the names the question spelled out; the answer never waits on them."""
 
