@@ -49,6 +49,7 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    names_smart,
     npc_pages,
     offers,
     past_sessions,
@@ -184,6 +185,8 @@ def create_app(
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
+    smart_names: names_smart.SmartNames | None = None,
+    smart_limit: RateLimit | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -206,6 +209,10 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    if smart_limit is None:
+        # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
+        # so one person gets 20 a minute, counted by account.
+        smart_limit = RateLimit(60, count=20)
     # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
     if route_limits is None:
         route_limits = {
@@ -1434,6 +1441,22 @@ def create_app(
                 db, session, ref, q=q, kind=kind, sort=sort, page=number, size=wanted
             )
         except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/all-names/smart")
+    async def me_campaign_all_names_smart(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+        """The Names page's search by meaning (#2733): the names closest in meaning to the DM's
+        words, best first. A DM only ("not found" for anyone else). `available: false` with a
+        `why` says the search could not run, so the page falls back to the letters search."""
+        session, _token = signed
+        taken = smart_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            return await names_smart.search(db, session, ref, q, smart_names)
+        except RecapError as err:
+            smart_limit.give_back(f"user-{session.user_id}")  # a refused search costs no turn
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

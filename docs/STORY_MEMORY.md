@@ -857,6 +857,20 @@ processor before it is used.
   question, re-scored by `rerank-2.5`, added to the names the question spelled out. Optional: a
   switch off, no numbers yet, nothing close or any failure means names alone. An entry the players
   may not know yet is never a lead for a sidebar answer. Table questions never ask for leads.
+- **Built (#2733): the Names page searches by meaning.** `GET /me/campaigns/{ref}/all-names/smart?q=`
+  (`web/names_smart.py`): the DM's words become numbers (Voyage AI, the same model the kept numbers
+  were made with), the database door `dmbot_web_names_near` finds the nearest names in that one
+  campaign (the website's role has no right on the numbers, so the comparing is done there), and
+  `rerank-2.5` puts the best in order by reading each name's text. The text is the name, its
+  description, its other names (never a secret one) and up to ten connections in plain words ("is an
+  ally of Brannoc"), put together in one place (`memory/entity_text.py`) so the numbers, the
+  reranker and the sidebar read the same words. A connection the DM keeps secret, or one to a name
+  the players don't know yet, is never in it. DMs only (a server manager who is not a DM gets "not
+  found": the text holds descriptions the page does not show them), and the DM is checked before any
+  word leaves for Voyage AI. 20 searches a minute for each person. When the search cannot run (off,
+  no credit, Voyage AI not answering) the answer says so with `available: false` and a `why`, and the
+  page falls back to the letters search. The words are never logged. The rows come back in the
+  list's usual shape (`dmbot_web_all_names` now takes a short list of ids as well as one).
 
 **Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
 rule says which in `memory/checks.py`'s docstring.
