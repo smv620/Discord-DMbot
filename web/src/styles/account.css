@@ -232,8 +232,6 @@
     font: inherit;
     text-decoration: underline;
     cursor: pointer;
-    min-height: var(--tap);
-    min-width: var(--tap);
   }
 
   .account button.button {
@@ -834,6 +832,8 @@
     text-align: start;
     text-decoration: underline;
     cursor: pointer;
+    min-height: var(--tap);
+    min-width: var(--tap);
   }
 
   /* One line a name, so a page of 200 is still easy to scan: ruled rows, no boxes. The line breaks
@@ -885,9 +885,18 @@
     min-height: var(--tap);
   }
 
+  /* A long name wraps inside its own button and stays beside the tick box, instead of being pushed
+     under it (and then touching it, or sticking out of a narrow screen). */
   .account .name-head .campaign-name {
     flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .account .name-head button.campaign-name {
+    flex: 1 1 8rem;
   }
 
   .account .name-open {
