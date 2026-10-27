@@ -299,3 +299,76 @@ class TheRoute(Smart):
         from tests.test_recap_web import callers
 
         self.assertEqual(callers("dmbot_web_names_near("), {"schema.py", "web/names_smart.py"})
+
+
+class TheEdges(Smart):
+    async def near(self, vector: list[float]) -> tuple[list[dict[str, Any]], bool] | None:
+        return await names_smart._near(self.web, self.session, self.g, self.one.id, MODEL, vector)
+
+    async def test_a_zero_a_huge_and_an_empty_search_vector_find_nothing(self) -> None:
+        for vector in ([0.0, 0.0, 0.0], [0.5] * 5000, []):
+            self.assertEqual(await self.near(vector), ([], False), len(vector))
+
+    async def test_an_empty_vector_only_proves_who_is_asking(self) -> None:
+        self.assertIsNone(
+            await names_smart._near(self.web, self.bob, self.g, self.one.id, MODEL, [])
+        )
+
+    async def test_a_person_a_merged_and_a_proposed_name_are_never_found(self) -> None:
+        for name, kind in (("Pip", "npc"), ("Old Mira", "npc"), ("Maybe Mira", "npc")):
+            made = await self.add(name, kind, description="A goddess of ice and winter")
+            if name == "Pip":  # (a person at the table: DMbot makes these itself)
+                await self.sql("UPDATE memory_entities SET type = 'person' WHERE id = %s", made)
+            if name == "Old Mira":
+                await self.sql(
+                    "UPDATE memory_entities SET status = 'merged', merged_into = %s WHERE id = %s",
+                    self.mira,
+                    made,
+                )
+            if name == "Maybe Mira":
+                await self.sql("UPDATE memory_entities SET status = 'proposed' WHERE id = %s", made)
+        await self.make_numbers(self.g, self.one.id)
+        found = {n["name"] for n in (await self.ask("ice goddess"))["names"]}
+        self.assertFalse(found & {"Pip", "Old Mira", "Maybe Mira"}, found)
+
+    async def test_the_text_the_reranker_reads_holds_nothing_secret(self) -> None:
+        await self.link("enemy_of", self.mira, self.auril, secret=True)
+        await self.make_numbers(self.g, self.one.id)
+        await self.ask("ally of Brannoc")
+        sent = "\n".join(d for _, docs in self.voyage.reranked for d in docs)
+        self.assertIn("Mira Voss", sent)
+        self.assertNotIn("Lady Grey", sent)  # (Mira's secret name)
+        self.assertNotIn("is an enemy of Auril", sent)  # (a secret connection)
+
+    async def test_a_scan_that_runs_out_of_time_says_so_and_costs_nothing_more(self) -> None:
+        from unittest.mock import patch
+
+        import psycopg
+
+        real = names_smart._near
+        calls = 0
+
+        async def slow(*args: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise psycopg.errors.QueryCanceled("statement timeout")
+            return await real(*args)
+
+        with patch.object(names_smart, "_near", slow):
+            got = await self.ask("ice goddess")
+        self.assertEqual((got["available"], got["why"], got["names"]), (False, "slow", []))
+        self.assertEqual(self.calls, 1)  # (the rerank was never asked)
+
+    async def test_more_numbers_than_one_search_compares_is_said(self) -> None:
+        await self.sql(
+            "INSERT INTO memory_vectors (guild_id, campaign_id, owner_kind, owner_id, model,"
+            " text_hash, vector, made_at)"
+            " SELECT %s, %s, 'assertion', 'filler-' || n, %s, 'h', ARRAY[0.1, 0.1, 0.1]::real[], 1"
+            " FROM generate_series(1, 10001) AS n",
+            self.g, self.one.id, MODEL,
+        )  # fmt: skip
+        got = await self.ask("ice goddess")
+        self.assertTrue(got["capped"])
+        self.assertIn("Auril", [n["name"] for n in got["names"]])  # (the newest are compared)
+        self.assertFalse((await self.ask("ice", smart=None))["capped"])

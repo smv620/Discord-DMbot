@@ -10869,7 +10869,9 @@ NAMES_SMART = (
     -- of the campaign only (NULL for anyone else, a server manager who is not a DM included: the
     -- text holds descriptions, which a manager does not see on the page). One campaign, one
     -- model, the same number of numbers; the vectors are unit length, but the length is divided
-    -- out anyway. At most `pool` (60) rows.
+    -- out anyway. At most `pool` (60) rows, from the newest 10,000 numbers (about 3 seconds of one
+    -- core for 20,000 rows, measured); `capped` says there were more. An empty `q` only proves who
+    -- is asking.
     CREATE FUNCTION dmbot_web_names_near(g BIGINT, c TEXT, m TEXT, q REAL[], pool INT)
     RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
@@ -10885,9 +10887,13 @@ NAMES_SMART = (
         END IF;
         qn := sqrt((SELECT sum(x::DOUBLE PRECISION * x) FROM unnest(q) AS x));
         IF qn IS NULL OR qn = 0 OR cardinality(q) > 4096 THEN
-            RETURN '[]'::jsonb;
+            RETURN jsonb_build_object('capped', false, 'rows', '[]'::jsonb);
         END IF;
-        RETURN COALESCE((
+        RETURN jsonb_build_object('capped', EXISTS (
+            SELECT 1 FROM memory_vectors x
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.owner_kind = 'assertion'
+              AND x.model = m AND cardinality(x.vector) = cardinality(q)
+            OFFSET 9999), 'rows', COALESCE((
             SELECT jsonb_agg(jsonb_build_object('id', n.id, 'parts', n.parts, 'score', n.score)
                              ORDER BY n.score DESC, n.id)
             FROM (
@@ -10895,13 +10901,16 @@ NAMES_SMART = (
                 FROM (
                     SELECT split_part(v.owner_id, '#', 1) AS id,
                            max(d.dot / (qn * d.len)) AS score
-                    FROM memory_vectors v
+                    FROM (SELECT x.owner_id, x.vector FROM memory_vectors x
+                          WHERE x.guild_id = g AND x.campaign_id = c
+                            AND x.owner_kind = 'assertion' AND x.model = m
+                            AND cardinality(x.vector) = cardinality(q)
+                          ORDER BY x.made_at DESC, x.owner_id LIMIT 10000) v
                     CROSS JOIN LATERAL (
                         SELECT sum(a::DOUBLE PRECISION * b) AS dot,
                                sqrt(sum(a::DOUBLE PRECISION * a)) AS len
                         FROM unnest(v.vector, q) AS u(a, b)) d
-                    WHERE v.guild_id = g AND v.campaign_id = c AND v.owner_kind = 'assertion'
-                      AND v.model = m AND cardinality(v.vector) = cardinality(q) AND d.len > 0
+                    WHERE d.len > 0
                     GROUP BY 1
                     ORDER BY 2 DESC, 1
                     LIMIT LEAST(GREATEST(pool, 1), 60)
@@ -10910,7 +10919,7 @@ NAMES_SMART = (
                   ON e.guild_id = g AND e.campaign_id = c AND e.id = best.id
                  AND e.status = 'confirmed' AND e.merged_into IS NULL AND e.type <> 'person'
             ) n
-            WHERE n.parts IS NOT NULL), '[]'::jsonb);
+            WHERE n.parts IS NOT NULL), '[]'::jsonb));
     END
     $fn$;
     DO $do$

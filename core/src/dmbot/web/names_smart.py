@@ -17,9 +17,12 @@ page can fall back to the letters search, which is always there.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+import psycopg
 
 from dmbot.ai import AIOutOfFunds
 from dmbot.db import Database
@@ -38,6 +41,9 @@ ROWS_MAX = 50  # names shown for one search
 POOL = 60  # names compared by meaning before the reranker orders the best ROWS_MAX of them
 
 
+SEARCHES_AT_ONCE = 2  # database scans at one time in this process: a scan is a core's worth of CPU
+
+
 class SmartNames:
     """What the route needs from Voyage AI: the client, the model the kept numbers were made with
     and a hook that counts each call (a tally of calls, nothing of what was sent)."""
@@ -51,6 +57,7 @@ class SmartNames:
         self.voyage = voyage
         self.model = model
         self.count_call = count_call
+        self.scans = asyncio.Semaphore(SEARCHES_AT_ONCE)
 
 
 def _words(text: str) -> str:
@@ -59,9 +66,9 @@ def _words(text: str) -> str:
 
 async def _near(
     db: Database, session: Session, guild_id: int, campaign_id: str, model: str, vector: list[float]
-) -> list[dict[str, Any]] | None:
-    """The door's answer: the nearest names with the parts of their text, or None for anyone but
-    a DM."""
+) -> tuple[list[dict[str, Any]], bool] | None:
+    """The door's answer: the nearest names with the parts of their text, and whether the campaign
+    has more numbers than one search compares; None for anyone but a DM."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
@@ -70,7 +77,7 @@ async def _near(
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
-    return None if got is None else list(got)
+    return None if got is None else (list(got["rows"]), bool(got["capped"]))
 
 
 async def search(
@@ -79,16 +86,17 @@ async def search(
     """The campaign's names closest in meaning to `words`, best first. "not_found" for anyone who
     is not a DM of the campaign (found out before any word leaves for Voyage AI); "bad_text" for
     nothing to search for. Otherwise `available` says whether the search could run and `why` is
-    one of "off", "no_credit" or "unreachable" when it could not."""
+    one of "off", "no_credit", "unreachable" or "slow" when it could not. `capped`: the campaign has
+    more numbers than one search compares (the newest 10,000), so an old name may not be found."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     text = _words(words)
     if not text:
         raise RecapError("bad_text")
-    # Who is asking, before anything is spent: a one-number "search" reaches the door, which
-    # answers an empty list to a DM and nothing to anyone else.
+    # Who is asking, before anything is spent: an empty "search" reaches the door's checks and
+    # stops there (no numbers are read), so it answers nothing to anyone but a DM.
     model = smart.model if smart is not None else ""
-    if await _near(db, session, guild_id, campaign_id, model, [1.0]) is None:
+    if await _near(db, session, guild_id, campaign_id, model, []) is None:
         raise RecapError("not_found")
     if smart is None:
         return _empty(False, "off")
@@ -96,11 +104,17 @@ async def search(
         if smart.count_call is not None:
             await smart.count_call()
         (query,) = await smart.voyage.embed([text], query=True)
-        close = await _near(db, session, guild_id, campaign_id, model, query)
-        if close is None:  # (stopped being a DM while the words were away)
+        try:
+            async with smart.scans:  # (a scan is a core's worth of CPU: two at a time)
+                near = await _near(db, session, guild_id, campaign_id, model, query)
+        except psycopg.errors.QueryCanceled:
+            log.warning("Names search by meaning: the scan ran out of time")
+            return _empty(False, "slow")
+        if near is None:  # (stopped being a DM while the words were away)
             raise RecapError("not_found")
+        close, capped = near
         if not close:
-            return _empty(True, None)
+            return _empty(True, None, capped)
         if smart.count_call is not None:
             await smart.count_call()
         ranked = await smart.voyage.rerank(
@@ -117,7 +131,7 @@ async def search(
     ]
     log.info("Names search by meaning: %d candidates, %d names", len(close), len(order))
     if not order:
-        return _empty(True, None)
+        return _empty(True, None, capped)
     page = await all_names.read_page(
         db, session, ref, size=200, only=",".join(order)
     )  # (the rows' usual shape; the door keeps what a DM may see)
@@ -125,11 +139,12 @@ async def search(
     return {
         "available": True,
         "why": None,
+        "capped": capped,
         "campaign": page["campaign"],
         "canEdit": page["canEdit"],
         "names": [rows[i] for i in order if i in rows],
     }
 
 
-def _empty(available: bool, why: str | None) -> dict[str, Any]:
-    return {"available": available, "why": why, "names": []}
+def _empty(available: bool, why: str | None, capped: bool = False) -> dict[str, Any]:
+    return {"available": available, "why": why, "capped": capped, "names": []}

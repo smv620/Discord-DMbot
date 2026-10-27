@@ -870,7 +870,11 @@ processor before it is used.
   word leaves for Voyage AI. 20 searches a minute for each person. When the search cannot run (off,
   no credit, Voyage AI not answering) the answer says so with `available: false` and a `why`, and the
   page falls back to the letters search. The words are never logged. The rows come back in the
-  list's usual shape (`dmbot_web_all_names` now takes a short list of ids as well as one).
+  list's usual shape (`dmbot_web_all_names` now takes a short list of ids as well as one). One
+  search compares the newest 10,000 numbers (measured: about 3 seconds of one core for 20,000; two
+  at a time in the process; `capped` tells the page there were more), until `pgvector` can replace
+  the comparing. A changed description, other name or connection makes that entry's numbers again
+  at the next run, so the Voyage bill follows how much the DM edits.
 
 **Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
 rule says which in `memory/checks.py`'s docstring.
