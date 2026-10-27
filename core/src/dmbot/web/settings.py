@@ -112,6 +112,9 @@ class WebSettings:
     imports_on: bool = False
     # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
     handover_email_on: bool = False
+    # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
+    # until the bot's half, which applies and sweeps staged restores (#2746), is live.
+    web_restore_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -305,9 +308,13 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
         )
+    restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
+    if restore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
     return WebSettings(
         database_url=get("DATABASE_URL"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
+        web_restore_on=restore_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),

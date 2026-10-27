@@ -15,6 +15,7 @@ from dmbot.campaigns.parts import PART_READ_BYTES
 from dmbot.campaigns.store import MAX_BACKUP_BYTES
 from dmbot.web import restores, sessions
 from dmbot.web.app import create_app
+from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW, Base
@@ -378,12 +379,95 @@ class Staging(Base):
         )
 
 
+class Authorizing(Staging):
+    """What the address alone can say, judged before any bytes are read (and again by the bot)."""
+
+    async def give_plan(self, plan: str, user_id: int | None = None) -> None:
+        user = user_id or ALICE.id
+        async with self.db.plan_writer(user) as conn:
+            await conn.execute("DELETE FROM entitlements WHERE user_id = %s", (user,))
+            await conn.execute(
+                "INSERT INTO entitlements (user_id, plan, status, hours_cap, extra_hours,"
+                " campaign_cap, period_start, period_end, grace_ends_at, lapsed_at,"
+                " plan_changed_at, provider, provider_subscription_id, last_event_at, updated_at)"
+                " VALUES (%s, %s, 'active', 18, 0, 3, %s, %s, NULL, NULL, 0, 'fake',"
+                " 'sub_1', 0, 0)",
+                (user, plan, NOW - 100, NOW + 86400),
+            )
+
+    def check(self, replace: str | None = None, *, plans: bool = True, session: Any = None) -> Any:
+        return restores.authorize(
+            self.web, session or self.session, THURSDAY.id, replace, now=NOW, enforce_plans=plans
+        )
+
+    async def test_a_server_with_dmbot_and_a_paid_plan_may_go_on(self) -> None:
+        await self.give_plan("guild")
+        await self.check()
+
+    async def test_a_server_dmbot_has_left_is_refused(self) -> None:
+        await self.give_plan("guild")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_at, left_at, via)"
+                " VALUES (%s, 1, 2, 'link')",
+                (THURSDAY.id,),
+            )
+        self.assertEqual(await self.refused(self.check()), "not_found")
+
+    async def test_no_plan_and_try_it_are_refused_before_anything_is_stored(self) -> None:
+        self.assertEqual(await self.refused(self.check()), "plan")
+        await self.give_plan("try-it")
+        self.assertEqual(await self.refused(self.check()), "plan")
+        await self.check(plans=False)  # (plans are not enforced on this server's settings)
+
+    async def test_a_replace_is_judged_by_the_campaign_owners_plan(self) -> None:
+        await self.campaigns.add_dm(
+            THURSDAY.id, self.two.id, ALICE.id
+        )  # Alice co-DMs Bob's campaign
+        await self.give_plan("guild", ALICE.id)  # her own plan is fine ...
+        ref = f"{THURSDAY.id}.{self.two.id}"
+        await self.give_plan("try-it", BOB.id)  # ... but the owner's is Try It
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = %s WHERE id = %s", (BOB.id, self.two.id)
+            )
+        self.assertEqual(await self.refused(self.check(ref)), "plan")
+        await self.give_plan("guild", BOB.id)
+        await self.check(ref)
+
+    async def test_a_campaign_that_is_not_theirs_to_run_is_not_found(self) -> None:
+        await self.give_plan("guild")
+        ref = f"{THURSDAY.id}.{self.two.id}"  # Bob's
+        self.assertEqual(await self.refused(self.check(ref)), "not_found")
+
+    async def test_a_second_server_is_busy_while_one_is_pending(self) -> None:
+        other = 4321
+        await self.stage(a_copy())
+        async with self.db.guild(other) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_at, via) VALUES (%s, 1, 'link')",
+                (other,),
+            )
+        wide = await self.signed(ALICE, THURSDAY, DiscordGuild(other, "Other", True))
+        with self.assertRaises(RecapError) as caught:
+            await restores.stage(self.web, wide, other, None, a_copy("Elsewhere"))
+        self.assertEqual(caught.exception.code, "busy")
+
+    async def test_the_progress_has_no_count_when_the_files_were_skipped(self) -> None:
+        made = await self.stage(a_copy(parts=3))
+        await restores.go(self.web, self.session, THURSDAY.id, made["id"], without=True)
+        await self.db_sql("UPDATE web_restores SET state='working', stage='restore_writing'")
+        got = await restores.status(self.web, self.session, THURSDAY.id, made["id"])
+        self.assertNotIn("total", got)
+        self.assertEqual(got["stage"], "restore_writing")
+
+
 class TheRoute(Staging):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://s.example"),
-            clock=lambda: NOW,
+            settings(web_restore_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
         )  # fmt: skip
         token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
         self.client = httpx.AsyncClient(
@@ -437,6 +521,42 @@ class TheRoute(Staging):
         await self.db_sql("UPDATE web_restores SET state = 'working', stage = 'restore_reading'")
         gone = await self.client.delete(f"{self.base}/{made.json()['id']}", headers=HEADERS)
         self.assertEqual((gone.status_code, gone.json()["error"]), (409, "working"))
+
+    async def test_an_oversized_chunked_body_is_cut_off_without_a_length(self) -> None:
+        async def chunks() -> Any:
+            for _ in range(restores.MAX_BODY_BYTES // 1_000_000 + 2):
+                yield b"\0" * 1_000_000
+
+        big = await self.client.post(self.base, content=chunks(), headers=HEADERS)
+        self.assertEqual((big.status_code, big.json()["error"]), (413, "too_big"))
+
+    async def test_the_routes_are_not_there_while_the_setting_is_off(self) -> None:
+        off = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://s.example"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=off), base_url=API, follow_redirects=False
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="api.dmbot.example")
+        self.addAsyncCleanup(client.aclose)
+        for method, path in (
+            ("POST", self.base),
+            ("GET", self.base),
+            ("GET", f"{self.base}/{'a' * 32}"),
+            ("DELETE", f"{self.base}/{'a' * 32}"),
+        ):
+            got = await client.request(method, path, content=a_copy(), headers=HEADERS)
+            self.assertEqual(got.status_code, 404, path)
+        self.assertEqual(await self.restore_count(), 0)
+
+    async def restore_count(self) -> int:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM web_restores")
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
 
     async def test_a_post_without_the_site_header_is_refused(self) -> None:
         refused = await self.client.post(self.base, content=a_copy())

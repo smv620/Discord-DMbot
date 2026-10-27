@@ -239,7 +239,7 @@ describe("finding its way back", () => {
     expect(await screen.findByRole("heading", { name: w.confirmHeading })).toBeTruthy();
   });
 
-  it("shows the one on its way when the API says another is pending", async () => {
+  const pendingElsewhere = async () => {
     const api = mockApi("table");
     const real = api.restoreStatus!.bind(api);
     let first = true;
@@ -254,8 +254,24 @@ describe("finding its way back", () => {
     await page(api);
     pick(FILE, gz("Other.dmbot.json.gz"));
     press(w.checkFile);
-    expect(await screen.findByRole("heading", { name: w.confirmHeading })).toBeTruthy();
-    expect(screen.getByText(w.confirmNew("Lost World", "Thursday Table"))).toBeTruthy();
+    await screen.findByRole("heading", { name: w.busyHeading });
+    return api;
+  };
+
+  it("asks once whether to swap the waiting one for the new file", async () => {
+    const api = await pendingElsewhere();
+    expect(screen.getByText(w.busyText("Lost World", "Thursday Table"))).toBeTruthy();
+    press(w.busyReplace);
+    expect(await screen.findByText(w.confirmNew("Other", "Thursday Table"))).toBeTruthy();
+    expect(calls(api, "restoreCancel")).toHaveLength(1);
+    expect(calls(api, "restoreStage")).toHaveLength(3); // the one waiting, the refused try, the swap
+  });
+
+  it("or keeps the waiting one", async () => {
+    const api = await pendingElsewhere();
+    press(w.busyKeep);
+    expect(await screen.findByText(w.confirmNew("Lost World", "Thursday Table"))).toBeTruthy();
+    expect(calls(api, "restoreCancel")).toHaveLength(0);
   });
 });
 

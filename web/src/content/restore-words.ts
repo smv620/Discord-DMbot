@@ -47,7 +47,7 @@ export const restoreWords = {
   confirmNew: (name: string, server: string): string =>
     `This will make a new campaign from the backup of "${name}" in ${server}. You will be its DM.`,
   confirmReplace: (name: string, target: string): string =>
-    `Replace "${target}"? Everything in it (story, notes, names, transcripts) is swapped for the backup of "${name}". This can't be undone. You will be its DM, and any other DMs lose access.`,
+    `Replace "${target}"? Everything in it (story, notes, names, transcripts) is swapped for the backup of "${name}". This can't be undone. The DMs become the ones in the backup, plus you and the campaign's owner.`,
   lostTrack: "We lost track of which campaign this was for. Cancel and start again.",
   downloadFirst: "Save a copy first",
   downloadNote: "Opens in a new tab. Come back here after.",
@@ -71,10 +71,17 @@ export const restoreWords = {
   openCampaign: "Open the campaign",
   leftOut: (n: number): string =>
     `${n} ${n === 1 ? "line" : "lines"} of people who have since deleted their transcripts ${n === 1 ? "was" : "were"} left out, as they asked.`,
+  busyHeading: "You already have a backup waiting",
+  busyText: (name: string, server: string): string =>
+    `The backup of "${name}" in ${server} hasn't gone to DMbot yet. Do you want to replace it with this file?`,
+  busyLoading: (name: string, server: string): string =>
+    `The backup of "${name}" in ${server} is already being loaded. Here it is.`,
+  busyReplace: "Replace it with this file",
+  busyKeep: "Keep the waiting one",
+  busyShow: "Show it",
   startOver: "Load another",
   checkAgain: "Check again",
   stopped: "The page has stopped checking. Press Check again to look.",
-  lastingNote: "If you are replacing a campaign and it fails, say so on the Help page.",
   gone: "That restore is gone. It was cleared or it ran out of time. Start again.",
   expires: "Your file is only kept for 24 hours, and deleted after it is loaded or cancelled.",
   keepOpen: "Once it says it is with DMbot you can close this page and come back.",
@@ -94,9 +101,11 @@ export const restoreWords = {
   problems: {
     "not-a-backup": "That file isn't a DMbot backup. Pick the file you got from Download a copy.",
     "too-big": `That file is too big. A copy can be up to ${RESTORE_MAX_MB} MB.`,
-    "too-many-parts": `This backup has more than ${RESTORE_MAX_PARTS} transcripts files, which is more than can be loaded here. Use /dmbot restore in Discord for this one.`,
+    "too-many-parts": `This backup has more than ${RESTORE_MAX_PARTS} transcripts files, which is more than can be loaded here. Ask on the Help page: this one needs help from us.`,
     "bad-part": "That transcripts file doesn't belong to this backup. Pick them again, all together from the same download.",
     "files-missing": "Some of the transcripts files haven't arrived. Pick them again, all together from the same download, or press Skip the transcripts.",
+    "restore-plan": "Your plan doesn't allow loading a backup, or you have no free campaign slot. Look at your plan on My Account. Replacing one of your campaigns doesn't need a free slot.",
+    "too-slow": "The file took too long to arrive. Check your connection and try again.",
     "restore-working": "DMbot has already started loading it, so it can't be taken back. Here is how far it has got.",
     "not-receiving": "This backup has already gone to DMbot. Press Load another to start fresh.",
     "too-soon": "You have loaded several backups in the last hour. Try again in an hour.",

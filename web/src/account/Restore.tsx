@@ -42,6 +42,9 @@ export default function Restore({ api }: { api: AccountApi }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const live = useRef(true);
   const [done, setDone] = useState<string | null>(null); // a note that stays after the form comes back
+  // A restore of theirs is already waiting (maybe in another server) and the person just picked a new file:
+  // asked once whether to swap it.
+  const [busyWith, setBusyWith] = useState<{ serverId: string; status: RestoreStatus } | null>(null);
 
   useEffect(
     () => () => {
@@ -132,7 +135,7 @@ export default function Restore({ api }: { api: AccountApi }) {
   }, [api, serverId, watching, status?.id, frozen]);
 
   // Each screen starts at its heading, so a keyboard or screen-reader user is not left on a button that went.
-  const screen = status === null ? "form" : status.stage === "restore_receiving" ? `receiving:${without}:${status.partsReceived}` : status.state;
+  const screen = busyWith !== null ? "busy" : status === null ? "form" : status.stage === "restore_receiving" ? `receiving:${without}:${status.partsReceived}` : status.state;
   useEffect(() => {
     heading.current?.focus();
   }, [screen]);
@@ -170,12 +173,61 @@ export default function Restore({ api }: { api: AccountApi }) {
       setParts([]);
       await read(staged.id);
     } catch (error) {
-      // One of theirs is already on its way (slow-down): show that one.
-      if (error instanceof ApiError && error.kind === "slow-down") await read().catch(() => null);
+      // One of theirs is already on its way (slow-down; maybe in another server): ask what to do with it.
+      if (error instanceof ApiError && error.kind === "slow-down") {
+        const found = await findPending().catch(() => null);
+        if (found) {
+          setBusyWith(found);
+          return;
+        }
+      }
       fail(error);
     } finally {
       if (live.current) setBusy(null);
     }
+  };
+
+  /** The person's waiting restore, in the chosen server first, then the others they could have used. */
+  const findPending = async (): Promise<{ serverId: string; status: RestoreStatus } | null> => {
+    const order = [serverId, ...servers.map((x) => x.id).filter((id) => id !== serverId)];
+    for (const id of order) {
+      const found = (await api.restoreStatus?.(id)) ?? null;
+      if (found && !ended(found)) return { serverId: id, status: found };
+    }
+    return null;
+  };
+
+  const keepWaiting = () => {
+    if (!busyWith) return;
+    setServerId(busyWith.serverId);
+    setStatus(busyWith.status);
+    setBusyWith(null);
+  };
+
+  const swapWaiting = async () => {
+    if (!busyWith || !api.restoreCancel) return;
+    const old = busyWith;
+    setBusyWith(null);
+    setBusy(w.working);
+    try {
+      await api.restoreCancel(old.serverId, old.status.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "restore-working") {
+        // DMbot started it meanwhile: it can't be swapped. Show it.
+        fail(error);
+        setServerId(old.serverId);
+        setStatus(old.status);
+        setBusy(null);
+        return;
+      }
+      if (!(error instanceof ApiError && error.kind === "not-found")) {
+        fail(error);
+        setBusy(null);
+        return;
+      }
+    }
+    setBusy(null);
+    await check();
   };
 
   const sendParts = async () => {
@@ -270,6 +322,30 @@ export default function Restore({ api }: { api: AccountApi }) {
       {problem}
     </p>
   );
+
+  // ---- a restore of theirs is already waiting ----
+  if (busyWith !== null) {
+    const where = servers.find((x) => x.id === busyWith.serverId)?.name ?? "";
+    const started = busyWith.status.stage !== "restore_receiving" && busyWith.status.stage !== "restore_waiting";
+    return (
+      <div class="stack restore">
+        <h2 ref={heading} tabIndex={-1}>
+          {w.busyHeading}
+        </h2>
+        <p>{started ? w.busyLoading(busyWith.status.name, where) : w.busyText(busyWith.status.name, where)}</p>
+        <div class="stack">
+          {!started && (
+            <button type="button" class="button" onClick={() => void swapWaiting()}>
+              {w.busyReplace}
+            </button>
+          )}
+          <button type="button" class="button secondary" onClick={keepWaiting}>
+            {started ? w.busyShow : w.busyKeep}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ---- no restore yet: the form ----
   if (status === null) {

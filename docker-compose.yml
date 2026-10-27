@@ -178,6 +178,8 @@ services:
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
       # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
       DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
+      # Load a backup from the website (#2745): off, its routes answer 404, until the bot's half is live.
+      DMBOT_WEB_RESTORE: ${DMBOT_WEB_RESTORE:-0}
       DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

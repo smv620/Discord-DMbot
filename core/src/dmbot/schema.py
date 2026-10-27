@@ -3491,6 +3491,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_backup_read", "dmbot_web_backup_read(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_backup_take", "dmbot_web_backup_take(BIGINT, TEXT, TEXT)"),
     # A backup loaded from the website, staged for the bot to apply (#2745).
+    ("dmbot_web_restore_target", "dmbot_web_restore_target(BIGINT, TEXT)"),
     ("dmbot_web_restore_add", "dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)"),
     ("dmbot_web_restore_part", "dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)"),
     ("dmbot_web_restore_go", "dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)"),
@@ -13402,7 +13403,7 @@ WEB_RESTORES = (
     -- still one of its DMs, and that the campaign is not playing. `main` is the copy and
     -- `web_restore_parts` its transcripts files (all of them or none, as in Discord). One row is
     -- one restore: `receiving` while the person's own files are still arriving, then `waiting`,
-    -- `working` (with `stage`, `done_parts` of `parts_total` and `updated_at` for the shared
+    -- `working` (with `stage`, `done_parts` of `parts_wanted` and `updated_at` for the shared
     -- progress shape of #2564), then `done` or `failed` with a plain reason word. The bytes are
     -- emptied when the bot has applied or refused it, and the row goes 24 hours after it began,
     -- whichever is first (the bot sweeps; the doors also do). A copy holds the campaign's secrets,
@@ -13435,6 +13436,10 @@ WEB_RESTORES = (
     );
     CREATE INDEX web_restores_open ON web_restores (guild_id, created_at)
         WHERE state IN ('waiting', 'working');
+    -- One restore on its way per person across every server (a copy can be 625 MB): the index sees
+    -- all servers' rows even though a door sees one server's.
+    CREATE UNIQUE INDEX web_restores_one_each ON web_restores (user_id)
+        WHERE state IN ('receiving', 'waiting', 'working');
     CREATE TABLE web_restore_parts (
         guild_id   BIGINT NOT NULL,
         restore_id TEXT NOT NULL,
@@ -13470,7 +13475,7 @@ WEB_RESTORES = (
     -- for this many transcripts files). `replace_` is a campaign of the caller's to swap for the
     -- copy, or NULL for a new campaign. The door checks what it can see: the caller is in the
     -- server (and, to replace, a DM of that campaign), no other restore of theirs is still pending
-    -- here, and fewer than 5 in the last hour. Answers 'ok' with the id and the state
+    -- in any server, and fewer than 5 in the last hour here. Answers 'ok' with the id and the state
     -- (`receiving`), 'busy' with the id of the one pending, 'too_soon', or 'bad_target'; NULL for
     -- anyone not in the server.
     CREATE FUNCTION dmbot_web_restore_add(
@@ -13496,8 +13501,7 @@ WEB_RESTORES = (
                WHERE d.guild_id = g AND d.campaign_id = replace_ AND d.user_id = me) THEN
             RETURN jsonb_build_object('status', 'bad_target');
         END IF;
-        PERFORM pg_advisory_xact_lock(
-            hashtextextended('web_restore:' || g::TEXT || ':' || me::TEXT, 0));
+        PERFORM pg_advisory_xact_lock(hashtextextended('web_restore:' || me::TEXT, 0));
         DELETE FROM web_restores r WHERE r.guild_id = g AND r.created_at < now_s - 86400;
         SELECT r.id INTO have FROM web_restores r
             WHERE r.guild_id = g AND r.user_id = me
@@ -13506,15 +13510,21 @@ WEB_RESTORES = (
         IF FOUND THEN
             RETURN jsonb_build_object('status', 'busy', 'id', have);
         END IF;
+        -- (Counted in this server only; the API's per-person rate limit is the real one.)
         IF (SELECT count(*) FROM web_restores r
             WHERE r.guild_id = g AND r.user_id = me AND r.created_at > now_s - 3600) >= 5 THEN
             RETURN jsonb_build_object('status', 'too_soon');
         END IF;
         -- Always `receiving` first: nothing goes to the bot until the person has seen what it
         -- will do and pressed Load it (`dmbot_web_restore_go`), even with no transcripts files.
-        INSERT INTO web_restores (guild_id, id, user_id, replace_id, name, parts_wanted, main,
-                                  created_at, updated_at)
-            VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, now_s, now_s);
+        BEGIN
+            INSERT INTO web_restores (guild_id, id, user_id, replace_id, name, parts_wanted, main,
+                                      created_at, updated_at)
+                VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, now_s, now_s);
+        EXCEPTION WHEN unique_violation THEN
+            -- Pending in another server (this server's was found above): no id to give.
+            RETURN jsonb_build_object('status', 'busy');
+        END;
         RETURN jsonb_build_object('status', 'ok', 'id', rid, 'state', 'receiving');
     END
     $fn$;
@@ -13667,8 +13677,31 @@ WEB_RESTORES = (
         RETURN 'ok';
     END
     $fn$;
+    -- Who owns the campaign a restore would replace, for the plan check made before any bytes are
+    -- stored: the owner's id as text (or '' when it has none), only for a DM of that campaign in
+    -- this server. NULL for anyone else.
+    CREATE FUNCTION dmbot_web_restore_target(g BIGINT, c TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        own BIGINT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT k.owner_user_id INTO own FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        RETURN COALESCE(own::TEXT, '');
+    END
+    $fn$;
     DO $do$
     BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_target(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
         EXECUTE format(
             'ALTER FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
@@ -13689,6 +13722,7 @@ WEB_RESTORES = (
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_target(BIGINT, TEXT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN) FROM PUBLIC;

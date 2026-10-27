@@ -1629,6 +1629,8 @@ export type ApiErrorKind =
   | "bad-part" // a transcripts file that is not one of the copy's (#2745)
   | "files-missing" // transcripts files are still to come (#2745)
   | "not-receiving" // the copy has already gone to DMbot (#2745)
+  | "restore-plan" // the plan has no loading of copies, or no free campaign slot (#2745)
+  | "too-slow" // a file took too long to arrive (#2745)
   | "restore-working" // DMbot has started the restore, so it can't be taken back (#2745)
   | "server"; // anything else
 
@@ -2062,6 +2064,8 @@ const errorKinds: Record<string, ApiErrorKind> = {
   missing: "files-missing",
   not_receiving: "not-receiving",
   working: "restore-working",
+  plan: "restore-plan",
+  too_slow: "too-slow",
   shares_rules: "shares-rules",
   not_the_owner: "not-allowed",
   session_running: "session-running",

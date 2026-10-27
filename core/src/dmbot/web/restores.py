@@ -23,11 +23,12 @@ import re
 import time
 from typing import Any
 
-from dmbot import progress
+from dmbot import plan_rules, progress
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.parts import PART_READ_BYTES
 from dmbot.campaigns.store import GZIP_MAGIC, MAX_BACKUP_BYTES, NOT_A_BACKUP, decode_backup
 from dmbot.db import Database
+from dmbot.entitlements import plan_grant_access
 from dmbot.ui import logic
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _scoped
@@ -60,6 +61,59 @@ def _check(blob: object, limit: int) -> bytes:
     return bytes(blob)
 
 
+async def authorize(
+    db: Database,
+    session: Session,
+    server_id: int,
+    replace_ref: str | None,
+    *,
+    now: int,
+    enforce_plans: bool,
+) -> None:
+    """What can be known from the address alone, asked before any of the up-to-25 MB body is read
+    (the bot checks all of it again when it applies the restore): the server is one of the
+    session's and DMbot is in it (the rule of `/me`'s `hasDmbot`); a campaign to replace is the
+    person's own to run; and the plan allows loading a copy, as `bot.restore_gate` judges it: the
+    campaign owner's plan for a replace (the person's own when it has no owner, or for a new
+    campaign, which makes them its owner). Raises `RecapError`: `not_found` (also for a server
+    without DMbot) or `plan`."""
+    if not any(g.id == server_id for g in session.guilds):
+        raise RecapError("not_found")
+    replace_id: str | None = None
+    if replace_ref is not None:
+        guild_id, replace_id = _parse(replace_ref)
+        if guild_id != server_id:
+            raise RecapError("not_found")
+    payer = session.user_id
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, server_id)
+        cur = await conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s AND left_at IS NULL)"
+            " AS installed,"
+            " EXISTS (SELECT 1 FROM installs WHERE guild_id = %(g)s) AS recorded,"
+            " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %(g)s) AS played",
+            {"g": server_id},
+        )
+        here = await cur.fetchone() or {}
+        if not (here.get("installed") or (here.get("played") and not here.get("recorded"))):
+            raise RecapError("not_found")
+        if replace_id is not None:
+            cur = await conn.execute(
+                "SELECT dmbot_web_restore_target(%s, %s) AS r", (server_id, replace_id)
+            )
+            row = await cur.fetchone()
+            owner = row["r"] if row else None
+            if owner is None:
+                raise RecapError("not_found")
+            if owner.isdecimal():
+                payer = int(owner)
+    if not enforce_plans:
+        return
+    _plan, _grant, access = await plan_grant_access(db, payer, now)
+    if plan_rules.refusal("restore", access, is_owner=True) is not None:
+        raise RecapError("plan")
+
+
 async def stage(
     db: Database, session: Session, server_id: int, replace_ref: str | None, raw: object
 ) -> dict[str, Any]:
@@ -74,9 +128,10 @@ async def stage(
     except CampaignError as exc:
         raise RecapError("not_a_backup" if str(exc) == NOT_A_BACKUP else "too_big") from None
     name = logic.backup_campaign_name(data)
+    wanted = logic.backup_parts(data)
+    del data  # (a 25 MB file parsed is far more in memory: only the name and the count are needed)
     if name is None:
         raise RecapError("not_a_backup")
-    wanted = logic.backup_parts(data)
     if wanted > MAX_PARTS:
         raise RecapError("too_many_parts")
     replace_id: str | None = None
@@ -95,7 +150,7 @@ async def stage(
     if got is None:
         raise RecapError("not_found")
     if got["status"] == "busy":
-        raise RecapError("busy", problems=[{"id": got["id"]}])
+        raise RecapError("busy", problems=[{"id": got.get("id")}])
     if got["status"] == "bad_target":
         raise RecapError("not_found")
     if got["status"] != "ok":
@@ -179,14 +234,16 @@ async def status(
     moment = int(time.time()) if now is None else now
     reason = got["error"] or None
     stage_ = got["stage"]
+    counted = stage_ == "restore_writing" and not got["withoutParts"] and got["partsWanted"] > 0
     shape = progress.shape(
         stage_,
         started_at=int(got["createdAt"]),
         updated_at=int(got["updatedAt"]),
         now=moment,
-        done=int(got["doneParts"]) if stage_ == "restore_writing" else None,
-        total=int(got["partsWanted"]) if stage_ == "restore_writing" else None,
-        unit="parts" if stage_ == "restore_writing" else None,
+        # (no count of files when the person chose to restore without them)
+        done=int(got["doneParts"]) if counted else None,
+        total=int(got["partsWanted"]) if counted else None,
+        unit="parts" if counted else None,
         reason=reason if reason in REASONS else ("failed" if reason else None),
     )
     ended = got["state"] in ("done", "failed")
