@@ -132,6 +132,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "themselves are in the transcript (#2684)",
     "name_pass_fixes": "the name pass's report and Undo record: a run's history, the fixes "
     "themselves are in the transcript (#2684)",
+    "memory_contradictions": "PlotBot's contradiction candidates and grades: made again by the "
+    "next pass, nothing the DM wrote (#2660)",
     # Decided on #2552 (Supervisor, 2026-10-23):
     "session_usage": "the hours meter: a restore must not reset or double it",
     "waiting_name_questions": _QUEUE,
