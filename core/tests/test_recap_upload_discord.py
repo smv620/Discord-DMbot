@@ -10,8 +10,9 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from dmbot.recaps.discord import RecapFeatures
+from dmbot.recaps.store import SavedLists
 from dmbot.ui import recap_upload as ru
-from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS, lists_warning
+from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import Base
 
@@ -136,7 +137,11 @@ class Adding(Base):
                 ('[{"saved": true, "present": ["Mira"]}, {"saved": true}, {}]',),
             )
         await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
-        self.assertEqual(said(send), ru.ASK_REPLACE + "\n" + lists_warning(2))
+        self.assertEqual(
+            said(send),
+            ru.ASK_REPLACE
+            + "\nYou saved who was in 2 scenes of this recap. Replacing it deletes those lists.",
+        )
         job = await self.store.get(1, self.one.id, 700)
         assert job is not None
         self.assertEqual(job.summary, TEXT)  # (asking changed nothing)
@@ -151,7 +156,11 @@ class Adding(Base):
         with patch.object(self.store, "saved_lists", broken):
             await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
         # (not known whether a finished recap stands, so no promise about an old one)
-        self.assertEqual(said(send), ru.ASK_LISTS + "\n" + lists_warning(None))
+        self.assertEqual(
+            said(send),
+            "I can't tell whether you saved who was in any scenes. "
+            "If you did, replacing it deletes those lists.\n" + ru.ASK_LISTS,
+        )
 
     async def test_a_failed_recap_with_saved_lists_is_asked_about_before_the_door_replaces_it(
         self,
@@ -165,7 +174,12 @@ class Adding(Base):
                 ('[{"saved": true, "present": ["Mira"]}]',),
             )
         await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
-        self.assertEqual(said(send), ru.ASK_LISTS + "\n" + lists_warning(1))
+        self.assertEqual(
+            said(send),
+            "You saved who was in 1 scene of this recap. Replacing it deletes that list.\n"
+            "Put the one you are adding in its place?",
+        )
+        self.assertNotIn("making it again", said(send).lower())
         job = await self.store.get(1, self.one.id, 700)
         assert job is not None
         self.assertEqual(job.summary, TEXT)  # (the door was not reached: nothing was replaced)
@@ -175,6 +189,28 @@ class Adding(Base):
         job = await self.store.get(1, self.one.id, 700)
         assert job is not None
         self.assertEqual(job.summary, "A new telling.")
+
+    async def test_no_to_the_lists_question_leaves_the_recap_and_its_lists_as_they_were(
+        self,
+    ) -> None:
+        interaction, send = talk(self.store, self.one)
+        await ru.submit(interaction, self.draft(rights=True))
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET beats = %s::jsonb WHERE guild_id = 1 AND session_at = 700",
+                ('[{"saved": true, "present": ["Mira"]}]',),
+            )
+        await ru.submit(interaction, self.draft(text="A new telling.", author="Garrick"))
+        view = send.await_args.kwargs["view"]
+        no = next(c for c in view.children if getattr(c, "label", "") == "No, leave it")
+        await no.callback(interaction)
+        self.assertEqual(said(send), "👍 Nothing was saved.")
+        job = await self.store.get(1, self.one.id, 700)
+        assert job is not None
+        self.assertEqual(job.summary, TEXT)
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, 700), SavedLists(1, True, True)
+        )
 
     async def test_somebody_who_is_not_a_dm_adds_nothing(self) -> None:
         interaction, send = talk(self.store, self.one, user=OTHER)

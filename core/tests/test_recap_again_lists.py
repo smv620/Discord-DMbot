@@ -81,14 +81,57 @@ class TheRead(Lists):
         await self.lines(SESSION)
         await self.written(SESSION)
         await self.beats(True, False, True)
-        self.assertEqual(await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(2, True))
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(2, True, False)
+        )
+
+    async def test_only_a_posted_or_approved_recap_is_one_that_stays(self) -> None:
+        await self.lines(SESSION)
+        await self.written(SESSION, approved=True)
+        await self.beats(True)
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(1, True, True)
+        )
+        await self.lines(SESSION + 1)
+        await self.written(SESSION + 1, posted=True)
+        await self.beats(True, at=SESSION + 1)
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, SESSION + 1), SavedLists(1, True, True)
+        )
+
+    async def test_lists_of_another_campaign_or_server_at_the_same_time_are_not_counted(
+        self,
+    ) -> None:
+        await self.lines(SESSION)
+        await self.written(SESSION)
+        await self.beats(False)
+        # another campaign of the server, and a campaign of another server, both with saved lists
+        await self.store.enqueue(1, self.two.id, SESSION, dm_user_id=fx.DM)
+        await self.sql(
+            "UPDATE recap_jobs SET beats = %s::jsonb WHERE guild_id = 1 AND campaign_id = %s",
+            json.dumps([{"saved": True}, {"saved": True}]), self.two.id,
+        )  # fmt: skip
+        other = await self.campaigns.create(2, "Elsewhere", fx.DM)
+        await self.store.enqueue(2, other.id, SESSION, dm_user_id=fx.DM)
+        async with self.db.guild(2) as conn:
+            await conn.execute(
+                "UPDATE recap_jobs SET beats = %s::jsonb WHERE guild_id = 2",
+                (json.dumps([{"saved": True}]),),
+            )
+        self.assertEqual(await self.store.saved_lists(1, other.id, SESSION), None)
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(0, True, False)
+        )
+        self.assertEqual(
+            await self.store.saved_lists(1, self.two.id, SESSION), SavedLists(2, False, False)
+        )
 
     async def test_a_recap_not_finished_says_so(self) -> None:
         await self.lines(SESSION)
         await self.store.enqueue(1, self.one.id, SESSION, dm_user_id=fx.DM)
         await self.beats(True)
         self.assertEqual(
-            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(1, False)
+            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(1, False, False)
         )
 
     async def test_odd_stored_data_counts_as_none(self) -> None:
@@ -99,11 +142,15 @@ class TheRead(Lists):
             " WHERE guild_id = 1 AND session_at = %s",
             SESSION,
         )
-        self.assertEqual(await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(0, True))
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(0, True, False)
+        )
         await self.sql(
             "UPDATE recap_jobs SET beats = '{}' WHERE guild_id = 1 AND session_at = %s", SESSION
         )
-        self.assertEqual(await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(0, True))
+        self.assertEqual(
+            await self.store.saved_lists(1, self.one.id, SESSION), SavedLists(0, True, False)
+        )
 
     async def test_only_a_dm_of_the_campaign_is_told_anything(self) -> None:
         await self.lines(SESSION)
@@ -115,14 +162,14 @@ class TheRead(Lists):
         )
         self.assertEqual(
             await RecapFeatures.recap_saved_lists(me, await self.campaign(), SESSION, fx.DM),
-            SavedLists(1, True),
+            SavedLists(1, True, False),
         )
 
 
 class TheQuestion(Lists):
     async def test_a_recap_with_saved_lists_warns_before_anything_starts(self) -> None:
         await self.lines(SESSION)
-        await self.written(SESSION)
+        await self.written(SESSION, approved=True)
         await self.beats(True, True, False)
         me = self.me()
         said, _ = await self.asked(me)
@@ -135,13 +182,40 @@ class TheQuestion(Lists):
         self.assertTrue(view.lists and view.finished)
         self.assertTrue(text.endswith(ra.OLD_STAYS))  # (a finished recap stands: said once)
 
+    async def test_an_unapproved_draft_is_wiped_so_no_old_one_is_promised(self) -> None:
+        await self.lines(SESSION)
+        await self.written(SESSION)  # (a draft nobody approved)
+        await self.beats(True)
+        me = self.me()
+        said, interaction = await self.asked(me)
+        ((text, view),) = said
+        self.assertNotIn(ra.OLD_STAYS, text)
+        self.assertTrue(view.finished)  # (a replace question is still answered by the same yes)
+        told: list[str] = []
+
+        async def tell(i: Any, text: str, *, view: Any = None) -> None:
+            told.append(text)
+
+        with patch.object(ra, "_tell", tell), patch.object(ra, "_bot", lambda i: me):
+            await view.yes.callback(interaction)
+        self.assertEqual(me.started, [(SESSION, fx.DM, True)])
+        self.assertEqual(told[-1], ra.QUEUED)  # (no "the recap you had stays")
+
     async def test_one_scene_is_said_in_the_singular(self) -> None:
         self.assertIn("1 scene of this recap", ra.lists_warning(1))
         self.assertIn("deletes that list.", ra.lists_warning(1))
+        self.assertEqual(
+            ra.lists_warning(2),
+            "You saved who was in 2 scenes of this recap. Making it again deletes those lists.",
+        )
+        self.assertEqual(
+            ra.lists_warning(2, ra.REPLACE_ACTION),
+            "You saved who was in 2 scenes of this recap. Replacing it deletes those lists.",
+        )
 
     async def test_no_changes_nothing_and_yes_starts_it_once(self) -> None:
         await self.lines(SESSION)
-        await self.written(SESSION)
+        await self.written(SESSION, approved=True)
         await self.beats(True)
         me = self.me()
         said, interaction = await self.asked(me)
@@ -212,7 +286,7 @@ class TheQuestion(Lists):
         me.recaps = SimpleNamespace(saved_lists=broken)
         said, _ = await self.asked(me)
         ((text, view),) = said
-        self.assertIn(ra.LISTS_UNREADABLE, text)
+        self.assertIn(ra.lists_warning(None), text)
         self.assertEqual(me.started, [])
         self.assertIsNone(view.finished)  # (not known whether a recap stands)
         told: list[str] = []

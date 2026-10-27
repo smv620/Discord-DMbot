@@ -21,8 +21,16 @@ import discord
 from discord import app_commands
 
 from dmbot.recaps import uploaded
+from dmbot.recaps.store import SavedLists
 from dmbot.ui.dmbot_commands import NOT_IN_SERVER, _bot, _tell, dmbot_group
-from dmbot.ui.recap_again import NO_SESSIONS, NOT_YOURS, TIMEOUT_S, date_label, lists_warning
+from dmbot.ui.recap_again import (
+    NO_SESSIONS,
+    NOT_YOURS,
+    REPLACE_ACTION,
+    TIMEOUT_S,
+    date_label,
+    lists_warning,
+)
 from dmbot.ui.recap_share import session_numbers
 
 log = logging.getLogger(__name__)
@@ -43,7 +51,7 @@ STORED = (
 )
 ASK_RIGHTS = uploaded.RIGHTS_ASK + " Is that so?"
 ASK_REPLACE = "This session already has a recap. Replace it? The old one is kept as an earlier one."
-ASK_LISTS = "This session's recap will be replaced by the one you are adding."
+ASK_LISTS = "Put the one you are adding in its place?"
 OUTCOMES = {
     "busy": "DMbot is writing or sending this session's recap right now. Try again when it's done.",
     "bad_text": uploaded.BAD_TEXT,
@@ -72,6 +80,15 @@ def read_text(raw: bytes) -> str | None:
         return None
 
 
+def _lists_question(found: SavedLists) -> str:
+    """The question when the recap being replaced has saved scene lists: the door asks about a
+    finished recap on its own, so this says the replace question and the lists in one."""
+    warning = lists_warning(found.count, REPLACE_ACTION)
+    if found.finished:
+        return ASK_REPLACE + "\n" + warning
+    return warning + "\n" + ASK_LISTS
+
+
 async def submit(interaction: discord.Interaction, draft: Draft) -> None:
     """Give the recap to the database's door and say what came of it, privately."""
     bot = _bot(interaction)
@@ -91,7 +108,7 @@ async def submit(interaction: discord.Interaction, draft: Draft) -> None:
         if found is not None and (found.count is None or found.count > 0):
             await _tell(
                 interaction,
-                (ASK_REPLACE if found.finished else ASK_LISTS) + "\n" + lists_warning(found.count),
+                _lists_question(found),
                 view=AskView(held, "Replace it", rights=False),
             )
             return

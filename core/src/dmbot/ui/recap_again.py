@@ -36,12 +36,14 @@ ASK = (
 )
 KEPT_OLD = "👍 Nothing was changed. The recap stays as it is."
 NOTHING_CHANGED = "👍 Nothing was changed."
-LISTS_ONE = "You saved who was in 1 scene of this recap. Making it again deletes that list."
-LISTS_MANY = "You saved who was in {n} scenes of this recap. Making it again deletes those lists."
+LISTS_ONE = "You saved who was in 1 scene of this recap. {action} deletes that list."
+LISTS_MANY = "You saved who was in {n} scenes of this recap. {action} deletes those lists."
 LISTS_UNREADABLE = (
     "I can't tell whether you saved who was in any scenes. "
-    "If you did, making it again deletes those lists."
+    "If you did, {action} deletes those lists."
 )
+AGAIN_ACTION = "Making it again"
+REPLACE_ACTION = "Replacing it"
 LISTS_ASK = "Make it again anyway?"
 OLD_STAYS = "The old one stays until you approve the new one."
 QUEUED = (
@@ -114,13 +116,13 @@ async def _campaign(interaction: discord.Interaction, campaign_id: str) -> Any |
     return campaign
 
 
-def lists_warning(lists: int | None) -> str:
-    """The warning before a recap is made again over scenes whose "who was there" lists the DM
-    saved (#2727): said before the button works, in plain words and how many. `None`: it could not
-    be read, so it warns anyway."""
+def lists_warning(lists: int | None, action: str = AGAIN_ACTION) -> str:
+    """The warning before a recap is made again, or replaced, over scenes whose "who was there"
+    lists the DM saved (#2727): said before the button works, in plain words and how many, naming
+    what is about to happen (`action`). `None`: it could not be read, so it warns anyway."""
     if lists is None:
-        return LISTS_UNREADABLE
-    return LISTS_ONE if lists == 1 else LISTS_MANY.format(n=lists)
+        return LISTS_UNREADABLE.format(action=action.lower())
+    return (LISTS_ONE if lists == 1 else LISTS_MANY).format(n=lists, action=action)
 
 
 async def start(
@@ -141,12 +143,14 @@ async def start(
         found = await bot.recap_saved_lists(campaign, session_at, interaction.user.id)
         if found is not None and (found.count is None or found.count > 0):
             ask = lists_warning(found.count) + "\n" + LISTS_ASK
-            if found.finished:
+            if found.kept:  # (only a posted or approved recap stays; a draft is wiped)
                 ask += "\n" + OLD_STAYS
             await _tell(
                 interaction,
                 ask,
-                view=ConfirmView(campaign.id, session_at, lists=True, finished=found.finished),
+                view=ConfirmView(
+                    campaign.id, session_at, lists=True, finished=found.finished, kept=found.kept
+                ),
             )
             return
     try:
@@ -254,10 +258,11 @@ class ConfirmView(discord.ui.View):
         *,
         lists: bool = False,
         finished: bool | None = True,
+        kept: bool | None = None,
     ) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id, self.session_at = campaign_id, session_at
-        self.lists, self.finished = lists, finished
+        self.lists, self.finished, self.kept = lists, finished, kept
         if lists and not finished:
             self.yes.label, self.no.label = "Make it again", "Leave it"
 
@@ -274,12 +279,12 @@ class ConfirmView(discord.ui.View):
                 # promised about an old one.
                 replace_ok=True if self.finished is None or not self.lists else self.finished,
                 lists_ok=self.lists,
-                keeps_old=bool(self.finished) if self.lists else None,
+                keeps_old=bool(self.kept) if self.lists else None,
             )
 
     @discord.ui.button(label="Keep the old one", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
-        await _tell(interaction, KEPT_OLD if self.finished else NOTHING_CHANGED)
+        await _tell(interaction, KEPT_OLD if self.kept or not self.lists else NOTHING_CHANGED)
 
 
 class SessionPick(discord.ui.View):

@@ -279,10 +279,13 @@ _PLOT_OPEN = (
 class SavedLists:
     """What making a recap again would throw away (#2727): how many scenes have a "who was there"
     list the DM saved (None: it could not be read, so the question warns anyway) and whether a
-    finished recap stands (which the DM is asked about anyway; None: not known)."""
+    finished recap stands (which the DM is asked about anyway; None: not known). `kept`: the old
+    recap also stays when a new one is made (it is posted or approved: an unapproved draft is
+    simply wiped, so no promise is made about it; None: not known)."""
 
     count: int | None
     finished: bool | None
+    kept: bool | None = None
 
 
 class RecapStore:
@@ -1095,12 +1098,17 @@ class RecapStore:
                 "          CASE WHEN jsonb_typeof(beats) = 'array' THEN beats ELSE '[]'::jsonb END"
                 "        ) AS b WHERE jsonb_typeof(b) = 'object'"
                 "          AND (b -> 'saved') = 'true'::jsonb) AS lists,"
-                " state = 'ready' AND status IN ('draft', 'posted') AS finished"
+                " state = 'ready' AND status IN ('draft', 'posted') AS finished,"
+                " state = 'ready' AND (status = 'posted' OR approved_hash <> '') AS kept"
                 " FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
                 (guild_id, campaign_id, session_at),
             )
             row = await cur.fetchone()
-        return None if row is None else SavedLists(int(row["lists"]), bool(row["finished"]))
+        return (
+            None
+            if row is None
+            else SavedLists(int(row["lists"]), bool(row["finished"]), bool(row["kept"]))
+        )
 
     async def others_working(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """Whether another recap of the campaign is being written, so this one waits its turn: the
