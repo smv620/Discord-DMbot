@@ -13373,10 +13373,6 @@ WEB_BACKUPS = (
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_backup_add(BIGINT, TEXT)'
-            ' SET search_path = pg_catalog, %I, pg_temp',
-            current_schema());
-        EXECUTE format(
             'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
@@ -13496,29 +13492,6 @@ OPTIONAL_RULE_SETTING = r"""
 """
 
 
-def _web_backup_add_with_parts() -> str:
-    """`dmbot_web_backup_add` as 0219 made it, with one change: a copy with transcripts files
-    still waiting counts as on the way (#2772). Cut from the text that made it, so nothing else
-    about it can drift; the search path is pinned again by 0258's own block."""
-    start = WEB_BACKUPS.index("    CREATE FUNCTION dmbot_web_backup_add")
-    end = WEB_BACKUPS.index("    -- Where one copy stands")
-    door = WEB_BACKUPS[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
-    old = (
-        "              AND (b.state IN ('waiting', 'working')"
-        " OR (b.state = 'done' AND b.file IS NOT NULL))"
-    )
-    if door.count(old) != 1:  # (0219's text moved)
-        raise RuntimeError("dmbot_web_backup_add changed: the parts follow-up needs a new anchor")
-    return door.replace(
-        old,
-        "              AND (b.state IN ('waiting', 'working')\n"
-        "                   OR (b.state = 'done' AND (b.file IS NOT NULL OR EXISTS (\n"
-        "                       SELECT 1 FROM web_backup_parts p WHERE p.guild_id = b.guild_id\n"
-        "                       AND p.backup_id = b.id AND p.data IS NOT NULL))))",
-        1,
-    )
-
-
 WEB_BACKUP_PARTS = (
     """
     -- The transcripts files of a copy the website downloads (#2772, #2552): Discord's backup
@@ -13541,12 +13514,10 @@ WEB_BACKUP_PARTS = (
     """
     + _isolate("web_backup_parts")
     + r"""
-    -- Ask for a copy: as before, but a copy whose main file was fetched while transcripts files
-    -- still wait is still "on the way", so a second click does not make another one and spend
-    -- one of the five requests (the rest of the door is 0219's text, unchanged).
-    """
-    + _web_backup_add_with_parts()
-    + r"""
+    -- (Asking for a copy is 0219's door, unchanged: a copy whose main file has been taken is never
+    -- handed back, so a retry after a failed part starts a fresh copy and the old one's leftovers
+    -- go with the 15-minute sweep, #2778.)
+
     -- Where one copy stands: the same answer as before, plus the files still waiting for the
     -- person (number and size, never the bytes).
     CREATE OR REPLACE FUNCTION dmbot_web_backup_read(g BIGINT, c TEXT, bid TEXT) RETURNS JSONB
@@ -13612,10 +13583,6 @@ WEB_BACKUP_PARTS = (
     $fn$;
     DO $do$
     BEGIN
-        EXECUTE format(
-            'ALTER FUNCTION dmbot_web_backup_add(BIGINT, TEXT)'
-            ' SET search_path = pg_catalog, %I, pg_temp',
-            current_schema());
         EXECUTE format(
             'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',

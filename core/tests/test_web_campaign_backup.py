@@ -354,17 +354,23 @@ class Backing(Base):
         got = await campaign_backup.status(self.web, self.session, ref, made)
         self.assertEqual((got["state"], got["ready"], got["parts"]), ("running", False, []))
 
-    async def test_a_second_click_while_files_still_wait_gets_the_same_copy(self) -> None:
+    async def test_a_copy_whose_main_file_was_taken_is_never_handed_back(self) -> None:
         await self.seed_transcripts()
         ref = self.cref(THURSDAY.id, self.one)
         made = await campaign_backup.request(self.web, self.session, ref)
         await self.build_next(THURSDAY.id)
         await campaign_backup.fetch(self.web, self.session, ref, made)  # the main file is taken
         again = await campaign_backup.request(self.web, self.session, ref)
-        self.assertEqual(again, made)  # (the transcripts file is still waiting: still on the way)
+        self.assertNotEqual(again, made)  # (a retry must not get a set with no main file)
+        # The old copy's transcripts file can still be fetched until the 15-minute sweep.
         await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        third = await campaign_backup.request(self.web, self.session, ref)
-        self.assertNotEqual(third, made)  # everything fetched: a new request
+
+    async def test_a_second_click_before_the_main_file_is_taken_gets_the_same_copy(self) -> None:
+        await self.seed_transcripts()
+        ref = self.cref(THURSDAY.id, self.one)
+        made = await campaign_backup.request(self.web, self.session, ref)
+        await self.build_next(THURSDAY.id)
+        self.assertEqual(await campaign_backup.request(self.web, self.session, ref), made)
 
     async def test_the_names_of_the_files_are_the_ones_discord_gives(self) -> None:
         from dmbot.ui import logic
