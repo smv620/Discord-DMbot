@@ -113,7 +113,7 @@ class TheList(WithChecks):
         self.assertEqual(
             got["names"],
             [{"id": mira, "name": "Mirelle", "note": "Used in a recap", "answering": False,
-              "error": ""}],
+              "error": "", "longerNames": []}],
         )  # fmt: skip
         self.assertEqual([k["name"] for k in got["known"]], ["Oakmere"])
         self.assertNotIn("player_character", [k["key"] for k in got["kinds"]])
@@ -466,6 +466,126 @@ class TheBot(WithChecks):
         self.assertEqual(await later.sweep(GUILD), 1)
 
 
+class TheChangedWords(WithChecks):
+    """✏️ Change the words on the page (#2593, #2570): the very call Discord's form makes."""
+
+    async def aliases(self, entity: str) -> dict[str, str]:
+        found = await self.memory.aliases(GUILD, self.one.id, entity_id=entity)
+        return {a.text: a.kind for a in found}
+
+    async def test_the_longer_names_the_recap_found_are_listed_with_the_card(self) -> None:
+        written = await self.memory.add_entity(
+            GUILD, self.one.id, type="concept", name="Harrow", source="scan", description=""
+        )
+        await self.answers.link(
+            GUILD, self.one.id, AT, [written.value.id], {written.value.id: ["a", "b", "c", "d"]}
+        )
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(card["longerNames"], ["a", "b", "c"])  # at most three
+        await self.answers.link(
+            GUILD, self.one.id, AT, [written.value.id], {}
+        )  # not read this time (a failed read): what was stored stays
+        self.assertEqual((await self.listed())["names"][0]["longerNames"], ["a", "b", "c"])
+        await self.answers.link(
+            GUILD, self.one.id, AT, [written.value.id], {written.value.id: []}
+        )  # read, and none found: brought up to date
+        self.assertEqual((await self.listed())["names"][0]["longerNames"], [])
+
+    async def test_the_words_change_in_one_change_and_the_card_stays(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.ask(harrow, action="change_words", words="Harrow's Keep", heard="Harrow's car")
+        self.assertTrue((await self.listed())["names"][0]["answering"])
+        self.assertEqual(await self.apply_next(), "")
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(
+            (card["id"], card["name"], card["answering"]), (harrow, "Harrow's Keep", False)
+        )
+        entity = await self.memory.entity(GUILD, self.one.id, harrow)
+        assert entity is not None
+        self.assertEqual(
+            (entity.name, entity.status), ("Harrow's Keep", PROPOSED)
+        )  # still to answer
+        names = await self.aliases(harrow)
+        self.assertEqual(names.get("Harrow's car"), "old")  # how it was heard: the Cleaner fixes it
+        self.assertNotIn("Harrow", names)  # the short word is part of the new name: not kept
+
+    async def test_a_name_that_is_not_part_of_the_new_one_is_kept_as_an_old_spelling(self) -> None:
+        mira = await self.suggest("Mirele")
+        await self.ask(mira, action="change_words", words="Mirelle")
+        self.assertEqual(await self.apply_next(), "")
+        self.assertEqual((await self.aliases(mira)).get("Mirele"), "old")
+
+    async def test_no_words_or_too_many_are_refused_before_anything_is_queued(self) -> None:
+        mira = await self.suggest("Mirelle")
+        for body, code in (
+            ({"action": "change_words", "words": ""}, "empty"),
+            ({"action": "change_words"}, "empty"),
+            ({"action": "change_words", "words": "  "}, "empty"),
+            ({"action": "change_words", "words": "x" * 101}, "too_long"),
+            ({"action": "change_words", "words": "Ok", "heard": "y" * 101}, "too_long"),
+            ({"action": "change_words", "words": "Mi\x00"}, "bad_text"),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(await self.code(self.ask(mira, **body)), code)
+        self.assertIsNone(await self.answers.claim_next(GUILD))
+
+    async def test_a_name_already_known_is_refused_by_the_bot(self) -> None:
+        await self.known("Oakmere")
+        mira = await self.suggest("Oak")
+        await self.ask(mira, action="change_words", words="oakmere")
+        self.assertEqual(await self.apply_next(), na.ALREADY_KNOWN)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual((card["name"], card["error"]), ("Oak", "already_known"))
+
+    async def test_another_entrys_secret_name_is_refused_without_saying_whose(self) -> None:
+        await self.known("Vael", "place", secret=True)
+        mira = await self.suggest("Vae")
+        await self.ask(mira, action="change_words", words="Vael")
+        self.assertEqual(await self.apply_next(), na.SECRET_CLASH)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(card["error"], "secret_clash")
+        self.assertNotIn("Vael", str(await self.listed()))  # (the secret name is not listed at all)
+
+    async def test_a_player_gets_not_found_and_a_changed_dm_is_refused_by_the_bot(self) -> None:
+        mira = await self.suggest("Mirelle")
+        bob = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        player = await sessions.find(self.web, bob, now=NOW)
+        assert player is not None
+        with self.assertRaises(RecapError) as err:
+            await web.answer(
+                self.web, player, self.ref, mira, {"action": "change_words", "words": "Mirelle X"}
+            )
+        self.assertEqual(err.exception.code, "not_found")
+        await self.ask(mira, action="change_words", words="Mirelle X")
+        self.assertEqual(await self.apply_next(dms=set()), na.NOT_ALLOWED)  # no longer a DM
+        entity = await self.memory.entity(GUILD, self.one.id, mira)
+        assert entity is not None
+        self.assertEqual(entity.name, "Mirelle")
+
+    async def test_another_campaigns_name_cannot_be_changed_from_this_recap(self) -> None:
+        other = (await self.campaigns.create(GUILD, "Elsewhere", ALICE.id)).id
+        stray = await self.suggest("Strayfolk", campaign=other)
+        self.assertEqual(
+            await self.code(self.ask(stray, action="change_words", words="Strayfolk Hall")),
+            "not_found",
+        )
+
+    async def test_it_is_one_change_with_one_undo(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.ask(harrow, action="change_words", words="Harrow's Keep", heard="Harrow's keep")
+        self.assertEqual(await self.apply_next(), "")
+        async with self.db.guild(GUILD) as conn:  # the rename is the last change made
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes WHERE campaign_id = %s", (self.one.id,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        await self.memory.undo(GUILD, self.one.id, int(row["b"]), source="dm")
+        entity = await self.memory.entity(GUILD, self.one.id, harrow)
+        assert entity is not None
+        self.assertEqual(entity.name, "Harrow")
+
+
 class TheLoop(WithChecks):
     """The bot's loop and the link it writes when it queues a recap's names."""
 
@@ -482,6 +602,7 @@ class TheLoop(WithChecks):
         )
         bot.run_name_answers = bot_module.DMBot.run_name_answers.__get__(bot)
         bot._link_recap_names = bot_module.DMBot._link_recap_names.__get__(bot)
+        bot._longer_names = bot_module.DMBot._longer_names.__get__(bot)
         return bot
 
     async def test_the_loop_applies_the_answer_and_refreshes_the_lists(self) -> None:
@@ -541,6 +662,27 @@ class TheLoop(WithChecks):
         await bot._link_recap_names(GUILD, self.one.id, job)
         await bot._link_recap_names(GUILD, self.one.id, job)  # a repeat changes nothing
         self.assertEqual([n["id"] for n in (await self.listed())["names"]], [mira])
+
+    async def test_the_cards_quotes_give_the_pages_longer_names(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.ui import name_places
+
+        bot = self.bot()
+        bot.transcripts = object()
+        bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={ALICE.id}))
+        bot.memory = SimpleNamespace(
+            entities=self.memory.entities, mentions=AsyncMock(return_value=[("ref", 1)])
+        )
+        harrow = await self.suggest("Harrow", link=False)
+        job = SimpleNamespace(session_at=AT, to_confirm=("Harrow",))
+        quotes = ["> We rode to **Harrow**'s Keep and Harrow's Keep again."]
+        with patch.object(
+            name_places, "first_places", AsyncMock(return_value=name_places.Places(quotes))
+        ):
+            await bot._link_recap_names(GUILD, self.one.id, job)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual((card["id"], card["longerNames"]), (harrow, ["Harrow's Keep"]))
 
     async def test_a_name_that_is_removed_takes_its_answers_and_links_with_it(self) -> None:
         mira = await self.suggest("Mirelle")

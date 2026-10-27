@@ -14867,6 +14867,87 @@ NAMES_FIXED_UNDO = (
     """
 )
 
+
+# ✏️ Change the words on the recap page's names to check (#2593; Discord's is #2570). One more answer
+# for `name_answers` (`change_words`: `text` holds the whole name and `target_id` how it was heard,
+# at most the name limit each), the answer door taking it, and up to three likely longer names kept
+# with each name the recap asks about (read from the card's quotes when the recap queues its
+# names, then shown by the read door). Both doors are rebuilt from their current text by guarded
+# replacement, so a drift in either makes this fail loudly rather than quietly change a rule.
+def _swap(text: str, pairs: tuple[tuple[str, str], ...]) -> str:
+    for old, new in pairs:
+        if text.count(old) != 1:  # (an explicit raise: `python -O` drops an assert)
+            raise RuntimeError(f"the names-to-check door no longer has: {old[:50]}")
+        text = text.replace(old, new, 1)
+    return text
+
+
+_CHECK_ANSWER_DOOR = _swap(
+    NAME_ANSWERS[
+        NAME_ANSWERS.index("    CREATE FUNCTION dmbot_name_answer_add") : NAME_ANSWERS.index(
+            "    DO $do$"
+        )
+    ].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION"),
+    (
+        (
+            "'respell', 'not_a_name', 'explain')",
+            "'respell', 'not_a_name', 'explain', 'change_words')",
+        ),
+        (
+            "OR (act = 'respell' AND char_length(clean) NOT BETWEEN 1 AND 80)",
+            "OR (act = 'respell' AND char_length(clean) NOT BETWEEN 1 AND 80)\n"
+            "           OR (act = 'change_words' AND char_length(clean) NOT BETWEEN 1 AND 100)",
+        ),
+        (
+            "OR (act <> 'same' AND COALESCE(tgt, '') <> '') THEN",
+            "OR (act NOT IN ('same', 'change_words') AND COALESCE(tgt, '') <> '')\n"
+            "           OR (act = 'change_words' AND (char_length(COALESCE(tgt, '')) > 100\n"
+            "                OR COALESCE(tgt, '') ~ '[[:cntrl:]]')) THEN",
+        ),
+    ),
+)
+_CHECK_READ_DOOR = _swap(
+    NAME_GATE[
+        NAME_GATE.index("    CREATE OR REPLACE FUNCTION dmbot_recap_names_read") : NAME_GATE.index(
+            "    DO $do$"
+        )
+    ],
+    (
+        (
+            "'note', e.description,",
+            "'note', e.description, 'longerNames', to_jsonb(k.longer_names),",
+        ),
+    ),
+)
+NAME_CHANGE_WORDS = (
+    """
+    ALTER TABLE recap_name_checks ADD COLUMN longer_names TEXT[] NOT NULL DEFAULT '{}'
+        CHECK (cardinality(longer_names) <= 3
+               AND char_length(array_to_string(longer_names, ' ')) <= 320);
+    ALTER TABLE name_answers DROP CONSTRAINT name_answers_action_check;
+    ALTER TABLE name_answers ADD CONSTRAINT name_answers_action_check CHECK (action IN
+        ('confirm', 'same', 'respell', 'not_a_name', 'explain', 'change_words'));
+    ALTER TABLE name_answers DROP CONSTRAINT name_answers_target_id_check;
+    ALTER TABLE name_answers ADD CONSTRAINT name_answers_target_id_check
+        CHECK (char_length(target_id) <= 100);
+    """
+    + _CHECK_READ_DOOR
+    + _CHECK_ANSWER_DOOR
+    + r"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_recap_names_read(BIGINT, TEXT, BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_name_answer_add('
+            'BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    """
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -15144,6 +15225,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # what the name pass did, for the website (#2684)
     ("0240_names_fixed_door", NAMES_FIXED_DOOR),  # the recap page reads it (#2684)
     ("0241_names_fixed_undo", NAMES_FIXED_UNDO),  # and undoes a fix, queued for the bot (#2684)
+    ("0242_name_change_words", NAME_CHANGE_WORDS),  # Change the words on names to check (#2593)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -14,13 +14,14 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.models import NAME_MAX
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.web import recaps
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
-ACTIONS = ("confirm", "same", "respell", "not_a_name", "explain")
+ACTIONS = ("confirm", "same", "respell", "not_a_name", "explain", "change_words")
 SPELLING_MAX = 80  # as the database's door and MemoryStore.rename_entity
 NOTE_MAX = name_answers.NOTE_MAX
 ID_LENGTH = 32
@@ -78,6 +79,15 @@ async def answer(
             raise RecapError("bad_text")
     if action == "confirm" and not kind:
         raise RecapError("bad_text")
+    if action == "change_words":
+        # ✏️ Change the words (#2593): the whole name, and how it was heard when one of the longer
+        # names was picked (carried in the door's target). The page's words for each refusal.
+        text = _text(body.get("words"))
+        target = _text(body.get("heard"))
+        if not text:
+            raise RecapError("empty")
+        if len(text) > NAME_MAX or len(target) > NAME_MAX:
+            raise RecapError("too_long")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
         cur = await conn.execute(

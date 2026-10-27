@@ -15,13 +15,21 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED, MemoryRuleError, name_key
-from dmbot.memory.store import MemoryStore
+from dmbot.memory.models import (
+    CONFIRMED,
+    NAME_MAX,
+    PROPOSED,
+    REJECTED,
+    MemoryRuleError,
+    name_key,
+)
+from dmbot.memory.name_longer import widens
+from dmbot.memory.store import SPELLING_TAKEN, MemoryStore
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +44,13 @@ BAD_KIND = "bad_kind"  # a kind the rules do not take for a name
 NOT_JOINED = "not_joined"  # the merge was refused (a secret name, a player's character…)
 BAD_SPELLING = "bad_spelling"  # the new spelling was refused
 FAILED = "failed"  # anything unexpected; the answer can be given again
+# Change the words (#2593): the codes the page turns into plain ones. None says which other entry
+# is meant, so a secret name is never given away.
+EMPTY = "empty"  # no words
+TOO_LONG = "too_long"  # more than `NAME_MAX` letters
+ALREADY_KNOWN = "already_known"  # the words are a name DMbot already knows
+SECRET_CLASH = "secret_clash"  # the words are another entry's secret name (not said which)
+LONGER_MAX = 3  # longer names kept for the page per name (the card offers up to three)
 
 PLAYER_CHARACTER = "player_character"  # who plays them is asked in Discord, not on the page
 
@@ -59,22 +74,43 @@ class AnswerStore:
         self._now = clock
 
     async def link(
-        self, guild_id: int, campaign_id: str, session_at: int, entity_ids: Sequence[str]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_at: int,
+        entity_ids: Sequence[str],
+        longer: Mapping[str, Sequence[str]] | None = None,
     ) -> int:
-        """Say which waiting suggestions belong to this recap (ids only). Repeats change
-        nothing. Returns how many were new."""
+        """Say which waiting suggestions belong to this recap (ids only), with the likely longer
+        names the card's quotes suggest for each (`longer`, words DMbot heard: for the DM's page
+        only). Repeats change nothing, except that a repeat brings the longer names up to date.
+        Returns how many were new."""
         ids = list(dict.fromkeys(entity_ids))
         if not ids:
             return 0
+        made = 0
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
-                " SELECT %s, %s, %s, e.id FROM memory_entities e"
-                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = ANY(%s)"
-                " ON CONFLICT DO NOTHING",
-                (guild_id, campaign_id, session_at, guild_id, campaign_id, ids),
-            )
-            return int(cur.rowcount)
+            for entity_id in ids:
+                known = entity_id in (longer or {})  # not read (a failure): keep what is stored
+                words = list((longer or {}).get(entity_id, ()))[:LONGER_MAX]
+                update = (
+                    " DO UPDATE SET longer_names = EXCLUDED.longer_names"
+                    " WHERE recap_name_checks.longer_names IS DISTINCT FROM EXCLUDED.longer_names"
+                    if known
+                    else " DO NOTHING"
+                )
+                cur = await conn.execute(
+                    "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id,"
+                    " longer_names) SELECT %s, %s, %s, e.id, %s FROM memory_entities e"
+                    " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                    " ON CONFLICT (guild_id, campaign_id, session_at, entity_id)"
+                    + update
+                    + " RETURNING (xmax = 0) AS inserted",
+                    (guild_id, campaign_id, session_at, words, guild_id, campaign_id, entity_id),
+                )
+                row = await cur.fetchone()
+                made += 1 if row is not None and row["inserted"] else 0
+        return made
 
     async def claim_next(self, guild_id: int) -> Answer | None:
         """The oldest waiting answer (or a stalled one), marked as being worked on."""
@@ -186,6 +222,8 @@ async def apply(
                 await memory.rename_entity(guild_id, cid, entity.id, answer.text, source="dm")
             except MemoryRuleError:
                 return BAD_SPELLING
+        elif answer.action == "change_words":
+            return await _change_words(memory, guild_id, cid, entity, answer)
         elif answer.action == "not_a_name":
             await memory.set_entity_status(guild_id, cid, entity.id, REJECTED, source="dm")
         elif answer.action == "explain":
@@ -196,6 +234,38 @@ async def apply(
             return FAILED
     except MemoryRuleError:
         return GONE  # the name changed under us (answered in Discord a moment ago)
+    return ""
+
+
+async def _change_words(
+    memory: MemoryStore, guild_id: int, campaign_id: str, entity: Any, answer: Answer
+) -> str:
+    """✏️ Change the words (#2593, #2570): the whole name, and how it was heard when one of the
+    longer names was picked (kept in `target_id`). The very call and checks of Discord's form: one
+    change, one Undo; the card stays and the DM still says what the name is. The answer is the
+    name's own, so no word of it is logged."""
+    new = " ".join(answer.text.split())
+    if not new:
+        return EMPTY
+    if len(new) > NAME_MAX:
+        return TOO_LONG
+    if (
+        name_key(new) != name_key(entity.name)
+        and await memory.confirmed_name_for(guild_id, campaign_id, name_key(new)) is not None
+    ):
+        return ALREADY_KNOWN
+    try:
+        await memory.rename_entity(
+            guild_id,
+            campaign_id,
+            entity.id,
+            new,
+            source="dm",
+            keep_old=not widens(entity.name, new),
+            also_known_as=" ".join(answer.target_id.split()),
+        )
+    except MemoryRuleError as exc:
+        return SECRET_CLASH if str(exc) == SPELLING_TAKEN else BAD_SPELLING
     return ""
 
 
