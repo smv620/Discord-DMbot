@@ -7,8 +7,9 @@ the shared progress shape (`dmbot.progress`, #2564), and `fetch` hands over the 
 removes it (it is kept 15 minutes at most). The owner may ask for a copy in any server, even one
 DMbot cannot reach; a game master may in a server on the session's list. Copies are for a paid
 plan (none for Try It): the bot judges that when it builds the copy and the status says so. Only
-the person who asked can read or fetch it. A copy holds the campaign's secrets, so it is never
-logged, and it is a download for the person, not a link to share.
+the person who asked can read or fetch it. A copy is a set, as Discord's is (#2772): the main file
+and its transcripts files, each fetched once (`fetch`, `fetch_part`). A copy holds the campaign's
+secrets, so it is never logged, and it is a download for the person, not a link to share.
 
 A campaign is named by `<server>.<campaign>`, as for the other pages.
 """
@@ -20,6 +21,7 @@ import time
 from typing import Any
 
 from dmbot import progress
+from dmbot.campaigns.parts import RESTORE_BOXES
 from dmbot.db import Database
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _scoped
@@ -81,6 +83,9 @@ async def status(
         "ready": got["state"] == "done",
         "fileName": got["fileName"] or None,
         "size": int(got["size"]) if got["state"] == "done" else None,
+        # The transcripts files still to fetch (number and size), and how many there were.
+        "parts": [{"n": int(p["n"]), "size": int(p["size"])} for p in got["parts"]],
+        "partsTotal": int(got["partsTotal"]),
         "expiresAt": int(got["createdAt"]) + KEEP_FOR_S,
     }
 
@@ -106,3 +111,36 @@ async def fetch(db: Database, session: Session, ref: str, backup_id: str) -> tup
         raise RecapError("not_found")
     # Held whole: the file is at most a restore's limit, and the database cannot stream it.
     return raw, str(info["fileName"]) or "campaign.dmbot.json.gz"
+
+
+async def fetch_part(
+    db: Database, session: Session, ref: str, backup_id: str, n: int
+) -> tuple[bytes, str]:
+    """One transcripts file of the copy and its name, once: it is deleted as it is read. Raises
+    `RecapError("not_found")` when it is not this person's, not ready, or already taken."""
+    guild_id, campaign_id = _parse(ref)
+    if not ID_PATTERN.match(backup_id) or not 1 <= n <= RESTORE_BOXES:
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        name_cur = await conn.execute(
+            "SELECT dmbot_web_backup_read(%s, %s, %s) AS r", (guild_id, campaign_id, backup_id)
+        )
+        info = (await name_cur.fetchone() or {}).get("r")
+        cur = await conn.execute(
+            "SELECT dmbot_web_backup_take_part(%s, %s, %s, %s) AS f",
+            (guild_id, campaign_id, backup_id, n),
+        )
+        found = await cur.fetchone()
+    raw = found["f"] if found else None
+    if raw is None or info is None:
+        raise RecapError("not_found")
+    total = int(info["partsTotal"])
+    return raw, part_filename(str(info["fileName"]), n, total)
+
+
+def part_filename(main: str, n: int, total: int) -> str:
+    """The name Discord's transcripts file has (`logic.part_filename`), made from the main file's
+    own name and date."""
+    base = main.removesuffix(".dmbot.json.gz") or "campaign"
+    return f"{base}.transcripts-{n}-of-{total}.dmbot.json.gz"

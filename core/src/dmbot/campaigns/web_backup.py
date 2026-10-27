@@ -2,7 +2,8 @@
 
 The website's role cannot read the tables a backup holds, so a request for a copy is a row
 (`web_backups`) that this module claims one at a time and fills. The copy is built exactly as
-Discord's Download builds it (`CampaignStore.export`, `encode_backup`), from the database alone, so
+Discord's Download builds it (`CampaignStore.export_set`, `encode_backup`: the main file and the
+transcripts files, #2772), from the database alone, so
 a campaign in a server DMbot cannot reach works. The file waits in the row for the person who
 asked (at most 15 minutes, or until they fetch it).
 
@@ -18,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -58,7 +59,7 @@ class Host(Protocol):
         self, action: Action, guild_id: int, campaign: Campaign, *, fail_open: bool = True
     ) -> bool: ...
 
-    async def export_campaign(self, guild_id: int, campaign_id: str) -> Any: ...
+    async def export_campaign(self, guild_id: int, campaign_id: str) -> tuple[Any, list[bytes]]: ...
 
 
 class WebBackups:
@@ -94,15 +95,30 @@ class WebBackups:
                 (stage, int(self._now()), guild_id, item.id, item.claimed_at),
             )
 
-    async def done(self, guild_id: int, item: Request, raw: bytes, name: str) -> bool:
+    async def done(
+        self, guild_id: int, item: Request, raw: bytes, name: str, parts: Sequence[bytes] = ()
+    ) -> bool:
+        """The copy is ready: the main file and its transcripts files, together in one
+        transaction, so the page never sees a copy that has only some of them."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE web_backups SET state = 'done', stage = 'done', file = %s, size = %s,"
-                " file_name = %s, updated_at = %s WHERE guild_id = %s AND id = %s"
+                " file_name = %s, parts = %s, updated_at = %s WHERE guild_id = %s AND id = %s"
                 " AND state = 'working' AND claimed_at = %s",
-                (raw, len(raw), name[:200], int(self._now()), guild_id, item.id, item.claimed_at),
-            )
-            return bool(cur.rowcount)
+                (
+                    raw, len(raw), name[:200], len(parts), int(self._now()), guild_id, item.id,
+                    item.claimed_at,
+                ),
+            )  # fmt: skip
+            if not cur.rowcount:
+                return False
+            for n, part in enumerate(parts, 1):
+                await conn.execute(
+                    "INSERT INTO web_backup_parts (guild_id, backup_id, n, data, size)"
+                    " VALUES (%s, %s, %s, %s, %s)",
+                    (guild_id, item.id, n, part, len(part)),
+                )
+            return True
 
     async def failed(self, guild_id: int, item: Request, error: str) -> bool:
         async with self._db.guild(guild_id) as conn:
@@ -139,15 +155,15 @@ async def build(host: Host, guild_id: int, item: Request, store: WebBackups) -> 
         if not await host.plan_allows("copy", guild_id, campaign, fail_open=False):
             await store.failed(guild_id, item, PLAN)
             return PLAN
-        data = await host.export_campaign(guild_id, campaign.id)
-        await store.stage(guild_id, item, "packing")
         try:
+            data, parts = await host.export_campaign(guild_id, campaign.id)
+            await store.stage(guild_id, item, "packing")
             raw = await asyncio.to_thread(encode_backup, data)
-        except BackupTooBig:
+        except BackupTooBig:  # (a main file, or a session, or a set of files a restore cannot take)
             await store.failed(guild_id, item, TOO_BIG)
             return TOO_BIG
         if not await store.done(
-            guild_id, item, raw, backup_filename(campaign.name, int(time.time()))
+            guild_id, item, raw, backup_filename(campaign.name, int(time.time())), parts
         ):
             return FAILED  # not this worker's row any more
         return ""
