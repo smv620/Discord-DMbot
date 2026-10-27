@@ -110,7 +110,7 @@ class TheAliasMap(unittest.IsolatedAsyncioTestCase):
             (), (), (), (),
             people=(alias("p" * 32, "the Ashen King"),),
         )  # fmt: skip
-        memory = SimpleNamespace(lookup_data=AsyncMock(return_value=data))
+        memory: Any = SimpleNamespace(lookup_data=AsyncMock(return_value=data))
         self.assertEqual(await confirmed_aliases(memory, CAMPAIGN), {})
 
     async def test_a_bare_title_or_a_short_word_is_no_alias(self) -> None:
