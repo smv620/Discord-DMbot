@@ -10785,11 +10785,14 @@ ALL_NAMES_MENTIONS = ALL_NAMES_SPEED.replace("'hidden', p.hidden,", _MENTIONS_OF
 # A one-kind list is what it took before, so every caller keeps working. (A redefined function loses
 # its pinned settings, so the copy of the door's tail that sets them again comes with it.)
 assert ALL_NAMES_MENTIONS.count("(kind_ IS NULL OR v.kind = kind_)") == 1
+# The door also bounds the page itself (no website route asks for more than 500, but a door is
+# asked by whoever holds the role): `LEAST(GREATEST(size, 1), 500)` wherever the size is used.
+assert ALL_NAMES_MENTIONS.count("GREATEST(size, 1)") == 2
 ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
     "(kind_ IS NULL OR v.kind = kind_)",
     "(kind_ IS NULL OR v.kind = ANY (string_to_array(kind_, ',')))",
     1,
-)
+).replace("GREATEST(size, 1)", "LEAST(GREATEST(size, 1), 500)")
 
 
 TRANSCRIPT_SPEAKER_NAMES = """

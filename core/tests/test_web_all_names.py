@@ -186,6 +186,19 @@ class TheDmsList(Listing):
             "bad_page",
         )
 
+    async def test_the_door_itself_bounds_the_page_at_500(self) -> None:
+        # (501 names would take minutes to make: the bound is read from the door's own text, and
+        # the 500 page size is proved above through the route's size)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT prosrc FROM pg_proc WHERE proname = 'dmbot_web_all_names'"
+            )
+            source = (await cur.fetchone() or {}).get("prosrc") or ""
+        self.assertEqual(source.count("LEAST(GREATEST(size, 1), 500)"), 2)
+        self.assertNotIn(
+            "GREATEST(size, 1) OFFSET", source.replace("LEAST(GREATEST(size, 1), 500)", "")
+        )
+
     async def test_a_huge_page_number_is_refused_not_a_server_error(self) -> None:
         for page in (2_000_000_000, 100_001, -1):
             self.assertEqual(await self.refused(self.session, self.cref, page=page), "bad_page")

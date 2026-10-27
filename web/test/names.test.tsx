@@ -50,7 +50,8 @@ describe("finding names", () => {
     expect(calls(api, "allNames").shift()).toContain("size=50");
     expect(within(types()).getByLabelText("NPCs (16)")).toBeTruthy();
     expect(within(types()).getByLabelText("Places (9)")).toBeTruthy();
-    expect((within(types()).getByRole("button", { name: /Show all types/ }) as HTMLButtonElement).disabled).toBe(true);
+    const clear = within(types()).getByRole("button", { name: /Show all types/ });
+    expect(clear.getAttribute("aria-disabled")).toBe("true"); // (not `disabled`: focus must stay)
   });
 
   it("offers 20, 50, 200 and 500 a page, 50 to begin with, and starts over at page 1", async () => {
@@ -182,6 +183,8 @@ describe("what a DM can do", () => {
     expect(screen.queryByText(w.readOnly)).toBeNull();
     expect(document.querySelectorAll("button.name-open")).toHaveLength(20);
     expect(screen.getByText(new RegExp(w.pressName))).toBeTruthy(); // the one cue that a name can be pressed
+    expect(document.querySelector("button.name-open")?.getAttribute("aria-describedby")).toBe("names-press-hint");
+    expect(document.getElementById("names-press-hint")?.textContent).toBe(w.pressName);
   });
 
   it("fixes a name of exactly the limit", async () => {

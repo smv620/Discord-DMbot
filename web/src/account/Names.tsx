@@ -308,7 +308,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </a>
         {data.canEdit ? (
           <p class="small muted">
-            {words.pressName} {words.undoNote}
+            <span id="names-press-hint">{words.pressName}</span> {words.undoNote}
           </p>
         ) : (
           <p class="note" role="note">
@@ -366,7 +366,13 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
               </label>
             ))}
             {/* Always there (and dimmed when nothing is ticked), so pressing it never drops the keyboard. */}
-            <button type="button" class="link-button small" disabled={kinds.length === 0} onClick={() => setKinds([])}>
+            {/* aria-disabled, not disabled: a disabled button drops the keyboard when it is pressed last. */}
+            <button
+              type="button"
+              class="link-button small"
+              aria-disabled={kinds.length === 0}
+              onClick={() => kinds.length > 0 && setKinds([])}
+            >
               {words.allKinds(everything)}
             </button>
           </div>
@@ -583,6 +589,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
             class="link-button campaign-name name-open"
             aria-expanded={open}
             aria-controls={panel}
+            aria-describedby="names-press-hint"
             onClick={onToggle}
           >
             {row.name}
