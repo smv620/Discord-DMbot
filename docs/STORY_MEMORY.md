@@ -760,6 +760,26 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   build: that report, and the point-of-view reading in `continuity.conflicts_in` (not wired until Supervisor
   says).
 
+**Built (#2661 slice 2, migration 0244): the report's storage.** `memory_differences` keeps what the
+party (or a player's character) believes that differs from The truth, with PlotBot's sort (disguised,
+misunderstood, false, or `not_sorted` when the answer was cut or unreadable: never "false") and its
+one-line reason. `report_answers` keeps the DM's answer to each item (`intended`, `not_a_problem`,
+`remind`, `fixed`), apart from the items and under a key made from the item's own ids, so an item that is
+made again meets its answer again, and one that is no longer found is dropped without losing the DM's
+decision. `memory_report_runs` keeps how far making a session's report has got (stage, done of total,
+started, last moved), counts and codes only. The items are made again by each check and are not in a
+backup; the answers cannot be made again, so they are (the `report_answers` backup section). Nothing here
+holds a transcript word or a speaker.
+
+**Built (#2661 slice 3a): PlotBot's sort.** `memory/difference_sorter.py` sorts what the party has wrong into
+disguised, misunderstood and false, with a one-line reason, as the contradiction grader grades clashes: the
+AI is shown each difference as two plain statements in the campaign's own names (what the point of view
+believes, and what the DM's view holds or says is not so), never a transcript line or anyone's speech.
+A cut, refused or unreadable answer is `not_sorted` and is asked again next time, never "false"; the whole
+items before a cut are kept; calls are counted before they are made and held to a limit; progress is said
+in counts. Nothing changes a belief. Still to build: the make job that runs the grading and the sort under
+the plan's limits with the shared progress, and the doors.
+
 **The after-session report** (DM only; it is full of spoilers, and nothing in it reaches players):
 - the minor contradictions;
 - **"What the party has wrong":** where the party's or a PC's beliefs differ from the DM's view,
