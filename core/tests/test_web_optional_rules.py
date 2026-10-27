@@ -10,7 +10,7 @@ import httpx
 
 from dmbot.rules import optional
 from dmbot.ui import logic
-from dmbot.web import optional_rules, sessions
+from dmbot.web import campaign_settings, optional_rules, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
@@ -106,7 +106,113 @@ class Reading(Base):
         self.assertFalse(row["can"])
 
 
-class TheRoute(Reading):
+class Choosing(Reading):
+    """A rule switched on the website is queued like the other settings, and read back alike."""
+
+    async def queue(self, body: object, ref: str | None = None, session: Any = None) -> str:
+        return await campaign_settings.queue_setting(
+            self.web, session or self.session, ref or self.cref(), body
+        )
+
+    async def rows(self) -> list[dict[str, Any]]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT setting, value, turn_on, flag, user_id FROM setting_actions ORDER BY seq"
+            )
+            return list(await cur.fetchall())
+
+    async def test_a_choice_is_queued_with_its_rule_and_which_way(self) -> None:
+        rule = optional.applying("2024")[0].id
+        answer = await self.queue({"setting": "optional_rule", "value": rule, "on": False})
+        self.assertRegex(answer, r"^[0-9a-f]{32}$")
+        (row,) = await self.rows()
+        self.assertEqual(
+            (row["setting"], row["value"], row["turn_on"], row["flag"], row["user_id"]),
+            ("optional_rule", rule, False, False, ALICE.id),
+        )
+        read = await campaign_settings.read_setting(self.web, self.session, self.cref(), answer)
+        self.assertEqual(
+            (read["state"], read["setting"], read["value"]), ("waiting", "optional_rule", rule)
+        )
+
+    async def test_a_rule_that_is_not_in_the_catalog_or_has_no_yes_or_no_is_refused(self) -> None:
+        good = optional.applying("2024")[0].id
+        for body in (
+            {"setting": "optional_rule", "value": "no-such-rule", "on": True},
+            {"setting": "optional_rule", "value": good},
+            {"setting": "optional_rule", "value": good, "on": "yes"},
+            {"setting": "optional_rule", "on": True},
+            {"setting": "optional_rule", "value": 5, "on": True},
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await self.queue(body)
+            self.assertEqual(caught.exception.code, "bad_value", body)
+        self.assertEqual(await self.rows(), [])
+
+    async def test_the_three_settings_are_unchanged_and_carry_no_turn_on(self) -> None:
+        await self.queue({"setting": "level", "value": "quiet"})
+        await self.queue({"setting": "retention", "value": "90", "confirm": True})
+        rows = await self.rows()
+        self.assertEqual([r["turn_on"] for r in rows], [None, None])
+        self.assertEqual([r["flag"] for r in rows], [False, True])
+
+    async def test_only_a_dm_of_the_campaign_may_queue_one(self) -> None:
+        rule = optional.applying("2024")[0].id
+        body = {"setting": "optional_rule", "value": rule, "on": True}
+        bob = await sessions.find(
+            self.web,
+            await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30),  # type: ignore[arg-type]
+            now=NOW,
+        )
+        assert bob is not None
+        for session, ref in ((bob, self.cref()), (self.session, self.cref(self.two))):
+            with self.assertRaises(RecapError) as caught:
+                await self.queue(body, ref, session)
+            self.assertEqual(caught.exception.code, "not_allowed")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_ten_waiting_choices_is_too_many(self) -> None:
+        rule = optional.applying("2024")[0].id
+        for n in range(10):
+            await self.queue({"setting": "optional_rule", "value": rule, "on": n % 2 == 0})
+        with self.assertRaises(RecapError) as caught:
+            await self.queue({"setting": "optional_rule", "value": rule, "on": True})
+        self.assertEqual(caught.exception.code, "too_soon")
+
+    async def test_the_table_will_not_hold_a_turn_on_that_does_not_belong(self) -> None:
+        import psycopg.errors
+
+        for setting, value, turn_on in (
+            ("optional_rule", "x", None),  # a rule with no yes or no
+            ("level", "quiet", True),  # a setting that has none
+        ):
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                async with self.db.guild(THURSDAY.id) as conn:
+                    await conn.execute(
+                        "INSERT INTO setting_actions (guild_id, campaign_id, id, user_id, setting,"
+                        " value, turn_on, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, 1)",
+                        (THURSDAY.id, self.one.id, "a" * 32, ALICE.id, setting, value, turn_on),
+                    )
+
+    async def test_a_campaign_that_follows_a_shared_ruleset_lists_the_same_rules(self) -> None:
+        """Discord's /dmbot optionalrules does not look at what a campaign follows: the rules
+        catalog and the campaign's own choices decide, so the website must not either."""
+        before = await optional_rules.read_rules(self.web, self.session, self.cref())
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+                " publisher, version, content, updating, followed_by, followed_at)"
+                " VALUES (%s, %s, 'pub-1', 'house_rules', 'House Rules', 'Brannoc', 1,"
+                " '{}'::jsonb, true, %s, 1)",
+                (THURSDAY.id, self.one.id, ALICE.id),
+            )
+        after = await optional_rules.read_rules(self.web, self.session, self.cref())
+        self.assertEqual(before, after)
+        rule = optional.applying("2024")[0].id
+        await self.queue({"setting": "optional_rule", "value": rule, "on": False})  # still allowed
+
+
+class TheRoute(Choosing):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         app = create_app(
@@ -130,6 +236,20 @@ class TheRoute(Reading):
     async def test_a_campaign_that_is_not_theirs_says_not_allowed(self) -> None:
         got = await self.client.get(f"/me/campaigns/{self.cref(self.two)}/optional-rules")
         self.assertEqual((got.status_code, got.json()["error"]), (403, "not_allowed"))
+
+    async def test_a_rule_is_queued_over_http_and_a_bad_one_is_refused(self) -> None:
+        rule = optional.applying("2024")[0].id
+        base = f"/me/campaigns/{self.cref()}/settings"
+        made = await self.client.post(
+            base, json={"setting": "optional_rule", "value": rule, "on": False}, headers=HEADERS
+        )
+        self.assertEqual(made.status_code, 202, made.text)
+        got = await self.client.get(f"{base}/answers/{made.json()['answer']}")
+        self.assertEqual((got.status_code, got.json()["setting"]), (200, "optional_rule"))
+        bad = await self.client.post(
+            base, json={"setting": "optional_rule", "value": "nope", "on": True}, headers=HEADERS
+        )
+        self.assertEqual((bad.status_code, bad.json()["error"]), (400, "bad_value"))
 
     async def test_a_bad_address_is_not_found(self) -> None:
         got = await self.client.get("/me/campaigns/nonsense/optional-rules")
