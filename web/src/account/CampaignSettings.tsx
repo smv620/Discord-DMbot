@@ -10,15 +10,10 @@ import { campaignPage as words } from "../content/campaign-page";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
 import LazyPanel from "./LazyPanel";
+import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
 
-/** How long between looks at the bot's answer, then the last repeats. */
-export const POLL_MS = [400, 800, 1500, 2500];
-/** After this long waiting the page says it is slow; after the next, that the bot is away. */
-export const SLOW_AFTER_MS = 8000;
-export const OFFLINE_AFTER_MS = 30000;
-/** Once the bot has been quiet that long the page looks less often, up to the hour the queue keeps a choice. */
-export const LATE_POLL_MS = 30000;
-export const GIVE_UP_MS = 3600000;
+// (the timings are re-exported for the pages and tests that already import them from here)
+export { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS };
 
 type Phase =
   | { kind: "idle" }

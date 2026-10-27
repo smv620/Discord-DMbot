@@ -104,10 +104,13 @@ describe("switching a rule", () => {
     expect(within(rule("Carts and loads")).getByRole("switch").getAttribute("aria-checked")).toBe("true");
   });
 
-  it("ignores a second press while it is saving", async () => {
+  it("keeps focus on the switch it was pressed on, and ignores a second press while saving", async () => {
     const api = await section();
     const sw = within(rule("Brittle bones")).getByRole("switch") as HTMLButtonElement;
+    sw.focus();
     fireEvent.click(sw);
+    expect(document.activeElement).toBe(sw);
+    expect(sw.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(sw);
     await within(rule("Brittle bones")).findByText("Brittle bones is now off.", {}, slow);
     expect(calls(api, "setCampaignSetting")).toHaveLength(1);

@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { optionalWords as w } from "../content/optional-rules-words";
 import { ApiError, type AccountApi, type OptionalRule, type OptionalRules } from "./api";
-import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./CampaignSettings";
+import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
 
 type Phase = { kind: "saving"; slow: boolean } | { kind: "offline" } | { kind: "saved"; note: string } | { kind: "error"; message: string };
 
@@ -67,7 +67,7 @@ export default function OptionalRulesSection({ api, campaignRef }: { api: Accoun
         got = await api.campaignSettingAnswer(campaignRef, answer);
       } catch (error) {
         if (error instanceof ApiError && ENDS.includes(error.kind)) return phase(rule.id, { kind: "error", message: problem(error.kind) });
-        if (final) return phase(rule.id, { kind: "error", message: w.timedOut });
+        if (final) return gaveUp(rule);
         say();
         continue;
       }
@@ -80,9 +80,17 @@ export default function OptionalRulesSection({ api, campaignRef }: { api: Accoun
         return phase(rule.id, { kind: "saved", note: got.note || w.saved(rule.name, on) });
       }
       if (got.state === "failed") return phase(rule.id, { kind: "error", message: got.error === "bad_value" ? problem("bad-value") : problem("server") });
-      if (final) return phase(rule.id, { kind: "error", message: w.timedOut });
+      if (final) return gaveUp(rule);
       say();
     }
+  }
+
+  /** The bot has not answered in the hour the queue keeps a choice: the choice may still be applied later, so
+   * the list is read again (it shows where things stand) and the page says so, not that nothing was saved. */
+  async function gaveUp(rule: OptionalRule) {
+    phase(rule.id, { kind: "error", message: w.timedOut });
+    const found = await api.campaignOptionalRules?.(campaignRef).catch(() => null);
+    if (found && live.current) setList(found);
   }
 
   if (list === "loading")
@@ -124,8 +132,8 @@ export default function OptionalRulesSection({ api, campaignRef }: { api: Accoun
                       role="switch"
                       aria-checked={rule.on}
                       aria-label={rule.on ? w.turnOff(rule.name) : w.turnOn(rule.name)}
-                      disabled={busy}
-                      onClick={() => void send(rule, !rule.on)}
+                      aria-disabled={busy}
+                      onClick={() => !busy && void send(rule, !rule.on)}
                     >
                       {rule.on ? w.on : w.off}
                     </button>

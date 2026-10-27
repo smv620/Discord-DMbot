@@ -19,7 +19,7 @@ export const optionalWords = {
   slow: "This is taking a little longer than usual.",
   offline: "DMbot hasn't answered yet. Your choice is waiting and will be saved when it does.",
   saved: (name: string, on: boolean): string => `${name} is now ${on ? "on" : "off"}.`,
-  timedOut: "DMbot didn't answer in time, so nothing was saved. Try again.",
+  timedOut: "DMbot hasn't answered yet. Your choice may still be saved: reload the page later to see where it stands.",
   problems: {
     "not-allowed": "Only a game master of this campaign can change its rules.",
     "not-found": "That campaign isn't here any more.",
