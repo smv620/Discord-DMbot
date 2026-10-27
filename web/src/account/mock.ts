@@ -2349,11 +2349,16 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
       return { channelsLeft: found.serverReachable === false };
     },
-    async campaignBackup(ref) {
+    async campaignBackup(ref, onProgress) {
       calls.push(`campaignBackup:${ref}`);
       await reachable();
       signedIn();
       if (me?.plan?.id === "try-it") throw new ApiError("no-backup");
+      // DMbot's own answers while it builds the copy (stage, times), as the real API gives them.
+      const now = Math.floor(Date.now() / 1000);
+      for (const stage of ["waiting", "reading", "packing"]) {
+        onProgress?.({ stage, state: "running", startedAt: now, updatedAt: now, serverNow: now });
+      }
       return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
     },
     async takeBackHandover(ref) {
