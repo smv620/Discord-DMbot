@@ -423,7 +423,7 @@ class TheUpkeep(Restoring):
     async def state_in(self, guild: int, restore_id: str) -> dict[str, Any] | None:
         async with self.db.guild(guild) as conn:
             cur = await conn.execute(
-                "SELECT state, error, main FROM web_restores WHERE guild_id = %s AND id = %s",
+                "SELECT state, error, main, updated_at FROM web_restores WHERE guild_id = %s AND id = %s",
                 (guild, restore_id),
             )
             found = await cur.fetchone()
