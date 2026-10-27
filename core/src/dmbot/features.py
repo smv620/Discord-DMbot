@@ -59,6 +59,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,
     ),
     Feature(
+        "meaning search",
+        "Finding notes by meaning",
+        "PlotBot also finds notes that mean the same thing in different words.",
+        lambda s: s.meaning_search_on,
+        ("meaning_search", "voyage_key"),
+        for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
+    ),
+    Feature(
         "recap audio",
         "Spoken recaps",
         "DMbot reads a recap aloud, with music.",
@@ -211,6 +219,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
     "elevenlabs_speech_model": "which voice model, a choice",
+    "voyage_embed_model": "which meaning-search model, a choice",
+    "voyage_rerank_model": "which meaning-search ranking model, a choice",
     "recap_audio_max_credits": "a cost limit",
     "recaps_per_month": "a limit",
     "recap_audio_per_month": "a limit",
