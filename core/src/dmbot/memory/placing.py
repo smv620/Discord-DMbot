@@ -72,7 +72,7 @@ from dmbot.memory.models import (
     MemoryRuleError,
     new_id,
 )
-from dmbot.memory.store import _load_ontology, flag_kept
+from dmbot.memory.store import _check_led_to_live, _load_ontology, flag_kept
 
 WAITING_ALREADY = "That is already waiting for your answer. Answer it there first."
 PLOT_IS_KNOWN = "The players already know that, so it cannot also be a secret plot."
@@ -302,6 +302,8 @@ async def _place_in(
     if keeps and relation.status == PROPOSED:
         # Waiting as a guess until now; the DM placing the reading keeps it. This is the DM's
         # Keep on the connection.
+        if relation.predicate == "led_to":  # keeping it makes the link live (#2673)
+            await _check_led_to_live(w, host, relation.subject_id, relation.object_id)
         await w.update(RELATIONS, host, {"status": CONFIRMED, "secret": secret})
         flags = [*flags, *await flag_kept(w, host)]  # judged now, as a fact
     if status == SECRET_PLOT:  # the DM's view already holds it, as a plot, from the connection

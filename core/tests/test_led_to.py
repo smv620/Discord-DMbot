@@ -26,6 +26,15 @@ class Pure(unittest.TestCase):
         self.assertFalse(th.would_loop(chain, "a", "b"))
         self.assertFalse(th.would_loop(chain, "d", "e"))
 
+    def test_a_loop_through_a_node_is_found_however_long(self) -> None:
+        self.assertFalse(th.loops_through([], "a"))
+        self.assertFalse(th.loops_through([("a", "b"), ("b", "c")], "a"))
+        self.assertTrue(th.loops_through([("a", "b"), ("b", "c"), ("c", "a")], "a"))
+        self.assertTrue(th.loops_through([("b", "c"), ("c", "b"), ("a", "b")], "b"))
+        self.assertFalse(th.loops_through([("b", "c"), ("c", "b"), ("a", "b")], "a"))  # not on it
+        long = [(f"n{i}", f"n{i + 1}") for i in range(40)] + [("n40", "n0")]
+        self.assertTrue(th.loops_through(long, "n0"))
+
     def test_a_chain_longer_than_the_limit_is_refused(self) -> None:
         long = [(f"n{i}", f"n{i + 1}") for i in range(30)]
         self.assertTrue(th.would_loop(long, "x", "n0", depth=10))  # too deep to read on a card
@@ -129,6 +138,130 @@ class Chain(ConfirmedMemoryTest):
             )
         self.assertEqual((str(button.exception), str(connect.exception)), (LED_TO_LOOP,) * 2)
         self.assertNotEqual(LED_TO_CONFIRM, LED_TO_LOOP)
+
+    async def rejected_then_looped(self) -> tuple[str, str]:
+        """heir→tower made and turned down, then tower→heir made: confirming the first would
+        close a loop. Returns the first link's id and the second's."""
+        first = (await self.link(self.heir, self.tower)).value
+        await self.memory.update_relation(GUILD_A, self.c, first.id, source="dm", status="rejected")
+        second = (await self.link(self.tower, self.heir)).value
+        return first.id, second.id
+
+    async def test_confirming_a_turned_down_link_that_would_close_a_loop_is_refused(self) -> None:
+        from dmbot.memory.store import LED_TO_LOOP
+
+        first, _ = await self.rejected_then_looped()
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.update_relation(
+                GUILD_A, self.c, first, source="dm", status="confirmed"
+            )
+        self.assertEqual(str(refused.exception), LED_TO_LOOP)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT status FROM memory_relations WHERE id = %s", (first,))
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["status"], "rejected")  # nothing changed
+        self.assertEqual(
+            [e.name for e in (await self.info(self.heir)).led_to], []
+        )  # and no loop on the cards
+
+    async def test_confirming_a_turned_down_link_with_no_loop_still_works(self) -> None:
+        first = (await self.link(self.heir, self.tower)).value
+        await self.memory.update_relation(GUILD_A, self.c, first.id, source="dm", status="rejected")
+        again = await self.memory.update_relation(
+            GUILD_A, self.c, first.id, source="dm", status="confirmed"
+        )
+        self.assertEqual(again.value.status, "confirmed")
+        self.assertEqual([e.name for e in (await self.info(self.heir)).led_to], ["The tower"])
+
+    async def test_confirming_a_link_to_an_end_that_is_not_confirmed_is_refused(self) -> None:
+        from dmbot.memory.store import LED_TO_CONFIRM
+
+        first = (await self.link(self.heir, self.tower)).value
+        await self.memory.update_relation(GUILD_A, self.c, first.id, source="dm", status="rejected")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'proposed' WHERE id = %s", (self.tower,)
+            )
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.update_relation(
+                GUILD_A, self.c, first.id, source="dm", status="confirmed"
+            )
+        self.assertEqual(str(refused.exception), LED_TO_CONFIRM)
+
+    async def test_a_merge_that_would_make_a_loop_is_refused_and_changes_nothing(self) -> None:
+        from dmbot.memory.store import MERGE_LED_TO_LOOP
+
+        a = await self.thread("The old rumour", "mystery")
+        b = await self.thread("The rumour again", "mystery")
+        await self.link(a, self.tower)  # a led to the tower
+        await self.link(
+            self.tower, b
+        )  # and the tower led to b: a and b are one thread? no loop yet
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.merge(GUILD_A, self.c, b, a, source="dm", dm_said_same=True)
+        self.assertEqual(str(refused.exception), MERGE_LED_TO_LOOP)
+        self.assertEqual((await self.memory.entity(GUILD_A, self.c, a)).status, "confirmed")  # type: ignore[union-attr]
+        self.assertEqual([e.name for e in (await self.info(a)).led_to], ["The tower"])
+
+    async def test_a_merge_with_no_loop_moves_the_links_as_before(self) -> None:
+        a = await self.thread("The old rumour", "mystery")
+        b = await self.thread("The rumour again", "mystery")
+        await self.link(a, self.tower)
+        await self.memory.merge(GUILD_A, self.c, b, a, source="dm", dm_said_same=True)
+        self.assertEqual([e.name for e in (await self.info(b)).led_to], ["The tower"])
+
+    async def test_a_loop_that_was_there_before_does_not_block_a_merge(self) -> None:
+        """A backup from before the checks may hold one (restore trusts it, #2673): a merge that
+        touches it must still work. Here both threads have live links, so the graph is read and it
+        is the old loop that lets the merge through."""
+        first, _ = await self.rejected_then_looped()
+        async with self.db.guild(GUILD_A) as conn:  # as a restored file would have it
+            await conn.execute(
+                "UPDATE memory_relations SET status = 'confirmed' WHERE id = %s", (first,)
+            )
+        other = await self.thread("Another rumour", "mystery")
+        await self.link(other, self.tower)  # other → tower, as heir → tower is
+        # heir is on the old loop; joining `other` into it keeps that loop, which is not new
+        await self.memory.merge(GUILD_A, self.c, self.heir, other, source="dm", dm_said_same=True)
+        merged = await self.memory.entity(GUILD_A, self.c, other)
+        assert merged is not None
+        self.assertEqual(merged.status, "merged")
+
+    async def test_a_many_merge_that_would_make_a_loop_writes_none_of_it(self) -> None:
+        from dmbot.memory.store import MERGE_LED_TO_LOOP
+
+        a = await self.thread("The old rumour", "mystery")
+        b = await self.thread("The rumour again", "mystery")
+        c = await self.thread("A third rumour", "mystery")
+        await self.link(a, self.tower)
+        await self.link(self.tower, b)
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.merge_many(GUILD_A, self.c, b, [c, a], source="dm")
+        self.assertEqual(str(refused.exception), MERGE_LED_TO_LOOP)
+        for name in (a, b, c):  # the merge of c, which came first, was not kept either
+            self.assertEqual((await self.memory.entity(GUILD_A, self.c, name)).status, "confirmed")  # type: ignore[union-attr]
+
+    async def test_an_undo_that_would_bring_back_a_loop_is_refused(self) -> None:
+        from dmbot.memory.store import CHANGED_SINCE
+
+        first = (await self.link(self.heir, self.tower)).value
+        removed = await self.memory.update_relation(
+            GUILD_A, self.c, first.id, source="dm", status="rejected"
+        )
+        await self.link(self.tower, self.heir)  # allowed: heir → tower is no longer live
+        with self.assertRaises(MemoryRuleError) as refused:
+            await self.memory.undo(GUILD_A, self.c, removed.batch)
+        self.assertEqual(str(refused.exception), CHANGED_SINCE)
+        self.assertEqual([e.name for e in (await self.info(self.heir)).led_to], [])
+
+    async def test_an_undo_with_no_loop_still_brings_the_link_back(self) -> None:
+        first = (await self.link(self.heir, self.tower)).value
+        removed = await self.memory.update_relation(
+            GUILD_A, self.c, first.id, source="dm", status="rejected"
+        )
+        await self.memory.undo(GUILD_A, self.c, removed.batch)
+        self.assertEqual([e.name for e in (await self.info(self.heir)).led_to], ["The tower"])
 
     async def test_a_link_to_itself_or_a_loop_is_refused(self) -> None:
         with self.assertRaises(MemoryRuleError):
