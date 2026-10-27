@@ -7,6 +7,8 @@ import { useRef, useState } from "preact/hooks";
 
 import { BACKUP_HAS_TRANSCRIPTS, campaignDeleteWords as words } from "../content/campaign-delete";
 import { ApiError, type AccountApi } from "./api";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 
 const squash = (name: string): string => name.split(/\s+/).filter(Boolean).join(" ").toLocaleLowerCase();
 
@@ -86,6 +88,7 @@ export default function CampaignDelete({
     }
   };
 
+  const backingUp = useObservedWait(state === "backup", "backup");
   const matches = squash(typed) === squash(name);
   const backups = !tryIt && !!api.campaignBackup;
   if (!open) {
@@ -114,6 +117,14 @@ export default function CampaignDelete({
               {state === "backup" ? words.backingUp : words.backup}
             </button>
           </div>
+          {state === "backup" && backingUp.startedAt !== null && (
+            <WorkProgress
+              stage={words.backingUp}
+              startedAt={backingUp.startedAt}
+              progressUnknown
+              state="running"
+            />
+          )}
           <p class="small">{words.backupNote}</p>
           {saved && <p role="status" class="small">{words.backupDone(words.backupFileName(name))}</p>}
         </>

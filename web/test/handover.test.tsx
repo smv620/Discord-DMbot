@@ -3,6 +3,7 @@
 // The hand-over accept page (#2534; core #2532): the emailed link's token is read from the hash, the
 // offer is looked at, and the person accepts onto a server or says no thanks. The API decides who may
 // accept; the page says what it is told. Shown only while HANDOVER_LIVE is true (false today).
+import { workWords } from "../src/content/work-progress";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -438,7 +439,7 @@ describe("moving to another server (#2550)", () => {
     await screen.findByText(w.offer("The Silver Hall", "Mira"));
     fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
     fireEvent.click(screen.getByRole("button", { name: w.accept }));
-    expect(await screen.findByText(w.moving)).toBeTruthy();
+    expect(await screen.findAllByText(w.moving)).toHaveLength(2);
     expect(await screen.findByText(w.accepted, undefined, { timeout: 12_000 })).toBeTruthy();
     expect(screen.getByRole("link", { name: w.openCampaign }).getAttribute("href")).toContain("s2.cmp9");
     expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:open:s2"]);
@@ -471,10 +472,10 @@ describe("moving to another server (#2550)", () => {
     await screen.findByText(w.offer("The Silver Hall", "Mira"));
     fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
     fireEvent.click(screen.getByRole("button", { name: w.accept }));
-    expect(await screen.findByText(w.moving)).toBeTruthy();
+    expect(await screen.findAllByText(w.moving)).toHaveLength(2);
     expect(await screen.findByText("A session is running. Try again after it ends.", undefined, { timeout: 15_000 })).toBeTruthy();
     expect(screen.getByRole("button", { name: w.accept })).toBeTruthy(); // usable again
-    expect(screen.queryByText(w.moving)).toBeNull();
+    expect(screen.queryAllByText(w.moving)).toHaveLength(0);
     expect(screen.queryByText(w.movingSlow)).toBeNull();
     expect(calls(api, "handoverLook").length).toBeGreaterThan(2); // it looked at the offer while it waited
   }, 25_000);
@@ -561,6 +562,10 @@ describe("moving to another server (#2550)", () => {
       await vi.advanceTimersByTimeAsync(200_000);
       expect(screen.getByText(w.movingSlow)).toBeTruthy();
       expect(w.movingSlow).toContain("open the link in the offer email again");
+      // The page has stopped looking: no clock keeps running, and it never claimed a "last change" it did not see.
+      expect(screen.getByText(workWords.stoppedLooking)).toBeTruthy();
+      expect(screen.queryByText(/Running for/)).toBeNull();
+      expect(screen.queryByText(workWords.noChangeYet)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

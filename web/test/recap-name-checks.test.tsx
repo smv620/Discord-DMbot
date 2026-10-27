@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, httpApi } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
 import RecapNameChecks from "../src/account/RecapNameChecks";
+import { workWords as workMovedWords } from "../src/content/work-progress";
 import { nameCheckWords as w } from "../src/content/recap-name-checks";
 
 const live = vi.hoisted(() => ({ on: false }));
@@ -69,7 +70,7 @@ describe("names to check", () => {
     fireEvent.click(within(brannoch).getByRole("button", { name: w.yesWith("Brannoch") }));
     await waitFor(() => expect(calls(api, "answerNameCheck")).toHaveLength(1));
     expect(calls(api, "answerNameCheck")[0]).toContain('"action":"confirm","kind":"place"');
-    expect(await screen.findByText(w.waiting)).toBeTruthy();
+    expect(await screen.findAllByText(w.waiting)).not.toHaveLength(0);
     await waitFor(() => expect(screen.queryByRole("group", { name: "Brannoch" })).toBeNull(), slow);
     expect(screen.getByRole("group", { name: "Veshla" })).toBeTruthy(); // the others stay
   });
@@ -206,5 +207,24 @@ describe("a busy answer through the real client", () => {
     expect(caught.kind).toBe("slow-down");
     expect(w.problem[caught.kind]).toBeTruthy();
     expect(w.problem[caught.kind]).not.toBe(w.problem.server);
+  });
+});
+
+describe("a name the bot never finishes", () => {
+  it("says it is still saving, stops the clock when the page gives up, and keeps the answer", async () => {
+    live.on = true;
+    vi.useFakeTimers();
+    const api = mockApi("table");
+    const real = api.nameChecks!.bind(api);
+    api.nameChecks = async (ref) => {
+      const got = await real(ref);
+      return { ...got, names: got.names.map((n) => ({ ...n, answering: true })) };
+    };
+    render(<RecapNameChecks api={api} refId={draft.ref} />);
+    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(screen.getByText(w.slow)).toBeTruthy();
+    expect(screen.getByText(workMovedWords.stoppedLooking)).toBeTruthy();
+    expect(screen.queryByText(/Running for/)).toBeNull();
   });
 });

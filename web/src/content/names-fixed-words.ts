@@ -31,6 +31,7 @@ export const namesFixedWords = {
     gone: "Nothing to put back. This name was already undone, or the transcript changed since. The list now shows the newest.",
     "cannot-write": "DMbot can't save that right now. Nothing was changed. Try again in a minute.",
     "queue-full": "Too many changes are waiting. Give DMbot a moment, then try again.",
+    "too-soon": "That was a bit quick. Wait a few seconds, then try again.",
     "not-allowed": "Only this campaign's DM can see this.",
     "still-waiting": "Not saved yet. The list shows how it stands now. Wait a minute before you press Undo again.",
     network: "Couldn't reach DMbot. Check your connection and try again.",
