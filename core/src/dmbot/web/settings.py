@@ -119,6 +119,9 @@ class WebSettings:
     imports_on: bool = False
     # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
     handover_email_on: bool = False
+    # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
+    # routes answer 404, so nothing is queued before the bot can run it.
+    line_delete_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -330,9 +333,15 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
         )
+    line_delete_raw = (get("DMBOT_WEB_LINE_DELETE") or "0").lower()
+    if line_delete_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
+        line_delete_on=line_delete_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
