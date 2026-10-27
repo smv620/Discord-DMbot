@@ -17,6 +17,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.rules import optional
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -29,6 +30,9 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "level": ("quiet", "normal"),
     "retention": ("forever", "365", "90", "30"),
 }
+
+
+OPTIONAL_RULE = "optional_rule"  # a fourth choice: one optional rule on or off (#2753)
 
 
 def _arguments(body: object) -> tuple[str, str, bool]:
@@ -46,6 +50,19 @@ def _arguments(body: object) -> tuple[str, str, bool]:
     return setting, value, body.get("confirm") is True
 
 
+def _optional_rule(body: object) -> tuple[str, bool] | None:
+    """(rule id, on) when the body is an optional-rule choice (#2753), None when it is one of the
+    three settings. The id must be one in the rules catalog, the same list Discord offers, and `on`
+    a real yes or no: anything else is the refusal word. The bot checks again that the rule applies
+    to this campaign's main rules."""
+    if not isinstance(body, dict) or body.get("setting") != OPTIONAL_RULE:
+        return None
+    rule_id, on = body.get("value"), body.get("on")
+    if not isinstance(rule_id, str) or optional.rule(rule_id) is None or not isinstance(on, bool):
+        raise RecapError("bad_value")
+    return rule_id, on
+
+
 async def queue_setting(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue one choice of the signed-in DM for the bot and return its id. A server the person is
     not in is "not found"; a member who is not a DM of the campaign is "not allowed". A shorter
@@ -53,13 +70,20 @@ async def queue_setting(db: Database, session: Session, ref: str, body: object) 
     refuses it without."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
-    setting, value, confirmed = _arguments(body)
+    rule = _optional_rule(body)
+    setting, value, confirmed = ("", "", False) if rule else _arguments(body)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT dmbot_web_setting_add(%s, %s, %s, %s, %s) AS r",
-            (guild_id, campaign_id, setting, value, confirmed),
-        )
+        if rule:
+            cur = await conn.execute(
+                "SELECT dmbot_web_optional_rule_add(%s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, rule[0], rule[1]),
+            )
+        else:
+            cur = await conn.execute(
+                "SELECT dmbot_web_setting_add(%s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, setting, value, confirmed),
+            )
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None:
