@@ -848,6 +848,15 @@ processor before it is used.
   transcripts, retention and a deleted session or campaign all take the numbers in the same
   statement. A line deleted while its text was away at Voyage AI is never saved (the save selects
   the line). Not in a backup: they are made again.
+- **Built (#2664 parts 3 and 4): keeping them up to date, and using them.** `memory/embedding.py` is
+  the after-session job (batches under one call limit, consent read before every batch and again
+  after the call, long text split and never cut, counts-only progress, no credit stops it). It runs
+  only with `DMBOT_MEANING_SEARCH=1` and a Voyage key, inside the story plan, and sends only the
+  campaign's confirmed entries and the game talk of people who agree to be recorded.
+  `memory/meaning.py` gives the sidebar more starting points: the entries closest in meaning to a
+  question, re-scored by `rerank-2.5`, added to the names the question spelled out. Optional: a
+  switch off, no numbers yet, nothing close or any failure means names alone. An entry the players
+  may not know yet is never a lead for a sidebar answer. Table questions never ask for leads.
 
 **Hard rules and warnings** (owner, 2026-10-24, #2663). Every rule is one or the other, and a new
 rule says which in `memory/checks.py`'s docstring.
