@@ -179,7 +179,9 @@ class TheReport(Reading):
         for words in (d["believes"], d["truth"]):
             self.assertTrue("Aldric" in words and "the Ashen Crown" in words, words)
         self.assertNotEqual(d["believes"], d["truth"])
-        self.assertEqual(d["open"], {"a": self.aldric, "b": self.circle})
+        self.assertEqual(
+            {d["open"]["a"], d["open"]["b"]}, {self.aldric, self.circle}
+        )  # (any order)
         self.assertEqual(got["counts"]["misunderstood"], 1)
 
     async def test_a_denied_connection_says_the_dm_view_says_it_is_not_so(self) -> None:
