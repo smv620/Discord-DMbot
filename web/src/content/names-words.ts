@@ -6,10 +6,14 @@
 // The longest a name may be: core's `NAME_MAX` (memory/models.py) and the Discord card's
 // `NAME_LIMIT` (ui/name_card.py). Keep the three equal, or a DM can't fix a long name here.
 export const NAME_LIMIT = 100;
+// How many names a page holds: what the page offers, and the usual. Core's `PAGE_SIZES` and
+// `PAGE_SIZE` (web/all_names.py) refuse any other size: keep them equal.
+export const NAMES_PAGE_SIZES = [20, 50, 200, 500] as const;
+export const NAMES_PAGE_SIZE = 50;
 
 export const namesPage = {
   heading: "Names",
-  lead: "Everything DMbot remembers by name in this campaign: NPCs, PCs, places, groups and more. Search them, filter by kind, and (if you are the DM) fix them here.",
+  lead: "Everything DMbot remembers by name in this campaign: NPCs, PCs, places, groups and more. Search them, tick types to narrow the list, and (if you are the DM) fix them here.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",
   signIn: "Sign in with Discord",
@@ -20,28 +24,27 @@ export const namesPage = {
   tryAgain: "Try again",
   searchLabel: "Find a name",
   searchHint: "Type part of a name or a nickname.",
-  kindLabel: "Show",
-  allKinds: (n: number): string => `Everything (${n})`,
+  kindLabel: "Type (none ticked shows all)",
+  allKinds: (n: number): string => `Show all types (${n})`,
+  perPageLabel: "Names per page",
+  perPageOption: (n: number): string => String(n),
   kindOption: (label: string, n: number): string => `${label} (${n})`,
   sortLabel: "Sort by",
   sortName: "Name, A to Z",
   sortNewest: "Newest first",
   howMany: (n: number): string => (n === 1 ? "1 name" : `${n} names`),
   noNames: "DMbot doesn't know any names here yet.",
-  noMatch: "No names match. Try fewer letters, or choose Everything.",
+  noMatch: "No names match. Try fewer letters, or untick some types.",
   listLabel: "Names",
   secretMark: "🤫",
   secretWords: "Secret (DM only)",
   alsoCalled: "Also called",
-  npcLink: "Open the NPC page",
+  npcLink: "NPC page",
   webLink: "Open the relationship web",
   npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
   readOnly: "Only this campaign's DM can change names.",
   undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",
-  change: "Change",
-  changeFor: (name: string): string => `Change ${name}`,
-  done: "Done",
-  doneFor: (name: string): string => `Done changing ${name}`,
+  pressName: "Press a name to change it.",
   spellLabel: "Spelling",
   saveSpelling: "Save spelling",
   // How to say it (#2317): the box the narrator reads from, with the buttons that fill it.

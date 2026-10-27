@@ -77,7 +77,7 @@ class TheDmsList(Listing):
         got = await self.page()
         self.assertEqual(
             {k: got[k] for k in ("campaign", "canEdit", "total", "page", "pages", "pageSize")},
-            {"campaign": "One", "canEdit": True, "total": 3, "page": 1, "pages": 1, "pageSize": 20},
+            {"campaign": "One", "canEdit": True, "total": 3, "page": 1, "pages": 1, "pageSize": 50},
         )
         by_name = {n["name"]: n for n in got["names"]}
         self.assertEqual(list(by_name), ["Dawnbreaker", "Greywater Keep", "Mira Voss"])  # A to Z
@@ -146,14 +146,58 @@ class TheDmsList(Listing):
     async def test_pages_of_20_and_a_page_past_the_end_is_refused(self) -> None:
         for n in range(24):
             await self.add(f"Person {n:02d}", "npc")
-        first, second = await self.page(kind="npc"), await self.page(kind="npc", page=2)
+        first = await self.page(kind="npc", size=20)
+        second = await self.page(kind="npc", size=20, page=2)
         self.assertEqual((first["total"], first["pages"], len(first["names"])), (25, 2, 20))
         self.assertEqual(len(second["names"]), 5)
         seen = [n["id"] for n in first["names"] + second["names"]]
         self.assertEqual(len(set(seen)), 25)
-        self.assertEqual(await self.refused(self.session, self.cref, page=3), "bad_page")
+        self.assertEqual(await self.refused(self.session, self.cref, size=20, page=3), "bad_page")
         self.assertEqual(await self.refused(self.session, self.cref, page=0), "bad_page")
         self.assertEqual(len((await self.page(q="zzz"))["names"]), 0)  # an empty list is page 1
+
+    async def test_the_page_size_is_50_unless_asked_and_only_the_offered_sizes_are_allowed(
+        self,
+    ) -> None:
+        for n in range(54):
+            await self.add(f"Person {n:02d}", "npc")
+        usual = await self.page(kind="npc")
+        self.assertEqual((usual["pageSize"], usual["pages"], len(usual["names"])), (50, 2, 50))
+        for size in (20, 50, 200, 500):
+            got = await self.page(kind="npc", size=size)
+            self.assertEqual(got["pageSize"], size)
+            self.assertEqual(got["pages"], -(-55 // size) if size < 55 else 1)
+        for size in (0, 19, 51, 1000, -5):
+            self.assertEqual(await self.refused(self.session, self.cref, size=size), "bad_page")
+
+    async def test_several_kinds_at_once_and_one_kind_still_works(self) -> None:
+        both = await self.page(kind="npc,place")
+        self.assertEqual(sorted(n["name"] for n in both["names"]), ["Greywater Keep", "Mira Voss"])
+        self.assertEqual(both["total"], 2)
+        # the counts beside each type ignore which types are ticked
+        self.assertEqual(
+            {k["key"]: k["count"] for k in both["kinds"]}, {"npc": 1, "place": 1, "item": 1}
+        )
+        self.assertEqual((await self.page(kind="item,bogus"))["total"], 1)
+        self.assertEqual((await self.page(kind=" npc , "))["total"], 1)  # (stray commas and spaces)
+        self.assertEqual(await self.refused(self.session, self.cref, kind="x" * 41), "bad_page")
+        self.assertEqual(
+            await self.refused(self.session, self.cref, kind=",".join("k" * 3 for _ in range(41))),
+            "bad_page",
+        )
+
+    async def test_the_door_itself_bounds_the_page_at_500(self) -> None:
+        # (501 names would take minutes to make: the bound is read from the door's own text, and
+        # the 500 page size is proved above through the route's size)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT prosrc FROM pg_proc WHERE proname = 'dmbot_web_all_names'"
+            )
+            source = (await cur.fetchone() or {}).get("prosrc") or ""
+        self.assertEqual(source.count("LEAST(GREATEST(size, 1), 500)"), 2)
+        self.assertNotIn(
+            "GREATEST(size, 1) OFFSET", source.replace("LEAST(GREATEST(size, 1), 500)", "")
+        )
 
     async def test_a_huge_page_number_is_refused_not_a_server_error(self) -> None:
         for page in (2_000_000_000, 100_001, -1):
@@ -263,10 +307,12 @@ class TheManagersList(Listing):
         )
         for n in range(22):
             await self.add(f"Person {n:02d}", "npc")
-        got = await self.page(self.bob, kind="npc")
+        got = await self.page(self.bob, kind="npc", size=20)
         self.assertEqual((got["total"], got["pages"]), (23, 2))  # Mira and 22 more; not Vecnor
-        self.assertEqual(len((await self.page(self.bob, kind="npc", page=2))["names"]), 3)
-        self.assertEqual(await self.refused(self.bob, self.cref, kind="npc", page=3), "bad_page")
+        self.assertEqual(len((await self.page(self.bob, kind="npc", size=20, page=2))["names"]), 3)
+        self.assertEqual(
+            await self.refused(self.bob, self.cref, kind="npc", size=20, page=3), "bad_page"
+        )
         rest = str(await self.page(self.bob))
         for hidden in ("A thread", "A mystery", "A hook", "A goal", "A promise", "A deed"):
             self.assertNotIn(hidden, rest)
@@ -557,6 +603,10 @@ class TheRoute(Listing):
         past = await self.client.get(url, params={"page": 4})
         self.assertEqual((past.status_code, past.json()), (400, {"error": "bad_page"}))
         self.assertEqual((await self.client.get(url, params={"sort": "x"})).status_code, 400)
+        for bad in ("abc", "7", "0", "-20", "99999"):
+            got = await self.client.get(url, params={"size": bad})
+            self.assertEqual((got.status_code, got.json()), (400, {"error": "bad_page"}), bad)
+        self.assertEqual((await self.client.get(url, params={"size": "200"})).status_code, 200)
         for bad in ("abc", "1.5", "", "0", "-2", "99999999999999999999", "²", "--1", "9" * 5000):
             got = await self.client.get(url, params={"page": bad})
             self.assertEqual((got.status_code, got.json()), (400, {"error": "bad_page"}), bad)

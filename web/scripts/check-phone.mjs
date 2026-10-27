@@ -186,7 +186,7 @@ const pages = [
     // The longest name's row, so a long unbroken name is measured; open its editor, search for a
     // merge, and ask for the removal's confirmation, so every part of the editor is on the page.
     await page.getByLabel("Find a name").fill("Alaric");
-    await page.getByRole("button", { name: /^Change Ser Alaric/ }).first().click();
+    await page.locator("button.name-open", { hasText: "Ser Alaric" }).first().click();
     await page.getByLabel("Find the other name").fill("a");
     await page.getByRole("radio").first().waitFor();
     await page.getByRole("button", { name: "Remove this name" }).click();
