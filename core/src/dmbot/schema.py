@@ -16654,16 +16654,16 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # meaning search: numbers made from campaign text (#2664)
     ("0249_report_read_door", REPORT_READ_DOOR),  # a session's after-session report (#2661)
     ("0250_report_answer_door", REPORT_ANSWER_DOOR),  # the DM's answer to one item (#2661)
+    (
+        "0251_web_restores",
+        WEB_RESTORES,
+    ),  # a backup loaded from the website, waiting for the bot (#2745)
     ("0252_optional_rules_read", OPTIONAL_RULES_READ),  # the Settings tab reads the choices (#2753)
     ("0253_names_smart", NAMES_SMART),  # the Names page's search by meaning (#2733)
     (
         "0254_optional_rule_setting",
         OPTIONAL_RULE_SETTING,
     ),  # a rule switched on the website is queued for the bot (#2753)
-    (
-        "0251_web_restores",
-        WEB_RESTORES,
-    ),  # a backup loaded from the website, waiting for the bot (#2745)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
