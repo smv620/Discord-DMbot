@@ -15075,12 +15075,17 @@ RECAP_NAME_PLACES = r"""
                     FROM (
                         SELECT DISTINCT ON (m.line_ref)
                                substring(m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$') AS sid,
-                               substring(m.line_ref from ':([0-9]{1,18}):[0-9]{1,18}$')::BIGINT AS ms,
+                               substring(m.line_ref
+                                         from ':([0-9]{1,18}):[0-9]{1,18}$')::BIGINT AS ms,
                                substring(m.line_ref from ':([0-9]{1,18})$')::BIGINT AS uid,
                                m.session_started_at AS at
                         FROM memory_mentions m
                         WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = ent.id
                           AND m.line_ref ~ '^.*:[0-9]{1,18}:[0-9]{1,18}$'
+                          AND EXISTS (SELECT 1 FROM transcript_sessions t0
+                                      WHERE t0.guild_id = g AND t0.campaign_id = c
+                                        AND t0.id = substring(
+                                            m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$'))
                         ORDER BY m.line_ref, m.created_at, m.id) q) r
                 JOIN transcript_sessions t
                   ON t.guild_id = g AND t.campaign_id = c AND t.id = r.sid
@@ -15092,8 +15097,13 @@ RECAP_NAME_PLACES = r"""
                 IF ptr.gone IS NULL THEN
                     SELECT COALESCE(jsonb_agg(jsonb_build_object(
                                'ms', w.started_ms, 'uid', w.user_id::TEXT, 'hit', w.hit,
-                               'text', w.said, 'agreed', w.agreed,
-                               'name', COALESCE(t2.speaker_names ->> w.user_id::TEXT, ''))
+                               'agreed', w.agreed,
+                               -- (words and name only for a speaker who agrees: the rest never
+                               -- leave the database)
+                               'text', CASE WHEN w.agreed THEN w.said ELSE '' END,
+                               'name', CASE WHEN w.agreed
+                                       THEN COALESCE(t2.speaker_names ->> w.user_id::TEXT, '')
+                                       ELSE '' END)
                                ORDER BY w.started_ms, w.id), '[]'::jsonb)
                     INTO found
                     FROM (

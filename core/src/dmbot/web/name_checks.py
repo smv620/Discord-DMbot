@@ -97,7 +97,7 @@ def _with_places(card: dict[str, Any], found: dict[str, Any] | None) -> dict[str
     places: list[dict[str, Any]] = []
     for window in found.get("windows", []):
         lines: list[dict[str, Any]] = []
-        started = int(window.get("startedAt", 0)) * 1000
+        started = int(window.get("startedAt") or 0) * 1000
         for line in window.get("lines", []):
             if not line.get("agreed"):
                 lines.append({"removed": True})
@@ -112,7 +112,7 @@ def _with_places(card: dict[str, Any], found: dict[str, Any] | None) -> dict[str
             lines.append(
                 {
                     "speaker": str(line.get("name") or SOMEONE),
-                    "at": max(0, (int(line.get("ms", 0)) - started) // 1000),
+                    "at": max(0, (int(line.get("ms") or 0) - started) // 1000),
                     "text": said,
                 }
             )

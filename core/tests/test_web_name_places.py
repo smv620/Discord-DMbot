@@ -99,6 +99,7 @@ class Places(WithChecks):
         )  # the line stays as a placeholder: no speaker, time or words
         self.assertEqual(after["lines"][1], {"removed": True})
         self.assertNotIn("Harrow's keep", json.dumps(await self.card()))
+        self.assertNotIn("agreed", json.dumps(await self.card()))
 
     async def test_a_window_with_everyone_stopped_has_nothing_to_show(self) -> None:
         await self.table()
@@ -111,7 +112,24 @@ class Places(WithChecks):
         await self.table()
         await self.agree(leave=(ALICE.id,))
         await self.agree(ALICE.id)
-        self.assertEqual((await self.card())["places"][0]["lines"][1]["speaker"], "Someone")
+        got = (await self.card())["places"][0]["lines"][1]
+        self.assertEqual((got["speaker"], got["text"]), ("Someone", "We rode to Harrow's keep."))
+
+    async def test_a_stopped_speakers_kept_name_is_not_sent_either(self) -> None:
+        await self.table()
+        await self.sql("UPDATE transcript_sessions SET speaker_names = %s::jsonb",
+                       json.dumps({str(ALICE.id): "Aliciana"}))  # fmt: skip
+        self.assertIn("Aliciana", json.dumps(await self.card()))
+        await self.agree(leave=(ALICE.id,))
+        self.assertNotIn("Aliciana", json.dumps(await self.card()))
+
+    async def test_a_reference_with_huge_numbers_is_skipped_not_fatal(self) -> None:
+        harrow, sid, _lines = await self.table()
+        await self.memory.add_mention(
+            GUILD, self.one.id, harrow, line_ref=f"{sid}:{'9' * 30}:1", span=(0, 6),
+            confidence=1.0, method="exact", source="scan", session_started_at=AT,
+        )  # fmt: skip
+        self.assertEqual(len((await self.card())["places"]), 1)
 
     async def test_the_dm_sidebar_is_never_a_place_or_a_neighbour(self) -> None:
         harrow = await self.suggest("Harrow")
@@ -162,6 +180,30 @@ class Places(WithChecks):
         )
         self.assertEqual([p["session"] for p in card["places"]], [1, 3])
         self.assertEqual(card["morePlaces"], 3)
+
+    async def test_a_pointer_to_a_vanished_session_does_not_hide_the_earliest_place(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.agree(ALICE.id)
+        line = Line(10_000, ALICE.id, "Harrow rode on.", "Harrow rode on.")
+        sid = await self.open()
+        await self.say(sid, [line])
+        await self.point(harrow, sid, line, at=AT + 500)
+        # the earliest mention names a session that no longer exists
+        await self.point(harrow, "f" * 32, line, at=AT)
+        card = await self.card()
+        self.assertEqual([p["session"] for p in card["places"]], [1])
+        self.assertEqual(card["morePlaces"], 0)
+
+    async def test_a_pointer_at_the_first_and_last_line_has_one_neighbour(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.agree(ALICE.id)
+        sid = await self.open()
+        first = Line(1_000, ALICE.id, "Harrow began.", "Harrow began.")
+        last = Line(9_000, ALICE.id, "Harrow ended.", "Harrow ended.")
+        await self.say(sid, [first, last])
+        await self.point(harrow, sid, first)
+        card = await self.card()
+        self.assertEqual([len(p["lines"]) for p in card["places"]], [2])
 
     async def test_a_name_never_said_anywhere_has_no_places(self) -> None:
         await self.suggest("Harrow")
