@@ -17,7 +17,7 @@ import json
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeGuard
 
 import aiohttp
 
@@ -60,7 +60,7 @@ class ProviderError(Exception):
         return self.kind in ("auth", "refused", "plan")
 
 
-def _number(x: object) -> bool:
+def _number(x: object) -> TypeGuard[int | float]:
     """A real, finite number (not a bool, not NaN or infinity: either would poison a ranking)."""
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
