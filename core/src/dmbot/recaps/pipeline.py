@@ -154,6 +154,7 @@ ENDING_CUT_NOTE = (
 NOT_FACT_CHECKED_NOTE = (
     "This recap was not fact-checked: the check could not be had. Read it against the session."
 )
+DM_TOLD = (ENDING_CUT_NOTE, NOT_FACT_CHECKED_NOTE)  # kept through the critics (#2741)
 
 
 def hard_after_cut(problems: Sequence[str]) -> list[str]:
@@ -1204,6 +1205,10 @@ class RecapWorker:
             )  # fmt: skip
         except AIOutOfFunds:
             return await self._fail(gid, cid, job, FUNDS)
+        if not set(job.speakers) <= set(await consenting()):
+            # (the fact check sends nothing and answers None when a speaker stopped, #2064: that is
+            # a recap to start over, never one to stand "not fact-checked")
+            return await self._restart(gid, cid, job)
         if not asked and key not in self._flags:
             # The fact check could not be had (a failed, unreadable or cut-off answer even after
             # its retry): the recap stands, marked, never passed as if nothing were flagged.
@@ -1681,7 +1686,11 @@ class RecapWorker:
             sentences_now, left = self._away(job.summary, sheet, inputs)
             return await self._save_loop(
                 gid, cid, job,
-                replace(loop, done=True, notes=unchecked + away.notes(left, sentences_now)),
+                replace(
+                    loop,
+                    done=True,
+                    notes=self._told(loop) + unchecked + away.notes(left, sentences_now),
+                ),
             )  # fmt: skip
         room = self._ceiling(job) - CRITIC_RESERVE - CRITIC_REVISE_CALLS
         # (a revision that waits for its try is off the job's calls, so the room is not looked at)
@@ -1690,6 +1699,12 @@ class RecapWorker:
         return await self._revise(
             gid, cid, job, inputs, consenting, loop, sheet, prose, play, retold
         )
+
+    @staticmethod
+    def _told(loop: cr.Loop) -> tuple[str, ...]:
+        """The notes `_accept_prose` told the DM about the draft that stands (the last lines cut,
+        no fact check), which the critics' own notes must not replace (#2741)."""
+        return tuple(n for n in DM_TOLD if n in loop.notes)
 
     def _away_notes(
         self, summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
@@ -1983,7 +1998,10 @@ class RecapWorker:
             grade=grade, errors=0,
             to_confirm=self._to_confirm(revised.summary, sheet, transcript, inputs),
             critics=replace(
-                loop, pending=None, motives=None, waits=0, since=0, told=False
+                loop, pending=None, motives=None, waits=0, since=0, told=False,
+                # (the new text passed its own ending check and was fact-checked: those notes were
+                # about the text it replaces)
+                notes=tuple(n for n in loop.notes if n not in DM_TOLD),
             ).to_json(),
         )  # fmt: skip
         self._forget_draft(key)
@@ -2083,6 +2101,9 @@ class RecapWorker:
             return await self._hold(gid, cid, job, loop, why)
         prose = rd.Prose(best.summary, best.music)
         cut = 0
+        # What the DM was told about the draft that stands holds only while the critics' best draft
+        # is that same text (a different one was fact-checked and ended on its own).
+        told = self._told(loop) if best.summary == job.summary else ()
         # The critics stopped because the service did not answer (or the day's tally): that is ours,
         # so what would fail the recap waits for its check instead, and is tried again (#2365). Only
         # the job's own ceiling still ends in a failure.
@@ -2103,6 +2124,8 @@ class RecapWorker:
                 pcs=inputs.pcs,
                 identity_ties=inputs.identity_ties,
             )  # fmt: skip
+            if problems and not hard_after_cut(problems) and ENDING_CUT_NOTE not in told:
+                told += (ENDING_CUT_NOTE,)  # the cut took the ending off: say so
             problems = hard_after_cut(problems)  # (the cut sentence may have been the ending)
             if problems:
                 # The rule that failed, by name, so a run that ends here says why (#2365).
@@ -2121,8 +2144,10 @@ class RecapWorker:
                 )  # fmt: skip
             cut = len(best.cuts)
         # (the away notes are read again from the text that is kept, cuts and all)
-        kept_notes = tuple(n for n in best.notes if not away.is_note(n)) + self._away_notes(
-            prose.summary, sheet, inputs
+        kept_notes = (
+            told
+            + tuple(n for n in best.notes if not away.is_note(n) and n not in told)
+            + self._away_notes(prose.summary, sheet, inputs)
         )
         log.info(
             "Recap: the critics stopped (%s) after %d reading(s): %d note(s) left, %d cut",
