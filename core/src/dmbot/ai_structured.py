@@ -108,7 +108,11 @@ async def structured[T](
     format pass easy). `validate` gets the format pass's JSON text and returns the step's checked
     value or None: it is the check the step already has. `escalate` is the stronger tier for the
     one retry (None: no retry). Raises AIError as any tier call does (out of funds included).
-    `stage` names the step in the log (counts only)."""
+    `stage` names the step in the log (counts only).
+
+    A run makes two calls (draft, format), three when the format pass is redone on `escalate`. A
+    caller with a budget of its own (a job's call ceiling, a day's tally) must count every one of
+    them, so it passes tiers that count each call before making it, not the plain clients."""
     c = counts if counts is not None else STATS
     c.runs += 1
     try:
