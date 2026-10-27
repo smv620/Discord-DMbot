@@ -840,6 +840,7 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
@@ -1444,17 +1445,29 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
-    @app.get("/me/campaigns/{ref}/all-names/smart")
-    async def me_campaign_all_names_smart(ref: str, signed: Signed, q: str = "") -> dict[str, Any]:
+    @app.post("/me/campaigns/{ref}/all-names/search")
+    async def me_campaign_all_names_search(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
         """The Names page's search by meaning (#2733): the names closest in meaning to the DM's
-        words, best first. A DM only ("not found" for anyone else). `available: false` with a
-        `why` says the search could not run, so the page falls back to the letters search."""
+        words, best first, with `capped` (the campaign has more numbers than one search compares).
+        The words are in the body, never the address: an address is written to logs on the way.
+        A DM only ("not found" for anyone else). When the search cannot run (off, no credit,
+        Voyage AI not answering, too slow) the refusal is "not_available" and the page falls back
+        to the letters search."""
         session, _token = signed
         taken = smart_limit.take(f"user-{session.user_id}")
         if taken != "ok":
             raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
         try:
-            return await names_smart.search(db, session, ref, q, smart_names)
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("q") if isinstance(body, dict) else None
+        try:
+            if not isinstance(words, str):
+                raise RecapError("bad_text")
+            return await names_smart.search(db, session, ref, words, smart_names)
         except RecapError as err:
             smart_limit.give_back(f"user-{session.user_id}")  # a refused search costs no turn
             status, detail = recap_refusals.get(err.code, (404, "not_found"))

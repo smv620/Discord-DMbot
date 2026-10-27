@@ -41,6 +41,7 @@ ROWS_MAX = 50  # names shown for one search
 POOL = 60  # names compared by meaning before the reranker orders the best ROWS_MAX of them
 
 
+CALL_WAIT_S = 10  # the longest a call to Voyage AI, or waiting for a scan slot, may take
 SEARCHES_AT_ONCE = 2  # database scans at one time in this process: a scan is a core's worth of CPU
 
 
@@ -58,6 +59,15 @@ class SmartNames:
         self.model = model
         self.count_call = count_call
         self.scans = asyncio.Semaphore(SEARCHES_AT_ONCE)
+
+
+class NotAvailable(RecapError):
+    """The search could not run: the page is told "not_available" and falls back to the letters
+    search. `why` is for the log and the tests: "off", "no_credit", "unreachable" or "slow"."""
+
+    def __init__(self, why: str) -> None:
+        super().__init__("not_available")
+        self.why = why
 
 
 def _words(text: str) -> str:
@@ -83,11 +93,11 @@ async def _near(
 async def search(
     db: Database, session: Session, ref: str, words: str, smart: SmartNames | None
 ) -> dict[str, Any]:
-    """The campaign's names closest in meaning to `words`, best first. "not_found" for anyone who
-    is not a DM of the campaign (found out before any word leaves for Voyage AI); "bad_text" for
-    nothing to search for. Otherwise `available` says whether the search could run and `why` is
-    one of "off", "no_credit", "unreachable" or "slow" when it could not. `capped`: the campaign has
-    more numbers than one search compares (the newest 10,000), so an old name may not be found."""
+    """The campaign's names closest in meaning to `words`, best first: `{names, capped}`.
+    "not_found" for anyone who is not a DM of the campaign (found out before any word leaves for
+    Voyage AI); "bad_text" for nothing to search for; "not_available" (a `NotAvailable`, with
+    `why`) when the search could not run. `capped`: the campaign has more numbers than one search
+    compares (the newest 10,000), so an old name may not be found."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     text = _words(words)
@@ -99,52 +109,71 @@ async def search(
     if await _near(db, session, guild_id, campaign_id, model, []) is None:
         raise RecapError("not_found")
     if smart is None:
-        return _empty(False, "off")
+        raise NotAvailable("off")
     try:
         if smart.count_call is not None:
             await smart.count_call()
-        (query,) = await smart.voyage.embed([text], query=True)
-        try:
-            async with smart.scans:  # (a scan is a core's worth of CPU: two at a time)
-                near = await _near(db, session, guild_id, campaign_id, model, query)
-        except psycopg.errors.QueryCanceled:
-            log.warning("Names search by meaning: the scan ran out of time")
-            return _empty(False, "slow")
+        async with asyncio.timeout(CALL_WAIT_S):
+            (query,) = await smart.voyage.embed([text], query=True)
+        near = await _scan(db, session, smart, guild_id, campaign_id, query)
         if near is None:  # (stopped being a DM while the words were away)
             raise RecapError("not_found")
         close, capped = near
         if not close:
-            return _empty(True, None, capped)
+            return _answer([], capped)
         if smart.count_call is not None:
             await smart.count_call()
-        ranked = await smart.voyage.rerank(
-            text, [compose(c["parts"]) for c in close], top_k=ROWS_MAX
-        )
+        async with asyncio.timeout(CALL_WAIT_S):
+            ranked = await smart.voyage.rerank(
+                text, [compose(c["parts"]) for c in close], top_k=ROWS_MAX
+            )
     except AIOutOfFunds:
         log.warning("Names search by meaning: no credit left")
-        return _empty(False, "no_credit")
-    except ProviderError as exc:
-        log.warning("Names search by meaning: a call failed (%s)", exc.describe())
-        return _empty(False, "unreachable")
+        raise NotAvailable("no_credit") from None
+    except (ProviderError, TimeoutError) as exc:
+        log.warning(
+            "Names search by meaning: a call failed (%s)",
+            exc.describe() if isinstance(exc, ProviderError) else "too slow",
+        )
+        raise NotAvailable("unreachable") from None
     order = [
         str(close[r.index]["id"]) for r in ranked if r.score >= MIN_SCORE and r.index < len(close)
     ]
     log.info("Names search by meaning: %d candidates, %d names", len(close), len(order))
     if not order:
-        return _empty(True, None, capped)
+        return _answer([], capped)
     page = await all_names.read_page(
         db, session, ref, size=200, only=",".join(order)
     )  # (the rows' usual shape; the door keeps what a DM may see)
     rows = {str(n["id"]): n for n in page["names"]}
-    return {
-        "available": True,
-        "why": None,
-        "capped": capped,
-        "campaign": page["campaign"],
-        "canEdit": page["canEdit"],
-        "names": [rows[i] for i in order if i in rows],
-    }
+    return _answer([rows[i] for i in order if i in rows], capped)
 
 
-def _empty(available: bool, why: str | None, capped: bool = False) -> dict[str, Any]:
-    return {"available": available, "why": why, "capped": capped, "names": []}
+async def _scan(
+    db: Database,
+    session: Session,
+    smart: SmartNames,
+    guild_id: int,
+    campaign_id: str,
+    query: list[float],
+) -> tuple[list[dict[str, Any]], bool] | None:
+    """The comparing, in one of the few slots a process has for it (a scan is a core's worth of
+    CPU). Waiting for a slot is limited too, and a scan that outlasts the website's own limit on a
+    statement is "slow", not an error."""
+    try:
+        async with asyncio.timeout(CALL_WAIT_S):
+            await smart.scans.acquire()
+    except TimeoutError:
+        log.warning("Names search by meaning: no scan slot free in time")
+        raise NotAvailable("slow") from None
+    try:
+        return await _near(db, session, guild_id, campaign_id, smart.model, query)
+    except psycopg.errors.QueryCanceled:
+        log.warning("Names search by meaning: the scan ran out of time")
+        raise NotAvailable("slow") from None
+    finally:
+        smart.scans.release()
+
+
+def _answer(names: list[dict[str, Any]], capped: bool) -> dict[str, Any]:
+    return {"names": names, "capped": capped}

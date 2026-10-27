@@ -6,8 +6,10 @@ words about the same thing at the same point. Invented names."""
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 
@@ -20,7 +22,7 @@ from dmbot.web import names_smart, sessions
 from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
-from tests.test_recap_web import BOB, NOW
+from tests.test_recap_web import BOB, HEADERS, NOW
 from tests.test_web_all_names import MEMBER, Listing
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 
@@ -107,6 +109,11 @@ class Smart(Listing):
             self.smart if smart is ... else smart,
         )  # fmt: skip
 
+    async def unavailable(self, words: str = "ice", **kw: Any) -> str:
+        with self.assertRaises(names_smart.NotAvailable) as caught:
+            await self.ask(words, **kw)
+        return caught.exception.why
+
     async def refused_ask(self, who: Any, words: str = "ice") -> str:
         with self.assertRaises(RecapError) as caught:
             await self.ask(words, who)
@@ -152,7 +159,6 @@ class TheText(Smart):
 class TheSearch(Smart):
     async def test_ice_goddess_finds_the_frost_goddess_first(self) -> None:
         got = await self.ask("ice goddess")
-        self.assertTrue(got["available"])
         found = [n["name"] for n in got["names"]]
         self.assertIn("Auril", found)
         self.assertNotIn("Brannoc", found)
@@ -166,7 +172,6 @@ class TheSearch(Smart):
         row = next(n for n in got["names"] if n["name"] == "Mira Voss")
         plain = next(n for n in (await self.page())["names"] if n["name"] == "Mira Voss")
         self.assertEqual(row, plain)
-        self.assertTrue(got["canEdit"])
 
     async def test_a_dm_finds_what_the_players_do_not_know_yet_and_it_says_so(self) -> None:
         got = await self.ask("frost")
@@ -175,7 +180,7 @@ class TheSearch(Smart):
 
     async def test_nothing_close_is_an_empty_answer_not_a_failure(self) -> None:
         got = await self.ask("dragon")
-        self.assertEqual((got["available"], got["why"], got["names"]), (True, None, []))
+        self.assertEqual((got["names"], got["capped"]), ([], False))
 
     async def test_another_campaigns_numbers_are_never_compared(self) -> None:
         other = await self.memory.add_entity(
@@ -230,19 +235,16 @@ class TheRefusals(Smart):
 
 class TheFallback(Smart):
     async def test_a_search_that_is_switched_off_says_so_for_a_dm_only(self) -> None:
-        got = await self.ask("ice", smart=None)
-        self.assertEqual((got["available"], got["why"], got["names"]), (False, "off", []))
+        self.assertEqual(await self.unavailable(smart=None), "off")
         self.assertEqual(await self.refused_ask(self.bob), "not_found")
 
     async def test_no_credit_left_says_so(self) -> None:
         self.voyage.fail = AIOutOfFunds("out")
-        got = await self.ask("ice")
-        self.assertEqual((got["available"], got["why"]), (False, "no_credit"))
+        self.assertEqual(await self.unavailable(), "no_credit")
 
     async def test_voyage_not_answering_says_so(self) -> None:
         self.voyage.fail = ProviderError("down")
-        got = await self.ask("ice")
-        self.assertEqual((got["available"], got["why"]), (False, "unreachable"))
+        self.assertEqual(await self.unavailable(), "unreachable")
 
 
 class TheList(Smart):
@@ -269,31 +271,75 @@ class TheRoute(Smart):
         )
         self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         self.addAsyncCleanup(self.client.aclose)
-        self.url = f"/me/campaigns/{self.cref}/all-names/smart"
+        self.url = f"/me/campaigns/{self.cref}/all-names/smart"  # (a GET: no longer a route)
 
-    async def test_the_search_over_http(self) -> None:
-        got = await self.client.get(self.url, params={"q": "ice goddess"})
+    async def post(self, words: Any, ref: str | None = None, client: Any = None) -> Any:
+        url = f"/me/campaigns/{ref or self.cref}/all-names/search"
+        return await (client or self.client).post(url, json={"q": words}, headers=HEADERS)
+
+    async def test_the_search_over_http_is_a_post_with_the_words_in_the_body(self) -> None:
+        got = await self.post("ice goddess")
         self.assertEqual(got.status_code, 200)
-        self.assertIn("Auril", [n["name"] for n in got.json()["names"]])
+        body = got.json()
+        self.assertIn("Auril", [n["name"] for n in body["names"]])
+        self.assertIs(body["capped"], False)
+        self.assertNotIn("available", body)
+        # never in the address: a GET is not a route
+        self.assertIn(
+            (await self.client.get(self.url, params={"q": "ice goddess"})).status_code, (404, 405)
+        )
+
+    async def test_a_search_that_cannot_run_is_the_not_available_refusal(self) -> None:
+        self.voyage.fail = ProviderError("down")
+        got = await self.post("ice")
+        self.assertEqual((got.status_code, got.json()), (409, {"error": "not_available"}))
+
+    async def test_a_search_switched_off_is_the_not_available_refusal_too(self) -> None:
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://s.example"),
+            clock=lambda: NOW, smart_names=None,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        self.addAsyncCleanup(client.aclose)
+        got = await self.post("ice", client=client)
+        self.assertEqual((got.status_code, got.json()), (409, {"error": "not_available"}))
 
     async def test_refusals_over_http(self) -> None:
-        self.assertEqual((await self.client.get(self.url)).status_code, 422)  # nothing to search
-        other = await self.client.get(f"/me/campaigns/{self.g}.{'0' * 32}/all-names/smart?q=ice")
+        for bad in ("", "   ", None, 5):
+            got = await self.post(bad)
+            self.assertEqual((got.status_code, got.json()), (422, {"error": "bad_text"}), bad)
+        nothing = await self.client.post(
+            self.url.replace("smart", "search"), content=b"not json", headers=HEADERS
+        )
+        self.assertEqual(nothing.status_code, 422)
+        other = await self.post("ice", ref=f"{self.g}.{'0' * 32}")
         self.assertEqual((other.status_code, other.json()), (404, {"error": "not_found"}))
         anonymous = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=self.app),
             base_url="https://web-api.internal.test",
         )
         self.addAsyncCleanup(anonymous.aclose)
-        self.assertEqual((await anonymous.get(self.url, params={"q": "ice"})).status_code, 401)
+        self.assertEqual((await self.post("ice", client=anonymous)).status_code, 401)
+
+    async def test_a_manager_who_is_not_a_dm_gets_not_found_over_http(self) -> None:
+        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="https://web-api.internal.test"
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        self.addAsyncCleanup(client.aclose)
+        got = await self.post("ice", client=client)
+        self.assertEqual((got.status_code, got.json()), (404, {"error": "not_found"}))
+        self.assertEqual(self.voyage.embedded, [])
 
     async def test_one_person_gets_twenty_searches_a_minute(self) -> None:
         for _ in range(20):
-            self.assertEqual(
-                (await self.client.get(self.url, params={"q": "ice"})).status_code, 200
-            )
-        slow = await self.client.get(self.url, params={"q": "ice"})
-        self.assertEqual(slow.status_code, 429)
+            self.assertEqual((await self.post("ice")).status_code, 200)
+        self.assertEqual((await self.post("ice")).status_code, 429)
 
     async def test_the_door_has_one_caller(self) -> None:
         from tests.test_recap_web import callers
@@ -356,8 +402,7 @@ class TheEdges(Smart):
             return await real(*args)
 
         with patch.object(names_smart, "_near", slow):
-            got = await self.ask("ice goddess")
-        self.assertEqual((got["available"], got["why"], got["names"]), (False, "slow", []))
+            self.assertEqual(await self.unavailable("ice goddess"), "slow")
         self.assertEqual(self.calls, 1)  # (the rerank was never asked)
 
     async def test_more_numbers_than_one_search_compares_is_said(self) -> None:
@@ -371,4 +416,119 @@ class TheEdges(Smart):
         got = await self.ask("ice goddess")
         self.assertTrue(got["capped"])
         self.assertIn("Auril", [n["name"] for n in got["names"]])  # (the newest are compared)
-        self.assertFalse((await self.ask("ice", smart=None))["capped"])
+
+
+class ThePrivacy(Smart):
+    """What a name's text may hold is what the players may know (#2756)."""
+
+    async def text_of(self, entity: str) -> str:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_entity_parts(%s, %s, %s) AS p", (self.g, self.one.id, entity)
+            )
+            row = await cur.fetchone()
+        return compose(row["p"]) if row and row["p"] else ""
+
+    async def test_a_connection_the_dm_has_not_revealed_is_left_out(self) -> None:
+        await self.link("enemy_of", self.mira, self.auril)
+        await self.sql(
+            "UPDATE memory_relations SET unrevealed = true"
+            " WHERE subject_id = %s AND object_id = %s",
+            self.mira, self.auril,
+        )  # fmt: skip
+        self.assertNotIn("Auril", await self.text_of(self.mira))
+
+    async def test_a_connection_to_a_story_planning_entry_is_left_out(self) -> None:
+        for kind in ("thread", "quest", "mystery", "hook", "goal", "promise", "deed"):
+            planned = await self.add(f"The {kind}", kind, description="Something planned")
+            await self.link("ally_of", self.mira, planned)
+        text = await self.text_of(self.mira)
+        for kind in ("thread", "quest", "mystery", "hook", "goal", "promise", "deed"):
+            self.assertNotIn(f"The {kind}", text)
+
+    async def test_a_connection_to_an_entry_whose_own_name_is_a_secret_is_left_out(self) -> None:
+        await self.link("ally_of", self.mira, self.auril)
+        self.assertIn("Auril", await self.text_of(self.mira))
+        await self.alias(self.auril, "Auril", secret=True)  # (its own spelling is the secret)
+        self.assertNotIn("Auril", await self.text_of(self.mira))
+
+    async def test_a_public_connection_still_reads(self) -> None:
+        self.assertIn("Brannoc", await self.text_of(self.mira))
+
+    async def test_the_helper_is_not_open_to_everyone(self) -> None:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT has_function_privilege('public', oid, 'EXECUTE') AS open"
+                " FROM pg_proc WHERE proname = 'dmbot_entity_parts'"
+            )
+            rows = await cur.fetchall()
+        self.assertTrue(rows)
+        self.assertFalse(any(r["open"] for r in rows))
+
+
+class TheWaits(Smart):
+    async def test_a_voyage_call_that_never_answers_is_unreachable_after_the_limit(self) -> None:
+        class Hung(FakeVoyage):
+            async def embed(self, texts: Sequence[str], *, query: bool = False) -> Any:
+                await asyncio.sleep(60)
+
+        smart = names_smart.SmartNames(Hung(), MODEL, self.count)
+        with patch.object(names_smart, "CALL_WAIT_S", 0.05):
+            self.assertEqual(await self.unavailable(smart=smart), "unreachable")
+
+    async def test_a_rerank_that_never_answers_is_unreachable_too(self) -> None:
+        class Hung(FakeVoyage):
+            async def rerank(self, query: str, documents: Sequence[str], *, top_k: int) -> Any:
+                await asyncio.sleep(60)
+
+        smart = names_smart.SmartNames(Hung(), MODEL, self.count)
+        with patch.object(names_smart, "CALL_WAIT_S", 0.05):
+            self.assertEqual(await self.unavailable("ice goddess", smart=smart), "unreachable")
+
+    async def test_no_free_scan_slot_in_time_is_slow(self) -> None:
+        for _ in range(names_smart.SEARCHES_AT_ONCE):
+            await self.smart.scans.acquire()  # (every slot taken)
+        with patch.object(names_smart, "CALL_WAIT_S", 0.05):
+            self.assertEqual(await self.unavailable("ice goddess"), "slow")
+
+    async def test_at_most_two_scans_run_at_once_and_the_slot_is_given_back(self) -> None:
+        running = peak = 0
+        real = names_smart._near
+
+        async def counting(*args: Any) -> Any:
+            nonlocal running, peak
+            if not args[-1]:  # (the who-is-asking check reads nothing)
+                return await real(*args)
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.05)
+            try:
+                return await real(*args)
+            finally:
+                running -= 1
+
+        with patch.object(names_smart, "_near", counting):
+            await asyncio.gather(*(self.ask("ice goddess") for _ in range(5)))
+        self.assertEqual(peak, names_smart.SEARCHES_AT_ONCE)
+        for _ in range(names_smart.SEARCHES_AT_ONCE):  # all slots are free again
+            await asyncio.wait_for(self.smart.scans.acquire(), 1)
+
+    async def test_the_slot_is_given_back_when_the_scan_fails(self) -> None:
+        import psycopg
+
+        async def cancelled(*args: Any) -> Any:
+            if not args[-1]:
+                return ([], False)
+            raise psycopg.errors.QueryCanceled("statement timeout")
+
+        with patch.object(names_smart, "_near", cancelled):
+            self.assertEqual(await self.unavailable("ice goddess"), "slow")
+        for _ in range(names_smart.SEARCHES_AT_ONCE):
+            await asyncio.wait_for(self.smart.scans.acquire(), 1)
+
+    def test_the_website_pool_cuts_a_statement_at_five_seconds(self) -> None:
+        import inspect
+
+        from dmbot.web import __main__ as web_main
+
+        self.assertIn("statement_timeout=5000", inspect.getsource(web_main))

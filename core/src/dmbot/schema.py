@@ -10822,7 +10822,10 @@ NAMES_SMART = (
     -- entry the players don't know yet, is left out, so nothing a player may not know is in the
     -- text of a name they may. NULL when the entry has no description (nothing is searched by a
     -- bare name). The bot's numbers and the Names page's reranker both read it, so they read the
-    -- same words.
+    -- same words. The rules for what a name's text may hold are the players' own (the same as
+    -- `meaning.entry_texts` and the website's readers): a connection the DM has not revealed, one
+    -- to a story-planning entry, or one to an entry whose own name is a secret never goes in. Text
+    -- already made can lag until the next embedding run after an entry becomes hidden.
     CREATE FUNCTION dmbot_entity_parts(g BIGINT, c TEXT, eid TEXT) RETURNS JSONB
     LANGUAGE sql STABLE AS $fn$
         SELECT jsonb_build_object(
@@ -10851,16 +10854,25 @@ NAMES_SMART = (
                        AND o.id = CASE WHEN r.subject_id = e.id THEN r.object_id
                                        ELSE r.subject_id END
                       WHERE r.guild_id = g AND r.campaign_id = c
-                        AND r.status = 'confirmed' AND NOT r.secret
+                        AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed
                         AND (r.subject_id = e.id OR r.object_id = e.id)
                         AND o.status = 'confirmed' AND o.merged_into IS NULL
                         AND o.type <> 'person' AND NOT o.audience_limited
                         AND NOT o.hidden_from_players
+                        AND o.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                           'promise', 'deed')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM memory_aliases sa
+                            WHERE sa.guild_id = o.guild_id AND sa.campaign_id = o.campaign_id
+                              AND sa.entity_id = o.id AND sa.secret AND sa.status <> 'rejected'
+                              AND regexp_replace(lower(sa.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(o.name), '[^[:alnum:]]', '', 'g'))
                       ORDER BY other, predicate LIMIT 40) k), '[]'::jsonb))
         FROM memory_entities e
         WHERE e.guild_id = g AND e.campaign_id = c AND e.id = eid
           AND char_length(btrim(e.description)) > 0
     $fn$;
+    REVOKE ALL ON FUNCTION dmbot_entity_parts(BIGINT, TEXT, TEXT) FROM PUBLIC;
 
     -- The Names page's search by meaning (#2733): the entries whose kept numbers are closest to the
     -- search's numbers (`q`, made by the website's server from the DM's own words), best first,
