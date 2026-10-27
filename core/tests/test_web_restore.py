@@ -60,14 +60,17 @@ class Staging(Base):
 
     # ---- staging the copy ----
 
-    async def test_a_copy_with_no_transcripts_files_goes_straight_to_the_bot(self) -> None:
+    async def test_nothing_goes_to_the_bot_until_it_is_sent_even_with_no_files(self) -> None:
         made = await self.stage(a_copy())
         self.assertEqual(
-            (made["name"], made["partsWanted"], made["state"]), ("Lost World", 0, "waiting")
+            (made["name"], made["partsWanted"], made["state"]), ("Lost World", 0, "receiving")
         )
         got = await restores.status(self.web, self.session, THURSDAY.id, made["id"])
-        self.assertEqual((got["stage"], got["state"]), ("restore_waiting", "running"))
+        self.assertEqual((got["stage"], got["state"]), ("restore_receiving", "running"))
         self.assertFalse(got["replacing"])
+        await restores.go(self.web, self.session, THURSDAY.id, made["id"], without=False)
+        sent = await restores.status(self.web, self.session, THURSDAY.id, made["id"])
+        self.assertEqual(sent["stage"], "restore_waiting")
 
     async def test_a_copy_with_transcripts_files_waits_for_them(self) -> None:
         made = await self.stage(a_copy(parts=3))
@@ -284,6 +287,7 @@ class Staging(Base):
 
     async def test_a_restore_the_bot_has_not_taken_goes_stalled(self) -> None:
         made = await self.stage(a_copy())
+        await restores.go(self.web, self.session, THURSDAY.id, made["id"], without=False)
         later = NOW + progress.STALL_AFTER_S["restore_waiting"] + 60  # type: ignore[operator]
         async with self.db.guild(THURSDAY.id) as conn:
             cur = await conn.execute("SELECT updated_at FROM web_restores")
@@ -393,10 +397,11 @@ class TheRoute(Staging):
         busy = await self.client.post(self.base, content=a_copy(), headers=HEADERS)
         self.assertEqual(busy.status_code, 409)
         self.assertEqual(busy.json(), {"error": "busy", "id": first.json()["id"]})
-        early = await self.client.post(
-            f"{self.base}/{first.json()['id']}/go", json={}, headers=HEADERS
-        )
-        self.assertEqual(early.status_code, 409)  # not receiving any more
+        url = f"{self.base}/{first.json()['id']}/go"
+        sent = await self.client.post(url, json={}, headers=HEADERS)
+        self.assertEqual(sent.status_code, 202)
+        again = await self.client.post(url, json={}, headers=HEADERS)
+        self.assertEqual(again.status_code, 409)  # not receiving any more
 
     async def test_a_post_without_the_site_header_is_refused(self) -> None:
         refused = await self.client.post(self.base, content=a_copy())

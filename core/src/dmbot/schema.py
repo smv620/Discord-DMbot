@@ -13453,9 +13453,9 @@ WEB_RESTORES = (
     -- for this many transcripts files). `replace_` is a campaign of the caller's to swap for the
     -- copy, or NULL for a new campaign. The door checks what it can see: the caller is in the
     -- server (and, to replace, a DM of that campaign), no other restore of theirs is still pending
-    -- here, and fewer than 5 in the last hour. Answers 'ok' with the id and the state (`waiting`
-    -- when no transcripts files are to come), 'busy' with the id of the one pending, 'too_soon',
-    -- or 'bad_target'; NULL for anyone not in the server.
+    -- here, and fewer than 5 in the last hour. Answers 'ok' with the id and the state
+    -- (`receiving`), 'busy' with the id of the one pending, 'too_soon', or 'bad_target'; NULL for
+    -- anyone not in the server.
     CREATE FUNCTION dmbot_web_restore_add(
         g BIGINT, replace_ TEXT, nm TEXT, wanted INT, copy BYTEA
     ) RETURNS JSONB
@@ -13465,7 +13465,6 @@ WEB_RESTORES = (
         now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
         have TEXT;
         rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
-        first_state TEXT;
     BEGIN
         IF me IS NULL OR g IS NULL
            OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
@@ -13493,13 +13492,12 @@ WEB_RESTORES = (
             WHERE r.guild_id = g AND r.user_id = me AND r.created_at > now_s - 3600) >= 5 THEN
             RETURN jsonb_build_object('status', 'too_soon');
         END IF;
-        first_state := CASE WHEN wanted = 0 THEN 'waiting' ELSE 'receiving' END;
+        -- Always `receiving` first: nothing goes to the bot until the person has seen what it
+        -- will do and pressed Load it (`dmbot_web_restore_go`), even with no transcripts files.
         INSERT INTO web_restores (guild_id, id, user_id, replace_id, name, parts_wanted, main,
-                                  state, stage, created_at, updated_at)
-            VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, first_state,
-                    CASE WHEN wanted = 0 THEN 'restore_waiting' ELSE 'restore_receiving' END,
-                    now_s, now_s);
-        RETURN jsonb_build_object('status', 'ok', 'id', rid, 'state', first_state);
+                                  created_at, updated_at)
+            VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, now_s, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid, 'state', 'receiving');
     END
     $fn$;
 
