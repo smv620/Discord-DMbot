@@ -399,8 +399,28 @@ class TellingContradictions(unittest.IsolatedAsyncioTestCase):
         grades.mark_said.assert_not_called()  # tried again next session
         me.post.assert_awaited_once()
         shown = me.post.await_args.args[1]
-        self.assertIn("2 clashes", shown)
-        self.assertNotIn("Clash", shown.replace("clashes", ""))  # a number only, no line
+        self.assertEqual(
+            shown, "DMbot has something for you. Open your private messages from DMbot."
+        )  # on a screen players may peek at: not even a number
+
+    async def test_long_reasons_go_out_in_parts_and_are_told_only_when_every_part_arrived(
+        self,
+    ) -> None:
+        long = [self.stored(n) for n in range(3)]
+        for row in long:
+            row.reason = "word " * 380
+        me = self.fake(long, visibility="peek", dm=["sent"] * 40)
+        grades = await self.tell(me)
+        sent = [c.args[1] for c in me.sidebar_send_dm.await_args_list]
+        self.assertGreater(len(sent) // 2, 1)  # more than one part for each of the two DMs
+        self.assertTrue(all(len(t) <= 2000 for t in sent))
+        me = self.fake(long, visibility="private", sent=True)
+        grades = await self.tell(me)
+        self.assertGreater(me.post.await_count, 1)
+        grades.mark_said.assert_awaited_once()
+        me = self.fake(long, visibility="private", sent=False)
+        grades = await self.tell(me)
+        grades.mark_said.assert_not_called()  # a part that did not arrive: not marked told
 
     async def test_a_send_that_failed_posts_nothing_and_marks_nothing(self) -> None:
         me = self.fake([self.stored(1)], visibility="peek", dm=["failed", "failed"])

@@ -8757,19 +8757,28 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.info("Contradictions: %d major waiting, %d told", len(waiting), len(told))
             if not told:
                 return
-            text = contradiction_notes.told_text(told)
-            if campaign.dm_screen_visibility == "private":
-                sent = await self.post(table.screen_channel_id, text, secret_of=(gid, cid))
+            texts = contradiction_notes.told_parts(told)  # (split at line ends, never cut short)
+            private = campaign.dm_screen_visibility == "private"
+            if private:
+                sent = True
+                for text in texts:
+                    sent = sent and await self.post(
+                        table.screen_channel_id, text, secret_of=(gid, cid)
+                    )
             else:
                 # Players may peek at the screen, and the line can name an entry: the DMs' own
                 # private messages instead, and nothing named on the screen (as the secret
-                # questions do). Told only if a DM was reached.
-                results = [await self.sidebar_send_dm(dm, text) for dm in campaign.dm_user_ids]
+                # questions do). Told only if a DM got every part.
+                results = []
+                for dm in campaign.dm_user_ids:
+                    got = [await self.sidebar_send_dm(dm, text) for text in texts]
+                    results.append("sent" if all(g == "sent" for g in got) else got[-1])
                 sent = "sent" in results
                 if not sent and "forbidden" in results:
                     await self.post(
-                        table.screen_channel_id, contradiction_notes.waiting_text(len(told))
-                    )  # (no name; the clashes stay untold, so a later session tries again)
+                        table.screen_channel_id,
+                        contradiction_notes.waiting_text(len(told), private=False),
+                    )  # (no name, no number; they stay untold, so a later session tries again)
             if sent:
                 await grades.mark_said(
                     gid,
