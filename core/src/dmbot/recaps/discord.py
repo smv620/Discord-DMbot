@@ -143,6 +143,7 @@ log = logging.getLogger("dmbot.bot")
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+WEB_RESTORE_ALIVE_EVERY_S = 30  # seconds between touches of the queued website restores
 WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
@@ -302,6 +303,8 @@ class RecapFeatures:
         async def run_web_settings(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
+        async def keep_web_restores_alive(self) -> None: ...
+        async def wait_until_ready(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -321,7 +324,10 @@ class RecapFeatures:
                 else []
             ),
             *(
-                [self._watched(self._web_restore_loop(), "web-restores")]
+                [
+                    self._watched(self._web_restore_loop(), "web-restores"),
+                    self._watched(self._web_restore_alive_loop(), "web-restore-queue"),
+                ]
                 if self.web_restores is not None
                 else []
             ),
@@ -339,6 +345,9 @@ class RecapFeatures:
         """Apply the copies DMs uploaded on the website (#2746). Its own loop: a big restore takes
         minutes, and the recap requests, settings and backups must not wait for it. One restore at
         a time in this process, so a row that stopped moving belongs to a bot that stopped."""
+        await (
+            self.wait_until_ready()
+        )  # (no restore is judged before Discord has said where the bot is)
         rounds = 0
         while True:
             if rounds % WEB_RESTORE_TIDY_EVERY == 0:  # about a minute; the first round too
@@ -352,6 +361,17 @@ class RecapFeatures:
             except Exception as exc:  # the type only: a database error can quote a row
                 log.warning("The website restores failed: %s", type(exc).__name__)
             await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def _web_restore_alive_loop(self) -> None:
+        """Keep the queued website restores showing as alive (#2746) while a long restore runs in
+        the other loop: the page calls a queued restore stalled after two minutes."""
+        await self.wait_until_ready()
+        while True:
+            try:
+                await self.keep_web_restores_alive()
+            except Exception as exc:  # the type only
+                log.warning("The website restore queue touch failed: %s", type(exc).__name__)
+            await asyncio.sleep(WEB_RESTORE_ALIVE_EVERY_S)
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):

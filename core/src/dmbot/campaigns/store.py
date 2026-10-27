@@ -97,6 +97,9 @@ DAMAGED = (
     "This backup file is damaged or isn't a DMbot campaign backup. "
     "Pick the file you got from `/dmbot backup`."
 )
+DAMAGED_DM = "This backup file is damaged (bad DM entry)."
+DAMAGED_CONFIRMATION = "This backup file is damaged (bad confirmation)."
+DAMAGED_OPTIONAL_RULE = "This backup file is damaged (bad optional rule)."
 TOO_BIG = "That file is too big to be a DMbot backup. Pick the file you got from `/dmbot backup`."
 NOT_A_BACKUP = (
     "That file isn't a DMbot campaign backup. Pick the file you got from `/dmbot backup`."
@@ -172,7 +175,7 @@ class _DMSection:
     async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: list[Any]) -> None:
         for raw in rows:
             if not _valid_user_id(raw):
-                raise CampaignError("This backup file is damaged (bad DM entry).")
+                raise CampaignError(DAMAGED_DM)
         async with conn.cursor() as cur:
             await cur.executemany(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
@@ -241,7 +244,7 @@ class _ConfirmationsSection:
                 and 0 <= at <= INT64_MAX
                 and rid not in seen
             ):
-                raise CampaignError("This backup file is damaged (bad confirmation).")
+                raise CampaignError(DAMAGED_CONFIRMATION)
             seen.add(rid)
             assert isinstance(user, str) and isinstance(purpose, str)
             values.append((rid, int(user), purpose, fp, at))
@@ -280,7 +283,7 @@ class _OptionalRulesSection:
             rule = row.get("rule") if isinstance(row, dict) else None
             enabled = row.get("enabled") if isinstance(row, dict) else None
             if not _valid_rule_id(rule) or not isinstance(enabled, bool):
-                raise CampaignError("This backup file is damaged (bad optional rule).")
+                raise CampaignError(DAMAGED_OPTIONAL_RULE)
             assert isinstance(rule, str)
             values.append((campaign_id, guild_id, rule, enabled))
         async with conn.cursor() as cur:

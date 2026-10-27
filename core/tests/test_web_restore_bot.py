@@ -15,7 +15,7 @@ from dmbot.campaigns import parts as campaign_parts
 from dmbot.campaigns import store as campaign_store
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, NO_ROOM_TO_RESTORE, PartsError, encode_backup
 from dmbot.campaigns.web_restore import Outcome, WebRestores
-from tests.test_recap_web import BOB, Base
+from tests.test_recap_web import Base
 from tests.test_web_api import ALICE, THURSDAY
 
 GUILD = THURSDAY.id
@@ -333,6 +333,9 @@ class TheRefusals(Restoring):
             (CampaignError(campaign_parts.TOO_BIG_PART), "too_big"),
             (CampaignError(campaign_store.NOT_A_BACKUP), "not_a_backup"),
             (CampaignError(campaign_store.DAMAGED), "not_a_backup"),
+            (CampaignError(campaign_store.DAMAGED_DM), "not_a_backup"),
+            (CampaignError(campaign_store.DAMAGED_CONFIRMATION), "not_a_backup"),
+            (CampaignError(campaign_store.DAMAGED_OPTIONAL_RULE), "not_a_backup"),
             (CampaignError(campaign_parts.DAMAGED), "not_a_backup"),
             (PartsError(campaign_store.PARTS_NOT_THIS_COPY), "parts"),
             (PartsError("This copy has 2 transcripts files, and you gave 1."), "parts"),
@@ -432,15 +435,22 @@ class TheUpkeep(Restoring):
         await self.stage_in(GUILD + 7, "2" * 32, "waiting", now)
         self.assertEqual(await self.restores.guilds(), sorted([GUILD, GUILD + 7]))
 
-    async def test_a_server_the_bot_has_left_ends_its_rows_and_sweeps_them_after_a_day(
-        self,
-    ) -> None:
+    async def install(self, guild: int, *, left: bool) -> None:
+        async with self.db.guild(guild) as conn:
+            await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via, left_at)"
+                " VALUES (%s, NULL, 1, 'link', %s)",
+                (guild, 5 if left else None),
+            )
+
+    async def test_a_server_dmbot_has_left_ends_its_rows_and_sweeps_them_after_a_day(self) -> None:
         old = int(time.time()) - 86400 - 60
         gone = GUILD + 7
+        await self.install(gone, left=True)
         await self.stage_in(gone, "2" * 32, "waiting", int(time.time()))
         await self.stage_in(gone, "3" * 32, "receiving", int(time.time()))
         await self.stage_in(gone, "4" * 32, "waiting", old)
-        await web_restore.tidy(self.restores, lambda g: g == GUILD)
+        await web_restore.tidy(self.restores)
         for restore_id in ("2" * 32, "3" * 32):
             row = await self.state_in(gone, restore_id)
             assert row is not None
@@ -449,20 +459,57 @@ class TheUpkeep(Restoring):
             )
         self.assertIsNone(await self.state_in(gone, "4" * 32))  # (a day old: gone, bytes and all)
 
-    async def test_a_server_the_bot_is_in_fails_its_stalled_row_keeps_its_queue_alive(self) -> None:
+    async def test_the_left_decision_is_the_install_record_and_never_the_bots_cache(self) -> None:
+        # a server DMbot is in (installed, not left) keeps its rows however the cache looks
+        here = GUILD + 8
+        await self.install(here, left=False)
+        await self.stage_in(here, "5" * 32, "waiting", int(time.time()))
+        # the test server has a campaign and no install record: DMbot's, as the website decides
+        await self.stage_in(GUILD, "6" * 32, "waiting", int(time.time()))
+        await web_restore.tidy(self.restores)  # (there is no cache to ask: it takes none)
+        for guild, restore_id in ((here, "5" * 32), (GUILD, "6" * 32)):
+            row = await self.state_in(guild, restore_id)
+            assert row is not None
+            self.assertEqual((row["state"], row["error"]), ("waiting", ""))
+        self.assertTrue(await self.restores.has_left(GUILD + 99))  # (no record, no campaign)
+        self.assertFalse(await self.restores.has_left(here))
+        self.assertFalse(await self.restores.has_left(GUILD))
+
+    async def test_a_server_dmbot_is_in_fails_its_stalled_row(self) -> None:
         now = int(time.time())
-        await self.stage_in(GUILD, "1" * 32, "waiting", now - 600)
         await self.stage(
             b"w", restore_id="2" * 32, user=12, state="working",
             updated=now - web_restore.STALLED_AFTER_S - 5,
         )  # fmt: skip
-        await web_restore.tidy(self.restores, lambda g: g == GUILD)
+        await web_restore.tidy(self.restores)
         row = await self.state_in(GUILD, "2" * 32)
         assert row is not None
         self.assertEqual((row["state"], row["error"]), ("failed", "failed"))
-        waiting = await self.row("1" * 32)
-        self.assertGreaterEqual(waiting["updated_at"], now)  # (the queue shows as alive)
-        self.assertEqual(waiting["state"], "waiting")
+
+    async def test_the_queue_is_kept_alive_by_a_task_of_its_own_while_a_restore_runs(self) -> None:
+        start = int(time.time())
+        clock = [float(start)]
+        store = WebRestores(self.db, clock=lambda: clock[0])
+        await self.stage(await self.copy_of(self.one), restore_id="1" * 32, created=start - 900)
+        await self.stage_in(GUILD, "2" * 32, "waiting", start - 600)  # (queued behind it)
+        item = await store.claim_next(GUILD)
+        assert item is not None and item.id == "1" * 32
+        seen: list[tuple[int, int]] = []
+        host = self.host()
+        real = host.restore_copy
+
+        async def importing(g: int, data: object, importer: int, **kw: Any) -> Any:
+            before = (await self.row("2" * 32))["updated_at"]
+            clock[0] += 120  # two minutes pass inside the restore...
+            await store.keep_waiting_alive()  # ...and the other task touches the queue
+            seen.append((before, (await self.row("2" * 32))["updated_at"]))
+            return await real(g, data, importer, **kw)
+
+        host.restore_copy = importing
+        done = await web_restore.apply(host, store, GUILD, item)
+        self.assertEqual(done.error, "")
+        self.assertEqual(seen, [(start - 600, start + 120)])
+        self.assertEqual((await self.row("2" * 32))["state"], "waiting")
 
     async def test_the_sweep_never_deletes_a_row_being_worked(self) -> None:
         old = int(time.time()) - 86400 - 60
@@ -480,12 +527,46 @@ class TheUpkeep(Restoring):
             raise RuntimeError("down")
 
         with patch.object(self.restores, "fail_stalled", broken):
-            await web_restore.tidy(self.restores, lambda g: True)
+            await web_restore.tidy(self.restores)
         self.assertIsNone(await self.state_in(GUILD, "1" * 32))  # (the sweep still ran)
 
-    async def test_the_bots_loop_tidies_first_then_applies_and_the_shared_loop_does_not(
-        self,
-    ) -> None:
+    async def test_the_restore_loop_waits_until_the_bot_is_ready_before_anything(self) -> None:
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.recaps.discord import RecapFeatures
+
+        class Stop(Exception):
+            pass
+
+        order: list[str] = []
+        ready = asyncio.Event()
+
+        async def wait_until_ready() -> None:
+            order.append("wait")
+            await ready.wait()
+            order.append("ready")
+
+        async def tidy() -> None:
+            order.append("tidy")
+
+        async def run() -> None:
+            order.append("run")
+
+        me = SimpleNamespace(
+            wait_until_ready=wait_until_ready, tidy_web_restores=tidy, run_web_restores=run
+        )
+        task = asyncio.ensure_future(RecapFeatures._web_restore_loop(me))  # type: ignore[arg-type]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.assertEqual(order, ["wait"])  # (nothing is judged before the bot is ready)
+        with patch("dmbot.recaps.discord.asyncio.sleep", AsyncMock(side_effect=Stop)):
+            ready.set()
+            with self.assertRaises(Stop):
+                await task
+        self.assertEqual(order, ["wait", "ready", "tidy", "run"])
+
+    async def test_the_queue_task_waits_until_ready_then_touches(self) -> None:
         from unittest.mock import AsyncMock, patch
 
         from dmbot.recaps.discord import RecapFeatures
@@ -495,18 +576,26 @@ class TheUpkeep(Restoring):
 
         order: list[str] = []
 
-        async def tidy() -> None:
-            order.append("tidy")
+        async def wait_until_ready() -> None:
+            order.append("ready")
 
-        async def run() -> None:
-            order.append("run")
+        async def alive() -> None:
+            order.append("alive")
 
-        me = SimpleNamespace(tidy_web_restores=tidy, run_web_restores=run)
+        me = SimpleNamespace(wait_until_ready=wait_until_ready, keep_web_restores_alive=alive)
         sleeping = patch("dmbot.recaps.discord.asyncio.sleep", AsyncMock(side_effect=Stop))
         with sleeping, self.assertRaises(Stop):
-            await RecapFeatures._web_restore_loop(me)  # type: ignore[arg-type]
-        self.assertEqual(order, ["tidy", "run"])
-        # the shared loop for recap requests, settings and backups never runs a restore
+            await RecapFeatures._web_restore_alive_loop(me)  # type: ignore[arg-type]
+        self.assertEqual(order, ["ready", "alive"])
+
+    async def test_the_shared_loop_for_recap_requests_never_runs_a_restore(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.recaps.discord import RecapFeatures
+
+        class Stop(Exception):
+            pass
+
         shared = SimpleNamespace(
             **{
                 name: AsyncMock()
@@ -527,6 +616,7 @@ class TheUpkeep(Restoring):
             web_delete_notices=None,
             web_backups=None,
         )
+        sleeping = patch("dmbot.recaps.discord.asyncio.sleep", AsyncMock(side_effect=Stop))
         with sleeping, self.assertRaises(Stop):
             await RecapFeatures._recap_request_loop(shared)  # type: ignore[arg-type]
         shared.run_web_backups.assert_awaited()  # (the others ran)
@@ -544,8 +634,9 @@ class TheCopyThatIsIn(Restoring):
         self.assertEqual((got["state"], got["result_id"]), ("done", done.result_id))
         self.assertIsNone(got["main"])
 
-    async def test_a_restore_that_fails_leaves_no_done_row_behind(self) -> None:
-        await self.stage(await self.copy_of(self.one), replace=self.two.id, user=BOB.id)
+    async def test_a_restore_that_fails_leaves_no_done_row_and_no_campaign_behind(self) -> None:
+        before = len(await self.campaigns.list_campaigns(GUILD))
+        await self.stage(await self.copy_of(self.one))  # (a new campaign: a leak would show)
 
         async def broken(conn: Any, campaign_id: str) -> None:
             raise RuntimeError("the copy rolled back")
@@ -560,7 +651,8 @@ class TheCopyThatIsIn(Restoring):
         host.restore_copy = failing
         got = await self.run_marked(host)
         self.assertEqual((got["state"], got["error"]), ("failed", "failed"))
-        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), 2)  # (no third one)
+        self.assertIsNone(got["result_id"])
+        self.assertEqual(len(await self.campaigns.list_campaigns(GUILD)), before)  # (rolled back)
 
     async def test_the_plan_is_asked_with_the_campaign_being_replaced_or_none(self) -> None:
         await self.stage(await self.copy_of(self.two), replace=self.one.id)
@@ -594,6 +686,39 @@ class TheCopyThatIsIn(Restoring):
 
 
 class TheBotsOwnSteps(Restoring):
+    async def test_the_bots_round_applies_a_waiting_copy_in_each_server_it_is_in(self) -> None:
+        from dmbot.bot import DMBot
+
+        await self.stage(await self.copy_of(self.one))
+        me = self.host()
+        me.guilds = [SimpleNamespace(id=GUILD), SimpleNamespace(id=999)]
+        me.web_restores = self.restores
+        await DMBot.run_web_restores(me)  # type: ignore[arg-type]
+        self.assertEqual((await self.row())["state"], "done")
+
+    async def test_a_person_is_in_the_server_from_the_cache_or_one_lookup(self) -> None:
+        import discord
+
+        from dmbot.bot import DMBot
+
+        class Guild:
+            def __init__(self, cached: set[int], found: set[int]) -> None:
+                self.cached, self.found = cached, found
+
+            def get_member(self, uid: int) -> object | None:
+                return object() if uid in self.cached else None
+
+            async def fetch_member(self, uid: int) -> object:
+                if uid not in self.found:
+                    raise discord.NotFound(SimpleNamespace(status=404, reason="x"), "gone")
+                return object()
+
+        me = SimpleNamespace(get_guild=lambda g: Guild({1}, {2}) if g == GUILD else None)
+        self.assertTrue(await DMBot.in_server(me, GUILD, 1))  # type: ignore[arg-type]
+        self.assertTrue(await DMBot.in_server(me, GUILD, 2))  # type: ignore[arg-type]
+        self.assertFalse(await DMBot.in_server(me, GUILD, 3))  # type: ignore[arg-type]
+        self.assertFalse(await DMBot.in_server(me, 999, 1))  # type: ignore[arg-type]
+
     async def test_the_planner_refresh_and_the_rules_channel_are_done_for_a_replace_only(
         self,
     ) -> None:

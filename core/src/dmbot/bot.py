@@ -10165,11 +10165,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def tidy_web_restores(self) -> None:
         """The upkeep of the website's restore rows (#2746), about once a minute: end what a
-        stopped bot left, keep a queue alive, end the rows of a server the bot has left (they hold
-        whole campaigns), delete what is a day old. Every server that has rows, not only the ones
-        the bot is in."""
+        stopped bot left, end the rows of a server DMbot has left (they hold whole campaigns;
+        decided from the install record, never from the cache), delete what is a day old. Every
+        server that has rows, not only the ones the bot is in."""
         if self.web_restores is not None:
-            await web_restore.tidy(self.web_restores, lambda g: self.get_guild(g) is not None)
+            await web_restore.tidy(self.web_restores)
+
+    async def keep_web_restores_alive(self) -> None:
+        """Show the website's queued restores as alive (#2746), from a task of its own so a long
+        restore ahead of them does not make them look stalled."""
+        if self.web_restores is not None:
+            await self.web_restores.keep_waiting_alive()
 
     async def in_server(self, guild_id: int, user_id: int) -> bool:
         """Whether this person is still in the server (a website restore is judged at the moment

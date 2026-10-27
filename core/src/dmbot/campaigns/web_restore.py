@@ -40,6 +40,9 @@ from dmbot.campaigns.parts import DAMAGED as PART_DAMAGED
 from dmbot.campaigns.parts import TOO_BIG_PART, LeftOut
 from dmbot.campaigns.store import (
     DAMAGED,
+    DAMAGED_CONFIRMATION,
+    DAMAGED_DM,
+    DAMAGED_OPTIONAL_RULE,
     NO_ROOM_TO_RESTORE,
     NOT_A_BACKUP,
     NOT_HERE,
@@ -77,6 +80,9 @@ _BY_MESSAGE = {
     TOO_BIG_PART: TOO_BIG,
     NOT_A_BACKUP: NOT_A_BACKUP_WORD,
     DAMAGED: NOT_A_BACKUP_WORD,
+    DAMAGED_DM: NOT_A_BACKUP_WORD,
+    DAMAGED_CONFIRMATION: NOT_A_BACKUP_WORD,
+    DAMAGED_OPTIONAL_RULE: NOT_A_BACKUP_WORD,
     PART_DAMAGED: NOT_A_BACKUP_WORD,
 }
 
@@ -277,6 +283,31 @@ class WebRestores:
             )
             return int(cur.rowcount)
 
+    async def keep_waiting_alive(self) -> None:
+        """`touch_waiting` for every server with rows. Run on its own, apart from the restores,
+        so a queue behind a long restore keeps moving; a server it cannot touch is skipped."""
+        for guild_id in await self.guilds():
+            try:
+                await self.touch_waiting(guild_id)
+            except Exception as exc:  # the type only
+                log.warning("Website restore queue touch: %s", type(exc).__name__)
+
+    async def has_left(self, guild_id: int) -> bool:
+        """Whether DMbot has left this server, from the database and never from the bot's cache
+        (which is empty until Discord has sent the server list): the install record says it left,
+        the same rule the website uses to accept a restore (#2750). A server with no record that
+        has no campaign either is not DMbot's, so nothing could ever apply its rows."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM installs WHERE guild_id = %s AND left_at IS NULL)"
+                " AS installed,"
+                " EXISTS (SELECT 1 FROM installs WHERE guild_id = %s) AS recorded,"
+                " EXISTS (SELECT 1 FROM campaigns WHERE guild_id = %s) AS played",
+                (guild_id, guild_id, guild_id),
+            )
+            here = await cur.fetchone() or {}
+        return not (here.get("installed") or (here.get("played") and not here.get("recorded")))
+
     async def fail_not_here(self, guild_id: int) -> int:
         """End, as not allowed, the rows of a server the bot is not in: nothing can apply them,
         and the person is `busy` everywhere while they stand."""
@@ -302,20 +333,26 @@ class WebRestores:
             return int(cur.rowcount)
 
 
-async def tidy(store: WebRestores, in_server: Callable[[int], bool]) -> None:
-    """The upkeep of the rows, for every server that has any: end what a stopped bot left, keep a
-    queue alive, end the rows of a server the bot has left, and delete what is a day old. Each step
-    has its own `try`, so one failing never skips the rest."""
+async def tidy(store: WebRestores) -> None:
+    """The upkeep of the rows, for every server that has any: end what a stopped bot left, end the
+    rows of a server DMbot has left (the install record says so; the bot's server cache is never
+    asked), and delete what is a day old. Each step has its own `try`, so one failing never skips
+    the rest. Keeping a queue alive is `keep_waiting_alive`, a task of its own."""
     for guild_id in await store.guilds():
+        try:
+            gone = await store.has_left(guild_id)
+        except Exception as exc:  # the type only: a database error can quote a row
+            log.warning("Website restore upkeep (has_left): %s", type(exc).__name__)
+            continue  # not known: nothing is ended on a guess
         steps = (
-            (store.fail_stalled, store.touch_waiting, store.sweep, store.forget_if_empty)
-            if in_server(guild_id)
-            else (store.fail_not_here, store.sweep, store.forget_if_empty)
+            (store.fail_not_here, store.sweep, store.forget_if_empty)
+            if gone
+            else (store.fail_stalled, store.sweep, store.forget_if_empty)
         )
         for step in steps:
             try:
                 await step(guild_id)
-            except Exception as exc:  # the type only: a database error can quote a row
+            except Exception as exc:
                 log.warning("Website restore upkeep (%s): %s", step.__name__, type(exc).__name__)
 
 

@@ -13398,7 +13398,8 @@ WEB_BACKUPS = (
 # sweep that must reach a server the bot has left (its rows hold whole campaigns) cannot list them
 # itself. A routing table like `campaign_guilds`: server ids and nothing else, so no row-level
 # security (see the rules at the top of this file). A trigger fills it when a row is staged, and
-# the bot's upkeep removes a server once it has no rows left. (`web_restores` is new and empty
+# the bot's upkeep removes a server once it has no rows left (the trigger's conflict clause takes
+# the row's lock, so a delete racing an insert waits for it). (`web_restores` is new and empty
 # everywhere, so there is nothing to backfill.)
 WEB_RESTORE_GUILDS = """
     CREATE TABLE web_restore_guilds (
@@ -13408,7 +13409,8 @@ WEB_RESTORE_GUILDS = """
         LANGUAGE plpgsql SECURITY DEFINER
         AS $fn$
     BEGIN
-        INSERT INTO web_restore_guilds (guild_id) VALUES (NEW.guild_id) ON CONFLICT DO NOTHING;
+        INSERT INTO web_restore_guilds (guild_id) VALUES (NEW.guild_id)
+            ON CONFLICT (guild_id) DO UPDATE SET guild_id = EXCLUDED.guild_id;
         RETURN NULL;
     END
     $fn$;
