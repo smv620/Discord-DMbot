@@ -53,6 +53,7 @@ from dmbot.web import (
     offers,
     past_sessions,
     relationships,
+    restores,
     sessions,
     shared_recaps,
     sharing,
@@ -951,6 +952,7 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    restore_limit = RateLimit(3600, count=10)  # copies loaded on the page: big, so few (#2745)
     upload_limit = RateLimit(60, count=6)  # recaps written by the table, added on the page (#2609)
     name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
@@ -1751,6 +1753,117 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    restore_refusals: dict[str, tuple[int, str]] = {
+        "not_found": (404, "not_found"),
+        "too_big": (413, "too_big"),
+        "not_a_backup": (422, "not_a_backup"),
+        "too_many_parts": (422, "too_many_parts"),
+        "bad_part": (422, "bad_part"),
+        "too_soon": (429, "too_soon"),
+        "busy": (409, "busy"),
+        "missing": (409, "missing"),
+        "not_receiving": (409, "not_receiving"),
+    }
+
+    def restore_refusal(err: RecapError) -> HTTPException:
+        status, detail = restore_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    async def bounded_bytes(request: Request, limit: int) -> bytes:
+        """A file's bytes, read with a running cap (a declared length is not trusted)."""
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > limit:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(status_code=413, detail="too_big")
+        return bytes(data)
+
+    @app.post("/me/restores/{server_id}", status_code=202)
+    async def me_restore_stage(
+        server_id: int, signed: Signed, request: Request, replace: str | None = None
+    ) -> Any:
+        """Load a backup from the website (#2745). The body is the copy itself (the file from
+        `/dmbot backup`, as bytes); `?replace=<server>.<campaign>` swaps one of the person's own
+        campaigns for it, otherwise it becomes a new campaign. Staged for the bot, which checks
+        the plan, the free slot and the rights again when it applies it. Answers `{id, name,
+        partsWanted, state}`. 413 `too_big`, 422 `not_a_backup` or `too_many_parts`, 409 `busy`
+        (with the id of the one pending), 429 `too_soon`, 404 `not_found`."""
+        session, _token = signed
+        if restore_limit.take(f"restore:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        raw = await bounded_bytes(request, restores.MAX_BODY_BYTES)
+        try:
+            return await restores.stage(db, session, server_id, replace, raw)
+        except RecapError as err:
+            if err.code == "busy" and err.problems:
+                # Says which one is pending, so the page can show that one instead.
+                return JSONResponse(
+                    {"error": "busy", "id": err.problems[0].get("id")}, status_code=409
+                )
+            raise restore_refusal(err) from None
+
+    @app.put("/me/restores/{server_id}/{restore_id}/parts/{number}")
+    async def me_restore_part(
+        server_id: int, restore_id: str, number: int, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """One transcripts file of a staged copy (numbers 1 to the count it asked for; sending
+        a number again replaces it). Answers `{received}`."""
+        session, _token = signed
+        raw = await bounded_bytes(request, restores.MAX_BODY_BYTES)
+        try:
+            return await restores.add_part(db, session, server_id, restore_id, number, raw)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.post("/me/restores/{server_id}/{restore_id}/go", status_code=202)
+    async def me_restore_go(
+        server_id: int, restore_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Send the staged copy to the bot. `{"without": true}` restores without the transcripts
+        files (all of them or none, as in Discord). 409 `missing` while files are still to come."""
+        session, _token = signed
+        body = await bounded_json(request)
+        without = bool(body.get("without")) if isinstance(body, dict) else False
+        try:
+            await restores.go(db, session, server_id, restore_id, without=without)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        return {"id": restore_id}
+
+    @app.get("/me/restores/{server_id}")
+    async def me_restore_latest(server_id: int, signed: Signed) -> dict[str, Any]:
+        """The person's latest restore in that server (so a closed page finds its way back), in
+        the shape of `GET /me/restores/{server_id}/{id}`. 404 when there is none."""
+        session, _token = signed
+        try:
+            return await restores.status(db, session, server_id, None)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.get("/me/restores/{server_id}/{restore_id}")
+    async def me_restore_status(server_id: int, restore_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own restore stands, in the shared progress shape (stage, startedAt,
+        updatedAt, serverNow, state, reason, done/total for the writing), with `name`, `replacing`,
+        `partsWanted`, `partsReceived`, `campaign` (once it is made), `leftOut`, `expiresAt`."""
+        session, _token = signed
+        try:
+            return await restores.status(db, session, server_id, restore_id)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.delete("/me/restores/{server_id}/{restore_id}", status_code=204)
+    async def me_restore_cancel(server_id: int, restore_id: str, signed: Signed) -> Response:
+        """Take a restore back before the bot starts it, or clear one that has ended."""
+        session, _token = signed
+        try:
+            await restores.cancel(db, session, server_id, restore_id)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        return Response(status_code=204)
 
     @app.post("/me/campaigns/{ref}/settings", status_code=202)
     async def me_campaign_setting(ref: str, signed: Signed, request: Request) -> dict[str, str]:
