@@ -10278,17 +10278,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def apply_optional_rule(
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
-    ) -> None:
+    ) -> bool:
         """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
-        saved, then noted in the DM screen if the campaign has one. A missing channel is not the
-        choice's failure (the rule is saved), and the note never pings."""
+        saved, then noted in the DM screen if the campaign has one. A line that could not be
+        posted is not the choice's failure (the rule is saved): False says so, for the page to
+        mention. The note never pings."""
         await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
-        if campaign.dm_screen_channel_id is not None:
-            await self.post(
+        if campaign.dm_screen_channel_id is None:
+            return True
+        try:
+            return await self.post(
                 campaign.dm_screen_channel_id,
                 f"{'✅' if turn_on else '⬜'} Optional rule turned {'on' if turn_on else 'off'}: "
                 f"**{rule.name}** (by <@{sender_id}>)",
             )
+        except Exception as exc:  # the type only
+            log.warning("The DM screen line for an optional rule failed: %s", type(exc).__name__)
+            return False
 
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's

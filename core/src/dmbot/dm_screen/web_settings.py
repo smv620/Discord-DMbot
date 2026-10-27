@@ -50,6 +50,12 @@ REFUSED = "refused"  # the rules refused it; `note` has the words Discord would 
 FAILED = "failed"  # anything unexpected; the choice can be sent again
 
 
+# Said after a saved optional rule when the DM screen could not be told (Discord says the same).
+NO_SCREEN_NOTE = (
+    "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that channel."
+)
+
+
 @dataclass(frozen=True, slots=True)
 class Setting:
     id: str
@@ -84,9 +90,11 @@ class Host(Protocol):
 
     async def apply_optional_rule(
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
-    ) -> None:
+    ) -> bool:
         """Save an optional rule on or off and note it in the DM screen, as `/dmbot optionalrules`
-        does. Raises `CampaignError` when the campaign is gone."""
+        does. True when the DM screen has its line (or the campaign has none); False when the line
+        could not be posted: the rule is saved either way. Raises `CampaignError` when the
+        campaign is gone."""
         ...
 
 
@@ -206,10 +214,11 @@ async def _optional_rule(host: Host, campaign: Campaign, item: Setting) -> Outco
     ):
         return Outcome(BAD_VALUE)
     try:
-        await host.apply_optional_rule(campaign, chosen, item.turn_on, item.user_id)
+        noted = await host.apply_optional_rule(campaign, chosen, item.turn_on, item.user_id)
     except CampaignError:
         return Outcome(NOT_FOUND)  # the campaign went while the choice was being saved
-    return Outcome(note=f"{chosen.name} is now {'on' if item.turn_on else 'off'}.")
+    note = f"{chosen.name} is now {'on' if item.turn_on else 'off'}."
+    return Outcome(note=note if noted else f"{note} {NO_SCREEN_NOTE}")
 
 
 async def run_one(host: Host, store: SettingStore, guild_id: int, item: Setting) -> bool:
