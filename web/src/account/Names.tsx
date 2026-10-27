@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words, smartWords } from "../content/names-words";
+import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import {
   type AccountApi,
   ApiError,
@@ -21,7 +21,7 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import SayIt from "./SayIt";
-import WorkProgress from "./WorkProgress";
+import LazyPanel from "./LazyPanel";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -76,17 +76,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const kind = kinds.join(",");
   const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
-  // "Search by meaning" (#2733): the words in the box, what the last search found (replacing the list until
-  // "Back to all names"), whether one is running and since when, and why the last one did not work. It only
-  // searches when Search is pressed (each search costs a call), never as you type.
-  const [meaning, setMeaning] = useState("");
+  // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
+  // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
+  // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).
   const [smart, setSmart] = useState<NameRow[] | null>(null);
-  const [smartRun, setSmartRun] = useState<{ since: number } | null>(null);
-  const [smartProblem, setSmartProblem] = useState<string | null>(null);
-  const smartLatest = useRef(0);
-  const meaningBox = useRef<HTMLInputElement>(null);
-  const smartShowing = useRef(false); // (a ref: a change that finishes later must see it now, not as of its render)
-  const lastSearch = useRef("");
+  const [smartRefresh, setSmartRefresh] = useState(0);
+  const [smartLeave, setSmartLeave] = useState(0);
+  const smartNow = useRef<NameRow[] | null>(null);
+  smartNow.current = smart;
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -161,75 +158,17 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     }
   }
 
-  /** One meaning search. A newer search, or going back to the list, makes an older answer be ignored. */
-  async function searchByMeaning(typed: string): Promise<void> {
-    const text = typed.trim();
-    if (!ref || !api.smartNames || smartRun) return;
-    if (text === "") {
-      setSmartProblem(smartWords.typeSome);
-      return;
-    }
-    if (text.length > 100) {
-      setSmartProblem(smartWords.tooLong);
-      return;
-    }
-    const mine = ++smartLatest.current;
-    lastSearch.current = text;
-    setSmartProblem(null);
-    setSmartRun({ since: Date.now() / 1000 });
-    try {
-      const got = await api.smartNames(ref, text);
-      if (mine !== smartLatest.current) return;
-      smartShowing.current = true;
-      setSmart(got.names);
-    } catch (error) {
-      if (mine !== smartLatest.current) return;
-      const kindOf = error instanceof ApiError ? error.kind : "network";
-      if (kindOf === "signed-out") setView("signed-out");
-      else setSmartProblem(smartProblemFor(kindOf));
-    } finally {
-      if (mine === smartLatest.current) setSmartRun(null);
-    }
-  }
-
-  /** After a change to a name: read the same search again, quietly, so the rows are not out of date. */
-  async function refreshSmart(): Promise<void> {
-    if (!ref || !api.smartNames || !smartShowing.current || lastSearch.current === "") return;
-    const mine = smartLatest.current;
-    try {
-      const got = await api.smartNames(ref, lastSearch.current);
-      // Back to all names, or a newer search, while this was on its way: its answer is not wanted.
-      if (mine === smartLatest.current && smartShowing.current) setSmart(got.names);
-    } catch {
-      // (the rows stay as they were; the next Search says what is wrong)
-    }
-  }
-
-  /** Leaves the search results (Back, or any use of the list's own controls): an answer still on its way is no
-   * longer wanted, and the words are forgotten. */
-  function leaveSmart(): void {
-    smartLatest.current++;
-    smartShowing.current = false;
-    lastSearch.current = "";
-    setSmart(null);
-    setSmartRun(null);
-    setSmartProblem(null);
-  }
-
-  function backToList(): void {
-    leaveSmart();
-    setMeaning("");
-    // The button that was pressed is gone: the keyboard goes to the box, ready for the next search.
-    setTimeout(() => meaningBox.current?.focus(), 0);
-  }
-
   // Search as you type, filter and sort: a new read from page 1 (the first one at once).
   useEffect(() => {
     if (!ref || !api.allNames) return;
     const wait = first.current ? 0 : SEARCH_MS;
     first.current = false;
     setNews(null);
-    if (smartShowing.current) leaveSmart(); // (typing in Find a name, or a type, sort or size, is back to the list)
+    if (smartNow.current !== null) {
+      // (typing in Find a name, or a type, sort or size, is back to the list)
+      setSmart(null);
+      setSmartLeave((n) => n + 1);
+    }
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
     // `load` reads the latest query through a ref, so only these restart the read.
@@ -304,7 +243,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   function reload(): Promise<unknown> {
     const read = load(pageNow.current, true);
     // (no extra step when no search is showing: the editor stays busy only as long as the list read takes)
-    return smartShowing.current ? read.then(refreshSmart) : read;
+    if (smartNow.current !== null) void read.then(() => setSmartRefresh((n) => n + 1)); // (the search is read again)
+    return read;
   }
 
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
@@ -463,59 +403,25 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       </form>
 
       {smartOn && (
-        <form
-          class="names-smart stack"
-          role="search"
-          aria-label={smartWords.region}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void searchByMeaning(meaning);
+        <LazyPanel
+          load={() => import("./NamesSmart")}
+          what="the search by meaning"
+          props={{
+            api,
+            campaignRef: ref,
+            onResults: setSmart,
+            showing: smart !== null,
+            refreshKey: smartRefresh,
+            leaveKey: smartLeave,
+            count: smart?.length ?? 0,
+            onSignedOut: () => setView("signed-out"),
           }}
-          noValidate
-        >
-          <label class="field">
-            {smartWords.label}
-            <input
-              type="search"
-              name="meaning"
-              value={meaning}
-              autoComplete="off"
-              spellcheck={false}
-              ref={meaningBox}
-              aria-describedby="names-smart-hint"
-              onInput={(e) => setMeaning((e.target as HTMLInputElement).value)}
-            />
-          </label>
-          <p id="names-smart-hint" class="small muted">
-            {smartWords.hint}
-          </p>
-          <div class="row">
-            {/* aria-disabled, not disabled: pressing it must not drop the keyboard (a search already running is
-                ignored, and an empty one says what to type). */}
-            <button type="submit" class="button" aria-disabled={smartRun !== null}>
-              {smartWords.button}
-            </button>
-            {smart !== null && (
-              <button type="button" class="button secondary" onClick={backToList}>
-                {smartWords.back}
-              </button>
-            )}
-          </div>
-          {smart !== null && <p class="small muted">{smartWords.showing}</p>}
-          {smartRun !== null && (
-            <WorkProgress stage={smartWords.stage} state="running" startedAt={smartRun.since} progressUnknown />
-          )}
-          {smartProblem !== null && (
-            <p class="warn" role="alert">
-              {smartProblem}
-            </p>
-          )}
-        </form>
+        />
       )}
 
       {/* Always on the page, so a screen reader hears each new count and each result. */}
       <p class="small" role="status" aria-live="polite" aria-busy={busy}>
-        {smart !== null ? (smart.length === 0 ? smartWords.none : smartWords.found(smart.length)) : words.howMany(data.total)}
+        {words.howMany(smart !== null ? smart.length : data.total)}
       </p>
       {/* Two boxes that are always there, each with one role for good: a role that changes is
           missed by screen readers. A result that repeats ("Saved." twice) is a new node, so it is
@@ -595,13 +501,6 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       />}
     </div>
   );
-}
-
-/** The words for a meaning search that did not work. */
-function smartProblemFor(kind: string): string {
-  if (kind === "not-available") return smartWords.notReady;
-  if (kind === "network") return words.errors.network ?? smartWords.failed;
-  return smartWords.failed;
 }
 
 /** "A, B and C". */

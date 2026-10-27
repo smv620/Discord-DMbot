@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names from "../src/account/Names";
-import { namesPage as w, smartWords as s } from "../src/content/names-words";
+import { smartWords as s } from "../src/content/names-smart-words";
+import { namesPage as w } from "../src/content/names-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/names-words", async (original) => {
@@ -28,9 +29,11 @@ afterEach(() => {
 });
 
 const rows = () => screen.queryAllByRole("listitem").filter((li) => li.classList.contains("name-row"));
-const open = async (path = "/account/names/100.cmp1", api = mockApi("table")) => {
+// The box is its own file, fetched after the page (LazyPanel): wait for it unless the test is about it being absent.
+const open = async (path = "/account/names/100.cmp1", api = mockApi("table"), withBox = true) => {
   render(<Names api={api} path={path} />);
   await screen.findByRole("list", { name: w.listLabel });
+  if (withBox && live.on && !/names-manager|names-none/.test(path)) await screen.findByLabelText(s.label);
   return api;
 };
 const box = () => screen.getByLabelText(s.label) as HTMLInputElement;
@@ -39,7 +42,7 @@ const calls = (api: ReturnType<typeof mockApi>) => api.calls.filter((c) => c.sta
 describe("Search by meaning", () => {
   it("is not there while the switch is off, and not for a server manager who can't change names", async () => {
     live.on = false;
-    await open();
+    await open("/account/names/100.cmp1", mockApi("table"), false);
     expect(screen.queryByLabelText(s.label)).toBeNull();
     cleanup();
     live.on = true;
@@ -234,6 +237,32 @@ describe("Search by meaning", () => {
     fireEvent.input(box(), { target: { value: "holy healer" } });
     fireEvent.click(screen.getByRole("button", { name: s.button }));
     expect(await screen.findByText(w.signedOut)).toBeTruthy();
+  });
+
+  it("a search that hangs goes quiet after a minute with a way on, and a new press starts over", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const api = mockApi("table");
+      const real = api.smartNames!.bind(api);
+      let hung = true;
+      api.smartNames = async (ref, words) => {
+        if (hung) return new Promise<never>(() => {}); // never answers
+        return real(ref, words);
+      };
+      await open("/account/names/100.cmp1", api);
+      fireEvent.input(box(), { target: { value: "holy healer" } });
+      fireEvent.click(screen.getByRole("button", { name: s.button }));
+      await screen.findByText(s.stage);
+      expect(screen.queryByText(s.quiet)).toBeNull();
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(await screen.findByText(s.quiet)).toBeTruthy();
+      hung = false;
+      fireEvent.click(screen.getByRole("button", { name: s.button })); // not ignored now
+      await waitFor(() => expect(rows()).toHaveLength(1));
+      expect(screen.queryByText(s.quiet)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("has no accessibility violations with the box and a result", async () => {
