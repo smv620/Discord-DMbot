@@ -47,6 +47,7 @@ class ThePass(NamesTest):
         self.ai = SimpleNamespace(complete=AsyncMock(return_value=reply()))
         self.bot.name_pass_ai = self.ai  # type: ignore[assignment]
         await self.campaigns.set_dm_screen(GUILD, self.campaign.id, 3)
+        await self.consent.grant(GUILD, PLAYER)  # (the pass reads consent again after its AI call)
         await ui.save_name(self.memory, self.campaign, "Kethrandil", "player_character", [], [])
         self.session = await self.transcripts.open_session(GUILD, self.campaign.id, START)
         await self.transcripts.end_session(GUILD, self.session, START + 100)
@@ -373,6 +374,90 @@ class ThePass(NamesTest):
         self.assertEqual(
             (args.guild, args.session, args.dry_run, args.yes), (1, "abc", True, False)
         )
+
+    async def test_the_tool_and_the_live_pass_count_unsure_and_new_alike(self) -> None:
+        """#2655: `run` leaves out a word the campaign knows or a person at the table, as the live
+        pass does, so dev1's tool prints the numbers a live session would."""
+        from dmbot.memory.models import name_key
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+
+        async def new_word(_system: str, _question: str) -> str:
+            return str(reply({"n": 1, "answer": "new", "name": ""}).text)
+
+        async def count(**kw: Any) -> tuple[int, int]:
+            report = await name_pass_run.run(
+                self.transcripts, lookup, new_word, GUILD, self.campaign.id, self.session,
+                agreed={PLAYER}, now=START, forget_before=0, dry_run=True, **kw,
+            )  # fmt: skip
+            return len(report.unsure), len(report.new)
+
+        self.assertEqual(await count(), (0, 1))
+        self.assertEqual(await count(known={name_key("Keirandal")}), (0, 0))
+        self.assertEqual(await count(people={name_key("Keirandal")}), (0, 0))
+        # and the live pass over the same session says the same
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, type="concept", name="Keirandal", source="scan"
+        )
+        await self.run_pass()
+        posted = self.bot.post.await_args  # type: ignore[attr-defined]
+        if posted is not None:
+            self.assertNotIn("New names (asked the DM): 1", posted.args[1])
+
+    async def test_a_line_of_a_person_who_stopped_agreeing_is_not_written_and_undo_is_exact(
+        self,
+    ) -> None:
+        """#2655: the pass writes only the lines it read."""
+        gone = "Keirandal was not at this table."
+        await self.transcripts.add_lines(GUILD, self.session, [Line(MS + 80_000, 999, gone, gone)])
+        before = await self.texts()
+        self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
+        self.assertEqual(await self.run_pass(), 3)  # the three lines of the person who agrees
+        after = await self.texts()
+        self.assertEqual(after[-1], gone)  # untouched
+        self.assertNotIn("Keirandal", " ".join(after[:3]))
+        from dmbot.transcript import name_pass as np
+
+        batch = np.batch_of(self.session, await self._entity())
+        await self.transcripts.undo_respell(GUILD, self.campaign.id, batch)
+        self.assertEqual(await self.texts(), before)
+
+    async def test_a_person_who_withdraws_while_the_ai_answers_has_no_line_written(self) -> None:
+        """#2655 review: consent is read again after the AI call."""
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        agreed = {PLAYER}
+
+        async def ask(_system: str, _question: str) -> str:
+            agreed.discard(PLAYER)  # withdrawn while the model answers
+            return str(reply({"n": 1, "answer": "is", "name": "Kethrandil"}).text)
+
+        async def now_agreed() -> set[int]:
+            return set(agreed)
+
+        before = await self.texts()
+        report = await name_pass_run.run(
+            self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed,
+        )  # fmt: skip
+        self.assertEqual(report.fixed, ())
+        self.assertEqual(await self.texts(), before)
+
+    async def test_an_imported_sessions_off_topic_line_is_not_written_either(self) -> None:
+        off = "Keirandal pass the chips."
+        await self.transcripts.add_lines(
+            GUILD, self.session, [Line(MS + 70_000, PLAYER, off, off, topic="off_topic")]
+        )
+        self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        await self.bot.repair_names(
+            GUILD, self.campaign.id, self.session, {PLAYER}, {PLAYER}, game_only=True
+        )
+        self.assertEqual((await self.texts())[-1], off)
 
     async def test_a_line_with_two_spellings_of_one_name_gets_both_fixed_and_undone(self) -> None:
         """#2649: the second spelling shares the first's batch, so a line already changed for it

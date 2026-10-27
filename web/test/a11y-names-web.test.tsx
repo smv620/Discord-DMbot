@@ -50,7 +50,7 @@ describe("Names page", () => {
     render(<Names api={mockApi("table")} path="/account/names/100.cmp1" />);
     const list = await screen.findByRole("list", { name: nw.listLabel });
     const row = within(list).getAllByRole("listitem").find((li) => li.textContent?.includes("Gorrak")) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: nw.changeFor("Gorrak") }));
+    fireEvent.click(within(row).getByRole("button", { name: "Gorrak" }));
     expect(await serious()).toEqual([]);
     fireEvent.click(within(row).getByRole("button", { name: /Remove this name/ }));
     await within(row).findByRole("button", { name: /Yes, remove it/ });

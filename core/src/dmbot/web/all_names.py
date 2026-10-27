@@ -22,7 +22,9 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-PAGE_SIZE = 20  # the same as Discord's Browse pages
+PAGE_SIZE = 50  # the page's usual size (it was Discord's 20 until the compact list, 2026-10-27)
+PAGE_SIZES = (20, 50, 200, 500)  # what the page's "Names per page" offers; nothing else is asked
+KINDS_MAX = 40  # most kinds ticked at once (there are fewer than this)
 SEARCH_MAX = 100  # the longest name; a longer search matches nothing anyway
 SORTS = ("name", "newest")
 PAGE_LIMIT = 100_000  # far past any campaign: 2 million names
@@ -68,14 +70,21 @@ async def read_page(
     kind: str = "",
     sort: str = "name",
     page: int = 1,
+    size: int = PAGE_SIZE,
     only: str | None = None,
 ) -> dict[str, Any]:
-    """One page of the campaign's confirmed names. "not_found" for anyone who may not see the
-    list (or another campaign's ref); "bad_page" for a page past the end."""
+    """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
+    one kind or several joined with commas. "not_found" for anyone who may not see the list (or
+    another campaign's ref); "bad_page" for a page past the end or a size the page never offers."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     if sort not in SORTS:
         raise RecapError("bad_sort")
+    if size not in PAGE_SIZES:
+        raise RecapError("bad_page")
+    kinds = [k.strip() for k in kind.split(",") if k.strip()]
+    if len(kinds) > KINDS_MAX or any(len(k) > 40 for k in kinds):
+        raise RecapError("bad_page")  # (a list no page makes: the same plain refusal)
     if not 1 <= page <= PAGE_LIMIT:  # (also keeps the database's arithmetic well inside range)
         raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -86,10 +95,10 @@ async def read_page(
                 guild_id,
                 campaign_id,
                 q.strip()[:SEARCH_MAX],
-                kind.strip()[:40],
+                ",".join(kinds),
                 sort == "newest",
                 page,
-                PAGE_SIZE,
+                size,
                 only,
             ),
         )
@@ -98,7 +107,7 @@ async def read_page(
     if got is None:
         raise RecapError("not_found")
     total = int(got["total"])
-    pages = max(1, -(-total // PAGE_SIZE))
+    pages = max(1, -(-total // size))
     if page > pages:
         raise RecapError("bad_page")
     names = got["names"]
@@ -112,7 +121,7 @@ async def read_page(
         "total": total,
         "page": page,
         "pages": pages,
-        "pageSize": PAGE_SIZE,
+        "pageSize": size,
     }
 
 

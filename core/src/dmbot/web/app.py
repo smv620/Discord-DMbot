@@ -120,6 +120,7 @@ from dmbot.web.recaps import (
     month_usage,
     read_recap,
     redo_recap,
+    set_beat_present,
     share_recap,
     upload_recap,
 )
@@ -835,7 +836,8 @@ def create_app(
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
-        "stale": (409, "stale"),  # the recap changed since its plot check (#2122)
+        "stale": (409, "stale"),  # the recap changed since its plot check (#2122) or scenes (#2577)
+        "bad_present": (422, "bad_present"),  # a name that is not a character here (#2577)
         # PlotBot is still answering the last message (#2123); a recap being written or sent (#2608)
         "busy": (409, "busy"),
         "plot_open": (409, "plot_open"),  # Approve waits for PlotBot's open issues (#2122)
@@ -900,6 +902,24 @@ def create_app(
         session, _token = signed
         try:
             return await read_recap(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.put("/me/recaps/{ref}/beats/{n}/present")
+    async def me_recap_beat_present(
+        ref: str, n: int, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """Save who was in scene `n` (#2577): `{"present": [names]}`, the whole new list. The DM's
+        alone; the recap's text is not changed (the list is kept on the scene)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        present = body.get("present") if isinstance(body, dict) else None
+        try:
+            return await set_beat_present(db, session, ref, n, present)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1392,7 +1412,13 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/all-names")
     async def me_campaign_all_names(
-        ref: str, signed: Signed, q: str = "", kind: str = "", sort: str = "name", page: str = "1"
+        ref: str,
+        signed: Signed,
+        q: str = "",
+        kind: str = "",
+        sort: str = "name",
+        page: str = "1",
+        size: str = str(all_names.PAGE_SIZE),
     ) -> dict[str, Any]:
         """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
         server manager who is not a DM gets no secret names; anyone else gets "not found". A page
@@ -1403,8 +1429,9 @@ def create_app(
             # Plain ASCII digits only, at most nine: "²", "--1" and a 5,000-digit page are not
             # pages, and must not reach int() (which would raise a 500).
             number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
+            wanted = int(size) if re.fullmatch(r"[0-9]{1,4}", size) else 0  # (0 is refused)
             return await all_names.read_page(
-                db, session, ref, q=q, kind=kind, sort=sort, page=number
+                db, session, ref, q=q, kind=kind, sort=sort, page=number, size=wanted
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))

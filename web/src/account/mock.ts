@@ -1037,7 +1037,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const r = await find(recapRef);
       if (!r.canEdit) throw new ApiError("not-allowed");
       const beat = r.beats?.find((b) => b.n === n);
-      if (!beat) throw new ApiError("not-found");
+      if (!beat) throw new ApiError("stale"); // no such scene: the recap was made again since the page read it
       if (n === 3 && !staleSeen.has(recapRef)) {
         staleSeen.add(recapRef);
         beat.present = ["Brannoch", "Mira"]; // what the newer text says
@@ -1045,7 +1045,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       }
       if (present.some((name) => !(r.characters ?? []).includes(name))) throw new ApiError("bad-present");
       beat.present = [...present];
-      return { n, present: [...present] };
+      beat.saved = true;
+      return { n, present: [...present], saved: true };
     },
     async namesFixed(recapRef) {
       calls.push(`namesFixed:${recapRef}`);
@@ -1607,7 +1608,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       return n;
     },
     async allNames(ref, query: NamesQuery): Promise<NamesPage> {
-      calls.push(`allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}`);
+      calls.push(
+        `allNames:${ref}:q=${query.q}:kind=${query.kind}:sort=${query.sort}:page=${query.page}` +
+          (query.size === undefined ? "" : `:size=${query.size}`),
+      );
       await reachable();
       signedIn();
       const view = namesView(ref);
@@ -1616,10 +1620,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const kinds: NameKind[] = NAME_KINDS.map((k) => ({ ...k, count: visible.filter((n) => n.kind === k.key).length })).filter((k) => k.count > 0);
       const needle = query.q.trim().toLowerCase();
       const found = visible
-        .filter((n) => query.kind === "" || n.kind === query.kind)
+        .filter((n) => query.kind === "" || query.kind.split(",").includes(n.kind))
         .filter((n) => needle === "" || [n.name, ...n.others].some((x) => x.toLowerCase().includes(needle)));
       const sorted = [...found].sort((a, b) => (query.sort === "name" ? a.name.localeCompare(b.name) : Number(b.id.slice(1)) - Number(a.id.slice(1))));
-      const pageSize = 20;
+      const pageSize = query.size ?? 50;
+      if (![20, 50, 200, 500].includes(pageSize)) throw new ApiError("bad-page");
       const pages = Math.max(1, Math.ceil(sorted.length / pageSize));
       if (query.page < 1 || query.page > pages) throw new ApiError("bad-page");
       return {
