@@ -15058,9 +15058,9 @@ RECAP_NAME_PLACES = r"""
                 SELECT DISTINCT m.line_ref FROM memory_mentions m
                 JOIN transcript_sessions t
                   ON t.guild_id = g AND t.campaign_id = c
-                 AND t.id = substring(m.line_ref from '^(.*):[0-9]+:[0-9]+$')
+                 AND t.id = substring(m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$')
                 WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = ent.id
-                  AND m.line_ref ~ '^.*:[0-9]+:[0-9]+$') q;
+                  AND m.line_ref ~ '^.*:[0-9]{1,18}:[0-9]{1,18}$') q;
             FOR ptr IN
                 SELECT r.sid, r.ms, r.uid, t.started_at, t.transcripts_deleted_at AS gone,
                        (SELECT count(*) FROM transcript_sessions e
@@ -15074,13 +15074,13 @@ RECAP_NAME_PLACES = r"""
                            count(*) OVER () AS cnt
                     FROM (
                         SELECT DISTINCT ON (m.line_ref)
-                               substring(m.line_ref from '^(.*):[0-9]+:[0-9]+$') AS sid,
-                               substring(m.line_ref from ':([0-9]+):[0-9]+$')::BIGINT AS ms,
-                               substring(m.line_ref from ':([0-9]+)$')::BIGINT AS uid,
+                               substring(m.line_ref from '^(.*):[0-9]{1,18}:[0-9]{1,18}$') AS sid,
+                               substring(m.line_ref from ':([0-9]{1,18}):[0-9]{1,18}$')::BIGINT AS ms,
+                               substring(m.line_ref from ':([0-9]{1,18})$')::BIGINT AS uid,
                                m.session_started_at AS at
                         FROM memory_mentions m
                         WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = ent.id
-                          AND m.line_ref ~ '^.*:[0-9]+:[0-9]+$'
+                          AND m.line_ref ~ '^.*:[0-9]{1,18}:[0-9]{1,18}$'
                         ORDER BY m.line_ref, m.created_at, m.id) q) r
                 JOIN transcript_sessions t
                   ON t.guild_id = g AND t.campaign_id = c AND t.id = r.sid
