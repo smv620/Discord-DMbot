@@ -15,6 +15,7 @@ from unittest.mock import patch
 from dmbot.ai import AIError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.devtools.recap_run import __main__ as run
+from dmbot.devtools.recap_run import review as rv
 from dmbot.devtools.recap_run.ephemeral import EphemeralStore, blank
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.audio.eleven import ElevenLabs
@@ -289,7 +290,7 @@ class TheFlags(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp) / "run"
             run.save_text(folder, out, lines, names_given=False)
-            report = (folder / run.rv.REPORT_FILE).read_text()
+            report = (folder / rv.REPORT_FILE).read_text()
         self.assertIn("Structured: runs 1, passes 2", report)
         self.assertNotIn(draft, report)  # counts only
 
