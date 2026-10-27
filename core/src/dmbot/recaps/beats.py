@@ -61,8 +61,9 @@ hit points, a condition, an item gained or lost, where the party is.
 each of its names must be said in those lines. Never invent an event, a place, a person or a name. \
 If something is unclear, leave it out.
 3. Cover every player: if a player did something, it is a beat.
-4. Use character names, never the players' own names. No quotes from the transcript; say it in \
-your own words.
+4. Use character names, never the players' own names. No quotes from the transcript; paraphrase in \
+your own words, without adding, expanding, inferring or resolving anything beyond what the lines \
+you cite say outright.
 5. "where" is the place the beat happens in, taken from the lines: one of the places named in the \
 transcript, or a short description in the lines' own words. If the lines do not say, use "". Never \
 guess a place, and never move an event to another place.
