@@ -78,7 +78,8 @@ class TheStructuredSplit(WorkerHarness):
         fast, careful = fx.Canned(st.SPLIT_ANSWER, *self.rest()), fx.Canned(DRAFT)
         await self.start(fast, careful)
         job = await self.go()
-        # the split is two calls now (a draft, a form) where it was one: 6 become 7
+        # a draft and a form where there was one call: 6 become 7 (usually one more; a form
+        # redone on the stronger tier is two more, the one call after both fail is three)
         self.assertEqual(job.calls, 7)
 
     async def test_a_player_who_stops_being_recorded_meanwhile_starts_it_again(self) -> None:

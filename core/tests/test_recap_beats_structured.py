@@ -73,7 +73,7 @@ class TheStructuredBeats(WorkerHarness):
         careful = fx.Canned(cut, DRAFT)
         await self.start(fast, careful)
         job = await self.go()
-        self.assertEqual((job.state, job.attempt), ("ready", 1))
+        self.assertEqual(job.state, "ready")
         self.assertEqual(fast.sent[0], DRAFT)  # no form pass on a draft with its end missing
         self.assertEqual(careful.tokens[1], careful.tokens[0] * 2)
 

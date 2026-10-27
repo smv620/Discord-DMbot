@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
-from dmbot import ai_structured as ast
+from dmbot import ai_structured
 from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds, Reply, max_input
 from dmbot.memory.extractor import Said, readable
 from dmbot.recaps import away, fixed_lines
@@ -268,7 +268,9 @@ class _Counted:
             schema=schema, stage=self._stage,
         )  # fmt: skip
         if reply is None:
-            ast.STATS.errors += 1  # (`_call` swallows the error: the adapter cannot count it)
+            ai_structured.STATS.errors += (
+                1  # (`_call` swallows the error: the adapter cannot count it)
+            )
             raise _Stopped
         return reply
 
@@ -657,7 +659,7 @@ class RecapWorker:
             # decides, as below. When that gives nothing the one call below is made, as before: the
             # new way only ever adds a try (#2714).
             try:
-                tried = await ast.structured(
+                tried = await ai_structured.structured(
                     bt.draft_system(k + 1, len(parts)),
                     text,
                     bt.SCHEMA,
@@ -674,7 +676,7 @@ class RecapWorker:
                 return await self._store.get(gid, cid, job.session_at)
             if not sent <= set(await consenting()):  # after it
                 return await self._restart(gid, cid, job)
-            if tried.status == ast.CUT:
+            if tried.status == ai_structured.CUT:
                 return await self._beats_cut(gid, cid, job, bt.room(job.attempt))
             parsed = tried.value
         if parsed is None:
@@ -752,9 +754,11 @@ class RecapWorker:
             if self._structured_split:
                 # A strong model drafts the labels, a fast one puts them in the schema, and the same
                 # check as below decides. When that gives nothing the one call below is made, as
-                # before: the new way only ever adds a try (#2714).
+                # before: the new way only ever adds a try (#2714). A try is usually one more call,
+                # two when the form is redone on the stronger tier, three when the one call
+                # follows both.
                 try:
-                    tried = await ast.structured(
+                    tried = await ai_structured.structured(
                         sp.draft_system(),
                         message,
                         sp.SCHEMA,

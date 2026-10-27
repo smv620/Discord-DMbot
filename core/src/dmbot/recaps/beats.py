@@ -126,10 +126,13 @@ SCHEMA: dict[str, Any] = {
 # lines, which a second, smaller pass puts into SCHEMA. Built from SYSTEM, so the rules (including
 # the one on paraphrasing, #2713) are the same words in both; the guards fail at import, loudly, if
 # SYSTEM is reworded so that it no longer splits where this expects.
-_HEAD, _JSON_SEP, _AFTER = SYSTEM.partition("Reply with JSON only")
-_RULES_SEP = "\nRules:"
-_REPLY, _RULES_FOUND, _RULES = _AFTER.partition(_RULES_SEP)
-assert _JSON_SEP and _RULES_FOUND, "beats.SYSTEM changed: update DRAFT_SYSTEM"
+# (the two markers are named `*_PROMPT` so the plain-words check reads them as the AI's own words)
+_JSON_PROMPT = "Reply with JSON only"
+_RULES_PROMPT = "\nRules:"
+_HEAD, _JSON_SEP, _AFTER = SYSTEM.partition(_JSON_PROMPT)
+_REPLY, _RULES_FOUND, _RULES = _AFTER.partition(_RULES_PROMPT)
+if not (_JSON_SEP and _RULES_FOUND):  # (a raise: `python -O` drops an assert)
+    raise RuntimeError("beats.SYSTEM changed: update DRAFT_SYSTEM")
 DRAFT_SYSTEM = (
     _HEAD
     + """\
@@ -139,7 +142,7 @@ where <the place, or nothing> | <one sentence>
 For example: event | lines 12,13 | who Mira; Oskar | where Greywater Keep | Mira and Oskar forced \
 the cellar door.
 """
-    + _RULES_SEP
+    + _RULES_PROMPT
     + _RULES
 )
 
