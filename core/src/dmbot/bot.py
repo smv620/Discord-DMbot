@@ -301,6 +301,7 @@ from dmbot.memory.ontology import Tally
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
+from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
@@ -11761,6 +11762,7 @@ def register_backup_sections(
     campaigns.register_section(AcceptedSection())  # the recaps the DM approved (#2122)
     campaigns.register_section(PlotIssuesSection())  # PlotBot's issues and the DM's answers
     campaigns.register_section(PlotFineSection())  # ... and what the DM said was not a problem
+    campaigns.register_section(ReportAnswersSection())  # the DM's report answers (#2661)
     # And how often names were said, kept only for who is recorded now (#1747).
     campaigns.register_section(HeardSection(consenting))
 
