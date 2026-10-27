@@ -141,6 +141,8 @@ class Outcome:
     calls: list[cl.CallEvent] = field(default_factory=list)  # each AI call, in order (#2053)
     # With --structured (#2714): how the draft-then-form passes went, counts only; else None
     structured: dict[str, int] | None = None
+    # Counts the worker reported (#2738): the away check's first finds. Numbers, never words.
+    counts: dict[str, int] = field(default_factory=dict)
 
 
 def estimate(inputs: pl.Inputs) -> tuple[int, int]:
@@ -150,6 +152,11 @@ def estimate(inputs: pl.Inputs) -> tuple[int, int]:
     windows = max(1, math.ceil(chars / inputs.window_chars))
     tokens = chars // 4 * 2 + 2500 * 3  # the transcript for beats, the beats for prose, prompts
     return pl.MAX_CALLS + windows - 1, tokens
+
+
+def count_lines(out: Outcome) -> list[str]:
+    """The away check's and the beat sheet's counts (#2738): see `review.count_lines`."""
+    return rv.count_lines(out.job, out.counts.get("away_found"))
 
 
 def split_lines(out: Outcome) -> list[str]:
@@ -205,6 +212,7 @@ async def run_text(
     formatting_c = Counting(formatting, creative_models[1]) if formatting is not None else None
     failures: list[tuple[str, int, list[str]]] = []
     calls: list[cl.CallEvent] = []
+    counts: dict[str, int] = {}
     notes: list[str] = []
     speakers = {s.user_id for s in readable(inputs.lines)}
 
@@ -233,6 +241,7 @@ async def run_text(
         ),
         on_note=notes.append,
         on_call=calls.append,
+        on_count=lambda name, n: counts.__setitem__(name, counts.get(name, 0) + n),
         creative=creative_c,
         formatting=formatting_c,
         critics=critics,
@@ -267,6 +276,7 @@ async def run_text(
         sheets=store.sheets,
         failures=failures,
         calls=calls,
+        counts=counts,
         structured=(
             {k: v - structured_before[k] for k, v in ai_structured.STATS.as_dict().items()}
             if structured
@@ -441,6 +451,7 @@ def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool =
     if job.state != "ready" and out.failures:
         lines += ["", *explain_failures(out)]
     lines += split_lines(out)
+    lines += count_lines(out)
     lines += cl.section(out.calls)  # counts and fixed words only (#2053)
     if out.notes:
         lines += ["", *(f"Note: {n}" for n in out.notes)]

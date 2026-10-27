@@ -125,6 +125,9 @@ def summary_lines(
     ]
     if job.grade:
         rows.append("  grader: " + ", ".join(f"{k} {v}" for k, v in job.grade.items()))
+    rows += [
+        f"  {line}" for line in rv.count_lines(job, out.counts.get("away_found"))
+    ]  # the away check and the beat sheet (#2738)
     parts = [
         ("writer", out.creative),
         ("formatter", out.formatting),

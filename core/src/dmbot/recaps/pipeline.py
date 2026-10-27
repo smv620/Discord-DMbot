@@ -293,6 +293,7 @@ class RecapWorker:
         on_problems: Callable[[str, int, Sequence[str]], None] | None = None,
         on_note: Callable[[str], None] | None = None,
         on_call: Callable[[cl.CallEvent], None] | None = None,
+        on_count: Callable[[str, int], None] | None = None,
         creative: Client | None = None,
         formatting: Client | None = None,
         story: Story | None = None,
@@ -321,6 +322,7 @@ class RecapWorker:
         self._draft_stage = "write" if self._two else "prose"  # the stage the draft's call is in
         self._on_problems = on_problems  # (stage, try, problems): a test run reports them (#1969)
         self._on_note = on_note  # plain notes a test run puts in its report (#2013)
+        self._on_count = on_count  # (name, number): counts a test run reports, never words (#2738)
         # Each AI call as it returns, for a test run's "Calls" section (#2053): counts and fixed
         # words only. The worker fills in the event as the answer is checked.
         self._on_call = on_call
@@ -1776,6 +1778,8 @@ class RecapWorker:
                 "Recap: the away-reader check found %d: %s",
                 len(found_away), sorted({f.kind for f in found_away}),
             )  # fmt: skip
+            if self._on_count is not None:
+                self._on_count("away_found", len(found_away))
         changes = [*(loop.motives or ()), *plot, *style, *asked_away]
         hard, soft = cr.count(changes)
         log.info("Recap: critics reading %d: %d hard, %d soft", loop.round + 1, hard, soft)

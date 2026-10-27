@@ -19,6 +19,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from dmbot.recaps.audio.files import FILE_NAMES, MIX, MUSIC, VOICE
 from dmbot.recaps.text import CUE, PERFORMANCE, strip_cues
@@ -500,3 +501,23 @@ def write_page(folder: Path) -> Path:
     target = folder / PAGE_FILE
     write_private(target, page(review, folder, with_names=review.names_given))
     return target
+
+
+def count_lines(job: Any, away_found: int | None) -> list[str]:
+    """The away check's and the beat sheet's counts (#2738), numbers only: how many notes are left
+    for the DM, how many of the first finds the writer's fix cleared, how many readings; how many
+    windows of the transcript, parts of the opening and beats. Never a word of the draft or the
+    transcript, so two variants can be compared. `away_found`: what the first reading found (None
+    when not reported: then nothing is claimed fixed)."""
+    from dmbot.recaps import away, critics
+    from dmbot.recaps import split as sp
+
+    loop = critics.loop_from_json(job.critics)
+    left = sum(1 for n in loop.notes if away.is_note(n))
+    found = left if away_found is None else away_found
+    split = sp.from_json(job.split)
+    return [
+        f"Away: notes {left}, fixed {max(found - left, 0)}, rounds {loop.round}",
+        f"Beats: windows {job.window_count}, parts {len(split.parts) if split else 0}, "
+        f"beats {len(job.beats)}",
+    ]

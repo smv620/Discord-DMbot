@@ -96,6 +96,42 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("lines talk 1-2, recap 3-7, play 8-14", text)
         self.assertNotIn("Redfall", text)
 
+    async def test_the_report_counts_the_away_check_and_the_beat_sheet_never_a_word(self) -> None:
+        # (#2738) Both lines are always there, so two variants can be compared side by side.
+        out = await run.run_text(inputs(), happy(), fx.Canned())
+        self.assertEqual(out.job.state, "ready")
+        lines = run.report(out, {})
+        away = [x for x in lines if x.startswith("Away: ")]
+        beats = [x for x in lines if x.startswith("Beats: ")]
+        self.assertEqual(len(away), 1)
+        self.assertEqual(len(beats), 1)
+        import re
+
+        self.assertRegex(away[0], r"^Away: notes \d+, fixed \d+, rounds \d+$")
+        self.assertRegex(beats[0], r"^Beats: windows \d+, parts \d+, beats \d+$")
+        self.assertIsNotNone(re.search(r"beats [1-9]\d*$", beats[0]))  # the sheet had beats
+        for word in ("Mira", "Oskar", "Greywater", "keep", "torch"):
+            self.assertNotIn(word, away[0] + beats[0])
+
+    def test_the_away_counts_say_what_was_found_what_is_left_and_so_what_was_fixed(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.recaps import critics as cr
+
+        note = "Check: the recap opens without saying who it is about."
+        job = SimpleNamespace(
+            critics=cr.Loop(round=2, notes=(note, "Check: something the DM wrote")).to_json(),
+            split=None,
+            window_count=3,
+            beats=[{}, {}, {}, {}],
+        )
+        self.assertEqual(
+            rv.count_lines(job, 4),
+            ["Away: notes 1, fixed 3, rounds 2", "Beats: windows 3, parts 0, beats 4"],
+        )
+        # not reported: nothing is claimed fixed
+        self.assertEqual(rv.count_lines(job, None)[0], "Away: notes 1, fixed 0, rounds 2")
+
     async def test_a_run_that_fails_its_beat_sheet_twice_says_why_for_each_try(self) -> None:
         # Both tries cite no real line, so the sheet is refused twice (#1997).
         bad = (
