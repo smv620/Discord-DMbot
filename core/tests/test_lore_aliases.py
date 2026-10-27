@@ -7,12 +7,14 @@ from __future__ import annotations
 import json
 import unittest
 from collections import Counter
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.memory import background as bg
 from dmbot.memory.lookup import LookupData
+from dmbot.memory.models import Alias
 from dmbot.ui.name_background import confirmed_aliases
 from tests.test_transcript_cleaner import alias, entity
 
@@ -24,7 +26,7 @@ ALIASES = {"aldric vane": ("the ashen king",)}
 
 
 def read(
-    aliases: dict[str, tuple[str, ...]] | None, text: str = TEXT
+    aliases: Mapping[str, tuple[str, ...]] | None, text: str = TEXT
 ) -> tuple[list[bg.Connection], Any]:
     lost: Any = Counter()
     reply = json.dumps({"connections": [ROW]})
@@ -65,7 +67,7 @@ class TheAliasBacksTheName(unittest.TestCase):
         self.assertEqual(dict(lost), {"spelling_clash": 1})
 
 
-def lookup_of(*pairs: tuple[Any, ...], secret: tuple[Any, ...] = ()) -> Any:
+def lookup_of(*pairs: Alias, secret: tuple[Alias, ...] = ()) -> Any:
     entities = (
         entity(ALDRIC, "Aldric Vane"),
         entity(MIRA, "Mira"),
@@ -76,7 +78,7 @@ def lookup_of(*pairs: tuple[Any, ...], secret: tuple[Any, ...] = ()) -> Any:
     return SimpleNamespace(lookup_data=AsyncMock(return_value=data))
 
 
-CAMPAIGN = SimpleNamespace(guild_id=1, id="x" * 32)
+CAMPAIGN: Any = SimpleNamespace(guild_id=1, id="x" * 32)
 
 
 class TheAliasMap(unittest.IsolatedAsyncioTestCase):
