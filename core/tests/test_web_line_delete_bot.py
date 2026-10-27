@@ -126,14 +126,15 @@ class TheDeletion(DatabaseTest):
         rid = await self.ask(ME)
         first = await self.rows.claim_next(GUILD)
         assert first is not None
-        self.clock[0] += 599
+        self.clock[0] += 600  # (exactly ten minutes: still the first worker's)
         self.assertIsNone(await self.rows.claim_next(GUILD))
-        self.clock[0] += 2
+        self.clock[0] += 1
         again = await self.rows.claim_next(GUILD)
         assert again is not None
         self.assertEqual(again.id, rid)
         # The first worker's claim is stale now: it cannot write over the second's.
         self.assertFalse(await self.rows.done(GUILD, first, 9, 9))
+        self.assertFalse(await self.rows.failed(GUILD, first, "failed"))
         self.assertTrue(await self.rows.done(GUILD, again, 1, 1))
 
     async def test_a_person_with_no_lines_left_ends_done_with_nothing(self) -> None:
@@ -162,13 +163,67 @@ class TheDeletion(DatabaseTest):
         self.assertEqual((await self.row(GUILD, here))["state"], "done")
         self.assertEqual((await self.row(OTHER_GUILD, far))["state"], "waiting")
 
-    async def test_nothing_of_the_person_is_logged(self) -> None:
-        await self.ask(ME)
+    async def test_nothing_of_the_person_is_logged_on_success_or_failure(self) -> None:
+        big = 8_000_000_000_000_001
+        await self.store.add_lines(GUILD, self.first, [line(9, big, "secret words")])
+        await self.ask(big)
         with self.assertLogs("dmbot", "INFO") as logged:
             await self.carry()
-            web_line_delete.log.info("x")  # (assertLogs needs one record even when all is quiet)
-        text = "\n".join(logged.output)
-        self.assertNotIn(
-            str(ME), text.replace("Deleted past transcripts: 3 lines in 2 sessions", "")
+        await self.ask(big, rid="c" * 32)
+        boom = RuntimeError(f"user {big} said secret words")
+        with (
+            patch.object(self.store, "delete_person", AsyncMock(side_effect=boom)),
+            self.assertLogs("dmbot", "INFO") as failed,
+        ):
+            await self.carry()
+        text = "\n".join(logged.output + failed.output)
+        for needle in (str(big), "secret words"):
+            self.assertNotIn(needle, text)
+        self.assertIn("RuntimeError", text)
+
+    async def test_a_row_that_cannot_be_marked_done_is_never_marked_failed(self) -> None:
+        rid = await self.ask(ME)
+        with patch.object(self.rows, "done", AsyncMock(side_effect=RuntimeError("blip"))):
+            self.assertEqual(await self.carry(), web_line_delete.NOT_MARKED)
+        self.assertEqual((await self.row(GUILD, rid))["state"], "working")  # retaken later
+        self.assertEqual((await self.store.person_counts(GUILD, ME)).lines, 0)  # (deleted)
+
+    async def test_a_stale_workers_finish_says_taken(self) -> None:
+        await self.ask(ME)
+        item = await self.rows.claim_next(GUILD)
+        assert item is not None
+        self.clock[0] += 601
+        await self.rows.claim_next(GUILD)  # a second worker holds it now
+        self.assertEqual(
+            await web_line_delete.carry_out(self.bot, GUILD, item, self.rows), web_line_delete.TAKEN
         )
-        self.assertNotIn("three", text)
+
+    async def test_a_running_sessions_waiting_lines_are_dropped_too(self) -> None:
+        import asyncio
+
+        from dmbot.transcript.models import TranscriptBuffer
+
+        buffer = TranscriptBuffer()
+        buffer.add(line(20, ME, "not yet saved"))
+        buffer.add(line(21, FRIEND, "theirs"))
+        self.bot.tables = {GUILD: SimpleNamespace(save_lock=asyncio.Lock(), unsaved=buffer)}
+        await self.ask(ME)
+        await self.carry()
+        self.assertEqual([x.user_id for x in buffer.lines()], [FRIEND])
+
+    async def test_one_servers_trouble_does_not_starve_the_next(self) -> None:
+        far = await self.ask(ME, OTHER_GUILD, "d" * 32)
+        real = self.rows.claim_next
+
+        async def claim(guild_id: int) -> Any:
+            if guild_id == GUILD:
+                raise RuntimeError("down")
+            return await real(guild_id)
+
+        guilds = [SimpleNamespace(id=GUILD), SimpleNamespace(id=OTHER_GUILD)]
+        with (
+            patch.object(self.rows, "claim_next", claim),
+            patch.object(DMBot, "guilds", new_callable=PropertyMock, return_value=guilds),
+        ):
+            await DMBot.run_web_line_deletions(self.bot)
+        self.assertEqual((await self.row(OTHER_GUILD, far))["state"], "done")

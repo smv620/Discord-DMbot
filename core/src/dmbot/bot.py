@@ -10330,13 +10330,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if store is None or self.transcripts is None:
             return
         for guild in list(self.guilds):
-            for _ in range(web_line_delete.PER_ROUND):
-                item = await store.claim_next(guild.id)
-                if item is None:
-                    break
-                with log_context(guild_id=guild.id):
-                    why = await web_line_delete.carry_out(self, guild.id, item, store)
-                    log.info("Website line deletion: %s", why or "done")  # the word only
+            try:  # one server's trouble must not starve the others
+                for _ in range(web_line_delete.PER_ROUND):
+                    item = await store.claim_next(guild.id)
+                    if item is None:
+                        break
+                    with log_context(guild_id=guild.id):
+                        why = await web_line_delete.carry_out(self, guild.id, item, store)
+                        log.info("Website line deletion: %s", why or "done")  # the word only
+            except Exception as exc:
+                log.warning("The website line deletions of a server failed: %s", type(exc).__name__)
 
     async def run_web_delete_notices(self) -> None:
         """Finish the campaigns the website deleted (#2554): tidy their Discord channels and tell

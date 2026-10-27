@@ -28,6 +28,8 @@ RETAKE_AFTER_S = 600  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 86_400  # a request goes a day after it was made
 
 FAILED = "failed"  # anything unexpected; nothing was deleted, asking again is fine
+TAKEN = "taken"  # another worker holds the row now, so this one writes nothing
+NOT_MARKED = "not_marked"  # deleted, but the row could not be marked; it is retaken
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,12 +102,13 @@ class WebLineDeletions:
 
 async def carry_out(host: Host, guild_id: int, item: Request, store: WebLineDeletions) -> str:
     """Carry out one claimed request and mark it. Returns the outcome word ("" when it worked).
-    Never raises. Only counts are logged (by `delete_my_lines`), never the person's id."""
+    Never raises. Only counts are logged (by `delete_my_lines`), never the person's id.
+
+    `failed` is written only when the erasure itself failed (nothing was deleted: it is one
+    transaction). If it worked and the row cannot be marked, the row stays `working` and is
+    retaken after ten minutes, which is harmless: the erasure repeats as a no-op."""
     try:
         lines, sessions = await host.delete_my_lines(guild_id, item.user_id)
-        if not await store.done(guild_id, item, lines, sessions):
-            return FAILED  # not this worker's row any more
-        return ""
     except Exception as exc:  # the type only: an error can quote a row
         log.warning("A website line deletion failed: %s", type(exc).__name__)
         try:
@@ -113,3 +116,9 @@ async def carry_out(host: Host, guild_id: int, item: Request, store: WebLineDele
         except Exception:
             log.warning("A website line deletion could not be marked failed")
         return FAILED
+    try:
+        # (A retake that finds nothing left reports 0: the lines went in the first try.)
+        return "" if await store.done(guild_id, item, lines, sessions) else TAKEN
+    except Exception as exc:
+        log.warning("A website line deletion could not be marked done: %s", type(exc).__name__)
+        return NOT_MARKED
