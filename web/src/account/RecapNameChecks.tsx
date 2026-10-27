@@ -5,10 +5,12 @@
 // queues for the bot (the same paths as Discord's 📝 Check new names), so this page asks again about
 // every two seconds until the name leaves the list. DMbot never decides what a name is.
 // Shown only while RECAPS_LIVE and RECAP_NAME_CHECKS_LIVE are true, for the campaign's DM.
+import NamePlaces from "./NamePlaces";
+import { campaignRefOf } from "./RecapNames";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { NAME_MAX_LETTERS, NOTE_MAX_LETTERS, SPELLING_MAX_LETTERS, nameCheckWords as words } from "../content/recap-name-checks";
-import { NAME_CHANGE_WORDS_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import { NAME_CHANGE_WORDS_LIVE, NAME_PLACES_LIVE, RECAP_NAME_CHECKS_LIVE, RECAPS_LIVE } from "../content/recap-words";
 import { ApiError, type AccountApi, type NameCheck, type NameCheckAnswer, type NameCheckList } from "./api";
 import { keepFocus } from "./focus";
 import { useObservedWait } from "./useObservedWait";
@@ -141,6 +143,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
             key={n.id}
             name={n}
             list={list}
+            campaignRef={campaignRefOf(refId)}
             busy={busy.has(n.id) || n.answering}
             problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? (changing.current.has(n.id) ? words.changeFailed : words.failedHint) : "")}
             onSend={(answer) => void send(n, answer)}
@@ -172,12 +175,14 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
 function NameRow({
   name,
   list,
+  campaignRef,
   busy,
   problem,
   onSend,
 }: {
   name: NameCheck;
   list: NameCheckList;
+  campaignRef: string;
   busy: boolean;
   problem: string;
   onSend: (answer: NameCheckAnswer) => void;
@@ -211,6 +216,7 @@ function NameRow({
             {words.noteFrom} {name.note}
           </p>
         )}
+        {NAME_PLACES_LIVE && <NamePlaces places={name.places ?? []} more={name.morePlaces ?? 0} campaignRef={campaignRef} />}
         <div class="row">
           <label for={`${id}-kind`}>{words.kind}</label>
           <select id={`${id}-kind`} value={kind} disabled={busy} onChange={(e) => setKind((e.target as HTMLSelectElement).value)}>

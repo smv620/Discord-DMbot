@@ -743,6 +743,12 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   reason, whether the game times and a guess are involved, and `said_at` (a major one is told to the DM
   once). Ids and DMbot's own words only, never a transcript line; the DM's alone. A backup leaves it out
   (it is made again by the next check). `memory/contradiction_grades.py` saves, reads and marks it.
+  **Built (#2660 slice 2c-2d): the pass and its switch.** `memory/contradiction_run.py` finds the
+  candidates, grades the ones not graded yet and keeps the grades (a `major` or `minor` one is not asked
+  again; a `not_graded` one is). `DMBOT_STORY_CONTRADICTIONS=1` (off by default, and only with the
+  extractor) runs it after the extractor in the after-session steps: the campaign's plan must include
+  story memory (closed if it can't be checked), it makes at most 3 AI calls a session, counted in the
+  extractor's session and day limits, and the log gets counts only.
   Still to build: the PlotBot grade (major or minor, with a reason), the cap of 3 said on the DM screen,
   and the minor ones kept for the after-session report.
 

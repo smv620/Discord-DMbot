@@ -2004,7 +2004,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         const key = `${ref}:${card.id}`;
         // Change the words (#2593): one look "answering" under the old words, then the same card with the new ones.
         const changed = nameChanges.get(key);
-        let n = { ...card, longerNames: card.id === "a".repeat(32) ? ["Brannoch's Forge", "Brannoch the smith"] : [] };
+        const places =
+          card.id === "a".repeat(32)
+            ? [
+                { session: 12, available: true, lines: [{ speaker: "Mira", at: 1840, text: "…we rode to Brannoch's forge before dark…" }, { removed: true as const }] },
+                { session: 9, available: false, lines: [] },
+              ]
+            : [];
+        let n = { ...card, places, morePlaces: places.length > 0 ? 3 : 0, longerNames: card.id === "a".repeat(32) ? ["Brannoch's Forge", "Brannoch the smith"] : [] };
         if (changed) {
           changed.looks += 1;
           if (changed.looks === 1) return [{ ...n, answering: true, error: "" }];
