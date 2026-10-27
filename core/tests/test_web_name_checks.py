@@ -519,6 +519,36 @@ class TheChangedWords(WithChecks):
         self.assertEqual((card["id"], card["longerNames"]), (harrow, ["Harrow's keep"]))
         self.assertNotIn("lines", card)  # the words themselves are not passed to the page
 
+    async def test_another_campaigns_lines_never_come_through_even_by_a_pointer_to_them(
+        self,
+    ) -> None:
+        """#2729: two campaigns in one server that mention the same name. The lines are picked
+        from this campaign's own sessions, whatever a mention points at."""
+        harrow = await self.suggest("Harrow")
+        await self.says(
+            harrow, [(ALICE.id, "We rode to Harrow's tower"), (ALICE.id, "ask Harrow's tower")]
+        )
+        store = TranscriptStore(self.db)
+        other_session = await store.open_session(GUILD, self.two.id, AT)
+        theirs = [Line(n * 1000, ALICE.id, "Harrow's keep", "Harrow's keep") for n in (1, 2, 3)]
+        await store.add_lines(GUILD, other_session, theirs)
+        for line in theirs:  # a pointer in THIS campaign's memory that names the other's lines
+            await self.memory.add_mention(
+                GUILD,
+                self.one.id,
+                harrow,
+                line_ref=line_ref(other_session, line.started_ms, ALICE.id),
+                span=(0, 6),
+                confidence=1.0,
+                method="exact",
+                source="scan",
+                session_started_at=AT,
+            )
+        await self.agree(ALICE.id)
+        (card,) = (await self.listed())["names"]
+        self.assertIn("Harrow's tower", card["longerNames"])  # its own lines are read
+        self.assertNotIn("Harrow's keep", card["longerNames"])  # nothing of the other campaign's
+
     async def test_a_speaker_who_stops_being_recorded_drops_out_at_once(self) -> None:
         harrow = await self.suggest("Harrow")
         await self.says(

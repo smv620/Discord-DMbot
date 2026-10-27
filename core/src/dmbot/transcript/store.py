@@ -33,12 +33,16 @@ MAX_SCANNED = 100_000  # candidate lines looked at in one run, rewritten or not
 
 # The lines a respelling may reach (the filter shared by the pages and the count): this campaign's
 # ended sessions, speech only, saying the name's longest word, not already done by this fix.
-def _candidates(one_session: bool = False) -> str:
+def _candidates(one_session: bool = False, speakers: bool = False, game: bool = False) -> str:
     # A line is "done by this fix" when this batch already replaced this very spelling in it: one
     # list name may be meant by several heard spellings (they share a batch, #2649), and a line
     # that says two of them gets both fixed.
     # `one_session` (the name pass, #2628): only the session whose id is the next parameter after
     # the campaign's, whatever its end (it is being finished now), instead of every ended session.
+    # `speakers` and `game` (#2655): only the lines the pass read, so a line of a person who has
+    # since stopped agreeing is never written: the speakers (an array parameter after the name),
+    # and game talk (the topic, after that).
+    read = (" AND l.user_id = ANY(%s)" if speakers else "") + (" AND l.topic = %s" if game else "")
     return (
         " FROM transcript_lines l JOIN transcript_sessions s ON s.id = l.session_id"
         " WHERE s.guild_id = %s AND s.campaign_id = %s"
@@ -47,6 +51,7 @@ def _candidates(one_session: bool = False) -> str:
         " AND strpos(lower(coalesce(l.text, l.heard)), lower(%s)) > 0"
         " AND NOT EXISTS (SELECT 1 FROM transcript_respells r"
         "   WHERE r.line_id = l.id AND r.campaign_id = %s AND r.batch = %s AND r.old_text = %s)"
+        + read
     )
 
 
@@ -681,6 +686,8 @@ class TranscriptStore:
         now: int,
         forget_before: int,
         session_id: str | None = None,
+        speakers: Collection[int] | None = None,
+        game_only: bool = False,
     ) -> PastRespell:
         """Write `new` where this campaign's past cleaned lines say `old` as a whole name, in
         ONE transaction (so a failure changes nothing), at most `MAX_RESPELLED` lines in session
@@ -691,7 +698,9 @@ class TranscriptStore:
         inside a longer name in `longer` is left alone, and so is a line the change would make say
         a name in `hidden`. The places are kept under `batch` and the run for `undo_respell`;
         places older than `forget_before` are dropped. `session_id`: only that session, ended or
-        not (the name pass of a session being finished, #2628)."""
+        not (the name pass of a session being finished, #2628); then `speakers` (when given) limits
+        the writes to those people's lines and `game_only` to lines kept as game talk: exactly the
+        lines the pass read (#2655)."""
         # The longest run of letters and digits: an apostrophe or dash in the name may be written
         # with a look-alike (a curly one), so a prefilter on a whole word would miss it.
         longest = max(re.findall(r"\w+", old), key=len, default="")
@@ -704,6 +713,13 @@ class TranscriptStore:
         remaining = 0
         scope: tuple[Any, ...] = (
             (guild_id, campaign_id) if session_id is None else (guild_id, campaign_id, session_id)
+        )
+        only = session_id is not None  # (the limits belong to a pass over one session)
+        use_speakers = only and speakers is not None
+        use_game = only and game_only
+        read: tuple[Any, ...] = (
+            *([list(speakers)] if use_speakers and speakers is not None else []),
+            *([GAME] if use_game else []),
         )
         async with self._db.guild(guild_id) as conn:
             # Two presses of Finish at once take turns, so no two runs share a number.
@@ -729,10 +745,10 @@ class TranscriptStore:
                 cur = await conn.execute(
                     "SELECT l.id, l.session_id, l.user_id, l.started_ms, s.started_at,"
                     " coalesce(l.text, l.heard) AS cleaned"
-                    + _candidates(session_id is not None)
+                    + _candidates(only, use_speakers, use_game)
                     + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)"
                     " ORDER BY s.started_at, l.started_ms, l.id LIMIT %s FOR UPDATE OF l",
-                    (*scope, longest, campaign_id, batch, old, *after, PAGE),
+                    (*scope, longest, campaign_id, batch, old, *read, *after, PAGE),
                 )
                 page = await cur.fetchall()
                 if not page:
@@ -768,9 +784,9 @@ class TranscriptStore:
             # never change (inside a longer name), so it is "up to" this many.
             cur = await conn.execute(
                 "SELECT count(*) AS n"
-                + _candidates(session_id is not None)
+                + _candidates(only, use_speakers, use_game)
                 + " AND (s.started_at, l.started_ms, l.id) > (%s, %s, %s)",
-                (*scope, longest, campaign_id, batch, old, *after),
+                (*scope, longest, campaign_id, batch, old, *read, *after),
             )
             remaining = int((await cur.fetchone() or {"n": 0})["n"])
             if updates:
