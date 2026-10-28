@@ -146,7 +146,6 @@ from dmbot.dm_screen.channel import setup_dm_screen, update_help_card
 from dmbot.dm_screen.dm_bot_channel import DmBotChannelError, setup_dm_bot_channel
 from dmbot.dm_screen.dmbchat_channel import DmbchatChannelError, setup_dmbchat_channel
 from dmbot.dm_screen.game_masters import GameMastersButton
-from dmbot.dm_screen.gametime_channel import GametimeChannelError, setup_gametime_channel
 from dmbot.dm_screen.handover import (
     AcceptOfferButton,
     DeclineOfferButton,
@@ -3600,10 +3599,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if problems:
             return False, join_blocked_message(problems)
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
-        gametime_problem = await self._gametime_channel(guild, campaign, screen)
         dmbchat_id, dmbchat_problem = await self._dmbchat_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
+        await self._tell_players_the_clock(
+            guild.id, campaign.id
+        )  # (only if they would see a change)
         self._npcs_guilds[campaign.id] = guild.id
         self._npcs_changed(campaign.id)  # the pages' view is brought up to date at every start
 
@@ -3658,8 +3659,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return False, SAVE_FAILED
         if transcript_problem:
             await self.post(screen_id, transcript_problem)
-        if gametime_problem:
-            await self.post(screen_id, gametime_problem)
         if dmbchat_problem:
             await self.post(screen_id, dmbchat_problem)
         if dm_bot_problem:
@@ -11254,36 +11253,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return None, screen_messages.transcript_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return channel.id, None
 
-    async def _gametime_channel(
-        self, guild: discord.Guild, campaign: Campaign, screen: object
-    ) -> str | None:
-        """The players' game-time channel (#1116), made or repaired at every start, with the
-        players' pinned clock in it if the game clock is set. Returns a note for the DM if it
-        couldn't be set up; a failure here never stops a session."""
-        category = getattr(screen, "category", None)
-        try:
-            channel = await setup_gametime_channel(
-                guild,
-                campaign.id,
-                self.campaigns,
-                category=category if isinstance(category, discord.CategoryChannel) else None,
-            )
-        except GametimeChannelError as exc:
-            return screen_messages.gametime_failed(str(exc))
-        except Exception:
-            log.exception("Couldn't set up the game-time channel")
-            return screen_messages.gametime_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
-        try:
-            stored = await self.clocks.get(guild.id, campaign.id) if self.clocks else None
-            fresh = await self.campaigns.get(guild.id, campaign.id)
-            if stored is not None and fresh is not None and fresh.gametime_channel_id == channel.id:
-                await clock_screen.show_players(self, fresh, stored)
-                # Redraws the DM's pinned clock too, so an older one loses its rest buttons.
-                await clock_screen.show(self, fresh, stored)
-        except Exception:
-            log.exception("Couldn't put the players' clock in the game-time channel")
-        return None
-
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Settings is
         pressed, not only at the next session start. Returns the new channel's id, or None
@@ -11334,6 +11303,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Couldn't set up the DM Bot channel")
             return screen_messages.dm_bot_failed(screen_messages.TRANSCRIPT_NO_ANSWER)
         return None
+
+    async def _tell_players_the_clock(self, guild_id: int, campaign_id: str) -> None:
+        """At a start: if the game clock is set and the players' view of it differs from DMbot's
+        last clock line in the chat channel, post it (#2877). Best effort, never blocks a start."""
+        try:
+            stored = await self.clocks.get(guild_id, campaign_id) if self.clocks else None
+            fresh = await self.campaigns.get(guild_id, campaign_id)
+            if stored is not None and fresh is not None:
+                await clock_screen.show_players(self, fresh, stored)
+                # Redraws the DM's pinned clock too, so an older one loses its rest buttons.
+                await clock_screen.show(self, fresh, stored)
+        except Exception as exc:
+            log.warning("Couldn't show the clock at the start: %s", type(exc).__name__)
 
     async def _retire_old_channels(self, guild: discord.Guild, campaign: Campaign) -> None:
         """Delete the rules and NPC channels DMbot made before #2874 (only its own, by id and

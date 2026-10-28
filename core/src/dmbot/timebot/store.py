@@ -44,7 +44,8 @@ class Stored:
     clock: Clock
     channel_id: int | None
     message_id: int | None
-    # The players' pinned clock in the game-time channel (#1116): where, so it is edited in place.
+    # The players' pinned clock in the old game-time channel (#1116). Nothing writes them since
+    # #2877 (the clock is a small line in the chat channel); a later migration drops the columns.
     players_channel_id: int | None = None
     players_message_id: int | None = None
     # Split party (#1607): the groups (empty when not split), the position of the one the
@@ -271,17 +272,6 @@ class ClockStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE game_clocks SET channel_id = %s, message_id = %s"
-                " WHERE guild_id = %s AND campaign_id = %s",
-                (channel_id, message_id, guild_id, campaign_id),
-            )
-
-    async def set_players_message(
-        self, guild_id: int, campaign_id: str, channel_id: int | None, message_id: int | None
-    ) -> None:
-        """Remember the players' pinned clock message in the game-time channel (#1116)."""
-        async with self._db.guild(guild_id) as conn:
-            await conn.execute(
-                "UPDATE game_clocks SET players_channel_id = %s, players_message_id = %s"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (channel_id, message_id, guild_id, campaign_id),
             )

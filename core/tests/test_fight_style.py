@@ -191,7 +191,10 @@ class Phrase(unittest.TestCase):
         self.assertIn("⚔️ Combat, round 2\nInitiative, as heard: by side", text)
         calm = clock_ui.clock_text(Clock(0, 0), None, None, "Initiative, as heard: by side")
         self.assertNotIn("Initiative", calm)
-        self.assertNotIn("Initiative", clock_ui.players_text(fighting))  # players never see it
+        told = clock_ui.small(
+            clock_ui.players_view(SimpleNamespace(clock=fighting, split=False, groups=()))  # type: ignore[arg-type]
+        )
+        self.assertNotIn("Initiative", told)  # players never see it
 
 
 def sheets_for(users: list[int]) -> list[CharacterSheet]:

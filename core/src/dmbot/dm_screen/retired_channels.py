@@ -1,8 +1,10 @@
-"""The rules and NPC channels DMbot no longer makes (#2874): delete the ones it made before.
+"""The rules, NPC and game-time channels DMbot no longer makes (#2874, #2877): delete the ones it
+made before.
 
-`#dmb-rules-<short name>` (#1752) and `#dmb-npcs-<short name>` (#1761) were DMbot's own, read only
-for everyone. The owner dropped them (2026-10-28): anyone can ask DMbot about the rules in the
-chat, the DM has them in their menu, and the rules and the NPC pages are on the website. This
+`#dmb-rules-<short name>` (#1752), `#dmb-npcs-<short name>` (#1761) and `#dmb-gametime-<short
+name>` (#1116) were DMbot's own, read only for everyone. The owner dropped them (2026-10-28):
+anyone can ask DMbot about the rules in the chat, the DM has them in their menu, the rules and the
+NPC pages are on the website, and the players' clock is now a small line in the chat channel. This
 module is what is left of them: the names that say a channel is still DMbot's, and the one-time
 clean-up of the ones that exist.
 
@@ -31,6 +33,7 @@ log = logging.getLogger(__name__)
 # (web/test/help.test.ts looks for the names "dmb-rules" and "dmb-npcs" in this file.)
 RULES_PREFIX = f"{PREFIX}-rules-"
 NPCS_PREFIX = f"{PREFIX}-npcs-"
+GAMETIME_PREFIX = f"{PREFIX}-gametime-"
 REASON = "DMbot no longer uses this channel"  # the audit-log line
 CALL_TIMEOUT_S = 15.0  # one slow Discord call must not hold up a start
 
@@ -41,6 +44,10 @@ def is_rules_name(name: str) -> bool:
 
 def is_npcs_name(name: str) -> bool:
     return name.startswith(NPCS_PREFIX)
+
+
+def is_gametime_name(name: str) -> bool:
+    return name.startswith(GAMETIME_PREFIX)
 
 
 @dataclass(slots=True)
@@ -74,12 +81,13 @@ async def _retire_one(
 async def remove_old_channels(
     guild: discord.Guild, campaign: Campaign, campaigns: CampaignStore
 ) -> Retired:
-    """Delete this campaign's old rules and NPC channels if they are DMbot's own, and clear both
-    stored ids. Never raises; logs counts only."""
+    """Delete this campaign's old rules, NPC and game-time channels if they are DMbot's own, and
+    clear the stored ids. Never raises; logs counts only."""
     done = Retired()
     for channel_id, named_right, forget in (
         (campaign.rules_channel_id, is_rules_name, campaigns.set_rules_channel),
         (campaign.npcs_channel_id, is_npcs_name, campaigns.set_npcs_channel),
+        (campaign.gametime_channel_id, is_gametime_name, campaigns.set_gametime_channel),
     ):
         if channel_id is None:
             continue
@@ -96,7 +104,7 @@ async def remove_old_channels(
             await forget(guild.id, campaign.id, None)
     if done.deleted or done.kept or done.failed:
         log.info(
-            "Old rules and NPC channels: %d deleted, %d kept, %d failed",
+            "Old rules, NPC and game-time channels: %d deleted, %d kept, %d failed",
             done.deleted,
             done.kept,
             done.failed,

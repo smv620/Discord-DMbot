@@ -123,7 +123,7 @@ class Host(Protocol):
     ) -> CoDmDone:
         """Save the change with the store's own rules (raises `CampaignError` with Discord's
         words), then do what Discord's menu does: the running session takes the new set, the
-        DM screen's permissions and game-time channel are applied again, and a new game master
+        DM screen's permissions are applied again, and a new game master
         gets the one private message. The caller has checked an added person is in the server and
         not a bot. Nothing here touches anyone's consent."""
         ...
