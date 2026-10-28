@@ -349,7 +349,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice
+from dmbot.rules import house_voice, optional
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -360,6 +360,7 @@ from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -10448,6 +10449,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign:
         return await self.campaigns.set_transcript_keep(campaign.guild_id, campaign.id, days)
+
+    async def apply_optional_rule(
+        self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
+    ) -> bool:
+        """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
+        saved, then noted in the DM screen if the campaign has one. A line that could not be
+        posted is not the choice's failure (the rule is saved): False says so, for the page to
+        mention. The note never pings."""
+        await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
+        if campaign.dm_screen_channel_id is None:
+            return True
+        try:
+            return await self.post(
+                campaign.dm_screen_channel_id,
+                optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
+            )
+        except Exception as exc:  # the type only
+            log.warning("The DM screen line for an optional rule failed: %s", type(exc).__name__)
+            return False
 
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's

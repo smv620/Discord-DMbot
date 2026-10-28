@@ -16,6 +16,7 @@ CONNECTION_WORDS = {
     "owns": "owns",
     "knows": "knows",
     "serves": "works for",
+    "sworn_to": "is sworn to",
     "carries": "carries",
 }
 # The same connection read from the other name's card ("Frostwolf tribe has as members
@@ -26,6 +27,7 @@ CONNECTION_BACK = {
     "owns": "is owned by",
     "knows": "is known to",
     "serves": "is the boss of",
+    "sworn_to": "is owed an oath by",
     "carries": "is carried by",
 }
 # On a card, where several names may follow ("members include Ulfgar, Kesh").
