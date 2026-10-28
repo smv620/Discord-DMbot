@@ -26,7 +26,7 @@ from dmbot.memory import kin
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
-from dmbot.memory.pronouns import speaker_end
+from dmbot.memory.pronouns import PRONOUNS, speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
@@ -184,6 +184,20 @@ class Pick:
     words: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class Unsettled:
+    """A connection whose quote has one pronoun ("she") and holds only one of its two names, where
+    the sentence before did not settle who the pronoun means (#2790). It is not dropped when the
+    who-is-it check is on: `who_resolve.settle` asks the AI who it is. `missing_is_a` says which end
+    the quote lacks, `phrase` is the pronoun as written and `passage` the text up to the end of the
+    quote, word for word."""
+
+    made: Connection
+    missing_is_a: bool
+    phrase: str
+    passage: str
+
+
 MAX_PICK_CHOICES = 3  # the card has a button for each; more is left out as `which_one`
 MAX_PICKS = 50  # "Which Mara?" questions from one reading
 
@@ -238,6 +252,17 @@ def _has(haystack: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
 
 
+def names_in(text: str, names: Iterable[str]) -> list[str]:
+    """Which of these names the text holds as whole words, in the order given."""
+    haystack = _squash(text)
+    return [n for n in names if _has(haystack, n)]
+
+
+def quote_holds(quote: str, end: str) -> bool:
+    """Whether a quote (as written) holds this end, as `read_connections` asks it."""
+    return _in_quote(_squash(quote), end)
+
+
 def _in_quote(quote: str, end: str) -> bool:
     """Whether the quote holds this end: the name whole, or (the quote says "my brother Ulric" and
     the end is the listed "Ulric Stonehand", #2642) a word of it that is a name's own, not a title
@@ -288,12 +313,6 @@ def _variant(haystack: str, name: str, cache: dict[str, str | None]) -> str | No
     return cache[key]
 
 
-# The words that stand for a name already said (#2757): a quote is widened to the sentence before
-# only when it has one, so a quote that merely sits near a name never borrows it.
-PRONOUNS = frozenset(
-    {"he", "she", "his", "her", "hers", "him", "himself", "herself", "they", "their", "theirs",
-     "them", "its", "who", "whose", "whom"}
-)  # fmt: skip
 _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
 # Every way a document ends a paragraph or a line, not only "\n" (a pasted text may use the
 # Unicode separators).
@@ -587,13 +606,17 @@ def read_connections(
     own: Collection[str] = (),
     dropped: Dropped | None = None,
     aliases: Mapping[str, Sequence[str]] | None = None,
+    unsettled: list[Unsettled] | None = None,
 ) -> list[Connection]:
     """The connections in one answer that the text really holds: both names and the quote are in
     `piece` as whole words and the quote holds both names, so DMbot never invents a link. The
     names are checked against the merged list later (`keep_connections`). `dropped` counts why
     each line that failed did. `aliases` (a name key of the campaign to its confirmed public alias
     keys, each fitting that one entry only) lets a text that uses only an alias back the canonical
-    name the AI wrote (#2762): secret aliases are never in it, so nothing secret is matched here."""
+    name the AI wrote (#2762): secret aliases are never in it, so nothing secret is matched here.
+    `unsettled` (#2790): when given, a connection whose pronoun the sentence before did not settle
+    is added there instead of being dropped as `not_in_text`, for the caller to settle; the caller
+    then counts what became of each (the counts add up to the lines found)."""
     lost = dropped if dropped is not None else Counter()
     data = _json(reply)
     items = data.get("connections") if isinstance(data, dict) else None
@@ -686,9 +709,34 @@ def read_connections(
             # The quote named one end ("his sister…"): the sentence before it joins, word for word.
             lost["quote_widened"] += 1
             out.append(replace(made, quote=" ".join(wide)))
+        elif unsettled is not None and (
+            open_ := _unsettled(piece, words, said_squashed, made, seen)
+        ):
+            unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
     return out
+
+
+def _unsettled(
+    piece: str, words: list[str], said: str, made: Connection, seen: list[str]
+) -> Unsettled | None:
+    """The question a quote leaves open, or None when it is not one the AI should be asked: the
+    quote must hold exactly one of the two names and exactly one distinct pronoun (two pronouns
+    could each mean another person, and which one stands for the missing end is a guess)."""
+    in_a, in_b = _in_quote(said, seen[0]), _in_quote(said, seen[1])
+    if in_a == in_b:
+        return None
+    written = [w.strip(".,;:!?\"'“”‘’()") for w in words]
+    pronouns = [w for w in written if w.casefold() in PRONOUNS]
+    if len({w.casefold() for w in pronouns}) != 1:
+        return None
+    pattern = r"\s+".join(re.escape(w) for w in words)
+    for hit in re.finditer(pattern, piece, re.I):
+        if _BREAK.search(piece[hit.start() : hit.end()]):
+            continue
+        return Unsettled(made, not in_a, pronouns[0], piece[: hit.end()])
+    return None
 
 
 def _clashes(reader: Ends, variant: str, own: str) -> bool:

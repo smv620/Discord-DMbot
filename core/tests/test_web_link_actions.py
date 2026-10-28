@@ -15,6 +15,7 @@ from dmbot.memory.backstory_links import BackstoryLinks, NewLink, NewWhich
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import MemoryRuleError, NewName
+from dmbot.memory.which_else import none_of_these
 from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
@@ -818,6 +819,67 @@ class TheEdits(Editing):
         self.assertEqual(await self.backstory.count(self.g, self.one.id), 0)
         again = await self.refused_queue(kind="which", action="neither", id=which)
         self.assertEqual(again, "not_found")  # the door no longer finds it
+
+    async def pronoun_question(self) -> str:
+        """A question about "she" with one name, Mara Ashgrove (#2790): the table's second place
+        holds the question's own end, Rook, which is never offered."""
+        self.mara_a = await self.add("Mara Ashgrove", "character", role="npc")
+        await self.backstory.add_which(
+            self.g,
+            self.one.id,
+            [NewWhich(self.rook, True, "knows", "She", (self.mara_a,), "She knows Rook")],
+        )
+        (found,) = await self.backstory.which_waiting(self.g, self.one.id)
+        self.assertEqual([i for i, _ in found.candidates], [self.mara_a])
+        return found.id
+
+    async def test_someone_else_from_the_website_keeps_the_connection_with_an_unnamed_person(
+        self,
+    ) -> None:
+        which = await self.pronoun_question()
+        await self.queue(kind="which", action="neither", id=which)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(await self.backstory.which_waiting(self.g, self.one.id), [])
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 1)  # kept, waiting
+        self.assertEqual(len(await self.memory.unnamed(self.g, self.one.id)), 1)
+
+    async def test_the_questions_own_end_is_no_answer_and_the_question_stays(self) -> None:
+        which = await self.pronoun_question()
+        result = await self.backstory.pick_which(self.g, self.one.id, which, self.rook)
+        self.assertEqual(result, "gone")
+        self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
+        self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # no link made
+
+    async def test_a_pronoun_question_whose_only_name_is_gone_still_waits(self) -> None:
+        which = await self.pronoun_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_a, "rejected", source="dm"
+        )
+        (left,) = await self.backstory.which_waiting(self.g, self.one.id)
+        self.assertEqual((left.id, left.candidates), (which, ()))
+
+    async def test_a_pick_that_raises_leaves_no_unnamed_person_behind(self) -> None:
+        await self.pronoun_question()
+        (q,) = await self.backstory.which_waiting(self.g, self.one.id)
+        with (
+            patch.object(self.backstory, "pick_which", side_effect=RuntimeError("boom")),
+            self.assertRaises(RuntimeError),
+        ):
+            await none_of_these(self.memory, self.backstory, self.g, self.one.id, q)
+        self.assertEqual(await self.memory.unnamed(self.g, self.one.id), [])
+
+    async def test_a_failed_undo_of_any_kind_is_logged_and_keeps_the_original_result(self) -> None:
+        await self.pronoun_question()
+        (q,) = await self.backstory.which_waiting(self.g, self.one.id)
+        for failure in (MemoryRuleError("late"), RuntimeError("down")):
+            with (
+                patch.object(self.backstory, "pick_which", return_value="full"),
+                patch.object(self.memory, "undo", side_effect=failure),
+                self.assertLogs("dmbot.memory.which_else", "WARNING") as logs,
+            ):
+                result = await none_of_these(self.memory, self.backstory, self.g, self.one.id, q)
+            self.assertEqual(result, "full")
+            self.assertIn("could not be taken back", logs.output[0])
 
     async def test_a_pick_that_is_not_a_candidate_or_not_an_id_is_refused(self) -> None:
         which = await self.which_question()

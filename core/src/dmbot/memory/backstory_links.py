@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
@@ -186,15 +187,22 @@ class BackstoryLinks:
             row = await cur.fetchone()
             room = max(0, MAX_WHICH - int(row["n"] if row else 0))
             for w in rows:
-                if added >= room or len(set(w.candidates)) < 2:
+                if added >= room or len(set(w.candidates)) < (1 if is_pronoun(w.word) else 2):
                     continue
+                candidates = list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES]
+                if len(candidates) < 2:
+                    # A pronoun's question with one name ("Mara, or someone else", #2790): the table
+                    # wants two, so the question's own named end fills the second place. It is never
+                    # offered (a candidate that is the other end is skipped when the question is
+                    # read), so the DM sees one name and "Someone else".
+                    candidates.append(w.other_id)
                 cur = await conn.execute(
                     "INSERT INTO backstory_which (guild_id, campaign_id, other_id,"
                     " other_is_subject, predicate, word, candidates, quote, secret, detail, truth,"
                     " upload, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
                     " %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, w.other_id, w.other_is_subject, w.predicate,
-                     w.word[:80], list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES],
+                     w.word[:80], candidates,
                      w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now),
                 )  # fmt: skip
                 added += cur.rowcount
@@ -205,7 +213,10 @@ class BackstoryLinks:
     async def which_waiting(self, guild_id: int, campaign_id: str) -> list[WhichWaiting]:
         """The questions still worth asking, oldest first. A candidate that was refused or merged
         away is dropped (or follows the merge); a question left with fewer than two candidates,
-        or about a name that is gone or refused, is not asked and is deleted."""
+        or about a name that is gone or refused, is not asked and is deleted. A question about a
+        pronoun ("she", #2790) is the exception for its candidates: it is kept with one name or
+        none, because "Someone else" keeps its connection; only its own end going away deletes it.
+        (Its stored second candidate, the question's own end, is never in the list returned.)"""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
@@ -228,7 +239,10 @@ class BackstoryLinks:
                     end = self._end(entities, candidate)
                     if end is not None and entities[end]["status"] != "rejected" and end != other:
                         live[end] = str(entities[end]["name"])
-                if other is None or entities[other]["status"] == "rejected" or len(live) < 2:
+                # A pronoun's question is never dropped for want of names: "Someone else" keeps its
+                # connection (#2790), so it waits even when every name it offered is gone.
+                needs = 0 if is_pronoun(str(r["word"])) else 2
+                if other is None or entities[other]["status"] == "rejected" or len(live) < needs:
                     drop.append(str(r["id"]))
                     continue
                 out.append(
@@ -247,12 +261,20 @@ class BackstoryLinks:
         return out
 
     async def pick_which(
-        self, guild_id: int, campaign_id: str, which_id: str, entity_id: str | None
+        self,
+        guild_id: int,
+        campaign_id: str,
+        which_id: str,
+        entity_id: str | None,
+        *,
+        outside: bool = False,
     ) -> str:
         """The DM's answer: one of the candidates (the connection joins the waiting ones, ready
         as soon as both its names are answered) or None for "Neither" (it is dropped). `GONE` when
         the question is gone or the pick is not one of its candidates, `FULL` when the queue is.
-        Under the campaign lock, so two presses answer once."""
+        `outside`: the entry is not one of the candidates (an unnamed person made for "none of
+        these", #2790): the connection still joins the waiting ones. Under the campaign lock, so
+        two presses answer once."""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
@@ -270,8 +292,14 @@ class BackstoryLinks:
                 )
                 ends = {self._end(entities, c) for c in row["candidates"]}
                 end = self._end(entities, entity_id)
-                if end is None or end not in ends or entities[end]["status"] == "rejected":
+                if (
+                    end is None
+                    or (end not in ends and not outside)
+                    or entities[end]["status"] == "rejected"
+                ):
                     return GONE
+                if end == row["other_id"] and not outside:
+                    return GONE  # (the question's own end is no answer: the question stays)
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
                     " AND campaign_id = %s",
