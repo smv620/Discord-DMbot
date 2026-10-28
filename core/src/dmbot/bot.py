@@ -108,6 +108,7 @@ from dmbot.dm_screen import (
     delete_campaign,
     dm_bot_buttons,
     ensure_dm_screen,
+    game_masters,
     house_sync,
     import_button,
     links_ready,
@@ -10475,6 +10476,55 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:  # the type only
             log.warning("The DM screen line for an optional rule failed: %s", type(exc).__name__)
             return False
+
+    async def find_member(self, guild_id: int, user_id: int) -> web_settings.Member | None:
+        """A person of the server for the website's game master change (#2776): the cache first
+        (DMbot has no members intent), then Discord. None only when Discord says they are not in
+        the server; any other failure raises, so a lookup that failed is never read as "left"."""
+        guild = self.get_guild(guild_id)
+        if guild is None:
+            raise RuntimeError("the server is not reachable")
+        found = guild.get_member(user_id)
+        if found is None:
+            try:
+                found = await asyncio.wait_for(
+                    guild.fetch_member(user_id), game_masters.LOOKUP_S * 4
+                )  # (one slow call must not hold every server's queue)
+            except discord.NotFound:
+                return None
+        return web_settings.Member(found.display_name, found.bot)
+
+    async def apply_co_dm(
+        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
+    ) -> web_settings.CoDmDone:
+        """A game master added or removed on the website (#2776), exactly as Discord's 👑 Game
+        masters does it: the store's rules, then access follows and a new game master gets the
+        one private message. The caller has checked an added person is in the server and not a
+        bot. The change stays saved if either follow-up fails. Ids in the log only."""
+        guild = self.get_guild(campaign.guild_id)
+        if guild is None:
+            raise CampaignError(screen_messages.CAMPAIGN_GONE)
+        if add:
+            changed = await self.campaigns.add_dm(campaign.guild_id, campaign.id, user_id)
+        else:
+            changed = await self.campaigns.remove_dm(campaign.guild_id, campaign.id, user_id)
+        with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
+            log.info(
+                "Game master %s %s by %s on the website",
+                user_id,
+                "added" if add else "removed",
+                asker_id,
+            )
+        late = await game_masters.follow_access_on(self, guild, changed)
+        if not add:
+            return web_settings.CoDmDone(late=late)
+        try:  # the cache is often empty (no members intent), so ask Discord too
+            asker = await self.find_member(campaign.guild_id, asker_id)
+        except Exception:
+            asker = None
+        by = asker.name if asker is not None else "A game master"
+        told = await game_masters.tell_new(guild, changed, user_id, by)
+        return web_settings.CoDmDone(told=told, late=late)
 
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's
