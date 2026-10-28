@@ -10,7 +10,7 @@ import time
 import unittest
 import zipfile
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 from unittest.mock import AsyncMock, patch
 
 import discord
@@ -747,7 +747,9 @@ class WaitingOnAFileRead(SyncTest):
     async def test_a_message_that_cannot_be_sent_does_not_stop_the_read(self) -> None:
         it = self.interaction()
         it.followup.send = AsyncMock(
-            side_effect=discord.HTTPException(SimpleNamespace(status=500, reason="x"), "x")
+            side_effect=discord.HTTPException(
+                cast(Any, SimpleNamespace(status=500, reason="x")), "x"
+            )
         )
         ran = []
         async with file_ui._waiting(it):
@@ -817,7 +819,9 @@ class WaitingOnAFileRead(SyncTest):
         it, message = self.message_interaction()
         form = file_ui.UploadForm(campaign())
         broken = AsyncMock(
-            side_effect=discord.HTTPException(SimpleNamespace(status=500, reason="x"), "x")
+            side_effect=discord.HTTPException(
+                cast(Any, SimpleNamespace(status=500, reason="x")), "x"
+            )
         )
         attachment = SimpleNamespace(size=3, filename="a.txt", read=broken)
         form.file.component._values = [attachment]  # type: ignore[attr-defined]
@@ -857,7 +861,7 @@ class WaitingOnAFileRead(SyncTest):
             await file_ui.check_now(it, campaign())
         self.assertIn(file_ui.READING, it.followup.send.await_args_list[0].args[0])
         self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
-        self.assertIn("progress", check.await_args.kwargs)
+        self.assertIn("progress", check.call_args.kwargs)
         file_ui._done(campaign())
 
     async def test_a_link_that_cannot_be_fetched_ends_the_wait_as_stopped(self) -> None:
@@ -878,8 +882,8 @@ class WaitingOnAFileRead(SyncTest):
             hs.BUSY, hs.TOO_MANY_READS, hs.FAILED, hs.couldnt_read("x"),
         ):  # fmt: skip
             self.assertTrue(hs.stopped(words), words)
-        for words in (None, hs.SAME, hs.BOOK, hs.NOTHING_FOUND):
-            self.assertFalse(hs.stopped(words), words)
+        for result in (None, hs.SAME, hs.BOOK, hs.NOTHING_FOUND):
+            self.assertFalse(hs.stopped(result), result)
 
     async def test_a_comparison_that_breaks_says_so_and_ends_stopped(self) -> None:
         sent: list[str] = []
