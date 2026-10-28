@@ -37,6 +37,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import (
+    accounts,
     alerts,
     campaign_cap,
     entitlements,
@@ -542,7 +543,6 @@ from dmbot.ui.transcripts import (
     lookup_members,
     transcript_command,
 )
-from dmbot.web import accounts
 
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
