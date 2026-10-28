@@ -33,7 +33,9 @@ export default function FixLine({
   startedMs: number;
   speaker: string;
   isDm: boolean;
-  /** One fix at a time on the page: the page owns the flag, so every button waits while one runs. */
+  /** One fix at a time on the page: the page owns the flag, so every button waits while one runs. The flag lives in
+   * the transcript list, so a reload or a campaign switch can clear it while a fix is still queued. That is accepted
+   * for now (#2884); the fix still goes through on the server. */
   busy: boolean;
   setBusy: (value: boolean) => void;
 }) {

@@ -2332,6 +2332,26 @@ export interface AccountApi {
   confirmDelete(token: string): Promise<void>;
 }
 
+/** The fix routes' own codes (#2858). Kept apart from the shared table so a bare `open` or `many` from any other
+ * route can never show the fix words. Only the two fix calls read it. */
+const fixErrorKinds: Record<string, ApiErrorKind> = {
+  bad_text: "bad-text",
+  same: "same",
+  not_yours: "not-yours",
+  not_recorded: "not-recorded",
+  line_changed: "line-changed",
+  line_gone: "line-gone",
+  not_written: "not-written",
+  not_available: "not-available",
+  open: "fix-open",
+  many: "fix-many",
+  no_dm_screen: "no-dm-screen",
+  queue_full: "queue-full",
+  bad_choice: "bad-choice",
+  player_stopped: "player-stopped",
+  secret: "secret",
+};
+
 const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
   no_rules: "no-rules",
@@ -2372,16 +2392,6 @@ const errorKinds: Record<string, ApiErrorKind> = {
   slow_down: "slow-down",
   busy: "slow-down",
   bad_link: "bad-link",
-  same: "same",
-  not_yours: "not-yours",
-  not_recorded: "not-recorded",
-  line_changed: "line-changed",
-  line_gone: "line-gone",
-  not_written: "not-written",
-  open: "fix-open",
-  many: "fix-many",
-  no_dm_screen: "no-dm-screen",
-  player_stopped: "player-stopped",
   bad_document: "bad-document-link",
   move_off: "not-ready",
   not_paid: "no-paid-plan",
@@ -2504,6 +2514,7 @@ export function httpApi(
     asFile = false,
     raw?: Blob,
     anonymous = false,
+    kinds: Record<string, ApiErrorKind> = errorKinds,
   ): Promise<unknown> {
     let response: Response;
     try {
@@ -2552,7 +2563,7 @@ export function httpApi(
       // FastAPI's own answer is {"detail":"Not Found"}; or the proxy's page): that is "not found", not
       // an outage. A 404 with a known code keeps what the code says (errorKinds is read first).
       const kind =
-        errorKinds[code] ??
+        kinds[code] ??
         (response.status === 403
           ? "not-allowed"
           : response.status === 404
@@ -2939,6 +2950,10 @@ export function httpApi(
         "POST",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix`,
         { speaker: line.speaker, startedMs: line.startedMs, text },
+        false,
+        undefined,
+        false,
+        fixErrorKinds,
       )) as { answer: string; mode: FixMode };
       if (!queued?.answer) throw new ApiError("server");
       return queued;
@@ -2947,6 +2962,11 @@ export function httpApi(
       (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix/${encodeURIComponent(answer)}`,
+        undefined,
+        false,
+        undefined,
+        false,
+        fixErrorKinds,
       )) as FixAnswer,
     campaignGameMasterCandidates: async (campaignRef, query) =>
       (
