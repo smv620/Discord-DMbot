@@ -122,6 +122,15 @@ class WebSettings:
     # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
     # routes answer 404, so nothing is queued before the bot can run it.
     line_delete_on: bool = False
+    # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
+    # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
+    co_dms_on: bool = False
+    # "Make it again" on a session's report (#2661; DMBOT_WEB_REPORT_MAKE): off, the route that
+    # queues the request answers 404, so nothing is queued before the bot (#2805) takes it.
+    report_make_on: bool = False
+    # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
+    # queue a choice answer 404, so nothing is queued before the bot can run it.
+    rule_sharing_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -338,10 +347,26 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
         )
+    co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
+    if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
+    report_make_raw = (get("DMBOT_WEB_REPORT_MAKE") or "0").lower()
+    if report_make_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
+        )
+    rule_sharing_raw = (get("DMBOT_WEB_RULE_SHARING") or "0").lower()
+    if rule_sharing_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RULE_SHARING must be 1 (on) or 0 (off), got "{rule_sharing_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         line_delete_on=line_delete_raw in ("1", "true", "on"),
+        co_dms_on=co_dms_raw in ("1", "true", "on"),
+        report_make_on=report_make_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),

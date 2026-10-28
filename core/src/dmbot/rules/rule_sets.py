@@ -521,13 +521,23 @@ class RuleSetStore:
             code,
         )  # fmt: skip
 
-    async def by_code(self, guild_id: int, user_id: int, code: str) -> Offer:
+    async def by_code(self, guild_id: int, user_id: int, code: str, *, count: bool = True) -> Offer:
         """The shared set a code opens, from any server: its name, its publisher campaign's
         name and the content it would copy. For a DM who is about to confirm following it:
         the caller checks that (this returns the full content). A wrong code counts toward a
         short limit for that person in that server (kept in memory, so it resets on a restart;
         a code is 10 letters from 32, about 10**15, so the limit only slows a determined
-        guesser)."""
+        guesser). `count=False`: a try that was already counted (the website's choice taken again
+        after a slow first run) is not counted twice, and is not held back by the limit."""
+        if not count:
+            offer = None
+            wanted = clean_code(code)
+            if len(wanted) == CODE_LENGTH:
+                async with self._db.guild(guild_id) as conn:
+                    offer = await self._door(conn, wanted)
+            if offer is None:
+                raise RuleSetError(BAD_CODE)
+            return offer
         key = (guild_id, user_id)
         now = self._clock()
         tries = self._wrong.setdefault(key, deque())

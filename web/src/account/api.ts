@@ -85,8 +85,30 @@ export interface CampaignPage {
 /** One of the three choices a game master can change on the Settings tab (#2484). */
 export type CampaignSettingName = "visibility" | "level" | "retention";
 
-/** A choice the queue carries: the three above, or an optional rule switched on or off (#2753). */
-export type QueuedSetting = CampaignSettingName | "optional_rule";
+/** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
+ * added or removed (#2768: `value` is the person's id, `on` true to add). */
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm";
+
+/** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
+ * campaign (cannot be removed); `you` is the person looking (may leave). */
+export interface GameMaster {
+  userId: string;
+  name: string;
+  plan: boolean;
+  you: boolean;
+}
+
+/** The campaign's game masters and the most it can have (#2768). */
+export interface GameMasters {
+  max: number;
+  gameMasters: GameMaster[];
+}
+
+/** Someone a game master can offer as one more: a member who agreed to be recorded (#2768). */
+export interface GameMasterCandidate {
+  userId: string;
+  name: string;
+}
 
 /** One optional rule from another book, as the Settings tab lists it (#2753; core web/optional_rules.py).
  * `changed` is true when the game master chose it, false when it follows the campaign's default. */
@@ -117,6 +139,36 @@ export interface CampaignSettingAnswer {
   error: string;
   setting: QueuedSetting;
   value: string;
+  note: string;
+}
+
+/** A campaign's shared and followed house rules, for the DM (#2783). Never a share code (they are read in Discord,
+ * #2460) and never a rule's words: names, versions and counts. */
+export interface RuleSharing {
+  published: null | { name: string; shared: boolean; version: number; hasCode: boolean };
+  following: { name: string; publisher: string; version: number; updating: boolean }[];
+  /** The sets other campaigns share in the same server, to follow from a list. */
+  here: { setId: string; name: string; publisher: string; version: number; rules: number }[];
+  /** How many house rules of its own the campaign could share. */
+  ruleCount: number;
+  /** Whether the owner's plan lets the campaign share. */
+  canShare: boolean;
+}
+export type RuleSharingChoice =
+  | { action: "publish"; arg: string }
+  | { action: "stop_sharing" | "unfollow" }
+  | { action: "look_code" | "follow_code"; arg: string }
+  | { action: "follow_here"; arg: string };
+/** Where one sharing choice stands: the shared progress shape and Discord's own words (`note`). */
+export interface RuleSharingAnswer {
+  state: "running" | "stalled" | "done" | "failed";
+  stage: "waiting" | "sharing" | "done" | "failed";
+  action: RuleSharingChoice["action"];
+  startedAt: number;
+  updatedAt: number;
+  serverNow: number;
+  reason: string | null;
+  error: string;
   note: string;
 }
 
@@ -541,6 +593,9 @@ export interface ReportDifference {
 export interface SessionReport {
   session: { at: number; number?: number | null };
   state: "none" | "making" | "ready" | "failed";
+  /** A "make it again" on a session that already has a report that did not work (#2661): the report below
+   * is the old one, still good. Missing when the last try worked or there was none. */
+  lastRequest?: { state: "failed"; updatedAt: number } | null;
   /** While `making` or `failed`: the shared wait shape (counts and codes only). */
   progress?: JobProgress | null;
   counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };
@@ -1366,6 +1421,13 @@ export interface NameRow {
   /** How often the name has been mentioned, for choosing which of several to keep (#2427). Missing
    * from an API that doesn't send it. */
   mentions?: number;
+  /** A person the story described and never named (#2803): the name is how the page calls them ("Ken's
+   * sister"). Only a DM's list has them, in the group `not_named`. */
+  unnamed?: boolean;
+  /** For an unnamed person: who they are, in the story's words ("sister"). */
+  unnamedWhat?: string;
+  /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
+  unnamedAnchor?: string | null;
 }
 
 export interface NameKind {
@@ -1406,6 +1468,9 @@ export interface NamesQuery {
   page: number;
   /** Names per page: 20, 50, 200 or 500 (core refuses any other); the API's usual (50) when missing. */
   size?: number;
+  /** Ask for the people the story never named too (#2803): without it the list, its counts and its totals
+   * leave them out, whatever the page's switch says. A DM's list only; anyone else gets none either way. */
+  unnamed?: boolean;
 }
 
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
@@ -1423,6 +1488,20 @@ export type NameChange =
   | { action: "merge-many"; others: string[] }
   | { action: "remove"; confirm: true };
 
+/** The three steps of giving a name to someone the story never named (#2803; the bot applies each one). */
+export type NameThemStep =
+  | { action: "name"; name: string }
+  // "Yes, the same person": joined into the name DMbot already knows, which is kept.
+  | { action: "name-join"; into: string }
+  // Takes back a name just given or a join; `answer` is the id the step came back with.
+  | { action: "name-undo"; answer: string };
+
+/** How a step ended: done (`undo` is the id to take it back with, null when it can't be), or a question
+ * because DMbot already knows someone with that name. */
+export type NameThemResult =
+  | { state: "done"; row: NameRow | null; undo: string | null; answer: string }
+  | { state: "question"; other: { id: string; name: string } };
+
 /** What the bot says about a queued name change (#2294). */
 interface NameAnswer {
   state: "waiting" | "working" | "done" | "failed";
@@ -1430,6 +1509,10 @@ interface NameAnswer {
   removed?: boolean;
   /** A store-side refusal, such as "exists" or "not_found". */
   error?: string | null;
+  /** The entry DMbot already knows, when a new name is one (#2803). */
+  other?: { id: string; name: string } | null;
+  /** True while the step can still be undone (#2803). */
+  undo?: boolean;
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
@@ -1571,6 +1654,11 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "ambiguous" // two people could be the one a new name is for, so nothing was changed (#2803)
+  | "hour-full" // the campaign's game masters have sent thirty talk messages to PlotBot this hour (#2774)
+  | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
+  | "no-rules" // there is no house rule of the campaign's own to share (#2783)
+  | "bad-choice" // a sharing choice the API cannot read (#2783)
   | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
   | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
   | "needs-rights" // the campaign's first added recap: say you may use it (#2609)
@@ -1662,6 +1750,9 @@ export type ApiErrorKind =
   | "bad-action" // not one of on, off or new (#2118)
   | "bad-setting" // a campaign setting the site does not change (#2484)
   | "bad-value" // a choice Discord does not offer for it (#2484)
+  | "plan-holder" // the game master whose plan runs the campaign cannot be removed (#2768)
+  | "too-many-masters" // the campaign already has the most game masters (#2768)
+  | "unknown-person" // not someone DMbot can offer as a game master (#2768)
   | "bad-answer" // the Plot check's answer was not one it takes (#2122)
   | "plot-open" // Approve waits for the Plot check's open questions (#2122)
   | "not-yet" // a draft is opened as it is only after 3 days of waiting (#2305)
@@ -1676,6 +1767,9 @@ export type ApiErrorKind =
   | "no-backup" // a Try It campaign has no backup (#2555)
   | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
   | "nothing-to-delete" // the person has no lines of theirs in that server to delete (#2769)
+  | "backup-too-many-files" // more transcripts files than one backup carries (#2772)
+  | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
+  | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1683,13 +1777,28 @@ export type ApiErrorKind =
 const BACKUP_POLL_MS = 1500;
 const BACKUP_POLL_MAX_MS = 10_000;
 const BACKUP_GIVE_UP_MS = 16 * 60_000;
+/** One file that has not arrived in this long is a download that is stuck (DMbot keeps the copy 15 minutes). */
+const BACKUP_FILE_TIMEOUT_MS = 3 * 60_000;
 /** What a failed copy's `reason` means to the page (core web/campaign_backup.py REASONS). */
 const backupReasons: Record<string, ApiErrorKind> = {
   plan: "no-backup",
   too_big: "too-big",
+  too_many_files: "backup-too-many-files",
   not_allowed: "not-allowed",
   not_found: "not-found",
 };
+
+/** One file of a downloaded backup, with the name Discord's own backup gives it (#2772). */
+export interface BackupFile {
+  name: string;
+  blob: Blob;
+}
+/** A backup as a set: the main file first, then its transcripts files in order. Keep them together. */
+export interface BackupSet {
+  files: BackupFile[];
+}
+/** A name safe to save under: letters, digits, dots, dashes and underscores. */
+const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
 
 export class ApiError extends Error {
   constructor(
@@ -1742,9 +1851,16 @@ export interface AccountApi {
   /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
    * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
    * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
-   * `too-big`, `not-allowed`, `not-found`, `too-soon`, and `backup-failed` (it could not be made, or took longer
-   * than the 15 minutes it is kept). */
-  campaignBackup?(ref: string, onProgress?: (progress: JobProgress) => void): Promise<Blob>;
+   * `too-big`, `not-allowed`, `not-found`, `too-soon`, `backup-too-many-files` (more transcripts files than one
+   * backup carries), `backup-part` (one of its files did not come through, so the set is not complete) and
+   * `backup-failed` (it could not be made, or took longer than the 15 minutes it is kept). The answer is the
+   * main file and every transcripts file, the same set Discord's `/dmbot backup` sends (#2772); `onFile` hears
+   * how many are fetched ("2 of 7"). */
+  campaignBackup?(
+    ref: string,
+    onProgress?: (progress: JobProgress) => void,
+    onFile?: (done: number, total: number) => void,
+  ): Promise<BackupSet>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
   /** `{moving: true}` (HTTP 202) when the campaign has to move to another server first: the bot does it within
@@ -1842,6 +1958,9 @@ export interface AccountApi {
   /** Delete all of my notes in a campaign; how many there were. */
   deleteMyNpcNotes?(campaignRef: string): Promise<number>;
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
+  /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
+   * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
+  nameThem?(ref: string, id: string, step: NameThemStep, onLook?: () => void): Promise<NameThemResult>;
   /** The relationship web around a name (#2324, API #2323). Missing from an older API. */
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
@@ -1908,6 +2027,11 @@ export interface AccountApi {
    * from an API older than that. A rule is switched with `setCampaignSetting({setting: "optional_rule",
    * value: <id>, on})`. */
   campaignOptionalRules?(campaignRef: string): Promise<OptionalRules>;
+  /** The campaign's game masters (#2768), for its game masters. Missing from an API older than that. A change is
+   * sent with `setCampaignSetting({setting: "co_dm", value: <userId>, on})`. */
+  campaignGameMasters?(campaignRef: string): Promise<GameMasters>;
+  /** Who can be offered as a game master, searched by name (#2768): at most 25, members who agreed to be recorded. */
+  campaignGameMasterCandidates?(campaignRef: string, query: string): Promise<GameMasterCandidate[]>;
   /** Where a choice sent with `setCampaignSetting` stands. */
   campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
@@ -1923,6 +2047,12 @@ export interface AccountApi {
   houseRules?(campaignRef: string): Promise<HouseRules>;
   /** The same rules as the file the bot's Download button sends. */
   houseRulesFile?(campaignRef: string): Promise<Blob>;
+  /** What the campaign shares and follows (DMs only, #2783); "not allowed" for anyone else. */
+  ruleSharing?(campaignRef: string): Promise<RuleSharing>;
+  /** Queue one sharing choice for the bot; resolves with the id to look at. */
+  chooseRuleSharing?(campaignRef: string, choice: RuleSharingChoice): Promise<string>;
+  /** Where a choice sent with `chooseRuleSharing` stands. */
+  ruleSharingAnswer?(campaignRef: string, answer: string): Promise<RuleSharingAnswer>;
   /** Whether DMbot may use this person's words to improve itself (#1610); on by default. Missing
    * from an older API, which shows no switch. */
   improvement?(): Promise<boolean>;
@@ -2049,7 +2179,11 @@ export interface AccountApi {
 }
 
 const errorKinds: Record<string, ApiErrorKind> = {
+  plan: "plan-needed",
+  no_rules: "no-rules",
+  bad_arg: "bad-choice",
   gone: "gone",
+  ambiguous: "ambiguous",
   cannot_write: "cannot-write",
   queue_full: "queue-full",
   stale: "stale",
@@ -2088,6 +2222,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  hour_full: "hour-full",
   bad_answer: "bad-answer",
   plot_open: "plot-open",
   not_yet: "not-yet",
@@ -2158,6 +2293,9 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_setting: "bad-setting",
   bad_value: "bad-value",
   nothing_to_delete: "nothing-to-delete",
+  plan_holder: "plan-holder",
+  too_many: "too-many-masters",
+  unknown_person: "unknown-person",
 };
 
 /** The recap routes answer 409 `busy` ("being written or sent now"), which the shared code table reads as
@@ -2314,13 +2452,22 @@ export function httpApi(
     },
     deleteCampaign: async (ref, name) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
-    campaignBackup: async (ref, onProgress) => {
+    campaignBackup: async (ref, onProgress, onFile) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
       const asked = (await call("POST", base)) as { id: string };
+      const copy = `${base}/${encodeURIComponent(asked.id)}`;
       const began = Date.now();
       let wait = BACKUP_POLL_MS;
+      type Status = JobProgress & {
+        ready: boolean;
+        fileName?: string | null;
+        fileWaiting?: boolean;
+        parts?: { n: number }[];
+        partsTotal?: number;
+      };
+      let got: Status;
       for (;;) {
-        const got = (await call("GET", `${base}/${encodeURIComponent(asked.id)}`)) as JobProgress & { ready: boolean };
+        got = (await call("GET", copy)) as Status;
         onProgress?.(got);
         if (got.state === "failed") throw new ApiError(backupReasons[got.reason ?? ""] ?? "backup-failed");
         if (got.ready) break;
@@ -2329,8 +2476,39 @@ export function httpApi(
         await new Promise((resolve) => setTimeout(resolve, wait));
         wait = Math.min(wait * 1.5, BACKUP_POLL_MAX_MS);
       }
-      // Once: DMbot deletes the copy as it is sent.
-      return (await call("GET", `${base}/${encodeURIComponent(asked.id)}/file`, undefined, true)) as Blob;
+      // The main file, then each transcripts file still waiting, each fetched once (DMbot deletes a file as it
+      // sends it). The names are Discord's own, made from the main file's name. One that fails fails the set:
+      // a backup with a file missing would restore without part of the story.
+      const main = safeBackupName(got.fileName ?? "", "campaign.dmbot.json.gz");
+      const stem = main.replace(/\.dmbot\.json\.gz$/, "") || "campaign";
+      // An API without the transcripts files says nothing of them (no `fileWaiting`, no `partsTotal`): a main file
+      // alone would look complete, so it is refused.
+      if (typeof got.partsTotal !== "number" || typeof got.fileWaiting !== "boolean") throw new ApiError("backup-failed");
+      const parts = (got.parts ?? []).map((p) => p.n);
+      // A broken set is never resumed: files are handed over once, so a copy whose main file was already taken, or
+      // that lists fewer files than it had, can never be a whole backup. Refused before anything is fetched.
+      if (!got.fileWaiting || parts.length !== got.partsTotal) throw new ApiError("backup-unfinished");
+      const total = 1 + parts.length;
+      const files: BackupFile[] = [];
+      onFile?.(0, total);
+      const take = async (path: string, name: string, first: boolean): Promise<void> => {
+        try {
+          // A file that does not arrive in time is a stuck download, said as one (the page keeps its clock running).
+          const arrives = call("GET", `${copy}${path}`, undefined, true) as Promise<Blob>;
+          const late = new Promise<never>((_, reject) => setTimeout(() => reject(new ApiError(first ? "backup-failed" : "backup-part")), BACKUP_FILE_TIMEOUT_MS));
+          arrives.catch(() => undefined); // (a file that arrives after the wait is over is dropped, not an unhandled error)
+          files.push({ name, blob: await Promise.race([arrives, late]) });
+        } catch (error) {
+          // The main file keeps its own refusals (not yours, gone); a later file that fails is a broken set,
+          // unless the trouble is the connection or the sign-in, which are what they are.
+          if (first || (error instanceof ApiError && ["network", "signed-out", "slow-down"].includes(error.kind))) throw error;
+          throw new ApiError("backup-part");
+        }
+        onFile?.(files.length, total);
+      };
+      await take("/file", main, true);
+      for (const n of parts) await take(`/file/${n}`, `${stem}.transcripts-${n}-of-${got.partsTotal}.dmbot.json.gz`, false);
+      return { files };
     },
     takeBackHandover: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
@@ -2519,6 +2697,15 @@ export function httpApi(
       ).answer,
     campaignOptionalRules: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
+    campaignGameMasters: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters`)) as GameMasters,
+    campaignGameMasterCandidates: async (campaignRef, query) =>
+      (
+        (await call(
+          "GET",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters/candidates?q=${encodeURIComponent(query)}`,
+        )) as { people: GameMasterCandidate[] }
+      ).people,
     campaignSettingAnswer: async (campaignRef, answer) =>
       (await call(
         "GET",
@@ -2543,6 +2730,24 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules`,
       )) as HouseRules,
+    ruleSharing: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing`,
+      )) as RuleSharing,
+    chooseRuleSharing: async (campaignRef, choice) =>
+      (
+        (await call(
+          "POST",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing`,
+          choice,
+        )) as { answer: string }
+      ).answer,
+    ruleSharingAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing/answers/${encodeURIComponent(answer)}`,
+      )) as RuleSharingAnswer,
     houseRulesFile: async (campaignRef) =>
       (await call(
         "GET",
@@ -2765,6 +2970,7 @@ export function httpApi(
     allNames: async (ref, q) => {
       const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
       if (q.size !== undefined) params.set("size", String(q.size));
+      if (q.unnamed) params.set("unnamed", "1");
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
@@ -2800,6 +3006,29 @@ export function httpApi(
       }
       // The bot may still apply it later: the page says so and reads the list again, never "nothing
       // was changed", so nobody tries a merge or remove twice.
+      throw new ApiError("still-waiting");
+    },
+    nameThem: async (ref, id, step, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, step)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+          onLook?.();
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") {
+          return { state: "done", row: got.row ?? null, undo: got.undo ? queued.answer : null, answer: queued.answer };
+        }
+        if (got?.state === "failed") {
+          if (got.error === "known_name" && got.other) return { state: "question", other: got.other };
+          throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
       throw new ApiError("still-waiting");
     },
     webGraph: async (ref, q) => {
