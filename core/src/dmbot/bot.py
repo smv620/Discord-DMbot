@@ -10299,9 +10299,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't finish a website-deleted campaign")
 
-    async def export_campaign(self, guild_id: int, campaign_id: str) -> Any:
-        """A campaign's complete copy, as Discord's Download makes it (#2554)."""
-        return await self.campaigns.export(guild_id, campaign_id)
+    async def export_campaign(self, guild_id: int, campaign_id: str) -> tuple[Any, list[bytes]]:
+        """A campaign's complete copy, as Discord's Download makes it (#2554): the main file's
+        data and the transcripts files (#2552, #2772), both from one moment."""
+        return await self.campaigns.export_set(guild_id, campaign_id)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a
