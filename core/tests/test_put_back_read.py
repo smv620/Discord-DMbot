@@ -32,7 +32,7 @@ def lines() -> list[Line]:
     ]
 
 
-class Reading(DatabaseTest):
+class Base(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db, clock=lambda: START)
@@ -76,6 +76,8 @@ class Reading(DatabaseTest):
     async def waiting(self) -> list[tuple[int, int]]:
         return await self.store.put_back_in(GUILD, self.sid)
 
+
+class Reading(Base):
     async def test_a_put_back_line_is_read_once_then_not_again(self) -> None:
         self.assertEqual(len(await self.waiting()), 2)
         self.assertEqual(await self.dm._read_put_back_all(GUILD), 2)
@@ -181,3 +183,27 @@ class TheTask(DatabaseTest):
             await asyncio.gather(*b._put_back_tasks.values())
         await asyncio.sleep(0)
         self.assertEqual(b._put_back_tasks, {})
+
+
+class TheNameScanAtTheEnd(Base):
+    """The lines the end-of-session pass turned back into game talk join the held words (#2587)."""
+
+    async def test_turned_back_lines_of_people_who_agree_are_scanned_too(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE transcript_lines SET leaned = TRUE WHERE session_id = %s"
+                " AND heard IN ('Kesh Varn waits', 'Orla Fenn knows')",
+                (self.sid,),
+            )
+        self.agreed = {ALICE}  # Bob stopped being recorded
+        table = SimpleNamespace(
+            guild_id=GUILD, campaign_id=self.cid, transcript_session_id=self.sid,
+            heard=[(ALICE, "the held words")], dm_user_id=DM, dm_user_ids=set(),
+            new_names=[],
+        )  # fmt: skip
+        self.dm.save_transcript = AsyncMock()
+        self.dm.repair_names = AsyncMock(return_value=False)
+        self.dm.tables = {}
+        self.dm.lookup = None
+        await self.dm._suggest_names(table)
+        self.assertEqual(self.scanned, [["the held words", "Kesh Varn waits"]])  # not Bob's
