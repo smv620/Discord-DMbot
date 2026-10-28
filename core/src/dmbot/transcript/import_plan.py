@@ -18,13 +18,13 @@ from collections import Counter
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
-from dmbot.recaps.draft import SPOKEN_WORDS_PER_HOUR
 from dmbot.transcript.importer import Transcript
 from dmbot.transcript.models import Line
 
 DROP = "drop"  # the mapping's value for a speaker whose lines are not kept
 NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT = "not_matched", "not_agreed", "bot", "left_out"
 REASONS = (NOT_MATCHED, NOT_AGREED, BOT, LEFT_OUT)
+SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 WORD_MS = 3_600_000 // SPOKEN_WORDS_PER_HOUR  # one spoken word, in milliseconds
 MAX_LINE_MS = 120_000  # a single line is never counted as longer than two minutes
 MAX_LINE_CHARS = 2_000  # a longer line is stored as several, so one can't carry a whole file
