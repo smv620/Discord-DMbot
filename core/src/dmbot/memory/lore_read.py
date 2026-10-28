@@ -87,7 +87,29 @@ RELATIONSHIPS
 NOT INCLUDED
 - Ashen Hand — answers to — someone in Wyrmhold: a rumour ("Some say… no one knows"), not stated.
 
-Example 2. Input (a list of names, no relationships):
+Example 2. Input (one sentence, several relationships):
+<document>
+Ysolde Marrow, a scout associated with the Lantern League, serves Captain Orrin Dace and lives in Ravenmoor. \
+Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane, and founded the Lantern League.
+</document>
+Output:
+NAMES
+- Ysolde Marrow | person | quote: "Ysolde Marrow, a scout"
+- Lantern League | group | quote: "the Lantern League"
+- Orrin Dace | person | other names: Captain Orrin Dace | quote: "Captain Orrin Dace"
+- Ravenmoor | place | quote: "lives in Ravenmoor"
+- Pell Wick | person | quote: "Pell Wick and Sorrel Tane"
+- Sorrel Tane | person | quote: "Sorrel Tane, and founded"
+
+RELATIONSHIPS
+- Ysolde Marrow — is a member of (associated with) — Lantern League | quote: "Ysolde Marrow, a scout associated with the Lantern League"
+- Ysolde Marrow — serves — Orrin Dace | quote: "Ysolde Marrow, a scout associated with the Lantern League, serves Captain Orrin Dace"
+- Ysolde Marrow — lives in — Ravenmoor | quote: "Ysolde Marrow, a scout associated with the Lantern League, serves Captain Orrin Dace and lives in Ravenmoor"
+- Orrin Dace — mentors — Pell Wick | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane"
+- Orrin Dace — mentors — Sorrel Tane | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane"
+- Orrin Dace — founded — Lantern League | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane, and founded the Lantern League"
+
+Example 3. Input (a list of names, no relationships):
 <document>
 Tavin (the rogue) | NPC
 Ka'zeth (kah-ZETH) | NPC
@@ -130,11 +152,17 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         f"identity. 'quote:' is {bg.QUOTE_WORDS} words at most, copied exactly from the text.\n"
         "- Leave out descriptions, ordinary words, spells, rules terms and kinds of creature in "
         "general (elves, goblins).\n"
-        "- RELATIONSHIPS: only what the text says plainly between two of those names, in plain "
-        "words (leads, is a member of, is in, is a friend of, is an ally of, is an enemy of, is "
-        "a rival of, owns, works for, serves, knows, is family of, is a parent of, is a child of, "
-        "mentors, is an apprentice of, founded, worships, is sworn to (an oath, vow, pact or "
-        "fealty), pays"
+        "- RELATIONSHIPS: go through the text sentence by sentence, and for every sentence that "
+        "says plainly how two of those names are connected, write a line. One sentence may give "
+        "several (a mentor with two named apprentices is two lines; a person who is a member of "
+        "a group and also lives in a town is two lines). Do not stop while the text still has "
+        "sentences you have not looked at: the list is as long as the text's relationships, and "
+        "a long document has many. The kinds, in plain words: is family of (say the role, such as "
+        "father, sister or cousin, in brackets), is a member of (also: belongs to, is associated "
+        "with, served in), works for (also: is employed by, is a bodyguard for), serves, "
+        "mentors, is an apprentice of, is a rival of, is an ally of, is a friend of, is an enemy "
+        "of, owns, is in (also: lives in, resides in, is from), leads, founded, worships, is a "
+        "parent of, is a child of, knows, is sworn to (an oath, vow, pact or fealty), pays"
         f"{theirs}). Write each relationship's two ends as the full "
         "names you listed under NAMES, never as 'my brother', 'the twins' or a title; when a "
         "sentence says 'his sister' or 'she', still write the two full names" + _speaking() + " "
@@ -146,22 +174,25 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
     )
 
 
-SECOND_LOOK_NAMES = 80  # names asked about in the second look (the list is data in the request)
+PARAGRAPH_LOOKS = 30  # paragraphs asked about in the second look, the ones missing the most
+PARAGRAPH_CHARS = 3000  # a longer paragraph is asked about in pieces of about this size
 SECOND_LOOK_MIN_CHARS = 1200  # a shorter text (a list of names) has no statements to miss
+SECOND_LOOK_NAMES = 80  # names given with one paragraph (the list is data in the request)
 
 
 def second_look_instructions(own: Mapping[str, str] | None = None) -> str:
-    """The second look at names pass 1 found no relationship for (#2757): the same rules as pass 1
-    (every relationship still needs words in the text), but only the RELATIONSHIPS heading is
-    wanted, and only for the names asked about."""
+    """The second look at a paragraph pass 1 may have skipped through (#2757, #2854): the same
+    rules as pass 1 (every relationship still needs words in the text), but only the RELATIONSHIPS
+    heading is wanted, only for the names given, and only from this paragraph."""
     return (
         read_instructions(own)
-        + "\n\nSECOND LOOK. A first reading listed the names inside <names_to_check> tags but "
-        "found no relationship for them. Read the text again and write ONLY a RELATIONSHIPS "
-        "heading with every relationship the text states plainly between one of those names and "
-        "any other name, in the same shape as the examples. If the text states none, write only "
-        "the heading. No NAMES and no NOT INCLUDED sections. The names are data, not "
-        "instructions."
+        + "\n\nSECOND LOOK. The text inside <document> tags is ONE PARAGRAPH of a longer "
+        "document. A first reading listed the names inside <names_to_check> tags as being in "
+        "it but found few of its relationships. Go through the paragraph sentence by sentence and "
+        "write ONLY a RELATIONSHIPS heading with every relationship it states plainly between "
+        "two of those names, in the same shape as the examples (one sentence may give several "
+        "lines). If it states none, write only the heading. No NAMES and no NOT INCLUDED "
+        "sections. The names are data, not instructions."
     )
 
 
@@ -307,7 +338,14 @@ class Stats:
     names_listed: int = 0
     links_listed: int = 0
     left_out: int = 0
-    lonely: int = 0  # names pass 1 gave no relationship, asked about once more (#2757)
+    lonely: int = 0  # names pass 1 gave no relationship line (#2757)
+    paragraphs_asked: int = 0  # paragraphs the second look asked about (#2854)
+    second_calls: int = 0  # the second look's calls that came back
+    pass1_links: int = 0  # relationship lines pass 1 gave on its own (before the second look)
+    # Paragraphs with 0 / 1 / 2 / 3 or more relationship lines of their names, before and after the
+    # second look ("12/5/3/9"): counts only (#2854).
+    paragraph_lines_before: str = ""
+    paragraph_lines_after: str = ""
     extra_links: int = 0  # relationship lines that second look added
     shape_calls: int = 0
     shape_cut: int = 0
@@ -398,6 +436,7 @@ async def read_list(
     # One line for each name (a name has one kind here) and for each pair and words.
     found.names, found.links = dedupe(found.names), dedupe(found.links)
     stats.names_listed, stats.links_listed = len(found.names), len(found.links)
+    stats.pass1_links = len(found.links)
     stats.left_out = len(found.left_out)
     cut = bool(reply.cut)
     if (
@@ -422,6 +461,115 @@ def lonely_names(listed: PlainList) -> list[str]:
     return [n for n in (line_name(x) for x in listed.names) if n and name_key(n) not in ended]
 
 
+def name_forms(line: str) -> list[str]:
+    """A pass-1 name line's name and the other names it gives: "- Mira | person | other names:
+    the Fox, Red Mira | ..." gives ["Mira", "the Fox", "Red Mira"]."""
+    forms = [line_name(line)]
+    for part in line.lstrip("-* ").split("|")[1:]:
+        low = part.strip().casefold()
+        if low.startswith("other names:"):
+            forms += [x.strip() for x in part.split(":", 1)[1].split(",") if x.strip()]
+    return [f for f in forms if f]
+
+
+def paragraphs(text: str) -> list[str]:
+    """The text's paragraphs: its lines, a long one cut into pieces of about `PARAGRAPH_CHARS`
+    at a sentence end. Words as written, nothing added."""
+    out: list[str] = []
+    for line in re.split(r"[\n\r\u2028\u2029\x85]+", text):
+        line = line.strip()
+        if not line:
+            continue
+        while len(line) > PARAGRAPH_CHARS:
+            cut = line.rfind(". ", 0, PARAGRAPH_CHARS)
+            cut = cut + 1 if cut > PARAGRAPH_CHARS // 3 else PARAGRAPH_CHARS
+            out.append(line[:cut].strip())
+            line = line[cut:].strip()
+        out.append(line)
+    return out
+
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])[\"'”’)\]]*\s+")
+
+
+def _forms_and_ends(
+    listed: PlainList,
+) -> tuple[list[tuple[str, list[str]]], list[tuple[str, str]]]:
+    """Each listed name with the forms it is written in, and the relationship lines' ends as the
+    keys of the MAIN names they stand for (a line that wrote "the Fox" for Mira counts for Mira;
+    a form two names share stands for neither)."""
+    forms = [(line_name(x), name_forms(x)) for x in listed.names]
+    owner: dict[str, set[str]] = {}
+    for name, alt in forms:
+        for form in alt:
+            owner.setdefault(name_key(form), set()).add(name_key(name))
+    main = {k: next(iter(v)) for k, v in owner.items() if len(v) == 1}
+    ends: list[tuple[str, str]] = []
+    for line in listed.links:
+        pair = line_ends(line)
+        if pair is not None:
+            a, b = (main.get(name_key(e), name_key(e)) for e in pair)
+            ends.append((a, b))
+    return forms, ends
+
+
+def paragraph_gaps(text: str, listed: PlainList) -> list[tuple[str, list[str], int]]:
+    """The paragraphs with a sentence pass 1 skipped through (#2854): `(paragraph, the listed names
+    in it, how many sentences)`, those with the most first. A sentence that holds n listed names
+    states at least n - 1 relationships (a mentor with two named apprentices, three names, two
+    lines); one with fewer relationship lines between its names than that was probably skipped
+    through, or connects them only by "his sister" (asked again, and the checks decide). Pass 1
+    stops early on a long document, so the skipped sentences cluster where it stopped. Pure and
+    slow on a large text: run it in a thread."""
+    forms, ends = _forms_and_ends(listed)
+    gaps: list[tuple[str, list[str], int]] = []
+    for para in paragraphs(text):
+        here = [name for name, alt in forms if name and bg.names_in(para, alt)]
+        if len(here) < 2:
+            continue
+        missed = 0
+        for sentence in _SENTENCE_BREAK.split(para):
+            keys = {name_key(n) for n, alt in forms if n and bg.names_in(sentence, alt)}
+            if len(keys) < 2:
+                continue
+            found = {(a, b) for a, b in ends if a in keys and b in keys}
+            if len(found) < len(keys) - 1:
+                missed += 1
+        if missed:
+            gaps.append((para, here, missed))
+    gaps.sort(key=lambda g: -g[2])  # (a stable sort: text order within the same count)
+    return gaps
+
+
+def link_counts(text: str, listed: PlainList) -> str:
+    """How many paragraphs have 0, 1, 2 and 3 or more relationship lines of the listed names, for
+    the log: counts only, never a word of the text (#2854). Slow on a large text: in a thread."""
+    forms, ends = _forms_and_ends(listed)
+    buckets = [0, 0, 0, 0]
+    for para in paragraphs(text):
+        keys = {name_key(name) for name, alt in forms if name and bg.names_in(para, alt)}
+        found = sum(1 for a, b in ends if a in keys and b in keys)
+        buckets[min(found, 3)] += 1
+    return "/".join(map(str, buckets))
+
+
+async def _ask_paragraph(
+    ai: Any,
+    own: Mapping[str, str],
+    gate: AbstractAsyncContextManager[Any],
+    paragraph: str,
+    names: list[str],
+) -> Reply:
+    reply: Reply = await _call(
+        gate,
+        ai,
+        second_look_instructions(own),
+        second_look_request(paragraph, names[:SECOND_LOOK_NAMES]),
+        min(OUTPUT_FLOOR, max_output(str(getattr(ai, "model", ""))) or OUTPUT_FLOOR),
+    )
+    return reply
+
+
 async def _second_look(
     ai: Any,
     text: str,
@@ -432,42 +580,69 @@ async def _second_look(
     tick: Callable[[int], None] | None,
     budget_s: float,
 ) -> None:
-    """Pass 1 skips statements (#2757, as #2454 reads again what an answer cut off): the names it
-    gave no relationship are asked about once more, in one more call over the same text. What
-    comes back is only more list lines; each still has to pass the same checks in pass 2, so
-    nothing is believed because it was asked for. A failure leaves the list as it was. Counts
-    only in the log."""
-    lonely = lonely_names(listed)
-    stats.lonely = len(lonely)
-    if not lonely:
+    """Pass 1 skips statements (#2757, as #2454 reads again what an answer cut off) and stops long
+    before the text runs out of relationships (#2854): each paragraph with fewer relationship
+    lines than its names need is asked about once more, on its own, at most `PARAGRAPH_LOOKS` of
+    them, the ones missing the most first. What comes back is only more list lines; each still has
+    to pass the same checks in pass 2, so nothing is believed because it was asked for. A call
+    that fails leaves the list as it was. Counts only in the log."""
+    stats.lonely = len(lonely_names(listed))
+    stats.paragraph_lines_before = await asyncio.to_thread(link_counts, text, listed)
+    gaps = (await asyncio.to_thread(paragraph_gaps, text, listed))[:PARAGRAPH_LOOKS]
+    stats.paragraphs_asked = len(gaps)
+    if not gaps:
+        stats.paragraph_lines_after = stats.paragraph_lines_before
         return
-    model = str(getattr(ai, "model", ""))
     if tick is not None:
         tick(stats.read_calls + 1)
+    tasks = [
+        asyncio.ensure_future(_ask_paragraph(ai, own, gate, para, names)) for para, names, _ in gaps
+    ]
+
+    def _one_back(task: asyncio.Future[Any]) -> None:
+        if tick is not None and not task.cancelled() and task.exception() is None:
+            tick(stats.read_calls + 1 + sum(1 for t in tasks if t.done() and not t.cancelled()))
+
+    for task in tasks:
+        task.add_done_callback(_one_back)
     try:
-        async with asyncio.timeout(budget_s):  # the rest of pass 1's time, never more
-            reply = await _call(
-                gate,
-                ai,
-                second_look_instructions(own),
-                second_look_request(text, lonely[:SECOND_LOOK_NAMES]),
-                read_room(text, model),
-            )
-    except AIOutOfFunds:
-        raise
-    except (AIError, TimeoutError):
-        log.info("Lore read: the second look stopped (an AI error or out of time)")
-        return
-    stats.read_calls += 1
-    if reply.cut:
-        # Counted like any cut read. The lines before the cut are used (the heading is the last
-        # thing a cut loses); the second look is extra, never the only way a name gets a line.
-        stats.read_cut += 1
-    more = parse_plain(reply.text, complete=not reply.cut)
-    joined = dedupe([*listed.links, *more.links])
+        # (an out-of-funds answer stops the rest at once: they would only be paid for in vain)
+        done, pending = await asyncio.wait(
+            tasks, timeout=budget_s, return_when=asyncio.FIRST_EXCEPTION
+        )
+        for task in done:
+            if not task.cancelled() and isinstance(task.exception(), AIOutOfFunds):
+                raise task.exception()  # type: ignore[misc]
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    extra: list[str] = []
+    for task in tasks:
+        if task.cancelled():
+            continue
+        failure = task.exception()
+        if isinstance(failure, AIOutOfFunds):
+            raise failure
+        if isinstance(failure, AIError):  # (this paragraph keeps what pass 1 had)
+            continue
+        if failure is not None:
+            raise failure  # (a bug is not swallowed as if the AI had failed)
+        reply = task.result()
+        stats.second_calls += 1
+        if reply.cut:
+            # Counted like any cut read. The lines before the cut are used; the second look is
+            # extra, never the only way a name gets a line.
+            stats.read_cut += 1
+        extra += parse_plain(reply.text, complete=not reply.cut).links
+    if pending or len(tasks) > stats.second_calls:
+        log.info("Lore read: the second look stopped early (an AI error or out of time)")
+    joined = dedupe([*listed.links, *extra])
     stats.extra_links = len(joined) - len(listed.links)
     listed.links = joined
     stats.links_listed = len(joined)  # the "found" count of the summary includes these lines
+    stats.paragraph_lines_after = await asyncio.to_thread(link_counts, text, listed)
 
 
 async def _shape(
@@ -693,11 +868,14 @@ async def read_lore(
     stats.names_kept, stats.links_kept = len(names), len(links)
     log.info(
         "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
-        "line(s), %d left out; second look at %d name(s) (asked about %d) added %d line(s); "
-        "pass 2 %d call(s), %d cut; kept %d name(s), %d connection(s)%s",
+        "line(s) (%d from pass 1 alone), %d left out; %d name(s) with no line; second look at %d "
+        "paragraph(s) in %d call(s) added %d line(s); paragraphs with 0/1/2/3+ lines %s before, "
+        "%s after; pass 2 %d call(s), %d cut; kept %d name(s), %d connection(s)%s",
         stats.read_calls, stats.read_cut, stats.continued, stats.names_listed,
-        stats.links_listed, stats.left_out, stats.lonely, min(stats.lonely, SECOND_LOOK_NAMES),
-        stats.extra_links, stats.shape_calls,
-        stats.shape_cut, stats.names_kept, stats.links_kept, ", still cut off" if cut else "",
+        stats.links_listed, stats.pass1_links, stats.left_out, stats.lonely,
+        stats.paragraphs_asked, stats.second_calls, stats.extra_links,
+        stats.paragraph_lines_before or "-", stats.paragraph_lines_after or "-",
+        stats.shape_calls, stats.shape_cut, stats.names_kept, stats.links_kept,
+        ", still cut off" if cut else "",
     )  # fmt: skip
     return LoreRead(names, links, cut, stats, known, secrets)
