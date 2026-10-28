@@ -121,6 +121,31 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sister of Ken", kept.quote)
         self.assertEqual(out.counts["accepted"], 1)
 
+    def test_how_each_pronoun_was_settled_is_recorded_in_fixed_words_and_a_rounded_score(
+        self,
+    ) -> None:
+        for answer, want, where in (
+            (asked(("Mara", 94.6), ("Bram", 5)), "who-is-it: accepted 95%", "connections"),
+            (asked(("Mara", 55), ("Bram", 45)), "who-is-it: asked 55%", "picks"),
+            (asked((NOT_LISTED, 90)), "who-is-it: nobody listed 90%", "unnamed"),
+            (None, "who-is-it: not checked", "unnamed"),
+        ):
+            out = who_resolve.Settled()
+            who_resolve._use(unsettled_of(), answer, out)
+            (got,) = getattr(out, where)
+            self.assertEqual(got.decided, want)
+            self.assertLessEqual(len(got.decided), 60)
+            self.assertNotIn("Mara", got.decided)  # (words and a number: never a name)
+
+    async def test_the_cap_and_the_clock_are_recorded_as_not_checked(self) -> None:
+        client = Scripted([("Mara", 95)], "Mara")
+        out = await who_resolve.settle(
+            [unsettled_of(), unsettled_of()], client, ["Mara", "Ken"], cap=1
+        )
+        self.assertEqual(out.unnamed[0].decided, "who-is-it: not checked, over the limit")
+        late = await who_resolve.settle([unsettled_of()], client, ["Mara"], time_limit_s=-1.0)
+        self.assertEqual(late.unnamed[0].decided, "who-is-it: not checked, out of time")
+
     def test_a_sure_answer_that_names_someone_else_is_a_question_not_a_guess(self) -> None:
         out = who_resolve.Settled()
         who_resolve._use(unsettled_of(), asked(("Bram", 95), ("Mara", 5)), out)
@@ -258,6 +283,33 @@ class ThePath(NamesTest):
             unsettled=[unsettled_of()], who_ai=client,
         )  # fmt: skip
         return queued, lost
+
+    async def test_how_it_was_decided_waits_with_the_connection_and_shows_on_its_card(self) -> None:
+        await self.run_links(Scripted([("Mara", 95), ("Bram", 5)], "Mara"))
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertRegex(w.decided, r"^who-is-it: accepted \d+%$")
+        view = ui_bg.ConnectionOffer(self.campaign.id)
+        self.assertTrue(await view.load(self.it()))
+        self.assertIn("DMbot's check of who it means: accepted", view.text())
+
+    async def test_how_it_was_decided_goes_with_a_question_through_its_answer(self) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual(q.decided, "who-is-it: asked 90%")
+        view = ui_bg.WhichOffer(self.campaign.id)
+        await view.load(self.it())
+        self.assertIn("DMbot's check of who it means: asked 90%.", view.text())
+        with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
+            await view.children[0].callback(self.it())  # Mara
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(w.decided, "who-is-it: asked 90%")
+
+    async def test_an_ordinary_connection_has_no_check_line(self) -> None:
+        plain = [[bg.Connection("Mara", "knows", "Ken", "q")]]
+        await ui_bg.queue_links(self.bot, self.memory, self.campaign, [], plain, set())
+        view = ui_bg.ConnectionOffer(self.campaign.id)
+        await view.load(self.it())
+        self.assertNotIn("DMbot's check", view.text())
 
     async def test_off_the_line_is_left_out_and_counted_as_before(self) -> None:
         queued, lost = await self.run_links(None)

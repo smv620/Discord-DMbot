@@ -28,7 +28,9 @@ MAX_CANDIDATES = 10
 # its candidates), or too many connections wait already, so the question stays.
 DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
-DECIDED_MAX = 60  # how a pronoun was settled (#2790): fixed words and a rounded score (the column's limit)
+DECIDED_MAX = (
+    60  # how a pronoun was settled (#2790): fixed words and a rounded score (the column's limit)
+)
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
 

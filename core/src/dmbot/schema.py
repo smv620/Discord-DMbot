@@ -17000,6 +17000,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0265_web_report_requests",
         WEB_REPORT_REQUESTS,
     ),  # make the report again, on the website (#2661)
+    ("0267_who_is_it_decided", BACKSTORY_DECIDED),  # how a pronoun was settled (#2790)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
