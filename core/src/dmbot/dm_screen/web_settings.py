@@ -28,6 +28,8 @@ from dmbot.db import Database
 from dmbot.dm_screen import messages
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import CHOICES, _shorter, days_of, saved_text
+from dmbot.rules import optional
+from dmbot.rules.optional import NO_SCREEN_NOTE, OptionalRule
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ SETTINGS_PER_ROUND = 10  # choices applied for one server in one round
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 
-VISIBILITY, LEVEL, RETENTION = "visibility", "level", "retention"
+VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
 
@@ -57,6 +59,7 @@ class Setting:
     value: str
     flag: bool = False
     claimed_at: int = 0  # this worker's claim: only it may finish the row
+    turn_on: bool | None = None  # an optional rule: on or off; None for every other setting
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,15 @@ class Host(Protocol):
 
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign: ...
 
+    async def apply_optional_rule(
+        self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
+    ) -> bool:
+        """Save an optional rule on or off and note it in the DM screen, as `/dmbot optionalrules`
+        does. True when the DM screen has its line (or the campaign has none); False when the line
+        could not be posted: the rule is saved either way. Raises `CampaignError` when the
+        campaign is gone."""
+        ...
+
 
 class SettingStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
@@ -100,7 +112,7 @@ class SettingStore:
                 " AND p.campaign_id = setting_actions.campaign_id AND p.seq < setting_actions.seq"
                 " AND (p.state = 'waiting' OR (p.state = 'working' AND p.claimed_at >= %s)))"
                 " ORDER BY seq LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, campaign_id, user_id, setting, value, flag",
+                " RETURNING id, campaign_id, user_id, setting, value, flag, turn_on",
                 (now, guild_id, now - RETAKE_AFTER_S * 1000, guild_id, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
@@ -114,6 +126,7 @@ class SettingStore:
             row["value"],
             bool(row["flag"]),
             now,
+            None if row["turn_on"] is None else bool(row["turn_on"]),
         )
 
     async def finish(self, guild_id: int, item: Setting, outcome: Outcome) -> bool:
@@ -152,6 +165,8 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return Outcome(NOT_FOUND)
     if item.user_id not in campaign.dm_user_ids:  # checked again: they may have handed over since
         return Outcome(NOT_ALLOWED)
+    if item.setting == OPTIONAL_RULE:
+        return await _optional_rule(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -178,6 +193,26 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
     except (CampaignError, DMScreenError) as exc:
         return Outcome(REFUSED, str(exc))  # words written for the DM, as Discord shows them
     return Outcome(BAD_VALUE)
+
+
+async def _optional_rule(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """An optional rule on or off (#2755), as Discord's menu does it. The website checked the id is
+    in the catalog; whether it applies to THIS campaign's main rules is checked here, because the
+    list can change under a page that stayed open (the page says to reload). What a campaign
+    follows in a shared ruleset is not looked at, as in Discord."""
+    chosen = optional.rule(item.value)
+    if (
+        item.turn_on is None
+        or chosen is None
+        or chosen not in optional.applying(campaign.target_ruleset)
+    ):
+        return Outcome(BAD_VALUE)
+    try:
+        noted = await host.apply_optional_rule(campaign, chosen, item.turn_on, item.user_id)
+    except CampaignError:
+        return Outcome(NOT_FOUND)  # the campaign went while the choice was being saved
+    note = f"{chosen.name} is now {'on' if item.turn_on else 'off'}."
+    return Outcome(note=note if noted else f"{note} {NO_SCREEN_NOTE}")
 
 
 async def run_one(host: Host, store: SettingStore, guild_id: int, item: Setting) -> bool:

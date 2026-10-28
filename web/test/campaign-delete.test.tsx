@@ -186,7 +186,7 @@ describe("the backup", () => {
     const api = await page();
     const box = await open("The Brynwater Crossing");
     fireEvent.click(within(box).getByRole("button", { name: w.backup }));
-    expect(await within(box).findByText(w.backupDone(w.backupFileName("The Brynwater Crossing")))).toBeTruthy();
+    expect(await within(box).findByText(w.backupDone(["pretend-campaign-2026-10-27.dmbot.json.gz"]))).toBeTruthy();
     expect(calls(api, "campaignBackup")).toEqual(["campaignBackup:100.cmp1"]);
     expect(calls(api, "deleteCampaign")).toHaveLength(0);
   });
@@ -194,25 +194,117 @@ describe("the backup", () => {
   it("shows the stage and how long it has run while the backup is made", async () => {
     const api = await page();
     const box = await open("The Brynwater Crossing");
-    let finish: (blob: Blob) => void = () => {};
+    let finish: (set: { files: { name: string; blob: Blob }[] }) => void = () => {};
     api.campaignBackup = (_ref, onProgress) => {
       const now = Math.floor(Date.now() / 1000);
       onProgress?.({ stage: "reading", state: "running", startedAt: now - 20, updatedAt: now - 8, serverNow: now });
-      return new Promise<Blob>((resolve) => (finish = resolve));
+      return new Promise((resolve) => (finish = resolve));
     };
     fireEvent.click(within(box).getByRole("button", { name: w.backup }));
     // DMbot's own words: the stage it is at, how long it has run, and when it last moved.
     expect(await within(box).findByText(w.stage["reading"] as string)).toBeTruthy();
     expect(within(box).getByText(/Running for/)).toBeTruthy();
     expect(within(box).getByText(/Last progress/)).toBeTruthy();
-    finish(new Blob(["{}"]));
+    finish({ files: [{ name: "a.dmbot.json.gz", blob: new Blob(["{}"]) }] });
     await waitFor(() => expect(within(box).queryByText(/Running for/)).toBeNull());
   });
 
-  it("says the transcripts aren't in it yet, while that is so", async () => {
+  it("no longer says the transcripts are missing, now that the backup carries them", async () => {
     await page();
     const box = await open("The Brynwater Crossing");
-    expect(within(box).getByText(new RegExp(w.backupWithoutTranscripts))).toBeTruthy();
+    expect(within(box).queryByText(new RegExp(w.backupWithoutTranscripts))).toBeNull();
+  });
+
+  describe("a backup of several files", () => {
+    const saved: string[] = [];
+    beforeEach(() => {
+      saved.length = 0;
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+        saved.push(this.download);
+      });
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it("saves the main file and every transcripts file, and says to keep them together", async () => {
+      const files = [
+        "pretend-campaign-2026-10-27.dmbot.json.gz",
+        "pretend-campaign-2026-10-27.transcripts-1-of-2.dmbot.json.gz",
+        "pretend-campaign-2026-10-27.transcripts-2-of-2.dmbot.json.gz",
+      ];
+      const api = mockApi("table");
+      api.campaignBackup = (ref, onProgress, onFile) => mockApi("table").campaignBackup!(`${ref}.bk-parts`, onProgress, onFile);
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(w.backupDone(files), {}, { timeout: 5000 })).toBeTruthy();
+      expect(saved).toEqual(files);
+      expect(within(box).getByText(/Backup saved: 3 files\. Keep them all together/)).toBeTruthy();
+      for (const file of files) expect(within(box).getByText(file, { selector: "li" })).toBeTruthy(); // one to a line, easy to read on a phone
+      expect(within(box).queryByText(w.backupBigFile)).toBeNull(); // (none of these files is large)
+    });
+
+    it("says a file is large when any file, the main one included, is over 10 MB", async () => {
+      const api = mockApi("table");
+      const big = new Blob([new Uint8Array(w.bigFileBytes + 1)]);
+      api.campaignBackup = async () => ({ files: [{ name: "x.dmbot.json.gz", blob: big }] });
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(w.backupBigFile, {}, { timeout: 5000 })).toBeTruthy();
+    });
+
+    it("shows the clock from the request, and a stuck file as stalled with what to do", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const api = mockApi("table");
+      api.campaignBackup = (_ref, _progress, onFile) => {
+        onFile?.(1, 3); // one of three files fetched, then nothing
+        return new Promise(() => {});
+      };
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(`1 of 3 ${w.filesUnit(3)}`)).toBeTruthy();
+      expect(within(box).queryByText(w.fileSlow)).toBeNull();
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(within(box).getByText(w.fileSlow)).toBeTruthy();
+      vi.useRealTimers();
+    });
+
+    it("shows how many files are fetched while it goes", async () => {
+      const api = mockApi("table");
+      let hold: () => void = () => {};
+      api.campaignBackup = async (_ref, _progress, onFile) => {
+        onFile?.(2, 7);
+        await new Promise<void>((resolve) => (hold = resolve));
+        return { files: [{ name: "a.dmbot.json.gz", blob: new Blob(["{}"]) }] };
+      };
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(w.stage["fetching"] as string)).toBeTruthy();
+      expect(within(box).getByText(`2 of 7 ${w.filesUnit(7)}`)).toBeTruthy();
+      hold();
+    });
+
+    it("says the whole backup failed when one file does not come through, and saves nothing", async () => {
+      const api = mockApi("table");
+      api.campaignBackup = (ref, p, f) => mockApi("table").campaignBackup!(`${ref}.bk-partfail`, p, f);
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(w.problem["backup-part"] as string)).toBeTruthy();
+      expect(saved).toEqual([]);
+    });
+
+    it("says what to change when the campaign has more transcripts files than one backup carries", async () => {
+      const api = mockApi("table");
+      api.campaignBackup = (ref, p, f) => mockApi("table").campaignBackup!(`${ref}.bk-toomany`, p, f);
+      await page(api);
+      const box = await open("The Brynwater Crossing");
+      fireEvent.click(within(box).getByRole("button", { name: w.backup }));
+      expect(await within(box).findByText(w.problem["backup-too-many-files"] as string)).toBeTruthy();
+      expect(w.problem["backup-too-many-files"]).toMatch(/Keep transcripts for/);
+    });
   });
 
   it("a Try It campaign is offered no backup, but can still be deleted", async () => {
