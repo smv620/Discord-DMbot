@@ -10,6 +10,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
+import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { notNamedWords as notNamed } from "../content/not-named-words";
 import {
   type AccountApi,
   ApiError,
@@ -20,6 +22,9 @@ import {
   type NameSort,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import NameThem, { type NamedInfo } from "./NameThem";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
 import LazyPanel from "./LazyPanel";
 
@@ -88,6 +93,12 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
+  // A name just given (#2803) can be taken back until the next change; `undoing` is the wait for the bot.
+  const [undo, setUndo] = useState<{ answer: string; rowId: string } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undoLooks, setUndoLooks] = useState(0);
+  const undoFlight = useRef(false);
+  const undoSeen = useObservedWait(undoing, String(undoLooks));
   // Only the newest read may set what is shown, so a slow old answer never overwrites a new one.
   const latest = useRef(0);
   const pageNow = useRef(1);
@@ -239,6 +250,35 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     }
   }
 
+  /** A person was given a name (#2803): say so, offer Undo, close the editor and read the list again. */
+  async function named(row: NameRow, info: NamedInfo): Promise<void> {
+    setNews({ ok: true, text: info.text, n: ++sayings.current });
+    setUndo(info.undo ? { answer: info.undo, rowId: row.id } : null);
+    setEditing(null);
+    setTimeout(() => newsBox.current?.focus(), 0);
+    await reload();
+  }
+
+  async function undoNamed(): Promise<void> {
+    if (!undo || !ref || !api.nameThem || undoFlight.current) return;
+    undoFlight.current = true;
+    setUndoing(true);
+    setUndoLooks(0);
+    try {
+      await api.nameThem(ref, undo.rowId, { action: "name-undo", answer: undo.answer }, () => setUndoLooks((n) => n + 1));
+      setUndo(null);
+      setNews({ ok: true, text: notNamed.undone, n: ++sayings.current });
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "signed-out") return void setView("signed-out");
+      setNews({ ok: false, text: notNamed.problems[kind] ?? notNamed.problems["server"]!, n: ++sayings.current });
+    } finally {
+      undoFlight.current = false;
+      setUndoing(false);
+    }
+    await reload();
+  }
+
   /** The list as it is now, and the search results too when they are showing (they would be out of date). */
   function reload(): Promise<unknown> {
     const read = load(pageNow.current, true);
@@ -250,6 +290,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
   async function act(row: NameRow, change: NameChange, ok: string): Promise<string | null> {
     if (!ref || !api.changeName) return words.errorFallback;
+    setUndo(null); // a later change ends the chance to undo a name just given
     try {
       await api.changeName(ref, row.id, change);
       // A name that has gone (removed, or merged into another) is not ticked any more.
@@ -317,9 +358,12 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
   // The API never sends a secret name to someone who isn't a DM; this keeps one from showing if
   // it ever did (the rule is the API's, this is only a backstop).
-  const shown = (smart ?? data.names).filter((n) => data.canEdit || !n.secret);
+  // "Not named yet" is a DM's, and only while the switch is on (the API sends it to a DM only; this is the backstop).
+  const unnamedOn = NOT_NAMED_LIVE && data.canEdit && api.nameThem !== undefined;
+  const shown = (smart ?? data.names).filter((n) => (data.canEdit || !n.secret) && (unnamedOn || !n.unnamed));
+  const kindList = unnamedOn ? data.kinds : data.kinds.filter((k) => k.key !== "not_named");
   const smartOn = NAMES_SMART_LIVE && data.canEdit && api.smartNames !== undefined;
-  const everything = data.kinds.reduce((sum, k) => sum + k.count, 0);
+  const everything = kindList.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
       <section class="stack" aria-labelledby="names-campaign">
@@ -376,7 +420,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         <fieldset class="names-types">
           <legend>{words.kindLabel}</legend>
           <div class="names-type-list">
-            {data.kinds.map((k) => (
+            {kindList.map((k) => (
               <label class="choice names-type" key={k.key}>
                 <input
                   type="checkbox"
@@ -433,6 +477,24 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
 
+      {undo && !undoing && (
+        <p class="row">
+          <button type="button" class="button secondary" onClick={() => void undoNamed()}>
+            {notNamed.undo}
+          </button>
+        </p>
+      )}
+      {undoing && (
+        <WorkProgress
+          stage={undoLooks === 0 ? (notNamed.stage["waiting"] as string) : (notNamed.stage["undoing"] as string)}
+          startedAt={undoSeen.startedAt}
+          updatedAt={undoSeen.movedAt}
+          state={undoSeen.quiet ? "stalled" : "running"}
+          progressUnknown
+          whatToDo={notNamed.quiet}
+        />
+      )}
+
       {data.canEdit && picked.length >= 1 && (
         <section class="panel merge-bar" aria-label={words.selectedBar}>
           <p role="status">{picked.length === 1 ? words.selectedOne : words.selected(picked.length)}</p>
@@ -473,7 +535,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
             <NameItem
               key={row.id}
               row={row}
-              kinds={data.kinds}
+              kinds={kindList}
               canEdit={data.canEdit}
               ticked={picked.some((r) => r.id === row.id)}
               onTick={() => pick(row)}
@@ -481,6 +543,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
               focusSaid={focusRow === row.id}
               onToggle={() => setEditing(editing === row.id ? null : row.id)}
               act={act}
+              onNamed={(info) => named(row, info)}
+              onSignedOut={() => setView("signed-out")}
               api={api}
               refId={ref}
               campaignPath={`/account/npc/${encodeURIComponent(ref)}/`}
@@ -600,17 +664,19 @@ interface ItemProps {
   focusSaid?: boolean;
   onToggle: () => void;
   act: (row: NameRow, change: NameChange, ok: string) => Promise<string | null>;
+  onNamed: (info: NamedInfo) => Promise<void>;
+  onSignedOut: () => void;
   api: AccountApi;
   refId: string;
   campaignPath: string;
 }
 
-function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, api, refId, campaignPath }: ItemProps) {
+function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, onNamed, onSignedOut, api, refId, campaignPath }: ItemProps) {
   const panel = `name-edit-${row.id}`;
   return (
     <li class="name-row">
       <div class="name-head">
-        {canEdit && (
+        {canEdit && !row.unnamed && (
           <label class="name-tick">
             <input
               type="checkbox"
@@ -657,7 +723,10 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           )}
         </span>
       </div>
-      {canEdit && open && (
+      {canEdit && open && row.unnamed && (
+        <NameThem id={panel} row={row} api={api} refId={refId} onDone={onNamed} onSignedOut={onSignedOut} />
+      )}
+      {canEdit && open && !row.unnamed && (
         <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />
       )}
     </li>
