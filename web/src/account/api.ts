@@ -1722,6 +1722,9 @@ export type ApiErrorKind =
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
   | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
+  | "backup-too-many-files" // more transcripts files than one backup carries (#2772)
+  | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
+  | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "server"; // anything else
 
@@ -1729,13 +1732,28 @@ export type ApiErrorKind =
 const BACKUP_POLL_MS = 1500;
 const BACKUP_POLL_MAX_MS = 10_000;
 const BACKUP_GIVE_UP_MS = 16 * 60_000;
+/** One file that has not arrived in this long is a download that is stuck (DMbot keeps the copy 15 minutes). */
+const BACKUP_FILE_TIMEOUT_MS = 3 * 60_000;
 /** What a failed copy's `reason` means to the page (core web/campaign_backup.py REASONS). */
 const backupReasons: Record<string, ApiErrorKind> = {
   plan: "no-backup",
   too_big: "too-big",
+  too_many_files: "backup-too-many-files",
   not_allowed: "not-allowed",
   not_found: "not-found",
 };
+
+/** One file of a downloaded backup, with the name Discord's own backup gives it (#2772). */
+export interface BackupFile {
+  name: string;
+  blob: Blob;
+}
+/** A backup as a set: the main file first, then its transcripts files in order. Keep them together. */
+export interface BackupSet {
+  files: BackupFile[];
+}
+/** A name safe to save under: letters, digits, dots, dashes and underscores. */
+const safeBackupName = (name: string, fallback: string): string => name.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 160) || fallback;
 
 export class ApiError extends Error {
   constructor(
@@ -1788,9 +1806,16 @@ export interface AccountApi {
   /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
    * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
    * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
-   * `too-big`, `not-allowed`, `not-found`, `too-soon`, and `backup-failed` (it could not be made, or took longer
-   * than the 15 minutes it is kept). */
-  campaignBackup?(ref: string, onProgress?: (progress: JobProgress) => void): Promise<Blob>;
+   * `too-big`, `not-allowed`, `not-found`, `too-soon`, `backup-too-many-files` (more transcripts files than one
+   * backup carries), `backup-part` (one of its files did not come through, so the set is not complete) and
+   * `backup-failed` (it could not be made, or took longer than the 15 minutes it is kept). The answer is the
+   * main file and every transcripts file, the same set Discord's `/dmbot backup` sends (#2772); `onFile` hears
+   * how many are fetched ("2 of 7"). */
+  campaignBackup?(
+    ref: string,
+    onProgress?: (progress: JobProgress) => void,
+    onFile?: (done: number, total: number) => void,
+  ): Promise<BackupSet>;
   /** The hand-over accept page (#2534; core #2532). The token is sent in the body, never in an address. */
   handoverLook?(token: string): Promise<HandoverLook>;
   /** `{moving: true}` (HTTP 202) when the campaign has to move to another server first: the bot does it within
@@ -2365,13 +2390,22 @@ export function httpApi(
     },
     deleteCampaign: async (ref, name) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
-    campaignBackup: async (ref, onProgress) => {
+    campaignBackup: async (ref, onProgress, onFile) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
       const asked = (await call("POST", base)) as { id: string };
+      const copy = `${base}/${encodeURIComponent(asked.id)}`;
       const began = Date.now();
       let wait = BACKUP_POLL_MS;
+      type Status = JobProgress & {
+        ready: boolean;
+        fileName?: string | null;
+        fileWaiting?: boolean;
+        parts?: { n: number }[];
+        partsTotal?: number;
+      };
+      let got: Status;
       for (;;) {
-        const got = (await call("GET", `${base}/${encodeURIComponent(asked.id)}`)) as JobProgress & { ready: boolean };
+        got = (await call("GET", copy)) as Status;
         onProgress?.(got);
         if (got.state === "failed") throw new ApiError(backupReasons[got.reason ?? ""] ?? "backup-failed");
         if (got.ready) break;
@@ -2380,8 +2414,39 @@ export function httpApi(
         await new Promise((resolve) => setTimeout(resolve, wait));
         wait = Math.min(wait * 1.5, BACKUP_POLL_MAX_MS);
       }
-      // Once: DMbot deletes the copy as it is sent.
-      return (await call("GET", `${base}/${encodeURIComponent(asked.id)}/file`, undefined, true)) as Blob;
+      // The main file, then each transcripts file still waiting, each fetched once (DMbot deletes a file as it
+      // sends it). The names are Discord's own, made from the main file's name. One that fails fails the set:
+      // a backup with a file missing would restore without part of the story.
+      const main = safeBackupName(got.fileName ?? "", "campaign.dmbot.json.gz");
+      const stem = main.replace(/\.dmbot\.json\.gz$/, "") || "campaign";
+      // An API without the transcripts files says nothing of them (no `fileWaiting`, no `partsTotal`): a main file
+      // alone would look complete, so it is refused.
+      if (typeof got.partsTotal !== "number" || typeof got.fileWaiting !== "boolean") throw new ApiError("backup-failed");
+      const parts = (got.parts ?? []).map((p) => p.n);
+      // A broken set is never resumed: files are handed over once, so a copy whose main file was already taken, or
+      // that lists fewer files than it had, can never be a whole backup. Refused before anything is fetched.
+      if (!got.fileWaiting || parts.length !== got.partsTotal) throw new ApiError("backup-unfinished");
+      const total = 1 + parts.length;
+      const files: BackupFile[] = [];
+      onFile?.(0, total);
+      const take = async (path: string, name: string, first: boolean): Promise<void> => {
+        try {
+          // A file that does not arrive in time is a stuck download, said as one (the page keeps its clock running).
+          const arrives = call("GET", `${copy}${path}`, undefined, true) as Promise<Blob>;
+          const late = new Promise<never>((_, reject) => setTimeout(() => reject(new ApiError(first ? "backup-failed" : "backup-part")), BACKUP_FILE_TIMEOUT_MS));
+          arrives.catch(() => undefined); // (a file that arrives after the wait is over is dropped, not an unhandled error)
+          files.push({ name, blob: await Promise.race([arrives, late]) });
+        } catch (error) {
+          // The main file keeps its own refusals (not yours, gone); a later file that fails is a broken set,
+          // unless the trouble is the connection or the sign-in, which are what they are.
+          if (first || (error instanceof ApiError && ["network", "signed-out", "slow-down"].includes(error.kind))) throw error;
+          throw new ApiError("backup-part");
+        }
+        onFile?.(files.length, total);
+      };
+      await take("/file", main, true);
+      for (const n of parts) await take(`/file/${n}`, `${stem}.transcripts-${n}-of-${got.partsTotal}.dmbot.json.gz`, false);
+      return { files };
     },
     takeBackHandover: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/handover`);
