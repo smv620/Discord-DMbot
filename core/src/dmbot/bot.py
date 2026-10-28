@@ -8575,7 +8575,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         now = time.monotonic()
         clock = self.plan_clocks[key] = plan_reader.ReadClock(now, now, now)
 
-        async def moved(position: int) -> None:
+        async def moved(_position: int) -> None:
             clock.moved = time.monotonic()  # a call came back (stored, or cut and read in halves)
 
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
@@ -8584,17 +8584,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
                     clock.began = clock.moved = time.monotonic()  # the turn has come
-                    report = await plan_reader.run(
-                        ai,
-                        plan,
-                        guild_id=guild_id,
-                        campaign_id=campaign_id,
-                        document_id=document_id,
-                        start_chunk=start,
-                        model=lambda: ai.model,
-                        allowed=plan_allowed,
-                        progress=moved,
-                    )
+                    try:
+                        # The whole read ends within MAX_RUN_S, a call in progress included (the
+                        # reader checks the time only between calls), so the card's "stops by
+                        # itself after" is true (#2564).
+                        async with asyncio.timeout(plan_reader.MAX_RUN_S):
+                            report = await plan_reader.run(
+                                ai,
+                                plan,
+                                guild_id=guild_id,
+                                campaign_id=campaign_id,
+                                document_id=document_id,
+                                start_chunk=start,
+                                model=lambda: ai.model,
+                                allowed=plan_allowed,
+                                progress=moved,
+                            )
+                    except TimeoutError:
+                        report = plan_reader.Report()
+                        report.stopped = plan_reader.STOP_TIME
                 log.info("%s", report.line())
                 if report.stopped:
                     await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
