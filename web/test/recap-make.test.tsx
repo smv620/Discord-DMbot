@@ -109,7 +109,7 @@ describe("making a recap", () => {
       expect(screen.queryByText(w.askAgainLists)).toBeNull();
     });
 
-    it("holds the Yes button until it has looked, then says the lists will be deleted", async () => {
+    it("looks before it asks, and holds the buttons meanwhile", async () => {
       present.on = true;
       const api = mockApi("table");
       const base = await api.recap!("200000000000000001.cmp1.1791000000");
@@ -117,11 +117,11 @@ describe("making a recap", () => {
       api.recap = () => new Promise((resolve) => (release = resolve));
       await open("100.cmp1", api);
       fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
-      await screen.findByText(w.askAgain(true));
-      expect(screen.getByText(w.checkingLists)).toBeTruthy();
-      expect((screen.getByRole("button", { name: w.yesAgain }) as HTMLButtonElement).disabled).toBe(true);
+      await waitFor(() => expect((screen.getAllByRole("button", { name: w.again })[0] as HTMLButtonElement).disabled).toBe(true));
+      expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
       release({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
       expect(await screen.findByText(w.askAgainLists)).toBeTruthy();
+      expect(screen.getByText(w.askAgain(true))).toBeTruthy();
       expect((screen.getByRole("button", { name: w.yesAgain }) as HTMLButtonElement).disabled).toBe(false);
     });
 
@@ -136,11 +136,73 @@ describe("making a recap", () => {
       fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
       fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
       fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-      const right = await screen.findByLabelText(rx(w.form.right));
-      fireEvent.click(right);
-      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
       expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
       expect(await screen.findByText(w.askAgainLists)).toBeTruthy();
+    });
+
+    describe("a recap that failed (#2764)", () => {
+      const failedSession = async (beats: { n: number; present: string[]; saved?: boolean }[] | "unreadable") => {
+        present.on = true;
+        const api = mockApi("table");
+        const base = await api.recap!("200000000000000001.cmp1.1791000000");
+        api.recap = async () => {
+          if (beats === "unreadable") throw new ApiError("server");
+          return { ...base, beats };
+        };
+        await open("100.cmp1", api);
+        return api;
+      };
+      const failedAgain = () => screen.getAllByRole("button", { name: w.again })[1]!; // session 2: failed
+
+      it("asks before making it again when scenes have saved lists, and promises no old recap", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(failedAgain());
+        expect(await screen.findByText(w.askAgainUnfinished)).toBeTruthy();
+        expect(screen.getByText(w.askAgainLists)).toBeTruthy();
+        expect(screen.queryByText(w.askAgain(true))).toBeNull();
+        expect(screen.queryByText(w.askAgain(false))).toBeNull();
+        expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
+      });
+
+      it("changes nothing on No", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(failedAgain());
+        fireEvent.click(await screen.findByRole("button", { name: w.keep }));
+        expect(screen.queryByText(w.askAgainLists)).toBeNull();
+        expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
+      });
+
+      it("makes it, once, on Yes", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(failedAgain());
+        fireEvent.click(await screen.findByRole("button", { name: w.yesAgain }));
+        await waitFor(() => expect(api.calls.filter((c) => c.startsWith("makeRecap"))).toEqual(["makeRecap:100.cmp1.1789000000:replace"]));
+      });
+
+      it("starts at once when no list was saved", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"] }]);
+        fireEvent.click(failedAgain());
+        await waitFor(() => expect(api.calls).toContain("makeRecap:100.cmp1.1789000000"));
+        expect(screen.queryByText(w.askAgainUnfinished)).toBeNull();
+      });
+
+      it("warns anyway when the recap could not be read", async () => {
+        await failedSession("unreadable");
+        fireEvent.click(failedAgain());
+        expect(await screen.findByText(w.askAgainMaybeLists)).toBeTruthy();
+      });
+
+      it("asks before an upload replaces it", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(screen.getAllByRole("button", { name: w.add })[2]!);
+        await screen.findByRole("heading", { name: w.form.heading });
+        fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+        fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+        fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+        expect(await screen.findByText(w.askReplaceUnfinished)).toBeTruthy();
+        expect(screen.getByText(w.askAgainLists)).toBeTruthy();
+        expect(api.calls.some((c) => c.startsWith("addRecap"))).toBe(false);
+      });
     });
 
     it("does not look while the feature is off", async () => {

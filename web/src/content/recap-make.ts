@@ -34,6 +34,9 @@ export const makeWords = {
   askAgainLists: 'Your saved lists for "Who was in each scene" are deleted right away. The new recap gets new scenes.',
   askAgainMaybeLists: 'Any saved lists for "Who was in each scene" are deleted right away. The new recap gets new scenes.',
   checkingLists: "Checking your saved lists…",
+  // A recap that failed has nothing to keep (#2764), but its saved "who was there" lists would still go.
+  askAgainUnfinished: "Make this recap again?",
+  askReplaceUnfinished: "Add this one in place of the recap that didn't finish?",
   askReplaceExisting: "This session already has a recap. Add this one in its place? The old one is kept as an earlier version.",
   yesAgain: "Yes, make a new one",
   yesReplace: "Yes, add it",

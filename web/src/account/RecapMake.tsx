@@ -22,13 +22,19 @@ export const WATCH_LIMIT_MS = 30 * 60_000;
 const MAX_FILE_BYTES = 1_000_000;
 
 /** What was chosen when the API asked its one question. */
-type Asking = { ref: string; what: "again" | "replace"; kept: boolean; lists?: "yes" | "maybe" | undefined; checking?: boolean | undefined; input?: AddRecapInput } | null;
+type Asking = { ref: string; what: "again" | "replace"; kept: boolean; finished?: boolean | undefined; lists?: "yes" | "maybe" | undefined; checking?: boolean | undefined; input?: AddRecapInput } | null;
 
 function kindOf(error: unknown): string {
   return error instanceof ApiError ? error.kind : "server";
 }
 // An unknown kind gets the general sentence, never the code itself.
 const say = (error: unknown): string => w.errors[kindOf(error)] ?? w.errors["server"] ?? "";
+
+/** The question: a recap that is not finished (it failed) has nothing to keep, so the words do not talk about an old one. */
+function askWords(q: NonNullable<Asking>): string {
+  if (q.what === "again") return q.finished === false ? w.askAgainUnfinished : w.askAgain(q.kept);
+  return q.finished === false ? w.askReplaceUnfinished : w.askReplaceExisting;
+}
 
 function length(seconds: number | null | undefined): string {
   if (!seconds) return "";
@@ -98,6 +104,17 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     void savedLists(s).then((lists) => setAsking((now) => (now && now.ref === next.ref ? { ...now, lists, checking: false } : now)));
   };
 
+  /** Whether the question comes before anything is sent (#2764): the session has a recap of any kind, even a
+   * failed one that the API would replace without a word, and its scenes have saved "who was there" lists.
+   * Matches the question Discord asks (#2763). A finished recap is also asked about by the API itself. */
+  const listsFirst = async (s: PastSession, next: NonNullable<Asking>): Promise<boolean> => {
+    if (!s.recap || !PRESENT_PER_SCENE_LIVE || !api.recap) return false;
+    const lists = await savedLists(s);
+    if (!lists) return false;
+    setAsking({ ...next, finished: s.recap.state === "ready", lists, checking: false });
+    return true;
+  };
+
   /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
   const start = async (s: PastSession, replace: boolean): Promise<void> => {
     if (inFlight.current || !api.makeRecap) return;
@@ -105,6 +122,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     setBusy(true);
     setProblem("");
     try {
+      if (!replace && (await listsFirst(s, { ref: s.ref, what: "again", kept: !!(s.recap?.approved || s.recap?.status === "posted") }))) return;
       const got = await api.makeRecap(s.ref, replace);
       setAsking(null);
       setRunning({ at: s.sessionAt, ref: got.ref });
@@ -129,6 +147,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     setBusy(true);
     setProblem("");
     try {
+      if (!input.replace && (await listsFirst(s, { ref: s.ref, what: "replace", kept: false, input }))) return false;
       const got = await api.addRecap(campaignRef, input);
       setAsking(null);
       setAdding(null);
@@ -189,8 +208,8 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                     }}
                   />
                 ) : question ? (
-                  <div class="stack" role="group" aria-label={question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}>
-                    <p>{question.what === "again" ? w.askAgain(question.kept) : w.askReplaceExisting}</p>
+                  <div class="stack" role="group" aria-label={askWords(question)}>
+                    <p>{askWords(question)}</p>
                     {question.checking && (
                       <p class="small muted" role="status">
                         {w.checkingLists}
