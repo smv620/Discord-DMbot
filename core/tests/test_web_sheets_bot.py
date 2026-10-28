@@ -399,8 +399,10 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
 
     async def test_while_closing_no_choice_is_started(self) -> None:
         queue: list[Any] = [SimpleNamespace(campaign_id="c")]
+        claimed: list[int] = []
 
         async def claim(guild_id: int) -> Any:
+            claimed.append(guild_id)
             return queue.pop(0) if queue else None
 
         b: Any = DMBot.__new__(DMBot)
@@ -421,9 +423,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         ):
             await b.run_web_sheets()
         await asyncio.sleep(0)  # a started task would run now, so `ran` below means something
-        # Nothing kept; the row stays claimed until RETAKE_AFTER_S.
         self.assertEqual(b._sheet_tasks, {})
         self.assertEqual(ran, [])
+        self.assertEqual(claimed, [])  # claim_next was never awaited: the row stays unclaimed
 
     async def test_without_a_store_nothing_happens(self) -> None:
         b: Any = DMBot.__new__(DMBot)
