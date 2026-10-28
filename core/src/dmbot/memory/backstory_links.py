@@ -28,9 +28,9 @@ MAX_CANDIDATES = 10
 # its candidates), or too many connections wait already, so the question stays.
 DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
-DECIDED_MAX = (
-    60  # how a pronoun was settled (#2790): fixed words and a rounded score (the column's limit)
-)
+DECIDED_MAX = 60  # how a pronoun was settled (#2790), in fixed words (the column's limit)
+DECIDED_BY_DM = "who-is-it: picked by the DM"  # the DM chose one of the names offered
+DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
 
@@ -326,6 +326,9 @@ class BackstoryLinks:
                         if row["other_is_subject"]
                         else (end, row["other_id"])
                     )
+                    # The note says who decided now: after the DM's pick, "DMbot wasn't sure" would
+                    # read as if it were still open (only a connection DMbot checked has a note).
+                    decided = (DECIDED_ELSE if outside else DECIDED_BY_DM) if row["decided"] else ""
                     await conn.execute(
                         "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                         " object_id, quote, secret, detail, truth, created_at, upload, decided)"
@@ -333,7 +336,7 @@ class BackstoryLinks:
                         " ON CONFLICT DO NOTHING",
                         (guild_id, campaign_id, a, row["predicate"], b, row["quote"],
                          row["secret"], row["detail"], row["truth"], row["created_at"],
-                         row["upload"], row["decided"]),
+                         row["upload"], decided),
                     )  # fmt: skip
             await conn.execute(
                 "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s AND id = %s",

@@ -14045,6 +14045,12 @@ BACKSTORY_DECIDED = """
         ADD COLUMN decided TEXT NOT NULL DEFAULT '' CHECK (char_length(decided) <= 60);
     ALTER TABLE backstory_which
         ADD COLUMN decided TEXT NOT NULL DEFAULT '' CHECK (char_length(decided) <= 60);
+
+    -- The same note on the kept relationship, for the DM's card only (never in a door, a search or
+    -- a player's view): NULL unless the relationship came from a pronoun DMbot settled. It is
+    -- carried in the change log, merges (the row is kept) and backups.
+    ALTER TABLE memory_relations
+        ADD COLUMN decided TEXT CHECK (decided IS NULL OR char_length(decided) <= 60);
 """
 
 BACKSTORY_WHICH = """

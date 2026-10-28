@@ -946,24 +946,6 @@ async def queue_links(
     return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
 
 
-def _checked_line(decided: str) -> str:
-    """DMbot's check of a pronoun, in plain words, for a card ("" when there was none, #2790). The
-    stored words are fixed (`who_resolve.decided_words`), so this maps them one by one. No score is
-    shown: a DM at the table cannot act on a percentage, and "sure" would invite a rubber stamp."""
-    how = decided.removeprefix("who-is-it: ").strip()
-    if not how or how == decided:
-        return ""
-    if how.startswith("accepted"):
-        return "DMbot matched this name from your text.\n"
-    if how.startswith("asked"):
-        return "DMbot wasn't sure who the text means. Please check.\n"
-    if how.startswith(("nobody listed", "unsure")):
-        return "DMbot couldn't tell who the text means. No name picked.\n"
-    if how.startswith("not checked"):
-        return "DMbot didn't check this one. Please check it yourself.\n"
-    return ""
-
-
 async def _unnamed_rows(
     memory: MemoryStore,
     campaign: Campaign,
@@ -1208,7 +1190,7 @@ class WhichOffer(_Menu):
             f"🔎 **Which {asked} is this?**{place}\n"
             f"{pair}\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
-            + _checked_line(c.decided)
+            + who_resolve.checked_line(c.decided)
             + (
                 f"It could be {names}. Tap the right one. "
                 if names
@@ -1410,7 +1392,7 @@ class ConnectionOffer(_Menu):
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
-            + _checked_line(c.decided)
+            + who_resolve.checked_line(c.decided)
             + f"{note}"
             + self._scope(c)
         )

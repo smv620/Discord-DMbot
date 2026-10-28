@@ -16,6 +16,7 @@ from dmbot.memory import background as bg
 from dmbot.memory import who_ask, who_resolve
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
 from dmbot.memory.models import CONFIRMED, NewName
+from dmbot.memory.which_else import none_of_these
 from dmbot.memory.who_is_it import NOT_LISTED, Candidate
 from dmbot.ui import name_background as ui_bg
 from tests.test_memory_names import GUILD, NamesTest
@@ -302,7 +303,7 @@ class ThePath(NamesTest):
         with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
             await view.children[0].callback(self.it())  # Mara
         (w,) = await self.store.waiting(GUILD, self.campaign.id)
-        self.assertEqual(w.decided, "who-is-it: asked 90%")
+        self.assertEqual(w.decided, "who-is-it: picked by the DM")  # not "wasn't sure" any more
 
     def test_every_stored_check_has_plain_words_and_no_score(self) -> None:
         for stored, want in (
@@ -316,10 +317,12 @@ class ThePath(NamesTest):
             ("who-is-it: not checked, over the limit", "Please check it yourself.\n"),
             ("who-is-it: not checked, out of time", "Please check it yourself.\n"),
         ):
-            got = ui_bg._checked_line(stored)
+            got = who_resolve.checked_line(stored)
             self.assertTrue(got.endswith(want), got)
             self.assertNotIn("%", got)
-        self.assertEqual((ui_bg._checked_line(""), ui_bg._checked_line("other")), ("", ""))
+        self.assertEqual(
+            (who_resolve.checked_line(""), who_resolve.checked_line("other")), ("", "")
+        )
 
     async def test_a_merge_while_it_waits_keeps_how_it_was_decided(self) -> None:
         await self.run_links(Scripted([("Mara", 95), ("Bram", 5)], "Mara"))
@@ -350,6 +353,18 @@ class ThePath(NamesTest):
             )
         (still,) = await self.store.which_waiting(GUILD, self.campaign.id)
         self.assertEqual(still.decided, q.decided)
+
+    async def test_someone_else_is_recorded_as_the_dms_choice(self) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        none = await none_of_these(self.memory, self.store, GUILD, self.campaign.id, q)
+        self.assertEqual(none, "done")
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(w.decided, "who-is-it: kept as someone else")
+        self.assertIn("You chose someone else", who_resolve.checked_line(w.decided))
+        self.assertIn(
+            "You picked this name", who_resolve.checked_line("who-is-it: picked by the DM")
+        )
 
     async def test_an_ordinary_connection_has_no_check_line(self) -> None:
         plain = [[bg.Connection("Mara", "knows", "Ken", "q")]]

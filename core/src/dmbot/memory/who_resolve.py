@@ -67,6 +67,28 @@ def decided_words(what: str, score: float | None = None) -> str:
     return f"who-is-it: {what}" + (f" {round(score)}%" if score is not None else "")
 
 
+def checked_line(decided: str) -> str:
+    """DMbot's check of a pronoun, in plain words, for a card ("" when there was none, #2790). The
+    stored words are fixed (`who_resolve.decided_words`), so this maps them one by one. No score is
+    shown: a DM at the table cannot act on a percentage, and "sure" would invite a rubber stamp."""
+    how = decided.removeprefix("who-is-it: ").strip()
+    if not how or how == decided:
+        return ""
+    if how.startswith("picked by the DM"):
+        return "You picked this name.\n"
+    if how.startswith("kept as someone else"):
+        return "You chose someone else for this one.\n"
+    if how.startswith("accepted"):
+        return "DMbot matched this name from your text.\n"
+    if how.startswith("asked"):
+        return "DMbot wasn't sure who the text means. Please check.\n"
+    if how.startswith(("nobody listed", "unsure")):
+        return "DMbot couldn't tell who the text means. No name picked.\n"
+    if how.startswith("not checked"):
+        return "DMbot didn't check this one. Please check it yourself.\n"
+    return ""
+
+
 def window_of(passage: str) -> str:
     """The last `QUOTE_WORDS` words of the passage, as written: the new quote, which ends where
     the AI's quote ended and so holds the pronoun and the end that was named."""
