@@ -24,6 +24,8 @@ class TheResultClass(unittest.TestCase):
                 modules += [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
                 modules.append(node.module)
+                # `from dmbot import recaps` names the package only in the alias.
+                modules += [f"{node.module}.{alias.name}" for alias in node.names]
         self.assertEqual(
             [m for m in modules if m == "dmbot.recaps" or m.startswith("dmbot.recaps.")], []
         )
