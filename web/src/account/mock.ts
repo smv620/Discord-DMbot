@@ -1696,7 +1696,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (/\.sheets-stuck(\.|$)/.test(ref)) {
-        return { state: "waiting", stage: "waiting", action: "link", entityId: "sh-ivy", error: null, startedAt: 1, updatedAt: 1 };
+        return { state: "running", stage: "waiting", action: "link", entityId: "sh-ivy", error: null, startedAt: 1, updatedAt: 1 };
       }
       return { state: "done", stage: "done", action: "link", entityId: "sh-ivy", error: null };
     },

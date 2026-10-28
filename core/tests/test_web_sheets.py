@@ -160,7 +160,7 @@ class TheQueue(Sheets):
         self.assertEqual(await self.queue("-", self.session, action="read_again"), first)
         await self.bot_marks(first, "done")
         self.assertEqual(
-            await self.refuse_sheet("-", self.session, action="read_again"), "too_soon"
+            await self.refuse_sheet("-", self.session, action="read_again"), "read_too_soon"
         )
 
     async def test_an_unknown_action_is_refused(self) -> None:

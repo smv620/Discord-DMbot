@@ -46,10 +46,12 @@ export default function CharacterSheetsSection({
   const [link, setLink] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
-  const [looks, setLooks] = useState(0);
+  // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
+  // changing (not every poll), so a bot that has gone quiet shows as stalled (#2564).
+  const [moved, setMoved] = useState("");
   const flight = useRef(false);
   const live = useRef(true);
-  const seen = useObservedWait(busy, String(looks));
+  const seen = useObservedWait(busy, moved);
   useEffect(() => {
     live.current = true;
     return () => {
@@ -83,7 +85,7 @@ export default function CharacterSheetsSection({
     flight.current = true;
     setBusy(true);
     setReport(null);
-    setLooks(0);
+    setMoved("");
     setStage(w.stage.waiting as string);
     try {
       const id = await api.chooseSheet(campaignRef, entity, choice);
@@ -104,7 +106,7 @@ export default function CharacterSheetsSection({
         > | null = null;
         try {
           got = await api.sheetAnswer(campaignRef, id);
-          setLooks((n) => n + 1);
+          if (got) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
         } catch (error) {
           if (error instanceof ApiError && ENDS.includes(error.kind))
             throw error;

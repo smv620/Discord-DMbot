@@ -142,6 +142,11 @@ describe("the wait", () => {
       await waitFor(() =>
         expect(screen.queryByText(w.stage.waiting as string)).toBeTruthy(),
       );
+      // Nothing moves on the bot's side for a minute: the panel must say so, not keep saying "running".
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(
+        await screen.findByText(w.quiet, {}, { timeout: 8000 }),
+      ).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

@@ -16640,8 +16640,10 @@ WEB_SHEET_ACTIONS = (
     -- a minute). Answers 'ok' with the id; a second press of the same choice while one is open
     -- gets that one back. 'not_found' for a character or sheet that isn't there, 'not_allowed'
     -- when the caller isn't the one who plays it (or a DM, for read_again), 'bad_link' for a link
-    -- of any other shape, 'too_soon' inside the cooldowns (20 seconds a person for a link, a
-    -- minute a campaign for read_again) or when the queue is full. NULL for a server the person is
+    -- of any other shape, 'too_soon' inside the link cooldown (20 seconds a person),
+    -- 'read_too_soon' inside the read_again cooldown (a minute a campaign) and 'queue_full' when
+    -- the queue is full. A link for another URL than an open one is queued on its own. NULL for
+    -- a server the person is
     -- not in.
     CREATE FUNCTION dmbot_web_sheet_action_add(g BIGINT, c TEXT, ent TEXT, act TEXT, lnk TEXT)
     RETURNS JSONB
@@ -16690,7 +16692,7 @@ WEB_SHEET_ACTIONS = (
                 want := '';
                 IF NOT EXISTS (SELECT 1 FROM character_sheets s
                                WHERE s.guild_id = g AND s.campaign_id = c
-                                 AND s.entity_id = who) THEN
+                                 AND s.entity_id = who AND s.player_id = dmbot_current_user()) THEN
                     RETURN jsonb_build_object('status', 'not_found');
                 END IF;
             END IF;
@@ -16705,7 +16707,8 @@ WEB_SHEET_ACTIONS = (
               AND a.updated_at < now_s - 600;
         SELECT a.id INTO have FROM web_sheet_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.user_id = dmbot_current_user()
-              AND a.entity_id = who AND a.action = act AND a.state IN ('waiting', 'working');
+              AND a.entity_id = who AND a.action = act AND a.url = want
+              AND a.state IN ('waiting', 'working');
         IF have IS NOT NULL THEN
             RETURN jsonb_build_object('status', 'ok', 'id', have);
         END IF;
@@ -16717,12 +16720,12 @@ WEB_SHEET_ACTIONS = (
         IF act = 'read_again' AND EXISTS (SELECT 1 FROM web_sheet_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.action = 'read_again'
               AND a.created_at > now_s - 60) THEN
-            RETURN jsonb_build_object('status', 'too_soon');
+            RETURN jsonb_build_object('status', 'read_too_soon');
         END IF;
         IF (SELECT count(*) FROM web_sheet_actions a
             WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 20
         THEN
-            RETURN jsonb_build_object('status', 'too_soon');
+            RETURN jsonb_build_object('status', 'queue_full');
         END IF;
         INSERT INTO web_sheet_actions (guild_id, campaign_id, id, user_id, entity_id, action, url,
                                        created_at, updated_at)

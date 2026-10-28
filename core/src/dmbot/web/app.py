@@ -2375,6 +2375,8 @@ def create_app(
         "bad_link": (400, "bad_link"),
         "not_allowed": (403, "not_allowed"),
         "too_soon": (429, "too_soon"),
+        "read_too_soon": (429, "read_too_soon"),
+        "queue_full": (429, "queue_full"),
     }
 
     @app.get("/me/campaigns/{ref}/sheets")

@@ -1523,7 +1523,7 @@ export type SheetChoice = { action: "link"; url: string } | { action: "forget" }
 
 /** Where a sheet choice stands, in the shared progress shape (#2816). */
 export interface SheetAnswer {
-  state: "waiting" | "working" | "done" | "failed" | "running" | "stalled";
+  state: "running" | "stalled" | "done" | "failed";
   stage: string;
   action: string;
   entityId: string;
@@ -1706,6 +1706,7 @@ export type ApiErrorKind =
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "needs-approval" // "Make the audio again" on a text that is no longer approved (#2090)
   | "too-soon" // the account moved less than 30 days ago (#1246)
+  | "read-too-soon" // a DM asked for the sheets to be read again less than a minute ago (#2816)
   | "email-failed" // the move code could not be emailed just now (#1246)
   | "not-paying" // a support ticket needs an account with a plan, Try It too (#1340, #1435)
   | "one-waiting" // a free account already has a question waiting (#1435)
@@ -2214,6 +2215,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  read_too_soon: "read-too-soon",
   hour_full: "hour-full",
   bad_answer: "bad-answer",
   plot_open: "plot-open",

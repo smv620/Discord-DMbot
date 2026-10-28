@@ -37,6 +37,10 @@ export const sheetWords = {
       "Wait a moment, then try again. A link can be made once every 20 seconds.",
     "still-waiting":
       "DMbot hasn't finished that yet. It may still happen; the list will show it. Check before trying again.",
+    "read-too-soon":
+      "DMbot was asked to read the sheets a moment ago. Wait a minute, then ask again.",
+    "queue-full":
+      "DMbot has a lot queued already. Try again in a few minutes.",
     network:
       "We couldn't reach DMbot, so nothing was changed. Check your connection and try again.",
     server: "That didn't work. Try again in a minute.",
