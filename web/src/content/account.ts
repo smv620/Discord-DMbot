@@ -310,6 +310,8 @@ export const text = {
   characterChange: "Change a character in Discord with 📜 My character sheet.",
   // Where DMbot may record you (#1151). The warning is the bot's own wording.
   recordingHeading: "Where DMbot may record you",
+  /** Under the list once "Delete my transcripts" is on (#2769): a server the person has left is not listed. */
+  recordingLeft: "Left a server? Use the 🗂️ Menu in DMbot's private message from that server to delete your transcripts there.",
   recordingLine: (server: string, date: string): string =>
     `${server}: DMbot may record you. You said yes on ${shortDate(date)}.`,
   recordingOld: (server: string): string =>

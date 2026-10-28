@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { parsePage } from "./dom";
 
 import { features, featuresHeading } from "../src/content/features";
-import { INITIATIVE_STYLE_LIVE, NPCS_CHANNEL_LIVE } from "../src/content/help";
+import { INITIATIVE_STYLE_LIVE } from "../src/content/help";
 import { RECAPS_LIVE } from "../src/content/recap-words";
 import Home from "../src/pages/index.astro";
 
@@ -67,7 +67,7 @@ describe("What DMbot does", () => {
   it("shows the recaps and who's who cards, and the initiative sentence, only with their switches (#1816)", () => {
     const titles = features.map((f) => f.title);
     expect(titles.includes("Recaps after each game")).toBe(RECAPS_LIVE);
-    expect(titles.includes("A who's who list")).toBe(NPCS_CHANNEL_LIVE);
+    expect(titles).not.toContain("A who's who list");
     const fight = features.find((f) => f.title === "FightBot reminders in a fight");
     expect(fight?.what.includes("how your table runs initiative")).toBe(INITIATIVE_STYLE_LIVE);
     expect(titles).toContain("FightBot reminders in a fight");
