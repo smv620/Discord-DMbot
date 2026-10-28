@@ -89,6 +89,8 @@ _VOICE_CO = (
 NOT_IN_BACKUP: dict[str, str] = {
     "web_backups": "a request for a copy for the website and the copy made for it, kept 15 "
     "minutes: a copy of a copy, never content (#2554)",
+    "web_backup_parts": "the transcripts files of a website copy, kept with it for 15 minutes: a "
+    "copy of a copy, never content (#2772)",
     "recap_dictionaries": _VOICE_CO,
     "active_sessions": _RUNTIME,
     "campaign_handover_offers": _RUNTIME,
@@ -123,6 +125,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
+    "web_rule_actions": _WAIT,
     "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "
     "(Supervisor, #2553; PLAN:947)",
     "memory_mentions": "where each name was said, made again as lines are read (PLAN:164)",
