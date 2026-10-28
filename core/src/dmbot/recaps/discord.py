@@ -1954,6 +1954,11 @@ class RecapFeatures:
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
+                    if self.web_line_fixes is not None:
+                        try:  # its own try: it carries the promise that words go within a day
+                            await self.web_line_fixes.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The line fix sweep failed: %s", type(exc).__name__)
                     try:
                         await self.recap_requests.sweep(guild.id)
                         if self.name_answers is not None:
@@ -1966,8 +1971,6 @@ class RecapFeatures:
                             await self.web_rule_actions.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
-                        if self.web_line_fixes is not None:  # a fix keeps no words past a day
-                            await self.web_line_fixes.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
                         await self.read_put_back_lines(guild.id)
                         if self.peek_notices is not None:

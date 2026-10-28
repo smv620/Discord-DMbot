@@ -301,11 +301,14 @@ async def run_one(host: Host, store: ActionStore, guild_id: int, item: Fix) -> b
     except Exception as exc:
         log.warning("A website line fix failed: %s", type(exc).__name__)
         outcome = Outcome(FAILED)
-    try:
-        if not await store.finish(guild_id, item, outcome):
-            log.info("A website line fix was taken over by another worker")
-    except Exception as exc:
-        log.warning("A website line fix could not be marked: %s", type(exc).__name__)
-        return False
+    for attempt in (1, 2):  # one more try: a retake would report the wrong result (already sent)
+        try:
+            if not await store.finish(guild_id, item, outcome):
+                log.info("A website line fix was taken over by another worker")
+            break
+        except Exception as exc:
+            log.warning("A website line fix could not be marked: %s", type(exc).__name__)
+            if attempt == 2:
+                return False
     log.info("Website line fix %s: %s", item.mode, outcome.error or "done")
     return True
