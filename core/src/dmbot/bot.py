@@ -355,7 +355,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice, optional
+from dmbot.rules import house_voice, optional, set_sync, web_sharing
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -469,6 +469,7 @@ from dmbot.ui import (
     name_pass_undo,
     recap_audio,
     rule_card,
+    shared_rules_defs,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -1155,12 +1156,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
-        # What players and DMs chose on the website's character sheets page (#2817).
-        self.web_sheets = web_sheets.ActionStore(recaps.db) if recaps is not None else None
+        # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
+        self.web_rule_actions = web_sharing.ActionStore(recaps.db) if recaps is not None else None
+        self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
         )
+        # What players and DMs chose on the website's character sheets page (#2817).
+        self.web_sheets = web_sheets.ActionStore(recaps.db) if recaps is not None else None
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -1193,6 +1197,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
+        # When each going read was asked for and last moved forward (monotonic seconds), for the
+        # card's "running for" and "last change" (#2564). Memory only, like the read itself.
+        self.plan_clocks: dict[tuple[int, str], plan_reader.ReadClock] = {}
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -1365,6 +1372,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.background_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
             if self.ai_client
+            else None
+        )
+        # Who "she" is in a lore read (#2790): the small model, only with DMBOT_WHO_IS_IT on.
+        self.who_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.WHO_IS_IT], Feature.WHO_IS_IT)
+            if self.ai_client and settings.who_is_it
             else None
         )
         # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
@@ -8585,21 +8598,41 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
         key = (guild_id, document_id)
+        now = time.monotonic()
+        clock = self.plan_clocks[key] = plan_reader.ReadClock(now, now, now)
+
+        async def moved(_position: int) -> None:
+            clock.moved = time.monotonic()  # a call came back (stored, or cut and read in halves)
+
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 self.plan_waiting.add(key)
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
-                    report = await plan_reader.run(
-                        ai,
-                        plan,
-                        guild_id=guild_id,
-                        campaign_id=campaign_id,
-                        document_id=document_id,
-                        start_chunk=start,
-                        model=lambda: ai.model,
-                        allowed=plan_allowed,
-                    )
+                    clock.began = clock.moved = time.monotonic()  # the turn has come
+                    report = plan_reader.Report()  # the caller's: a cut-off run keeps its counts
+                    # The whole read ends within MAX_RUN_S, a call in progress included (the
+                    # reader checks the time only between calls), so the card's "stops by itself
+                    # after" is true (#2564).
+                    limit = asyncio.timeout(plan_reader.MAX_RUN_S)
+                    try:
+                        async with limit:
+                            report = await plan_reader.run(
+                                ai,
+                                plan,
+                                guild_id=guild_id,
+                                campaign_id=campaign_id,
+                                document_id=document_id,
+                                start_chunk=start,
+                                model=lambda: ai.model,
+                                allowed=plan_allowed,
+                                progress=moved,
+                                report=report,
+                            )
+                    except TimeoutError:
+                        if not limit.expired():
+                            raise  # a store's or a call's own timeout: the generic handler
+                        report.stopped = plan_reader.STOP_TIME
                 log.info("%s", report.line())
                 if report.stopped:
                     await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
@@ -8617,6 +8650,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await self._plan_read_notice(guild_id, campaign_id, document_id)
             finally:
                 self.plan_waiting.discard(key)
+                self.plan_clocks.pop(key, None)
 
     async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
         """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
@@ -10593,6 +10627,105 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     if not await web_settings.run_one(self, store, guild.id, item):
                         break
 
+    async def run_web_report_requests(self) -> None:
+        """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
+        the campaign, and the report is made the way it is after a session, inside the same plan
+        check and call limits. Each runs as a tracked background task, at most one a server, so
+        this returns at once; only the outcome word is logged."""
+        store = self.report_requests
+        if store is None:
+            return
+        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_report_tasks", {})
+        for guild in list(self.guilds):
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one report at a time for a server; the loop does not wait for it
+            req = await store.claim_next(guild.id)
+            if req is None:
+                continue
+            gid = guild.id
+            task = asyncio.create_task(self._run_report_request(store, gid, req))
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_report_request(
+        self,
+        store: web_report_requests.RequestStore,
+        guild_id: int,
+        req: web_report_requests.Request,
+    ) -> None:
+        """One website report request, as a background task so the poll loop (and every other
+        website action in it) does not wait for the many AI calls of a report."""
+        with log_context(guild_id=guild_id, campaign_id=req.campaign_id):
+            await web_report_requests.run_one(self, store, guild_id, req)
+
+    # ---- the website's rule sharing (#2793): the Host of rules.web_sharing ----
+
+    async def share_refusal(self, campaign: Campaign, user_id: int) -> str | None:
+        return await self.plan_gate("share", campaign.guild_id, campaign, user_id)
+
+    async def own_rules(self, campaign: Campaign) -> tuple[list[HouseRule], str | None]:
+        """The campaign's house rules and its rules document link, as Discord's Share reads
+        them; rules from a followed set or a rulebook are not among them."""
+        if self.house_rules is None:
+            return [], None
+        rules = await self.house_rules.list(campaign.guild_id, campaign.id)
+        links = self.house_file_links
+        link = await links.get(campaign.guild_id, campaign.id) if links is not None else None
+        return rules, getattr(link, "link", None)
+
+    async def settle(self, campaign: Campaign, *, following: bool) -> str:
+        """After a follow or an unfollow: the relationship definitions borrowed from the set
+        match it again (#1456), and the sentence Discord adds to its answer. A failure here
+        never undoes the follow."""
+        if self.memory is None or self.rule_sets is None:
+            return ""
+        done = await set_sync.safely(
+            set_sync.reconcile(self.memory, self.rule_sets, campaign.guild_id, campaign.id)
+        )
+        if following:
+            return shared_rules_defs.followed_note(done)
+        return shared_rules_defs.stopped_note(done)
+
+    async def run_web_rule_sharing(self) -> None:
+        """What DMs chose on the website's rule sharing (#2793), applied the way Discord's
+        📚 Shared rules buttons apply it. Each asker must still be a DM of the campaign. Each
+        runs as a tracked background task, at most one a server, so this returns at once and the
+        poll loop's other website actions do not wait; only outcome words are logged."""
+        store = self.web_rule_actions
+        if store is None or self.rule_sets is None:
+            return
+        running = self._rule_tasks
+        for guild in list(self.guilds):
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one at a time for a server; the loop does not wait for it
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            task = self._track(self._run_rule_choice(store, gid, item), "web-rule-choice")
+            if task is None:
+                continue  # shutting down: the row is retaken after the door's ten minutes
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_rule_choice(
+        self, store: web_sharing.ActionStore, guild_id: int, item: web_sharing.Action
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_sharing.run_one(self, store, guild_id, item)
+
     # ---- the website's character sheets page (#2817): the Host of memory.web_sheets ----
 
     async def in_server(self, guild_id: int, user_id: int) -> bool:
@@ -10649,48 +10782,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
             task.add_done_callback(forget)
 
-    async def run_web_report_requests(self) -> None:
-        """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
-        the campaign, and the report is made the way it is after a session, inside the same plan
-        check and call limits. Each runs as a tracked background task, at most one a server, so
-        this returns at once; only the outcome word is logged."""
-        store = self.report_requests
-        if store is None:
-            return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_report_tasks", {})
-        for guild in list(self.guilds):
-            task = running.get(guild.id)
-            if task is not None and not task.done():
-                continue  # one report at a time for a server; the loop does not wait for it
-            req = await store.claim_next(guild.id)
-            if req is None:
-                continue
-            gid = guild.id
-            task = asyncio.create_task(self._run_report_request(store, gid, req))
-            running[gid] = task
-
-            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
-                if running.get(gid) is done:
-                    del running[gid]
-
-            task.add_done_callback(forget)
-
     async def _run_sheet_choice(
         self, store: web_sheets.ActionStore, guild_id: int, item: web_sheets.Action
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_sheets.run_one(self, store, guild_id, item)
-
-    async def _run_report_request(
-        self,
-        store: web_report_requests.RequestStore,
-        guild_id: int,
-        req: web_report_requests.Request,
-    ) -> None:
-        """One website report request, as a background task so the poll loop (and every other
-        website action in it) does not wait for the many AI calls of a report."""
-        with log_context(guild_id=guild_id, campaign_id=req.campaign_id):
-            await web_report_requests.run_one(self, store, guild_id, req)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a

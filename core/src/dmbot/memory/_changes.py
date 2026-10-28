@@ -152,10 +152,10 @@ RELATIONS = Table(
     "id",
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
-     "secret", "created_at", "definition_version", "unrevealed", "directional"),
+     "secret", "created_at", "definition_version", "unrevealed", "directional", "decided"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
     # older row's role has no direction (#2457)
-    defaults={"unrevealed": False, "directional": False},
+    defaults={"unrevealed": False, "directional": False, "decided": None},
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -328,6 +328,18 @@ class Changes(Scope):
         self.undoes = undoes
         self.batch: int | None = None
         self.tables: set[str] = set()  # tables this write changed
+        # The DM's own writes to connections, (op, before, after): what the after-session report
+        # reads to mark an item "fixed" (#2661). Not an Undo's, not another source's.
+        self.relation_changes: list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]] = []
+        # Beliefs the DM's write added, (point of view, connection): The truth taking up a
+        # connection is how the DM fixes a "denied" difference (#2661).
+        self.belief_additions: list[tuple[str, str]] = []
+        # Items that name a connection the DM deleted, found before the delete takes them with it
+        # (the database cascades them away), and connections an Undo brought back (#2661).
+        self.deleted_items: set[tuple[str, str]] = set()
+        self.restored: set[str] = set()  # connections an Undo gave back their old meaning
+        # (point of view, connection) beliefs an Undo took away
+        self.unbelieved: set[tuple[str, str]] = set()
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
@@ -398,6 +410,10 @@ class Changes(Scope):
         before = await self.get(table, row_id)
         if before is None:
             return
+        if table is RELATIONS and self.source == "dm" and self.undoes is None:
+            from dmbot.memory import report_fixed
+
+            self.deleted_items |= await report_fixed.names(self.conn, *self.ids, [row_id])
         if table is RELATIONS and self.undoes is None:
             # its beliefs go with it, each logged, so an Undo brings the connection back whole
             for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
@@ -586,6 +602,11 @@ class Changes(Scope):
                 }
             )
         self.tables.add(table.name)
+        if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
+            self.relation_changes += [(op, b, a) for _, b, a in rows]
+        if self.undoes is not None:
+            for _, before, after in rows:
+                self._note_undone(table, op, before, after)
         await self.conn.execute(
             "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
             " row_id, op, before, after, source, undoes, made_at)"
@@ -593,6 +614,23 @@ class Changes(Scope):
             " undoes, made_at FROM jsonb_populate_recordset(NULL::memory_changes, %s)",
             (*self.ids, Jsonb(entries)),
         )
+
+    def _note_undone(
+        self, table: Table, op: str, before: dict[str, Any] | None, after: dict[str, Any] | None
+    ) -> None:
+        """An Undo wrote this row. What matters to the after-session report (#2661) is a
+        connection given back its old meaning (the undo of a reject, an end, a reword or a delete:
+        not of a pin, a secret flag or a reveal) and a belief taken away. The check reads the undo's
+        own row backwards: the change it undid went from `after` to `before`."""
+        from dmbot.memory import report_fixed
+
+        if table.name == "memory_relations":
+            if op == "insert" and after is not None:  # a deleted connection is back
+                self.restored.add(str(after["id"]))
+            elif report_fixed.changed_meaning("update", after, before) and before is not None:
+                self.restored.add(str(before["id"]))
+        elif table.name == "memory_beliefs" and op == "delete" and before is not None:
+            self.unbelieved.add((str(before["perspective_id"]), str(before["relation_id"])))
 
     async def _log(
         self,
@@ -606,6 +644,15 @@ class Changes(Scope):
             return
         self.version += 1
         self.tables.add(table.name)
+        if self.source == "dm" and self.undoes is None:
+            if table.name == "memory_relations":
+                self.relation_changes.append((op, before, after))
+            elif table.name == "memory_beliefs" and op == "insert" and after is not None:
+                self.belief_additions.append(
+                    (str(after["perspective_id"]), str(after["relation_id"]))
+                )
+        if self.undoes is not None:
+            self._note_undone(table, op, before, after)
         if self.batch is None:
             self.batch = self.version
         await self.conn.execute(
@@ -631,7 +678,12 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
-    "memory_relations": {"definition_version": 1, "unrevealed": False, "directional": False},
+    "memory_relations": {
+        "definition_version": 1,
+        "unrevealed": False,
+        "directional": False,
+        "decided": None,
+    },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
     "memory_entities": {

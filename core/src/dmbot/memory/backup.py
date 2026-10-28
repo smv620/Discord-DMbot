@@ -131,6 +131,7 @@ _TEXT_LIMITS = {
     "model": 80,
     "unnamed_role": 40,  # a person the story never names (#2790)
     "unnamed_what": NAME_MAX,
+    "decided": 60,  # how a pronoun was settled (#2790): fixed words and a number
 }
 _CHOICES: dict[str, Sequence[str]] = {
     "status": (
@@ -164,7 +165,7 @@ _NULLABLE = {
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
-    "unnamed_anchor", "unnamed_role", "unnamed_what",
+    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided",
 }  # fmt: skip
 
 
@@ -469,7 +470,14 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 version = 1
             # from before #2404: every connection a file holds had been shown to the players;
             # from before #2457: no family role had a direction
-            raw = {"unrevealed": False, "directional": False, **raw, "definition_version": version}
+            # from before #2790: no connection had a pronoun DMbot settled
+            raw = {
+                "unrevealed": False,
+                "directional": False,
+                "decided": None,
+                **raw,
+                "definition_version": version,
+            }
         out.append(raw)
     return out
 

@@ -1408,6 +1408,13 @@ export interface NameRow {
   /** How often the name has been mentioned, for choosing which of several to keep (#2427). Missing
    * from an API that doesn't send it. */
   mentions?: number;
+  /** A person the story described and never named (#2803): the name is how the page calls them ("Ken's
+   * sister"). Only a DM's list has them, in the group `not_named`. */
+  unnamed?: boolean;
+  /** For an unnamed person: who they are, in the story's words ("sister"). */
+  unnamedWhat?: string;
+  /** For an unnamed person: the name they hang from ("Ken"), or null when it is not a name. */
+  unnamedAnchor?: string | null;
 }
 
 export interface NameKind {
@@ -1448,6 +1455,9 @@ export interface NamesQuery {
   page: number;
   /** Names per page: 20, 50, 200 or 500 (core refuses any other); the API's usual (50) when missing. */
   size?: number;
+  /** Ask for the people the story never named too (#2803): without it the list, its counts and its totals
+   * leave them out, whatever the page's switch says. A DM's list only; anyone else gets none either way. */
+  unnamed?: boolean;
 }
 
 /** What a DM can do to one name: the same actions as the name card in Discord (#2295). */
@@ -1465,6 +1475,20 @@ export type NameChange =
   | { action: "merge-many"; others: string[] }
   | { action: "remove"; confirm: true };
 
+/** The three steps of giving a name to someone the story never named (#2803; the bot applies each one). */
+export type NameThemStep =
+  | { action: "name"; name: string }
+  // "Yes, the same person": joined into the name DMbot already knows, which is kept.
+  | { action: "name-join"; into: string }
+  // Takes back a name just given or a join; `answer` is the id the step came back with.
+  | { action: "name-undo"; answer: string };
+
+/** How a step ended: done (`undo` is the id to take it back with, null when it can't be), or a question
+ * because DMbot already knows someone with that name. */
+export type NameThemResult =
+  | { state: "done"; row: NameRow | null; undo: string | null; answer: string }
+  | { state: "question"; other: { id: string; name: string } };
+
 /** What the bot says about a queued name change (#2294). */
 interface NameAnswer {
   state: "waiting" | "working" | "done" | "failed";
@@ -1472,6 +1496,10 @@ interface NameAnswer {
   removed?: boolean;
   /** A store-side refusal, such as "exists" or "not_found". */
   error?: string | null;
+  /** The entry DMbot already knows, when a new name is one (#2803). */
+  other?: { id: string; name: string } | null;
+  /** True while the step can still be undone (#2803). */
+  undo?: boolean;
 }
 const NAME_POLL_MS = 1000;
 const NAME_POLLS = 60;
@@ -1654,6 +1682,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "ambiguous" // two people could be the one a new name is for, so nothing was changed (#2803)
   | "hour-full" // the campaign's game masters have sent thirty talk messages to PlotBot this hour (#2774)
   | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
   | "no-rules" // there is no house rule of the campaign's own to share (#2783)
@@ -1957,6 +1986,9 @@ export interface AccountApi {
   /** Delete all of my notes in a campaign; how many there were. */
   deleteMyNpcNotes?(campaignRef: string): Promise<number>;
   changeName?(ref: string, id: string, change: NameChange): Promise<NameChanged>;
+  /** Give a name to someone the story never named, join them into a name DMbot knows, or undo either (#2803).
+   * `onLook` hears each time the bot's answer is read, for the wait panel. Missing from an API older than that. */
+  nameThem?(ref: string, id: string, step: NameThemStep, onLook?: () => void): Promise<NameThemResult>;
   /** The relationship web around a name (#2324, API #2323). Missing from an older API. */
   webGraph?(ref: string, query: WebQuery): Promise<WebGraph>;
   /** How many names that web would draw, asked before drawing so a big one can be warned about. */
@@ -2177,6 +2209,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   no_rules: "no-rules",
   bad_arg: "bad-choice",
   gone: "gone",
+  ambiguous: "ambiguous",
   cannot_write: "cannot-write",
   queue_full: "queue-full",
   stale: "stale",
@@ -2979,6 +3012,7 @@ export function httpApi(
     allNames: async (ref, q) => {
       const params = new URLSearchParams({ q: q.q, kind: q.kind, sort: q.sort, page: String(q.page) });
       if (q.size !== undefined) params.set("size", String(q.size));
+      if (q.unnamed) params.set("unnamed", "1");
       return (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(ref)}/all-names?${params.toString()}`,
@@ -3014,6 +3048,29 @@ export function httpApi(
       }
       // The bot may still apply it later: the page says so and reads the list again, never "nothing
       // was changed", so nobody tries a merge or remove twice.
+      throw new ApiError("still-waiting");
+    },
+    nameThem: async (ref, id, step, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/all-names`;
+      const queued = (await call("POST", `${base}/${encodeURIComponent(id)}`, step)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      for (let i = 0; i < NAME_POLLS; i++) {
+        let got: NameAnswer | null = null;
+        try {
+          got = (await call("GET", `${base}/answers/${encodeURIComponent(queued.answer)}`)) as NameAnswer;
+          onLook?.();
+        } catch (error) {
+          if (error instanceof ApiError && error.kind === "signed-out") throw error;
+        }
+        if (got?.state === "done") {
+          return { state: "done", row: got.row ?? null, undo: got.undo ? queued.answer : null, answer: queued.answer };
+        }
+        if (got?.state === "failed") {
+          if (got.error === "known_name" && got.other) return { state: "question", other: got.other };
+          throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+        }
+        if (i < NAME_POLLS - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
+      }
       throw new ApiError("still-waiting");
     },
     webGraph: async (ref, q) => {
