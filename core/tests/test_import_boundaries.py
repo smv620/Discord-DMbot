@@ -1,6 +1,6 @@
-"""The feature-boundary check (#2130): the repo's own contracts hold today, and a new forbidden
-import is what makes the check fail (shown on a throwaway package, so the proof does not depend
-on the real code staying clean)."""
+"""The feature-boundary check (#2130): a new forbidden import is what makes it fail, shown on a
+throwaway package so the proof does not depend on the real code. The repo's own contracts are
+run by the core CI job (`lint-imports`), not repeated here in every shard."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-CORE = Path(__file__).resolve().parent.parent
 RUN = "from importlinter.cli import lint_imports; raise SystemExit(lint_imports())"
 
 CONFIG = """[importlinter]
@@ -37,10 +36,6 @@ def lint(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 class ImportBoundaries(unittest.TestCase):
-    def test_the_repos_contracts_hold(self) -> None:
-        done = lint(CORE)
-        self.assertEqual(done.returncode, 0, done.stdout[-2000:])
-
     def test_a_new_forbidden_import_fails_the_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
