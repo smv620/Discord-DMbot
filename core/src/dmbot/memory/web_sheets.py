@@ -339,12 +339,14 @@ async def _character_name(host: Host, guild_id: int, item: Action) -> str | None
 
 async def _typed(host: Host, guild_id: int, campaign: Campaign, item: Action) -> str:
     """Discord's "Type in my character", from the page: replaces a linked sheet, as there."""
-    if host.link_too_soon(guild_id, item.user_id):  # (shares the link cooldown)
-        return TOO_SOON
     form = _form(item.payload)
     name = await _character_name(host, guild_id, item)
     if form is None or name is None:
         return BAD_TYPED if name is not None else NOT_FOUND
+    if host.link_too_soon(
+        guild_id, item.user_id
+    ):  # (shares the link cooldown; a bad form spends none)
+        return TOO_SOON
     class_name, level, species, listed = form
     snapshot = sheets.typed(
         shorten(name, sheets.NAME_MAX),
@@ -395,19 +397,20 @@ async def _document(
     if host.document_too_soon(guild_id, item.user_id, campaign.id):
         return TOO_SOON
     sheet_document.claim(guild_id, day)
+    spent = False  # the AI is asked: only then does the read count against the day
     try:
         try:
             text = await sheet_document.link_text(item.url)
-        except sheet_document.TooBig:
-            sheet_document.give_back(guild_id, day)  # nothing reached the AI: no read used
+        except (sheet_document.TooBig, fetch.TooBig):
             return TOO_BIG
+        except fetch.Unreachable:
+            return SERVER  # the site didn't answer: the page offers a retry
         except fetch.LinkError:
-            sheet_document.give_back(guild_id, day)
             return BAD_DOCUMENT
         except DocumentError:
-            sheet_document.give_back(guild_id, day)
             return CANT_READ
         await moved()
+        spent = True
         try:
             snapshot, _ = await sheet_document.read_snapshot(ai, text)
         except AIError:
@@ -433,6 +436,8 @@ async def _document(
         await moved()
         return ""
     finally:
+        if not spent:  # a refusal, a bug or a stop before the AI: no read used
+            sheet_document.give_back(guild_id, day)
         sheet_document.release(guild_id)
 
 

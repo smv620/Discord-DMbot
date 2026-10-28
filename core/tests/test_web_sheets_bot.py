@@ -311,7 +311,7 @@ class Documents(Base):
         with self.opened() as opened:
             await self.take_and_run()
         self.assertEqual(await self.state_of(rid), ("done", ""))
-        opened.assert_awaited_once_with(DOC)
+        opened.assert_awaited_once_with(DOC, max_bytes=sheet_import.FILE_MAX_BYTES)
         (kept,) = await self.store.sheets(GUILD_A, self.c)
         assert kept.sheet is not None
         self.assertEqual(kept.sheet["name"], "Belleros")
@@ -390,6 +390,17 @@ class Documents(Base):
         self.assertEqual(self.host.sheet_ai.complete.await_count, 0)
         self.assertEqual(sum(sheet_document._reads.values()), 0)
 
+    async def test_a_download_over_the_cap_or_a_silent_site_is_told_apart(self) -> None:
+        for error, word in ((fetch.TooBig(fetch.TOO_BIG), ws.TOO_BIG),
+                            (fetch.Unreachable(fetch.UNREACHABLE), ws.SERVER)):  # fmt: skip
+            with self.subTest(word):
+                rid = await self.put(ws.DOCUMENT, url=DOC)
+                with patch.object(fetch, "fetch", AsyncMock(side_effect=error)):
+                    await self.take_and_run()
+                self.assertEqual(await self.state_of(rid), ("failed", word))
+                self.assertEqual(sum(sheet_document._reads.values()), 0)
+                self.host.too_soon_document = False
+
     async def test_a_document_the_ai_cannot_read_is_cant_read_and_the_days_read_is_given_back(
         self,
     ) -> None:
@@ -409,6 +420,47 @@ class Documents(Base):
             await self.take_and_run()
         self.assertEqual(await self.state_of(rid), ("failed", ws.CANT_READ))
         self.assertEqual(await self.store.sheets(GUILD_A, self.c), [])
+
+    async def test_a_server_already_reading_is_busy_and_shares_the_discord_state(self) -> None:
+        from dmbot.ui import sheet_import as discord_side
+
+        self.assertIs(discord_side._busy, sheet_document._busy)
+        self.assertIs(discord_side._reads, sheet_document._reads)
+        sheet_document._busy.add(GUILD_A)  # e.g. a Discord import is running
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened() as opened:
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.BUSY))
+        opened.assert_not_awaited()
+        self.assertEqual(sum(sheet_document._reads.values()), 0)
+        self.assertEqual(sheet_document._busy, {GUILD_A})  # not freed by someone else's refusal
+
+    async def test_a_bug_before_the_ai_gives_the_days_read_back(self) -> None:
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with patch.object(fetch, "fetch", AsyncMock(side_effect=RuntimeError("boom"))):
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.SERVER))
+        self.assertEqual(sum(sheet_document._reads.values()), 0)
+        self.assertEqual(sheet_document._busy, set())
+
+    async def test_a_read_that_runs_out_of_time_is_server_and_stays_counted(self) -> None:
+        async def hang(*_: Any, **__: Any) -> Reply:
+            await asyncio.sleep(5)
+            return Reply("", False)
+
+        self.host.sheet_ai.complete = hang
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened(), patch.object(sheet_document, "TIME_LIMIT_S", 0.05):
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.SERVER))
+        self.assertEqual(sum(sheet_document._reads.values()), 1)  # the AI was asked
+        self.assertEqual(sheet_document._busy, set())
+
+    async def test_the_fetch_is_capped_at_the_documents_limit(self) -> None:
+        await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened() as opened:
+            await self.take_and_run()
+        opened.assert_awaited_once_with(DOC, max_bytes=sheet_import.FILE_MAX_BYTES)
 
     async def test_the_days_reads_used_up_is_used_up(self) -> None:
         sheet_document._reads[(GUILD_A, sheet_document.today())] = sheet_document.READS_PER_DAY
@@ -461,6 +513,7 @@ class Documents(Base):
         await self.put(ws.DOCUMENT, url="https://127.0.0.1/private-path")
         with self.assertLogs(level=logging.DEBUG) as logs, self.opened():
             await self.take_and_run()
+        self.assertTrue(logs.records)  # the check below means something
         text = "\n".join(r.getMessage() + str(r.exc_text) for r in logs.records)
         for forbidden in ("docs.example.com", "belleros-sheet", "127.0.0.1", "private-path",
                           "Belleros", "Secret Spell Name", "Wood Elf"):  # fmt: skip

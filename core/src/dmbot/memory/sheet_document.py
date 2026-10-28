@@ -69,7 +69,7 @@ async def link_text(link: str) -> str:
     """The text of a public document link. `fetch.fetch` does every network check (https only,
     public addresses re-checked after each redirect, size and time caps). Raises `fetch.LinkError`,
     `TooBig` or `DocumentError`."""
-    got = await fetch.fetch(link)
+    got = await fetch.fetch(link, max_bytes=sheet_import.FILE_MAX_BYTES)  # stop early, not at 10 MB
     if len(got.data) > sheet_import.FILE_MAX_BYTES:
         raise TooBig
     async with READING:  # the same limit as the names screen
