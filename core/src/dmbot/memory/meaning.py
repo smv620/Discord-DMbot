@@ -64,7 +64,7 @@ async def entry_texts(
             " AND e.status = 'confirmed' AND e.merged_into IS NULL"
             " AND char_length(btrim(e.description)) > 0"
             " AND (NOT %s OR (e.type <> 'person' AND NOT e.audience_limited"
-            "   AND NOT e.hidden_from_players AND e.type <> ALL(%s)"
+            "   AND NOT e.hidden_from_players AND NOT e.unnamed AND e.type <> ALL(%s)"
             "   AND NOT EXISTS (SELECT 1 FROM memory_aliases a"
             "     WHERE a.guild_id = e.guild_id AND a.campaign_id = e.campaign_id"
             "     AND a.entity_id = e.id AND a.secret AND a.status <> 'rejected'"
