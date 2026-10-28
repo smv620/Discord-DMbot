@@ -22,7 +22,16 @@ describe("checkDocumentLink", () => {
     expect(checkDocumentLink("https://example.com/\tsheet")).toEqual({ ok: false, problem: "not-web" });
   });
 
-  it("refuses a link without a literal http:// or https:// prefix, even where the URL parser would read it", () => {
+  it("refuses an http link: the bot fetches only https", () => {
+    expect(checkDocumentLink("http://example.com/sheet.pdf")).toEqual({ ok: false, problem: "not-web" });
+    expect(checkDocumentLink("HTTP://example.com/sheet.pdf")).toEqual({ ok: false, problem: "not-web" });
+  });
+
+  it("accepts an https link whatever the case of the scheme", () => {
+    expect(checkDocumentLink("HTTPS://example.com/sheet.pdf")).toEqual({ ok: true, url: "HTTPS://example.com/sheet.pdf" });
+  });
+
+  it("refuses a link without a literal https:// prefix, even where the URL parser would read it", () => {
     expect(checkDocumentLink("http:/example.com")).toEqual({ ok: false, problem: "not-web" });
   });
 

@@ -328,6 +328,7 @@ describe("Use a document link", () => {
     ["", "empty"],
     ["a word with spaces", "not-web"],
     ["ftp://example.com/x", "not-web"],
+    ["http://example.com/x", "not-web"],
   ] as const)("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
     const api = await open();
     fireEvent.input(docBox("Ivy"), { target: { value: text } });
