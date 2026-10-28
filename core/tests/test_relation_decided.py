@@ -109,8 +109,29 @@ class OnTheRelationship(MemoryTest):
 
 
 class NoDoorReadsIt(MemoryTest):
+    """The relation's note is for the DM's card. Since #2859 the DM's own doors may carry it, and
+    only in the one migration that does (0275): the waiting list (a DM-only door) and a
+    connection's edge only for a DM who sees everything. No other migration, search or player's
+    view may select it."""
+
+    DM_DOORS = "0275_web_decided_note"
+
     def test_no_door_search_or_player_view_selects_it(self) -> None:
         pattern = re.compile(r"\b[a-z]{1,3}\.decided\b")
         for name, sql_text in schema.MIGRATIONS:
+            if name == self.DM_DOORS:
+                continue
             with self.subTest(migration=name):
                 self.assertIsNone(pattern.search(sql_text))
+
+    def test_the_dm_doors_read_it_only_for_a_dm(self) -> None:
+        text = dict(schema.MIGRATIONS)[self.DM_DOORS]
+        gated = "CASE WHEN is_dm AND sees_all THEN r.decided END"
+        # every read of a connection's note sits inside the DM-sees-everything test
+        self.assertEqual(text.count("r.decided"), text.count(gated))
+        self.assertEqual(text.count(gated), 1)
+        # the waiting list's two reads are of the backstory tables, in a door that answers a DM only
+        self.assertEqual(text.count("l.decided"), 1)
+        self.assertEqual(text.count("w.decided"), 1)
+        others = re.findall(r"\b[a-z]{1,3}\.decided\b", text.replace(gated, ""))
+        self.assertEqual(sorted(others), ["l.decided", "w.decided"])

@@ -709,6 +709,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         b: Any = DMBot.__new__(DMBot)
         b.web_sheets = SimpleNamespace(claim_next=claim)
         b.sheets = object()
+        b._sheet_tasks = {}  # declared in DMBot.__init__
+        b._closing = False
+        b._asking = set()
         guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
         with (
             patch.object(DMBot, "guilds", guilds),
@@ -723,6 +726,34 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*b._sheet_tasks.values())
         await asyncio.sleep(0)
         self.assertEqual(b._sheet_tasks, {})  # forgotten when done
+
+    async def test_while_closing_no_choice_is_started(self) -> None:
+        queue: list[Any] = [SimpleNamespace(campaign_id="c")]
+
+        async def claim(guild_id: int) -> Any:
+            return queue.pop(0) if queue else None
+
+        b: Any = DMBot.__new__(DMBot)
+        b.web_sheets = SimpleNamespace(claim_next=claim)
+        b.sheets = object()
+        b._sheet_tasks = {}  # declared in DMBot.__init__
+        b._closing = True
+        b._asking = set()
+        ran: list[int] = []
+
+        async def never(self: Any, store: Any, guild_id: int, item: Any) -> None:
+            ran.append(guild_id)
+
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with (
+            patch.object(DMBot, "guilds", guilds),
+            patch.object(DMBot, "_run_sheet_choice", never),
+        ):
+            await b.run_web_sheets()
+        await asyncio.sleep(0)  # a started task would run now, so `ran` below means something
+        # Nothing kept; the row stays claimed until RETAKE_AFTER_S.
+        self.assertEqual(b._sheet_tasks, {})
+        self.assertEqual(ran, [])
 
     async def test_the_poll_loop_does_not_wait_for_a_document_read(self) -> None:
         started, release = asyncio.Event(), asyncio.Event()
@@ -739,6 +770,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         b: Any = DMBot.__new__(DMBot)
         b.web_sheets = SimpleNamespace(claim_next=claim)
         b.sheets = object()
+        b._sheet_tasks = {}  # declared in DMBot.__init__
+        b._closing = False
+        b._asking = set()
         guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
         with patch.object(DMBot, "guilds", guilds), patch.object(ws, "run_one", slow):
             await asyncio.wait_for(b.run_web_sheets(), timeout=1)  # returns at once
