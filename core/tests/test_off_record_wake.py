@@ -12,11 +12,12 @@ from unittest.mock import AsyncMock, MagicMock
 import discord
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.consent_dm import ResumeButton
 from dmbot.off_the_record import WAKE_MINUTES, Paused
+from dmbot.table import Table
 from dmbot.transcript.models import OFF_RECORD, Line
 
 GUILD, VOICE, SCREEN = 1, 20, 30
