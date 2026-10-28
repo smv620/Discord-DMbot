@@ -254,24 +254,29 @@ def _has(haystack: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
 
 
-SPLIT_GAP = 6  # words that may stand between a first name and a surname it is shared with
+# What may stand between a first name and a surname it shares (#2841): a list joiner or a bracketed
+# aside, and around them only more asides, joiners or capitalised first names. "Brannoc (father) &
+# Mira (mother) Ashgrove" holds "Brannoc Ashgrove"; "Mira spoke with Ken Ashgrove" does not hold
+# "Mira Ashgrove".
+_ASIDE = r"\([^)\n]*\)"
+_JOIN = rf"(?:{_ASIDE}|&|,|\band\b|\bor\b)"
+_FILL = rf"(?:{_JOIN}|[A-Z][\w'’-]*)"
+_SPLIT_GAP = rf"\s*(?:{_FILL}\s*)*?{_JOIN}\s*(?:{_FILL}\s*)*"
 
 
-def _in_text(haystack: str, name: str) -> bool:
+def _in_text(haystack: str, name: str, piece: str | None = None) -> bool:
     """Whether the (squashed) text holds this name: whole, or (a surname written once for two
-    people, "Brannoc (father) & Mira (mother) Ashgrove", #2841) with its words in order a few
-    words apart, so "Brannoc Ashgrove" is there. Only for a name of two or more words, each of
-    some length; a short word is not a name's claim (the whole-words rule still holds for each)."""
+    people, "Brannoc (father) & Mira (mother) Ashgrove", #2841) with its words in order across a
+    list joiner or bracketed aside in `piece`, the text as written (capitals tell a first name from
+    other words). Only for a name of two or more words, each of some length."""
     if _has(haystack, name):
         return True
-    words = _squash(name).split()
-    if len(words) < 2 or any(len(re.sub(r"\W", "", w)) < SHORTEST for w in words):
+    words = name.split()
+    if piece is None or len(words) < 2 or any(len(re.sub(r"\W", "", w)) < SHORTEST for w in words):
         return False
-    # (no sentence end or line break between the words: "Brannoc met the smith. Ashgrove..." is not)
-    sep = r"[^\w.!?\n\r\u2028\u2029\x85]+"
-    gap = rf"(?:{sep}\w+){{0,{SPLIT_GAP}}}?{sep}"
-    pattern = gap.join(rf"(?<!\w){re.escape(w)}(?!\w)" for w in words)
-    return re.search(pattern, haystack) is not None
+    glue = rf"(?:\s+|{_SPLIT_GAP})"
+    pattern = glue.join(rf"(?<!\w)(?i:{re.escape(w)})(?!\w)" for w in words)
+    return re.search(pattern, piece) is not None
 
 
 def names_in(text: str, names: Iterable[str]) -> list[str]:
@@ -465,7 +470,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or len(name) > NAME_CHARS
             or len(name.split()) > NAME_WORDS
             or "|" in name
-            or not _in_text(haystack, name)
+            or not _in_text(haystack, name, piece)
             or not not_names.allowed(name, cued)
         ):
             continue
@@ -775,8 +780,8 @@ def read_connections(
         # the name it stands for.
         seen = [a, b]
         for index, end in enumerate((a, b)):
-            if not _in_text(haystack, end):
-                spelled = next((f for f in forms(end)[1:] if _in_text(haystack, f)), None)
+            if not _in_text(haystack, end, piece):
+                spelled = next((f for f in forms(end)[1:] if _in_text(haystack, f, piece)), None)
                 spelled = spelled or _variant(haystack, end, variants)
                 if spelled is not None:
                     seen[index] = spelled
@@ -796,7 +801,9 @@ def read_connections(
             variant_b=seen[1] if seen[1] != b else "",
         )
         if not (
-            _in_text(haystack, seen[0]) and _in_text(haystack, seen[1]) and _has(haystack, said)
+            _in_text(haystack, seen[0], piece)
+            and _in_text(haystack, seen[1], piece)
+            and _has(haystack, said)
         ):
             lost["not_in_text"] += 1
         elif holds(said_squashed, seen[0]) and holds(said_squashed, seen[1]):

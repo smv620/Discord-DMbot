@@ -299,6 +299,33 @@ class TheSurnameMustBeCloseAndInOneSentence(unittest.TestCase):
         self.assertEqual(self.read("Brannoc met the smith. Ashgrove is a town."), [])
 
 
+class TheSplitNeedsAJoinerOrAnAside(unittest.TestCase):
+    def read(self, text: str) -> list[bg.Found]:
+        reply = json.dumps(
+            {"names": [{"name": "Mira Ashgrove", "kind": "person", "also": [], "secret": []}]}
+        )
+        return bg.read_answer(reply, text)
+
+    def test_other_words_between_are_refused(self) -> None:
+        self.assertEqual(self.read("Mira spoke with Ken Ashgrove."), [])
+
+    def test_a_joiner_between_two_first_names_is_enough(self) -> None:
+        for text in (
+            "Ken and Mira Ashgrove ran the farm.",
+            "Mira & Ken Ashgrove ran the farm.",
+            "Mira, Ken Ashgrove ran the farm.",
+            "Mira (the elder) Ashgrove ran the farm.",
+            "Mira or Ken Ashgrove ran the farm.",
+        ):
+            self.assertEqual([f.name for f in self.read(text)], ["Mira Ashgrove"], text)
+
+    def test_two_first_names_side_by_side_are_not_a_split_surname(self) -> None:
+        self.assertEqual(self.read("Mira Ken Ashgrove ran the farm."), [])
+
+    def test_a_lowercase_word_between_is_refused_even_with_a_joiner(self) -> None:
+        self.assertEqual(self.read("Mira and then went to Ashgrove."), [])
+
+
 class ALongWindowStillNeedsBothEnds(unittest.TestCase):
     def test_forty_words_that_still_miss_one_end_are_refused(self) -> None:
         text = "Brannoc mentored apprentices. " + "She became his closest friend."
