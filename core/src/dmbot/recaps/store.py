@@ -30,6 +30,9 @@ from dmbot.memory.models import name_key
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
+
+# Re-exported with the `as` form, which mypy strict needs: the tests import it from here.
+from dmbot.transcript.respell import RecapRespelled as RecapRespelled
 from dmbot.transcript.respell import respell
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
@@ -65,17 +68,6 @@ COLUMNS = (
 
 
 _LIMITS = {"title": 120, "summary": STORY_COLUMN_MAX, "original": STORY_COLUMN_MAX}  # the table's
-
-
-@dataclass(frozen=True, slots=True)
-class RecapRespelled:
-    """What a fixed spelling did to a campaign's recaps (#2170): counts only."""
-
-    waiting: int = 0  # drafts and approved ones not yet posted
-    posted: int = 0
-    approvals_kept: int = 0
-    audio_old: int = 0  # recaps whose finished audio still says the old spelling
-    skipped: int = 0  # recaps the new spelling would make too long: left as they were
 
 
 _DISCORD_LINK = re.compile(r"^https://discord\.com/channels/[0-9]+/[0-9]+/[0-9]+$")
