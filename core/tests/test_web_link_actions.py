@@ -677,7 +677,9 @@ class TheEdits(Editing):
 
     # ---- "Which Mara?" and the read door for what waits (#2652) ----------------------------------
 
-    async def which_question(self, *, secret: bool = False, upload: str = "Lore, 24 Oct") -> str:
+    async def which_question(
+        self, *, secret: bool = False, upload: str = "Lore, 24 Oct", decided: str = ""
+    ) -> str:
         """Two Maras and a question about "Sister Mara" and Rook, waiting for the DM's pick."""
         self.mara_a = await self.add("Mara Ashgrove", "character", role="npc")
         self.mara_b = await self.add("Mara Vell", "character", role="npc")
@@ -685,7 +687,7 @@ class TheEdits(Editing):
             self.g,
             self.one.id,
             [NewWhich(self.rook, True, "knows", "Sister Mara", (self.mara_a, self.mara_b),
-                      "Rook knows Sister Mara", secret=secret, upload=upload)],
+                      "Rook knows Sister Mara", secret=secret, upload=upload, decided=decided)],
         )  # fmt: skip
         (found,) = await self.backstory.which_waiting(self.g, self.one.id)
         return found.id
@@ -904,6 +906,27 @@ class TheEdits(Editing):
         with self.assertRaises(RecapError) as caught:
             await self.waiting_now(self.player)
         self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_a_dm_sees_dmbots_check_on_a_waiting_connection_and_a_question(self) -> None:
+        """#2859: the stored note comes back as the words Discord shows, never the stored code."""
+        asked = "DMbot wasn't sure who the text means. Please check."
+        await self.backstory.add(
+            self.g,
+            self.one.id,
+            [
+                NewLink(self.rook, "knows", self.hall, "q", decided="who-is-it: asked 60%"),
+                NewLink(self.mira, "knows", self.hall, "q"),
+            ],
+        )
+        which = await self.which_question(decided="who-is-it: asked 60%")
+        got = await self.waiting_now()
+        checks = {b["subjectId"]: b["check"] for b in got["backstory"]}
+        self.assertEqual(checks[self.rook], asked)
+        self.assertEqual(checks[self.mira], "")  # nothing decided: nothing shown
+        (question,) = [w for w in got["which"] if w["id"] == which]
+        self.assertEqual(question["check"], asked)
+        for item in (*got["backstory"], *got["which"]):
+            self.assertNotIn("decided", item)  # (the stored code stays inside)
 
     async def test_a_pronoun_question_whose_only_name_is_gone_still_waits(self) -> None:
         which = await self.pronoun_question()
