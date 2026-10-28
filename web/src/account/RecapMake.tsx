@@ -115,8 +115,15 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     if (!s.recap || !PRESENT_PER_SCENE_LIVE || !api.recap) return false;
     const lists = await savedLists(s);
     if (!lists) return false;
-    setAsking({ ...next, finished: s.recap.state === "ready", lists, checking: false });
+    setAsking({ ...next, finished: s.recap.state !== "failed", lists, checking: false });
     return true;
+  };
+
+  /** The yes to a replacement lives only as long as the form it was said in: closing the form forgets it, so a later
+   * Add on the same session asks again. */
+  const closeForm = (): void => {
+    confirmedReplace.current = null;
+    setAdding(null);
   };
 
   /** Make (or make again) the recap of a session; `replace` after the DM said yes to the question. */
@@ -257,7 +264,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                   {/* The form stays, out of sight, while the question is asked: the words typed are still there when the rights box comes after the yes. */}
                   {adding?.ref === s.ref && (
                     <div hidden={!!question}>
-                      <AddForm session={s} needRights={needRights} busy={busy} onCancel={() => setAdding(null)} onSubmit={(input) => submit(s, input)} />
+                      <AddForm session={s} needRights={needRights} busy={busy} onCancel={() => closeForm()} onSubmit={(input) => submit(s, input)} />
                     </div>
                   )}
                   </>
@@ -277,6 +284,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                           disabled={busy}
                           onClick={() => {
                             setProblem("");
+                            confirmedReplace.current = null;
                             setAdding(s);
                           }}
                         >
