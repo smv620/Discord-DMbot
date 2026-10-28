@@ -8630,6 +8630,9 @@ HOUSE_RULE_SOURCE = """
             CHECK (source_name IS NULL OR char_length(source_name) BETWEEN 1 AND 200);
 """
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 HIDDEN_FROM_PLAYERS = """
     -- A name the players don't know yet (#2321): the DM's switch on any entry ("Players don't
     -- know this one yet"), apart from a clue's audience (`audience_limited`, who knows a clue),
@@ -9951,6 +9954,9 @@ INSTALLS_LEFT_EXCEPT = r"""
     REVOKE ALL ON FUNCTION dmbot_installs_left_except(BIGINT[]) FROM PUBLIC;
 """
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 ALL_NAMES_PAGE = r"""
     -- The website's All names page (#2294): one page of a campaign's confirmed names, searched and
     -- filtered, with the count of each kind. Answers a DM of the campaign (everything) and a server
@@ -10407,6 +10413,9 @@ SETTING_ACTIONS = (
 """
 )
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 WEB_RELATIONSHIPS = r"""
     -- The relationship web on the website (#2323): the names within N steps of one name, and the
     -- confirmed connections between them, for the page that draws them. Read only; the words for a
@@ -10812,11 +10821,17 @@ ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
 # so a comma never belongs to one): the page asks for the rows of the names the search found, in
 # the rows' usual shape, with one call instead of one for each name.
 assert ALL_NAMES_KINDS.count("(only_id IS NULL OR v.id = only_id)") == 1
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 ALL_NAMES_LIST = ALL_NAMES_KINDS.replace(
     "(only_id IS NULL OR v.id = only_id)",
     "(only_id IS NULL OR v.id = ANY (string_to_array(only_id, ',')))",
     1,
 )
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 NAMES_SMART = (
     r"""
     -- What an entry is searched by (#2733), as parts: the name and the description, the other
@@ -11478,6 +11493,9 @@ _PARTY_KNOWS_R = (
     " AND x.relation_id = pb.relation_id))"
 )
 assert WEB_RELATIONSHIPS.count("(is_dm OR (NOT r.secret AND r.to_session_at IS NULL") == 1
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 WEB_GRAPH_PARTY = WEB_RELATIONSHIPS.replace(
     "CREATE FUNCTION dmbot_web_relationships(",
     "CREATE OR REPLACE FUNCTION dmbot_web_relationships(",
@@ -12082,6 +12100,9 @@ LINK_DECIDE_ACTIONS = (
         (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 """
 )
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -12214,6 +12235,9 @@ SHARED_RULES_PAGE = """
     REVOKE ALL ON FUNCTION dmbot_web_shared_rules(BIGINT) FROM PUBLIC;
 """
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 STORY_TIMELINE = """
     -- What the Story timeline page needs besides the sessions themselves (#2462): the campaign's
     -- recaps and the names shown to the players at the table, each with the time it belongs to. The
@@ -13815,6 +13839,9 @@ _overview_checks = _overview_door[
     )
 ]
 assert "vis := ARRAY(" in _overview_checks and "rel_ids := ARRAY(" in _overview_checks
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 GRAPH_OVERVIEW = (
     """
     CREATE OR REPLACE FUNCTION dmbot_web_graph_overview(
@@ -14593,6 +14620,8 @@ UNNAMED_HIDDEN_FROM_PLAYERS = r"""
         r record;
         def text;
         fresh text;
+        have int;
+        paired int;
     BEGIN
         FOR r IN
             SELECT p.oid, p.proname FROM pg_proc p
@@ -14612,6 +14641,35 @@ UNNAMED_HIDDEN_FROM_PLAYERS = r"""
                                     '(\1.hidden_from_players OR \1.unnamed OR ', 'g');
             IF fresh = def THEN
                 RAISE EXCEPTION 'no hidden_from_players guard changed in %', r.proname;
+            END IF;
+            -- Guard by guard, not function by function: every way of saying "not hidden from
+            -- players" left in the new text must have its unnamed partner next to it (a positive
+            -- use, such as the one that lists the held names, is no guard and is left alone).
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, 'NOT \w+\.hidden_from_players', 'g');
+            SELECT count(*) INTO paired FROM regexp_matches(
+                fresh, 'NOT (\w+)\.hidden_from_players AND NOT \1\.unnamed', 'g');
+            IF have <> paired THEN
+                RAISE EXCEPTION 'NOT x.hidden_from_players has no unnamed guard: %', r.proname;
+            END IF;
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, 'OR \w+\.hidden_from_players\)', 'g');
+            IF have <> 0 THEN
+                RAISE EXCEPTION 'OR x.hidden_from_players) has no unnamed guard: %', r.proname;
+            END IF;
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, '\(\w+\.hidden_from_players OR ', 'g');
+            SELECT count(*) INTO paired FROM regexp_matches(
+                fresh, '\((\w+)\.hidden_from_players OR \1\.unnamed OR ', 'g');
+            IF have <> paired THEN
+                RAISE EXCEPTION '(x.hidden_from_players OR has no unnamed guard: %', r.proname;
+            END IF;
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, 'OR \w+\.hidden_from_players OR ', 'g');
+            SELECT count(*) INTO paired FROM regexp_matches(
+                fresh, 'OR (\w+)\.hidden_from_players OR \1\.unnamed', 'g');
+            IF have <> paired THEN
+                RAISE EXCEPTION 'OR x.hidden_from_players OR has no unnamed guard: %', r.proname;
             END IF;
             EXECUTE fresh;
         END LOOP;
