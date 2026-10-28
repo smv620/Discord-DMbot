@@ -44,20 +44,35 @@ class Decision:
 
 def noise(others: list[float]) -> float:
     """Mean plus three population standard deviations (divided by n, no zero-fill) of the other
-    candidates' confidences."""
+    candidates' confidences (at least one)."""
+    if not others:
+        raise ValueError("noise needs at least one other candidate")
     mean = sum(others) / len(others)
     sigma = math.sqrt(sum((x - mean) ** 2 for x in others) / len(others))
     return mean + SIGMAS * sigma
 
 
+def _is_not_listed(name: str) -> bool:
+    return name.strip().casefold() == NOT_LISTED
+
+
 def decide(candidates: list[Candidate]) -> Decision:
     """What to do with the AI's answer. Only the top MAX_CANDIDATES count; a candidate list with
     nothing in it is an unnamed person (the relationship is still a stated fact)."""
-    ranked = sorted(candidates, key=lambda c: -c.confidence)[:MAX_CANDIDATES]
+    # The AI's numbers are untrusted: one that is not a number is dropped, the rest kept in 0..100.
+    # A tie goes to "someone not listed", the safe side: an unnamed person is never a wrong name.
+    clean = [
+        Candidate(c.name, min(max(c.confidence, 0.0), 100.0))
+        for c in candidates
+        if math.isfinite(c.confidence)
+    ]
+    ranked = sorted(clean, key=lambda c: (-c.confidence, not _is_not_listed(c.name)))[
+        :MAX_CANDIDATES
+    ]
     if not ranked:
         return Decision(Verdict.UNNAMED, None, None)
     top = ranked[0]
-    if top.name == NOT_LISTED or top.confidence < UNNAMED_BELOW:
+    if _is_not_listed(top.name) or top.confidence < UNNAMED_BELOW:
         return Decision(Verdict.UNNAMED, None, None)
     if top.confidence >= ACCEPT_AT:
         return Decision(Verdict.ACCEPT, top.name, None)

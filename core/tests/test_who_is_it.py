@@ -14,8 +14,8 @@ from dmbot.memory.who_is_it import (
 )
 
 
-def ranked(*scores: float, names: str = "ABCDEFG") -> list[Candidate]:
-    return [Candidate(names[i], s) for i, s in enumerate(scores)]
+def ranked(*scores: float) -> list[Candidate]:
+    return [Candidate(f"N{i}", s) for i, s in enumerate(scores)]
 
 
 class TheRule(unittest.TestCase):
@@ -69,6 +69,33 @@ class TheRule(unittest.TestCase):
         self.assertEqual(decide(shuffled).name, "B")
         many = ranked(50, 20, 15, 10, 5, 49, 48)  # the 49 and 48 beat 5 but 49 is the runner-up
         self.assertEqual(decide(many).verdict, Verdict.ASK)
+
+    def test_the_sixth_candidate_never_counts_toward_the_noise(self) -> None:
+        # Counting the sixth (a 0) would give noise 40 and SNR 1.25; cut first, noise is 20.
+        self.assertEqual(decide(ranked(50, 20, 20, 20, 20, 0)).verdict, Verdict.ACCEPT)
+        d = decide(ranked(60, 10, 5, 4, 3, 2, 1, 0, 0))
+        assert d.snr is not None
+        self.assertAlmostEqual(d.snr, 60 / noise([10, 5, 4, 3]))
+
+    def test_untrusted_numbers_are_dropped_or_held_to_the_range(self) -> None:
+        bad = [Candidate("Ken", 70), Candidate("Mira", float("nan")), Candidate("Bram", -50)]
+        self.assertEqual(decide(bad).verdict, Verdict.ACCEPT)  # -50 counts as 0: SNR is infinite
+        self.assertEqual(decide([Candidate("Ken", float("nan"))]).verdict, Verdict.UNNAMED)
+        self.assertEqual(decide([Candidate("Ken", 150)]).verdict, Verdict.ACCEPT)
+
+    def test_a_tie_with_someone_not_listed_goes_to_not_listed_in_either_order(self) -> None:
+        for order in ([("Ken", 45), (NOT_LISTED, 45)], [(NOT_LISTED, 45), ("Ken", 45)]):
+            with self.subTest(order=order):
+                d = decide([Candidate(n, c) for n, c in order])
+                self.assertEqual(d.verdict, Verdict.UNNAMED)
+
+    def test_the_not_listed_words_match_however_the_ai_cases_them(self) -> None:
+        d = decide([Candidate(" Someone Not Listed ", 90), Candidate("Ken", 5)])
+        self.assertEqual(d.verdict, Verdict.UNNAMED)
+
+    def test_noise_needs_someone_to_compare_with(self) -> None:
+        with self.assertRaises(ValueError):
+            noise([])
 
     def test_no_candidates_is_an_unnamed_person_and_zero_noise_is_clear(self) -> None:
         self.assertEqual(decide([]).verdict, Verdict.UNNAMED)
