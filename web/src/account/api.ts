@@ -1552,7 +1552,9 @@ export type SheetChoice =
   | { action: "link"; url: string }
   | { action: "forget" }
   | { action: "read_again" }
-  | { action: "typed"; className: string; level: number; species: string; names: string };
+  | { action: "typed"; className: string; level: number; species: string; names: string }
+  /** A public web page or PDF the player made, read by the bot later (#2843). The page only checks its shape. */
+  | { action: "document"; url: string };
 
 /** Where a sheet choice stands, in the shared progress shape (#2816). */
 export interface SheetAnswer {

@@ -34,6 +34,18 @@ export const sheetWords = {
   typedReplacedLink: " This replaced your link.",
   typedReplacesLink: "You have a sheet linked. Saving what you type replaces the link.",
   typedBadLevel: "Nothing was saved: the level is a number from 1 to 20.",
+  documentSummary: "Use a document link",
+  documentFor: (name: string): string => `Use a document link for ${name}`,
+  documentLabel: "Link to your sheet",
+  documentHint: "Anyone with the link must be able to open it. DMbot keeps no document.",
+  documentRead: "Read my sheet",
+  documentReplaces: "You have a sheet already. Reading a document replaces it.",
+  documentSent: "Sent. DMbot is reading your document; this can take a minute.",
+  documentProblems: {
+    empty: "Nothing was sent: paste the link first.",
+    "not-web": "Nothing was sent: the link must start with https:// or http://.",
+    "too-long": "Nothing was sent: the link is longer than 400 characters.",
+  } as Record<string, string>,
   typedNeedsClass: "Nothing was saved: type the class first.",
   readAgain: "Read the sheets again",
   readAgainNote:

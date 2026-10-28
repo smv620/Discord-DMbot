@@ -230,3 +230,60 @@ describe("Type in my character", () => {
     expect(await screen.findByText(w.typedSaved + w.typedReplacedLink, {}, { timeout: 8000 })).toBeTruthy();
   });
 });
+
+describe("Use a document link", () => {
+  const docBox = (index: number) => screen.getAllByLabelText(w.documentLabel)[index] as HTMLInputElement;
+  const sendDocument = (index: number) => fireEvent.submit(docBox(index).closest("form")!);
+  const documentCalls = (api: ReturnType<typeof mockApi>) => calls(api, "chooseSheet").filter((c) => c.includes('"action":"document"'));
+
+  it("a player sends a document link and the choice is queued as document", async () => {
+    const api = await open();
+    fireEvent.input(docBox(1), { target: { value: "https://example.com/sheet.pdf" } });
+    sendDocument(1);
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(api.calls).toContain(`chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "document", url: "https://example.com/sheet.pdf" })}`);
+  });
+
+  // Each case opens a fresh page, so one case's message cannot be the one another case finds.
+  it.each([
+    ["", "empty"],
+    ["a word with spaces", "not-web"],
+    ["ftp://example.com/x", "not-web"],
+  ])("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
+    const api = await open();
+    fireEvent.input(docBox(1), { target: { value: text } });
+    sendDocument(1);
+    expect(await screen.findByText(w.documentProblems[problem]!)).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(0);
+  });
+
+  it("the mock refuses a link it can't read with bad-link, and the page says so", async () => {
+    const api = await open();
+    fireEvent.input(docBox(1), { target: { value: "http:/example.com" } });
+    sendDocument(1);
+    expect(await screen.findByText(w.problems["bad-link"] as string, {}, { timeout: 8000 })).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(1);
+  });
+
+  it("a DM does not see the document form", async () => {
+    await open(".sheets-dm");
+    expect(screen.queryByText(w.documentSummary)).toBeNull();
+    expect(screen.queryByLabelText(w.documentLabel)).toBeNull();
+  });
+
+  it("an existing sheet shows that reading a document replaces it", async () => {
+    await open();
+    expect(screen.getAllByText(w.documentReplaces)).toHaveLength(1);
+  });
+
+  it("a half-typed document link does not show under another campaign", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.input(docBox(1), { target: { value: "https://example.com/half" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(docBox(1).value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(docBox(1).value).toBe("https://example.com/half"));
+  });
+});
