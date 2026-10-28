@@ -276,23 +276,12 @@ class Entity:
     made_before_name_gate: bool = False
     # For an event, clue or item entry: the evidence it faked (the planted ledger), by id (#2409).
     manipulated_by: str | None = None
-    # A person the story describes but never names (#2790): "Ken's sister", "a hooded figure". It
-    # has no alias, so no name match finds it; `unnamed_what` is what the story calls them,
-    # `unnamed_anchor` the entry they hang off (none for a hooded figure) and `unnamed_role` the
-    # relationship. The label is built from these when shown (`unnamed.label`), never stored.
-    unnamed: bool = False
-    unnamed_anchor: str | None = None
-    unnamed_role: str | None = None
-    unnamed_what: str | None = None
 
     @property
     def unseen_by_players(self) -> bool:
-        """The DM alone sees this entry: a clue only some know, one the players don't know yet, or
-        a person the story never named (#2790). What lists, cards, answers and recaps hide from
-        everyone but a DM."""
-        # (an unnamed person is also kept out of the names a spelling fix may complete: safe, and
-        # at worst it fixes one line fewer)
-        return self.audience_limited or self.hidden_from_players or self.unnamed
+        """The DM alone sees this entry: a clue only some know, or one the players don't know
+        yet. What lists, cards, answers and recaps hide from everyone but a DM."""
+        return self.audience_limited or self.hidden_from_players
 
     @property
     def is_unique(self) -> bool:
@@ -403,8 +392,6 @@ class Relation:
     unrevealed: bool = False
     # A family connection whose detail is a role that reads one way, written by a DM (#2457).
     directional: bool = False
-    # How a pronoun was settled (#2790), in fixed words: the DM's card only, never a player's.
-    decided: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

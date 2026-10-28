@@ -336,9 +336,7 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
     async def test_a_spelling_said_next_to_a_pending_suggestion_goes_to_that_suggestion(
         self,
     ) -> None:
-        pending = SimpleNamespace(
-            id="e" * 32, name="Brenoch", description="Heard 3 times", unnamed=False
-        )
+        pending = SimpleNamespace(id="e" * 32, name="Brenoch", description="Heard 3 times")
         bot, table = table_bot(waiting=[pending]), a_table()
         said = [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N N O C H")]
         self.say(bot, table, said)
@@ -350,9 +348,7 @@ class TheBot(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_two_spellings_near_one_suggestion_give_it_one_note(self) -> None:
-        pending = SimpleNamespace(
-            id="e" * 32, name="Brenoch", description="Heard 3 times", unnamed=False
-        )
+        pending = SimpleNamespace(id="e" * 32, name="Brenoch", description="Heard 3 times")
         bot, table = table_bot(waiting=[pending]), a_table()
         said = [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N N O C H")]
         said += [(1, "ask Brenoch"), (1, "how do you spell that"), (2, "B R A N O C H")]

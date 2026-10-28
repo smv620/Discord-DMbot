@@ -11,11 +11,8 @@ export const reportWords = {
   none: "No report for this session yet.",
   make: "Make the report",
   makeAgain: "Try again",
-  // The last "make it again" did not work, and the report shown is the one made before.
-  lastFailed: "The new report couldn't be made, so this is the one from before. Nothing was changed.",
   // The wait (owner rule 2026-10-23): the stage, how far, how long, and when it last moved.
   stages: {
-    waiting: "Waiting for DMbot to start",
     reading: "Reading the session's notes",
     grading: "Checking what might not fit",
     sorting: "Sorting what the party has wrong",
@@ -24,7 +21,6 @@ export const reportWords = {
   failed: "The report couldn't be made. Nothing was changed. Try again, and if it fails again, tell us on the Say hello page.",
   stoppedWatching: "This is taking longer than usual, so the page stopped checking. The report is still being made and nothing is lost. Open this page again in a little while.",
   empty: "Nothing to check from this session.",
-  leftForNextTime: "Some of this will be checked after the next session.",
   counts: (c: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number }): string => {
     const parts: string[] = [];
     if (c.contradictions) parts.push(`${c.contradictions} that may not fit`);

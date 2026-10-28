@@ -108,7 +108,6 @@ from dmbot.dm_screen import (
     delete_campaign,
     dm_bot_buttons,
     ensure_dm_screen,
-    game_masters,
     house_sync,
     import_button,
     links_ready,
@@ -263,16 +262,10 @@ from dmbot.memory import (
     contradiction_run,
     definitions,
     document_reader,
-    embed_sources,
-    embedding,
     extractor,
     lore_context,
-    meaning,
     plan_reader,
-    report_make,
-    voyage,
     web_actions,
-    web_report_requests,
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
@@ -309,7 +302,6 @@ from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
-from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
@@ -326,7 +318,6 @@ from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
-from dmbot.memory.vectors import VectorStore
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.recaps import discord as recaps_discord
@@ -351,7 +342,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice, optional, set_sync, web_sharing
+from dmbot.rules import house_voice
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -362,7 +353,6 @@ from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
-from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -465,7 +455,6 @@ from dmbot.ui import (
     name_pass_undo,
     recap_audio,
     rule_card,
-    shared_rules_defs,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -509,7 +498,6 @@ from dmbot.ui.name_card import (
     UndoSpellingButton,
 )
 from dmbot.ui.name_lists import UndoListButton
-from dmbot.ui.name_unnamed import UndoNamingButton
 from dmbot.ui.names import (
     SPELLED_OUT,
     ReviewButton,
@@ -547,8 +535,6 @@ from dmbot.ui.transcripts import (
 )
 from dmbot.web import accounts
 
-REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
-MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
 CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (12 clashes each)
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
@@ -634,9 +620,6 @@ IDLE_CHECK_S = 60  # how often a running session is checked for being empty or q
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
 METER_FINAL_RETRY_S = 2
-MEANING_WAIT_S = (
-    1.5  # the lead search by meaning: a database read and two calls to Voyage AI (#2664)
-)
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
@@ -1151,13 +1134,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
-        # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
-        self.web_rule_actions = web_sharing.ActionStore(recaps.db) if recaps is not None else None
-        self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
-        # "Make the report again", asked for on the website (#2805).
-        self.report_requests = (
-            web_report_requests.RequestStore(recaps.db) if recaps is not None else None
-        )
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -1192,9 +1168,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
-        # When each going read was asked for and last moved forward (monotonic seconds), for the
-        # card's "running for" and "last change" (#2564). Memory only, like the read itself.
-        self.plan_clocks: dict[tuple[int, str], plan_reader.ReadClock] = {}
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -1367,12 +1340,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.background_ai = (
             self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
             if self.ai_client
-            else None
-        )
-        # Who "she" is in a lore read (#2790): the small model, only with DMBOT_WHO_IS_IT on.
-        self.who_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.WHO_IS_IT], Feature.WHO_IS_IT)
-            if self.ai_client and settings.who_is_it
             else None
         )
         # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
@@ -1561,27 +1528,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
-        # Meaning search (#2664): built only with the switch on and the Voyage key set. With
-        # neither, nothing is sent anywhere and the sidebar and recall work from names alone.
-        self._voyage_http: voyage.HttpTransport | None = None
-        self.voyage: voyage.Voyage | None = None
-        self.meaning_seeds: meaning.MeaningSeeds | None = None
-        self.meaning_calls = meaning.CallCounter(time.time)
-        if memory is not None and settings.meaning_search_on:
-            self._voyage_http = voyage.HttpTransport(settings.voyage_key)
-            self.voyage = voyage.Voyage(
-                self._voyage_http,
-                embed_model=settings.voyage_embed_model,
-                rerank_model=settings.voyage_rerank_model,
-            )
-            self.meaning_seeds = meaning.MeaningSeeds(
-                memory._db,
-                VectorStore.of(memory),
-                self.voyage,
-                settings.voyage_embed_model,
-                allowed=self.meaning_allowed,
-                count_call=self.meaning_calls.count,
-            )
         # The DM sidebar's answer engine (#934), on that same smallest model. #935 calls
         # `bot.sidebar_answers.answer(...)` for voice memos and "hold on, I need to find…"; None
         # without an AI key.
@@ -1743,7 +1689,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
-        self.add_dynamic_items(UndoNamingButton)  # Undo of giving an unnamed person a name (#2790)
         self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
@@ -1879,7 +1824,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if self._eleven_http is not None:
             with contextlib.suppress(Exception):
                 await self._eleven_http.close()
-        await self.close_meaning()
         # Stopped sessions stop waiting for their last words and finish now (saving
         # first), alongside everything below.
         self.pipeline.stop_waiting()
@@ -3128,8 +3072,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
             # After the extractor (its readings are beliefs too); off unless the switch is on.
             ("contradiction grades", lambda: self.grade_contradictions(table)),
-            # The report for the website (#2661): reuses those grades, then sorts the differences.
-            ("after-session report", lambda: self.make_report(table)),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -3151,10 +3093,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
             ("steward numbers", lambda: self.log_steward_tally(table)),
             ("memory health", lambda: self.log_memory_health(table, ended_at)),
-            # Last, on purpose: up to `MEANING_RUN_CALLS` calls to another company, and nothing
-            # above reads the numbers, so a slow or failing call never delays what players see
-            # (#2664). Off unless the switch is on and the key is set.
-            ("meaning search numbers", lambda: self.embed_campaign(table)),
         ]
         for name, step in steps:
             try:
@@ -3665,7 +3603,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             names=names,
             people=people,
             recall=recall if self.settings.sidebar_recall else None,
-            meaning=self.meaning_leads if recall_service is not None else None,
             brews=brews,
             second_try=careful,
             settled=settled,
@@ -8593,41 +8530,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
         key = (guild_id, document_id)
-        now = time.monotonic()
-        clock = self.plan_clocks[key] = plan_reader.ReadClock(now, now, now)
-
-        async def moved(_position: int) -> None:
-            clock.moved = time.monotonic()  # a call came back (stored, or cut and read in halves)
-
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 self.plan_waiting.add(key)
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
-                    clock.began = clock.moved = time.monotonic()  # the turn has come
-                    report = plan_reader.Report()  # the caller's: a cut-off run keeps its counts
-                    # The whole read ends within MAX_RUN_S, a call in progress included (the
-                    # reader checks the time only between calls), so the card's "stops by itself
-                    # after" is true (#2564).
-                    limit = asyncio.timeout(plan_reader.MAX_RUN_S)
-                    try:
-                        async with limit:
-                            report = await plan_reader.run(
-                                ai,
-                                plan,
-                                guild_id=guild_id,
-                                campaign_id=campaign_id,
-                                document_id=document_id,
-                                start_chunk=start,
-                                model=lambda: ai.model,
-                                allowed=plan_allowed,
-                                progress=moved,
-                                report=report,
-                            )
-                    except TimeoutError:
-                        if not limit.expired():
-                            raise  # a store's or a call's own timeout: the generic handler
-                        report.stopped = plan_reader.STOP_TIME
+                    report = await plan_reader.run(
+                        ai,
+                        plan,
+                        guild_id=guild_id,
+                        campaign_id=campaign_id,
+                        document_id=document_id,
+                        start_chunk=start,
+                        model=lambda: ai.model,
+                        allowed=plan_allowed,
+                    )
                 log.info("%s", report.line())
                 if report.stopped:
                     await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
@@ -8645,7 +8562,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await self._plan_read_notice(guild_id, campaign_id, document_id)
             finally:
                 self.plan_waiting.discard(key)
-                self.plan_clocks.pop(key, None)
 
     async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
         """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
@@ -8817,162 +8733,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
-
-    async def make_report(self, table: Table) -> None:
-        """After a session, only with DMBOT_STORY_REPORT on (and the extractor): make the report
-        the recap page shows (#2661): grade the clashes not graded yet, find what the party has
-        wrong and have PlotBot sort it. It reads no transcript line: the AI is shown only the
-        campaign's own names and relationship words. Inside the extractor's plan check and call
-        limits (its calls are counted there), and at most `REPORT_CALLS` a session; what the limit
-        leaves is made next time and the report says so. The run shows its stage and counts to the
-        page, and the log gets counts only. Nothing here changes a belief or tells a player.
-
-        No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
-        DM-confirmed names and relationships the campaign already stores."""
-        if table.campaign_id is None or table.transcript_session_id is None:
-            return
-        await self._make_report_for(table.guild_id, table.campaign_id, table.transcript_session_id)
-
-    async def report_for_session_at(self, guild_id: int, campaign_id: str, started_at: int) -> str:
-        """The same report for a session the website named by when it began (#2805), when a DM
-        asks for it again. "" when it was made; else why not, as one short word (the website's
-        row carries it)."""
-        if self.transcripts is None:
-            return web_report_requests.UNAVAILABLE
-        session = await self.transcripts.session_at(guild_id, campaign_id, started_at)
-        if session is None:
-            return web_report_requests.FAILED
-        return await self._make_report_for(guild_id, campaign_id, session.id)
-
-    async def _make_report_for(self, gid: int, cid: str, sid: str) -> str:
-        """Make one session's report (see `make_report`). "" when it was made; else why it was
-        not: `unavailable` (switched off, or no AI), `plan`, `limit` (the extractor's call limit is
-        used) or `failed` (the campaign or session is gone)."""
-        if (
-            not self.settings.story_report_on
-            or not self.settings.story_extractor_on
-            or self.extractor_ai is None
-            or self.memory is None
-            or self.transcripts is None
-        ):
-            return web_report_requests.UNAVAILABLE
-        with log_context(guild_id=gid, campaign_id=cid):
-            campaign = await self.campaigns.get(gid, cid)
-            if campaign is None:
-                return web_report_requests.FAILED
-            if not await self.plan_allows("story", gid, campaign, fail_open=False):
-                return web_report_requests.PLAN  # closed: a plan that can't be checked is not run
-            session = await self.transcripts.session(gid, sid)
-            if session is None:
-                return web_report_requests.FAILED
-            _, used = await self.transcripts.extraction(gid, sid)
-            day_used = await self.transcripts.extractor_calls_since(
-                gid, cid, int(time.time()) - 86400
-            )
-            allowed = min(
-                REPORT_CALLS,
-                extractor.calls_left(
-                    self.settings.story_extractor_max_calls,
-                    used,
-                    self.settings.story_extractor_max_calls_day,
-                    day_used,
-                ),
-            )
-            if allowed == 0:
-                log.info("Report: not made, the extractor's call limit is used")
-                return web_report_requests.LIMIT
-            transcripts = self.transcripts
-            made = await report_make.make(
-                self.memory,
-                GradeStore.of(self.memory),
-                ReportStore.of(self.memory),
-                self.extractor_ai,
-                gid,
-                cid,
-                session.started_at,
-                session_started_at=session.started_at,
-                max_calls=allowed,
-                count_call=lambda: transcripts.record_extraction(
-                    gid, sid, through_ms=0, calls=1, now=int(time.time())
-                ),
-            )
-            log.info(made.line())
-            # What the website's row says (the after-session step ignores it): a report that never
-            # started (a run was going) is not "done", and neither is one that failed inside.
-            if not made.ran:
-                return web_report_requests.BUSY
-            if made.failed == report_make.OUT_OF_FUNDS:
-                return web_report_requests.UNAVAILABLE
-            if made.failed:
-                return web_report_requests.FAILED
-            return ""
-
-    async def meaning_leads(self, campaign: Campaign, question: str, asker_id: int) -> list[str]:
-        """More starting points for the sidebar's recall by what the question means (#2664).
-        "Players": the reply can reach the raw transcript, so an entry the players may not know yet
-        is never a lead. Optional: it has its own wait, and a slow or failing search is just no
-        leads, said in a line and not a traceback."""
-        if self.meaning_seeds is None:
-            return []
-        # The question is a person's words, typed or spoken, so it goes to Voyage AI only if that
-        # person agrees to be recorded (the same rule as a line of the transcript).
-        if asker_id not in await self.consent.consenting(campaign.guild_id):
-            return []
-        try:
-            async with asyncio.timeout(MEANING_WAIT_S):
-                return await self.meaning_seeds.find(
-                    campaign.guild_id, campaign.id, question, for_players=True
-                )
-        except TimeoutError:
-            log.info("Meaning search: no answer in time; answering from the names alone")
-            return []
-
-    async def close_meaning(self) -> None:
-        """End the connection to Voyage AI, if there is one. (getattr: a bot built without the usual
-        start-up has no such attribute, and closing must never be what fails.)"""
-        http = getattr(self, "_voyage_http", None)
-        if http is not None:
-            with contextlib.suppress(Exception):
-                await http.close()
-
-    async def meaning_allowed(self) -> bool:
-        """Whether text may go to Voyage AI right now: the switch is on and the key is set. Asked
-        before every call, so turning the switch off stops a run at its next batch."""
-        return self.settings.meaning_search_on
-
-    async def embed_campaign(self, table: Table) -> None:
-        """After a session, only with DMBOT_MEANING_SEARCH on and a Voyage key (#2664): bring the
-        campaign's numbers for meaning search up to date. What is sent is the campaign's own
-        entries and the game talk of people who agree to be recorded (checked before every batch
-        and again after the call); nothing else. Inside the story plan, at most
-        `MEANING_RUN_CALLS` calls. The log gets counts only."""
-        if (
-            not self.settings.meaning_search_on
-            or self.voyage is None
-            or self.memory is None
-            or table.campaign_id is None
-        ):
-            return
-        gid, cid = table.guild_id, table.campaign_id
-        with log_context(guild_id=gid, campaign_id=cid):
-            campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or not await self.plan_allows(
-                "story", gid, campaign, fail_open=False
-            ):
-                return  # closed: a plan that can't be checked is not run
-            db = self.memory._db
-            await embedding.run(
-                VectorStore.of(self.memory),
-                self.voyage,
-                [embed_sources.LineSource(db), embed_sources.EntitySource(db)],
-                self.consent.consenting,
-                gid,
-                cid,
-                self.settings.voyage_embed_model,
-                allowed=self.meaning_allowed,
-                max_calls=MEANING_RUN_CALLS,
-                count_call=self.meaning_calls.count,
-            )
 
     async def tell_contradictions(self, table: Table) -> None:
         """After the grading, with the same switches (#2660): the major clashes PlotBot graded that
@@ -9558,12 +9318,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             agreed = await self.consent.consenting(gid)
             known = set(await self.memory.known_keys(gid, cid))
             added = 0
-            # (a person the story never named has no name to be spelled: #2790)
-            waiting = [
-                e
-                for e in await self.memory.entities(gid, cid, statuses=[PROPOSED])
-                if not e.unnamed
-            ]
+            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
             given: set[str] = set()  # suggestions that already got a spelling in this run
             for word, user_id, near in spelled:
                 key = name_key(word)
@@ -10372,10 +10127,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't finish a website-deleted campaign")
 
-    async def export_campaign(self, guild_id: int, campaign_id: str) -> tuple[Any, list[bytes]]:
-        """A campaign's complete copy, as Discord's Download makes it (#2554): the main file's
-        data and the transcripts files (#2552, #2772), both from one moment."""
-        return await self.campaigns.export_set(guild_id, campaign_id)
+    async def export_campaign(self, guild_id: int, campaign_id: str) -> Any:
+        """A campaign's complete copy, as Discord's Download makes it (#2554)."""
+        return await self.campaigns.export(guild_id, campaign_id)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a
@@ -10511,20 +10265,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
         )
 
-    def _named_batch_for(
-        self, guild_id: int
-    ) -> Callable[[str, int, str], Awaitable[int | None]] | None:
-        """For the website's Undo of a name it gave (#2808): the change batch of the DM's own done
-        action, read when the Undo is applied."""
-        actions = self.name_actions
-        if actions is None:
-            return None
-
-        async def batch_of(campaign_id: str, user_id: int, action_id: str) -> int | None:
-            return await actions.named_batch(guild_id, campaign_id, user_id, action_id)
-
-        return batch_of
-
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -10550,7 +10290,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 campaign.dm_user_ids,
                                 action,
                                 self._waiting_answers(guild.id),
-                                named_batch=self._named_batch_for(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -10600,74 +10339,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign:
         return await self.campaigns.set_transcript_keep(campaign.guild_id, campaign.id, days)
 
-    async def apply_optional_rule(
-        self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
-    ) -> bool:
-        """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
-        saved, then noted in the DM screen if the campaign has one. A line that could not be
-        posted is not the choice's failure (the rule is saved): False says so, for the page to
-        mention. The note never pings."""
-        await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
-        if campaign.dm_screen_channel_id is None:
-            return True
-        try:
-            return await self.post(
-                campaign.dm_screen_channel_id,
-                optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
-            )
-        except Exception as exc:  # the type only
-            log.warning("The DM screen line for an optional rule failed: %s", type(exc).__name__)
-            return False
-
-    async def find_member(self, guild_id: int, user_id: int) -> web_settings.Member | None:
-        """A person of the server for the website's game master change (#2776): the cache first
-        (DMbot has no members intent), then Discord. None only when Discord says they are not in
-        the server; any other failure raises, so a lookup that failed is never read as "left"."""
-        guild = self.get_guild(guild_id)
-        if guild is None:
-            raise RuntimeError("the server is not reachable")
-        found = guild.get_member(user_id)
-        if found is None:
-            try:
-                found = await asyncio.wait_for(
-                    guild.fetch_member(user_id), game_masters.LOOKUP_S * 4
-                )  # (one slow call must not hold every server's queue)
-            except discord.NotFound:
-                return None
-        return web_settings.Member(found.display_name, found.bot)
-
-    async def apply_co_dm(
-        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
-    ) -> web_settings.CoDmDone:
-        """A game master added or removed on the website (#2776), exactly as Discord's 👑 Game
-        masters does it: the store's rules, then access follows and a new game master gets the
-        one private message. The caller has checked an added person is in the server and not a
-        bot. The change stays saved if either follow-up fails. Ids in the log only."""
-        guild = self.get_guild(campaign.guild_id)
-        if guild is None:
-            raise CampaignError(screen_messages.CAMPAIGN_GONE)
-        if add:
-            changed = await self.campaigns.add_dm(campaign.guild_id, campaign.id, user_id)
-        else:
-            changed = await self.campaigns.remove_dm(campaign.guild_id, campaign.id, user_id)
-        with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
-            log.info(
-                "Game master %s %s by %s on the website",
-                user_id,
-                "added" if add else "removed",
-                asker_id,
-            )
-        late = await game_masters.follow_access_on(self, guild, changed)
-        if not add:
-            return web_settings.CoDmDone(late=late)
-        try:  # the cache is often empty (no members intent), so ask Discord too
-            asker = await self.find_member(campaign.guild_id, asker_id)
-        except Exception:
-            asker = None
-        by = asker.name if asker is not None else "A game master"
-        told = await game_masters.tell_new(guild, changed, user_id, by)
-        return web_settings.CoDmDone(told=told, late=late)
-
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's
         ⚙️ Settings buttons apply it. Each sender must still be a DM of the campaign; only the
@@ -10683,105 +10354,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
                     if not await web_settings.run_one(self, store, guild.id, item):
                         break
-
-    async def run_web_report_requests(self) -> None:
-        """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
-        the campaign, and the report is made the way it is after a session, inside the same plan
-        check and call limits. Each runs as a tracked background task, at most one a server, so
-        this returns at once; only the outcome word is logged."""
-        store = self.report_requests
-        if store is None:
-            return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_report_tasks", {})
-        for guild in list(self.guilds):
-            task = running.get(guild.id)
-            if task is not None and not task.done():
-                continue  # one report at a time for a server; the loop does not wait for it
-            req = await store.claim_next(guild.id)
-            if req is None:
-                continue
-            gid = guild.id
-            task = asyncio.create_task(self._run_report_request(store, gid, req))
-            running[gid] = task
-
-            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
-                if running.get(gid) is done:
-                    del running[gid]
-
-            task.add_done_callback(forget)
-
-    async def _run_report_request(
-        self,
-        store: web_report_requests.RequestStore,
-        guild_id: int,
-        req: web_report_requests.Request,
-    ) -> None:
-        """One website report request, as a background task so the poll loop (and every other
-        website action in it) does not wait for the many AI calls of a report."""
-        with log_context(guild_id=guild_id, campaign_id=req.campaign_id):
-            await web_report_requests.run_one(self, store, guild_id, req)
-
-    # ---- the website's rule sharing (#2793): the Host of rules.web_sharing ----
-
-    async def share_refusal(self, campaign: Campaign, user_id: int) -> str | None:
-        return await self.plan_gate("share", campaign.guild_id, campaign, user_id)
-
-    async def own_rules(self, campaign: Campaign) -> tuple[list[HouseRule], str | None]:
-        """The campaign's house rules and its rules document link, as Discord's Share reads
-        them; rules from a followed set or a rulebook are not among them."""
-        if self.house_rules is None:
-            return [], None
-        rules = await self.house_rules.list(campaign.guild_id, campaign.id)
-        links = self.house_file_links
-        link = await links.get(campaign.guild_id, campaign.id) if links is not None else None
-        return rules, getattr(link, "link", None)
-
-    async def settle(self, campaign: Campaign, *, following: bool) -> str:
-        """After a follow or an unfollow: the relationship definitions borrowed from the set
-        match it again (#1456), and the sentence Discord adds to its answer. A failure here
-        never undoes the follow."""
-        if self.memory is None or self.rule_sets is None:
-            return ""
-        done = await set_sync.safely(
-            set_sync.reconcile(self.memory, self.rule_sets, campaign.guild_id, campaign.id)
-        )
-        if following:
-            return shared_rules_defs.followed_note(done)
-        return shared_rules_defs.stopped_note(done)
-
-    async def run_web_rule_sharing(self) -> None:
-        """What DMs chose on the website's rule sharing (#2793), applied the way Discord's
-        📚 Shared rules buttons apply it. Each asker must still be a DM of the campaign. Each
-        runs as a tracked background task, at most one a server, so this returns at once and the
-        poll loop's other website actions do not wait; only outcome words are logged."""
-        store = self.web_rule_actions
-        if store is None or self.rule_sets is None:
-            return
-        running = self._rule_tasks
-        for guild in list(self.guilds):
-            task = running.get(guild.id)
-            if task is not None and not task.done():
-                continue  # one at a time for a server; the loop does not wait for it
-            item = await store.claim_next(guild.id)
-            if item is None:
-                continue
-            gid = guild.id
-            task = self._track(self._run_rule_choice(store, gid, item), "web-rule-choice")
-            if task is None:
-                continue  # shutting down: the row is retaken after the door's ten minutes
-            running[gid] = task
-
-            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
-                if running.get(gid) is done:
-                    del running[gid]
-
-            task.add_done_callback(forget)
-
-    async def _run_rule_choice(
-        self, store: web_sharing.ActionStore, guild_id: int, item: web_sharing.Action
-    ) -> None:
-        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
-            await web_sharing.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a

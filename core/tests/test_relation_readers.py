@@ -64,8 +64,6 @@ STORE = {
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
-    "_let_go_of_anchored": DM_ONLY
-    + ": only counts live connections, to decide a rejection (#2790)",
     "relations": "all live ones, without guess connections (they are not connections yet)",
     "lookup_data": CONFIRMED_ONLY + " (a proposed one only while not secret)",
     "set_condition_in": DM_ONLY + ": what an entry's condition touches",

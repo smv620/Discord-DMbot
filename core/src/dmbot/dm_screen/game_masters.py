@@ -50,10 +50,6 @@ FAILED = (
 )
 NOT_HERE = "DMbot can't reach the server right now. Try again in a minute."
 NOT_A_PERSON = "Bots can't be game masters. Pick a person."
-NOT_IN_SERVER = (
-    "They aren't in this server any more, so they can't be a game master. "
-    "Pick someone who is in the server."
-)
 ALREADY = "**{name}** is already a game master."
 TOO_MANY = TOO_MANY_DMS
 # Two voices, because only the plan holder has the 🤝 Hand over button.
@@ -333,7 +329,7 @@ class AddPicker(discord.ui.View):
         with log_context(guild_id=guild.id, campaign_id=campaign.id):
             log.info("Game master %s added by %s", person.id, interaction.user.id)
         late = await follow_access(interaction, guild, changed)
-        told = await tell_new(guild, changed, person.id, interaction.user.display_name)
+        told = await _tell_new(guild, changed, person.id, interaction.user.display_name)
         self.stop()
         await interaction.edit_original_response(
             content=ADDED.format(name=md(name), campaign=md(campaign.name))
@@ -344,7 +340,7 @@ class AddPicker(discord.ui.View):
         )
 
 
-async def tell_new(guild: discord.Guild, campaign: Campaign, user_id: int, by: str) -> bool:
+async def _tell_new(guild: discord.Guild, campaign: Campaign, user_id: int, by: str) -> bool:
     """The one private message to a new game master. False if it could not be sent."""
     try:
         member = guild.get_member(user_id) or await guild.fetch_member(user_id)
@@ -464,20 +460,15 @@ class ConfirmRemove(discord.ui.View):
 async def follow_access(
     interaction: discord.Interaction, guild: discord.Guild, campaign: Campaign
 ) -> str:
-    """After the game masters changed from Discord's menu: see `follow_access_on`."""
-    return await follow_access_on(interaction.client, guild, campaign)
-
-
-async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign) -> str:
     """After the game masters changed: a running session takes the new set at once, then the DM
     screen's permissions (and an existing game-time channel's) are applied again (this creates the
     screen if the campaign has none yet, as a session start would).
     "" when it worked, else the words to add to the reply; the change itself is saved either
     way."""
-    store: CampaignStore = client.campaigns
+    store = _store(interaction)
     # A running session takes the new set first and on its own: its authority must not wait for
     # (or fail with) the Discord permissions below.
-    running = getattr(client, "after_game_masters_change", None)
+    running = getattr(interaction.client, "after_game_masters_change", None)
     if running is not None:
         try:
             running(campaign)
@@ -496,7 +487,7 @@ async def follow_access_on(client: Any, guild: discord.Guild, campaign: Campaign
             await setup_gametime_channel(guild, campaign.id, store)
         except Exception:
             log.exception("The game-time channel could not be updated after a game master change")
-    hook = getattr(client, "after_screen_change", None)
+    hook = getattr(interaction.client, "after_screen_change", None)
     if hook is not None:
         try:
             await hook(result.campaign, result.channel)  # a running table's DM set

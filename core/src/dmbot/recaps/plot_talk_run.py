@@ -100,9 +100,8 @@ class TalkStore:
         now = int(self._now() * 1000)  # milliseconds: the claim is the token that lets one write
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE plot_chat SET state = 'working', claimed_at = %s"
-                " WHERE (guild_id, campaign_id, id) = (SELECT guild_id, campaign_id, id"
-                " FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
+                "UPDATE plot_chat SET state = 'working', claimed_at = %s WHERE (guild_id, id) ="
+                " (SELECT guild_id, id FROM plot_chat WHERE guild_id = %s AND role = 'dm' AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s"
                 " AND created_at > %s))"
                 " ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED)"
@@ -150,9 +149,9 @@ class TalkStore:
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE plot_chat SET state = 'done' WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = %s AND state = 'working' AND claimed_at = %s",
-                (guild_id, m.campaign_id, m.id, m.claimed_at),
+                "UPDATE plot_chat SET state = 'done' WHERE guild_id = %s AND id = %s"
+                " AND state = 'working' AND claimed_at = %s",
+                (guild_id, m.id, m.claimed_at),
             )
             if not cur.rowcount:
                 return False
@@ -281,9 +280,9 @@ class TalkStore:
     async def fail(self, guild_id: int, m: Message, error: str) -> None:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE plot_chat SET state = 'failed', error = %s WHERE guild_id = %s"
-                " AND campaign_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
-                (error[:40], guild_id, m.campaign_id, m.id, m.claimed_at),
+                "UPDATE plot_chat SET state = 'failed', error = %s WHERE guild_id = %s AND id = %s"
+                " AND state = 'working' AND claimed_at = %s",
+                (error[:40], guild_id, m.id, m.claimed_at),
             )
 
 

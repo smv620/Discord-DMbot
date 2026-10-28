@@ -128,9 +128,6 @@ class Feature(enum.StrEnum):
     PLOT_TALK = "plot_talk"  # the DM talks an issue of that check through with PlotBot (#2123)
     # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
     NAME_PASS = "name_pass"
-    # Who "he", "the king" or "his sister" is in a lore or story read (#2790): scored candidates
-    # for a pronoun, then a few samples to check the top pick holds.
-    WHO_IS_IT = "who_is_it"
 
 
 # How much a background call may write at least (#2596, the owner 2026-10-24: "the cutoffs are
@@ -196,9 +193,6 @@ FEATURE_TIERS = {
     # Written into the transcript the whole server reads, but only a sure answer naming one of the
     # offered list names, and the DM can Undo (#2628).
     Feature.NAME_PASS: AIModelTier.CAREFUL,
-    # Short local passage, small answers, and the code only accepts a sure answer or asks the DM;
-    # the calibration set (#2790) decides whether the careful model is worth the cost.
-    Feature.WHO_IS_IT: AIModelTier.FAST,
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).

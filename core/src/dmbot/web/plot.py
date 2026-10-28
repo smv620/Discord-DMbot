@@ -103,9 +103,8 @@ async def send_chat(db: Any, session: Session, ref: str, issue: str, text: str) 
     """The DM's message about one issue (#2123): queued for the bot, which answers on a second
     row; the page polls `read_chat`. The words are never logged. Refusals: `bad_text` (empty or
     over the limit), `not_found` (not a DM, or no such issue), `stale` (the recap changed since the
-    check), `busy` (an answer is on its way), `too_soon` (only this issue's talk: it is long
-    enough, so answer it or leave it as it is; never the hourly cap) and `hour_full` (the
-    campaign's DMs have sent thirty messages this hour, on any issue: try again later)."""
+    check), `busy` (an answer is on its way) and `too_soon` (the talk on this issue is long
+    enough: answer it, or leave it as it is)."""
     if not isinstance(text, str) or not text.strip() or len(text) > CHAT_MAX:
         raise RecapError("bad_text")
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -119,9 +118,7 @@ async def send_chat(db: Any, session: Session, ref: str, issue: str, text: str) 
         raise RecapError("not_found")
     status = raw["status"]
     if status != "ok":
-        raise RecapError(
-            {"too_many": "too_soon", "hour_full": "hour_full", "busy": "busy"}.get(status, status)
-        )
+        raise RecapError({"too_many": "too_soon", "busy": "busy"}.get(status, status))
     return {"id": raw["id"]}
 
 

@@ -1027,9 +1027,8 @@ class Undo(MemoryTest):
             undone = await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
             undo_statements = statements
         # Row by row, this was well over a thousand round trips each. Counted with
-        # execute, so the savepoints around bulk undo runs (their own round trips) aren't. (59
-        # before the people who hang off a merged entry were moved with it, #2790: one statement.)
-        self.assertLess(merge_statements, 61)
+        # execute, so the savepoints around bulk undo runs (their own round trips) aren't.
+        self.assertLess(merge_statements, 60)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1151,9 +1150,7 @@ class Undo(MemoryTest):
             merge_statements, statements = statements, 0
             assert merged.batch is not None
             await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
-        self.assertLess(
-            merge_statements, 61
-        )  # (60 with #2790: one statement for the people who hang off a merge)
+        self.assertLess(merge_statements, 60)
         self.assertLess(statements, 60)
         self.assertEqual(await self.snapshot(), before)
 
@@ -1650,7 +1647,7 @@ class Lists(MemoryTest):
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
         # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
-        self.assertLess(statements, 35)  # (34 with #2790's unnamed-anchor link to check)
+        self.assertLess(statements, 34)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:

@@ -16,7 +16,6 @@ import re
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PRONOUNCED
 from dmbot.web.names import _parse
@@ -34,7 +33,6 @@ PAGE_LIMIT = 100_000  # far past any campaign: 2 million names
 # `memory/background.LABELS`, as in 📝 Check new names) are shown in those words, so the website and
 # Discord agree (#2376). The rest are the website's own.
 KIND_LABELS: dict[str, str] = {
-    "not_named": unnamed_mod.GROUP,  # the people the story never named (#2803), for a DM only
     "player_character": "PCs",
     "character": "Characters",
     "creature": "Creatures",
@@ -60,16 +58,7 @@ def _label(key: str) -> str:
 def kinds_from(counts: dict[str, int]) -> list[dict[str, Any]]:
     """Every kind with its count, the biggest first (ties by label), as Discord's Browse does."""
     rows = [{"key": k, "label": _label(k), "count": int(n)} for k, n in counts.items()]
-    # "Not named yet" comes first (it is the DM's to do), the rest by size.
-    return sorted(
-        rows,
-        key=lambda r: (
-            r["key"] != "not_named",
-            -r["count"],
-            str(r["label"]).casefold(),
-            str(r["key"]),
-        ),
-    )
+    return sorted(rows, key=lambda r: (-r["count"], str(r["label"]).casefold(), str(r["key"])))
 
 
 async def read_page(
@@ -83,7 +72,6 @@ async def read_page(
     page: int = 1,
     size: int = PAGE_SIZE,
     only: str | None = None,
-    unnamed: bool = False,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -101,12 +89,6 @@ async def read_page(
         raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        # "Not named yet" (#2803) is in the list, the counts and the totals only when the page asks
-        # for it, so a DM's numbers are right whatever the page's switch says; the door still lets
-        # only a DM of the campaign see them. Local to this transaction, like the guild.
-        await conn.execute(
-            "SELECT set_config('dmbot.names_unnamed', %s, true)", ("1" if unnamed else "",)
-        )
         cur = await conn.execute(
             "SELECT dmbot_web_all_names(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (
@@ -129,8 +111,6 @@ async def read_page(
     if page > pages:
         raise RecapError("bad_page")
     names = got["names"]
-    for row in names:
-        _label_unnamed(row)
     if got["canEdit"] and names:
         await _add_said_as(db, session, guild_id, campaign_id, names)
     return {
@@ -143,26 +123,6 @@ async def read_page(
         "pages": pages,
         "pageSize": size,
     }
-
-
-def _label_unnamed(row: dict[str, Any]) -> None:
-    """A person the story never named: their name is the label built from the parts with the
-    anchor's name as it is now ("Ken's sister (name unknown)"), as Discord builds it; the anchor
-    goes to the page as a plain name, and the raw parts stay out of the row. An anchor that is
-    itself unnamed is built the same way ("the king's sister")."""
-    anchor = row.pop("unnamedAnchor", None)
-    if not row.get("unnamed"):
-        row["unnamed"] = False
-        row.pop("unnamedWhat", None)
-        return
-    anchor_name = None
-    if isinstance(anchor, dict):
-        anchor_name = str(anchor["name"]) if anchor.get("name") else None
-        if anchor.get("what"):
-            anchor_name = unnamed_mod.label(str(anchor["what"]), anchor.get("anchorName"))
-    what = str(row.get("unnamedWhat") or "")
-    row["name"] = unnamed_mod.label(what, anchor_name)
-    row["unnamedAnchor"] = anchor_name
 
 
 async def _add_said_as(
@@ -201,9 +161,6 @@ ACTIONS = (
     "merge",
     "merge-many",
     "remove",
-    "name",
-    "name-join",
-    "name-undo",
 )
 
 
@@ -260,16 +217,6 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         if len(set(others)) != len(others):
             raise RecapError("bad_target")
         text = " ".join(others)
-    elif action == "name":  # a name for a person the story never named (#2803)
-        text = _text(body.get("name"))
-    elif action == "name-join":  # "yes, the same person": joined into the named one, keeping it
-        target = str(body.get("into") or "")
-        if not ID_PATTERN.match(target):
-            raise RecapError("bad_target")
-    elif action == "name-undo":  # undoes a done `name` or `name-join`, named by its answer id
-        target = str(body.get("answer") or "")
-        if not ID_PATTERN.match(target):
-            raise RecapError("bad_target")
     elif action == "remove":
         flag = body.get("confirm") is True
         if not flag:
@@ -325,21 +272,9 @@ async def read_action(db: Database, session: Session, ref: str, action_id: str) 
     if got["state"] == "done" and got["resultId"]:
         shown = await read_page(db, session, ref, only=got["resultId"])
         row = shown["names"][0] if shown["names"] else None
-    # A name DMbot already knows (#2803): the bot wrote nothing and says which entry it is, by id;
-    # the name comes from the list, as a person would see it, never from the answer row.
-    other = None
-    if got["state"] == "failed" and got["error"] == "known_name" and got["resultId"]:
-        shown = await read_page(db, session, ref, only=got["resultId"])
-        if shown["names"]:
-            other = {"id": shown["names"][0]["id"], "name": shown["names"][0]["name"]}
     return {
         "state": got["state"],
         "row": row,
         "removed": got["state"] == "done" and got["action"] == "remove",
         "error": got["error"],
-        "other": other,
-        # Undo is offered for a name just given (or a join), until the bot's record of it is gone.
-        "undo": got["state"] == "done"
-        and got["action"] in ("name", "name-join")
-        and bool(got["resultOther"]),
     }

@@ -7,14 +7,16 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
-import { CO_DMS_LIVE } from "../content/game-masters-switch";
-import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
-import LazyPanel from "./LazyPanel";
-import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS } from "./settings-timing";
 
-// (the timings are re-exported for the pages and tests that already import them from here)
-export { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS, SLOW_AFTER_MS };
+/** How long between looks at the bot's answer, then the last repeats. */
+export const POLL_MS = [400, 800, 1500, 2500];
+/** After this long waiting the page says it is slow; after the next, that the bot is away. */
+export const SLOW_AFTER_MS = 8000;
+export const OFFLINE_AFTER_MS = 30000;
+/** Once the bot has been quiet that long the page looks less often, up to the hour the queue keeps a choice. */
+export const LATE_POLL_MS = 30000;
+export const GIVE_UP_MS = 3600000;
 
 type Phase =
   | { kind: "idle" }
@@ -245,10 +247,7 @@ export default function CampaignSettings({
         <li>
           <span class="campaign-name">{words.settingsLabels.gameMasters}</span>
           {s && <span class="block">{words.gameMastersCount(s.gameMasters)}</span>}
-          {/* The list is changed on the page below once the website can (CO_DMS_LIVE); until then, in Discord. */}
-          {!(CO_DMS_LIVE && api.campaignGameMasters) && (
-            <span class="small muted block">{words.doThisInDiscord(words.paths.gameMasters)}</span>
-          )}
+          <span class="small muted block">{words.doThisInDiscord(words.paths.gameMasters)}</span>
         </li>
         <li>
           <span class="campaign-name">{words.settingsLabels.pause}</span>
@@ -265,16 +264,6 @@ export default function CampaignSettings({
         ))}
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}
       </ul>
-      {CO_DMS_LIVE && api.campaignGameMasters && (
-        <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
-      )}
-      {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
-        <LazyPanel
-          load={() => import("./OptionalRules")}
-          what="the optional rules"
-          props={{ api, campaignRef }}
-        />
-      )}
     </section>
   );
 }

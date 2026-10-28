@@ -96,7 +96,6 @@ export const plotWords = {
     " Leave it as is counts as an answer.",
   waitingCheck: "The Plot check is still running. You can approve when it is done.",
   problem: {
-    "hour-full": "PlotBot has answered a lot this hour. Try again in an hour.",
     "too-soon": "You've talked with DMbot enough for now. Answer the question, or leave it as it is.",
     "not-found": "That question is already gone. The list is up to date now.",
     "bad-text": "That message is empty or too long. Shorten it and try again.",

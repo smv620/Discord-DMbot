@@ -132,18 +132,6 @@ async def _sessions(
     return guild_id, campaign_id, found
 
 
-async def numbered_sessions(conn: Any, guild_id: int, campaign_id: str) -> list[dict[str, Any]]:
-    """The campaign's sessions as the transcripts page numbers them (number, `startedAt`, `endedAt`,
-    ...), read inside the caller's own connection and without the plan rule: other pages that only
-    need a session's number (the after-session report) ask here, so the numbers are exactly the
-    transcripts page's and this door keeps one place that calls it."""
-    cur = await conn.execute(
-        "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
-    )
-    found = ((await cur.fetchone()) or {}).get("found") or {}
-    return list(found.get("sessions", []))
-
-
 async def list_sessions(
     db: Database, session: Session, ref: str, *, now: int, enforce_plans: bool
 ) -> dict[str, Any]:

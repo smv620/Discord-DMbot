@@ -234,14 +234,6 @@ export default function RecapReport({ api, campaignRef, sessionAt }: { api: Acco
           )}
         </div>
       )}
-      {report && report.state !== "failed" && report.state !== "making" && report.lastRequest?.state === "failed" && (
-        <div class="stack">
-          <p role="status">{w.lastFailed}</p>
-          <button type="button" class="button secondary" disabled={busy === "make"} aria-busy={busy === "make"} onClick={() => void make()}>
-            {w.makeAgain}
-          </button>
-        </div>
-      )}
       {report?.state === "ready" && <Ready report={report} busy={busy} onAnswer={answer} campaignRef={campaignRef} />}
     </section>
   );
@@ -260,13 +252,10 @@ function Ready({
 }) {
   const { counts, contradictions, differences } = report;
   const total = contradictions.length + differences.disguised.length + differences.misunderstood.length + differences.false.length;
-  // A run the call limit cut short is never "nothing to check": the rest comes after the next session.
-  const cutShort = report.leftForNextTime === true || (report.notSorted ?? 0) > 0;
-  if (total === 0) return <p>{cutShort ? w.leftForNextTime : w.empty}</p>;
+  if (total === 0) return <p>{w.empty}</p>;
   return (
     <div class="stack">
       <p>{w.counts(counts)}</p>
-      {cutShort && <p class="small muted">{w.leftForNextTime}</p>}
       {contradictions.length > 0 && (
         <section class="stack" aria-labelledby="report-c">
           <h3 id="report-c">{w.contradictionsHeading}</h3>

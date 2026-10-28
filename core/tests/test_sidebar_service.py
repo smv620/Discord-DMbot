@@ -1083,17 +1083,6 @@ class TableQuestions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.host.chat), 1)
         self.assertEqual(self.answerer.asked[0][1], "does fireball need line of sight?")
 
-    async def test_the_same_question_from_someone_not_paused_is_stored_in_the_raw_transcript(
-        self,
-    ) -> None:
-        """The pair of the test below (#2466): off the record is what makes the difference."""
-        self.assertTrue(
-            self.sidebar.ask_in_chat(self.table, PLAYER, "does fireball need line of sight?")
-        )
-        await self.settle()
-        self.assertEqual(len(self.host.chat), 1)
-        self.assertEqual(len(self.host.saved), 2)  # their question and DMbot's answer
-
     async def test_a_paused_players_typed_question_is_answered_but_nothing_is_stored(self) -> None:
         """Off the record (#2466): they agreed, so the question gets its answer in the chat; no
         line of it, and no agree button, reaches the transcript."""

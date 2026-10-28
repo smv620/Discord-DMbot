@@ -118,9 +118,7 @@ class PlotStore:
         is still an unapproved draft (an approved one is still a 'draft' with the same text, and is
         not written onto either). The recap's row is locked (`FOR UPDATE`) for the whole write, as
         the approval's is, so an approval cannot land between the check and the writes: one in
-        flight is waited for and the check then sees it. The other way round, an approval that comes
-        right after this write wins the lock in its turn and stands with the issues found: it is
-        the DM's word, and PlotBot only advises (#2537). Returns how many issues were written."""
+        flight is waited for and the check then sees it. Returns how many issues were written."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

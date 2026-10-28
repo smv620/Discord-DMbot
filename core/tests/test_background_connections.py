@@ -762,31 +762,6 @@ class ThePath(NamesTest):
         (rel,) = await self.relations()
         self.assertEqual((rel.predicate, rel.detail), ("associated_with", "pays"))
 
-    async def test_a_parent_line_is_shown_and_kept_with_who_the_parent_is(self) -> None:
-        text = "Brother Aldric ruled Greyfen. Mira, called the Fox, is the child of Brother Aldric."
-        names = [
-            name("Brother Aldric", "person", "Brother Aldric ruled"),
-            name("Mira", "person", "Mira, called the Fox"),
-        ]
-        parent = {
-            "a": "Brother Aldric", "how": "parent", "words": "", "b": "Mira",
-            "quote": "Mira, called the Fox, is the child of Brother Aldric",
-        }  # fmt: skip
-        lore_fake.set_answer(self.ai, {"names": names, "connections": [parent]})
-        it = self.it()
-        await ui_bg.offer(it, self.campaign.id, Upload(text, "your background"))
-        await it.response.sent[0][1]["view"]._read(self.it())
-        await self.confirm_all()
-        (queued,) = await self.waiting()
-        self.assertEqual((queued.predicate, queued.detail), ("kin_of", "parent"))
-        _, view = await self.offer()
-        self.assertIn("is the parent of", view.text())  # not "is family of"
-        await self.button(view, "✅ Keep").callback(self.it())
-        (rel,) = await self.relations()
-        self.assertEqual((rel.predicate, rel.detail, rel.directional), ("kin_of", "parent", True))
-        ids = await self.ids()
-        self.assertEqual((rel.subject_id, rel.object_id), (ids["Brother Aldric"], ids["Mira"]))
-
     async def test_the_campaigns_own_kind_is_offered_to_the_ai_and_kept(self) -> None:
         term = PredicateTerm(
             "mentor_of", "is a mentor of", "One teaches the other.", ("character",), ("character",),

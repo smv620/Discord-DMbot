@@ -54,7 +54,7 @@ class Backing(Base):
             return plan is None
 
         async def export_campaign(g: int, c: str) -> Any:
-            return await self.campaigns.export_set(g, c)
+            return await self.campaigns.export(g, c)
 
         return SimpleNamespace(
             get_campaign=get_campaign, plan_allows=plan_allows, export_campaign=export_campaign
@@ -143,9 +143,6 @@ class Backing(Base):
             [
                 "expiresAt",
                 "fileName",
-                "fileWaiting",
-                "parts",
-                "partsTotal",
                 "ready",
                 "reason",
                 "serverNow",
@@ -169,243 +166,6 @@ class Backing(Base):
             await campaign_backup.fetch(self.web, self.session, ref, made)
         with self.assertRaises(RecapError):
             await campaign_backup.status(self.web, self.session, ref, made)
-
-    async def seed_transcripts(self, sessions: int = 2, lines: int = 3) -> None:
-        async with self.db.guild(THURSDAY.id) as conn:
-            for n in range(sessions):
-                sid = f"{n + 1:032x}"
-                await conn.execute(
-                    "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at,"
-                    " ended_at, line_count, speakers) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (sid, THURSDAY.id, self.one.id, 1000 * (n + 1), 1000 * (n + 1) + 60, lines,
-                     [ALICE.id]),
-                )  # fmt: skip
-                for k in range(lines):
-                    await conn.execute(
-                        "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
-                        " heard, text) VALUES (%s, %s, %s, %s, 'raw', %s)",
-                        (THURSDAY.id, sid, k * 1000, ALICE.id, f"clean {n} {k}"),
-                    )
-
-    async def test_a_website_copy_carries_the_transcripts_as_discords_does(self) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        self.assertEqual(await self.build_next(THURSDAY.id), "")
-        _, discord_parts = await self.campaigns.export_set(THURSDAY.id, self.one.id)
-        got = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertEqual(got["partsTotal"], len(discord_parts))
-        self.assertEqual([p["n"] for p in got["parts"]], list(range(1, len(discord_parts) + 1)))
-        self.assertGreaterEqual(len(discord_parts), 1)
-        raw, name = await campaign_backup.fetch(self.web, self.session, ref, made)
-        files = []
-        for p in got["parts"]:
-            part, part_name = await campaign_backup.fetch_part(
-                self.web, self.session, ref, made, p["n"]
-            )
-            self.assertEqual(len(part), p["size"])
-            self.assertEqual(
-                part_name, name.removesuffix(".dmbot.json.gz") + f".transcripts-{p['n']}-of-"
-                f"{got['partsTotal']}.dmbot.json.gz",
-            )  # fmt: skip
-            files.append(part)
-        # the same set: the main file names its parts, and a restore takes them
-        manifest = decode_backup(raw)["parts"]  # type: ignore[index]
-        self.assertEqual(manifest["count"], len(files))
-        restored = await self.campaigns.import_backup(LOST, decode_backup(raw), BOB.id, parts=files)
-        async with self.db.guild(LOST) as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM transcript_lines WHERE guild_id = %s", (LOST,)
-            )
-            lines = (await cur.fetchone() or {})["n"]
-        self.assertEqual((restored.name, lines), ("One", 6))
-
-    async def test_each_transcripts_file_is_served_once_and_only_to_the_person_who_asked(
-        self,
-    ) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        await self.build_next(THURSDAY.id)
-        await self.campaigns.add_dm(THURSDAY.id, self.one.id, BOB.id)
-        bob = await self.signed(BOB, THURSDAY)
-        with self.assertRaises(RecapError):
-            await campaign_backup.fetch_part(self.web, bob, ref, made, 1)
-        await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        with self.assertRaises(RecapError):  # taken once
-            await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        for n in (0, 25, 99):  # no such file
-            with self.assertRaises(RecapError):
-                await campaign_backup.fetch_part(self.web, self.session, ref, made, n)
-        left = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertNotIn(1, [p["n"] for p in left["parts"]])  # the page sees what is still there
-        self.assertEqual(left["partsTotal"], 1)
-
-    async def test_the_copy_is_gone_once_the_main_file_and_every_part_are_fetched(self) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        await self.build_next(THURSDAY.id)
-        before = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertTrue(before["fileWaiting"])
-        await campaign_backup.fetch(self.web, self.session, ref, made)
-        still = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertFalse(still["fileWaiting"])  # (so a half-finished download can resume)
-        self.assertTrue(still["parts"])  # the main file alone does not end it
-        await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        with self.assertRaises(RecapError):
-            await campaign_backup.status(self.web, self.session, ref, made)
-
-    async def test_the_main_file_and_its_parts_are_stored_together_or_not_at_all(self) -> None:
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        item = await self.backups.claim_next(THURSDAY.id)
-        assert item is not None
-        stale = web_backup.Request(item.id, item.campaign_id, item.user_id, item.claimed_at - 1)
-        self.assertFalse(await self.backups.done(THURSDAY.id, stale, b"x", "n", [b"p1"]))
-        async with self.db.guild(THURSDAY.id) as conn:
-            cur = await conn.execute("SELECT count(*) AS n FROM web_backup_parts")
-            self.assertEqual((await cur.fetchone() or {})["n"], 0)
-        self.assertTrue(await self.backups.done(THURSDAY.id, item, b"x", "n", [b"p1", b"p2"]))
-        got = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertEqual([p["n"] for p in got["parts"]], [1, 2])
-
-    async def test_a_set_with_too_many_files_fails_whole_with_nothing_kept(self) -> None:
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        host = self.host()
-
-        async def too_many(g: int, c: str) -> Any:
-            raise BackupTooBig("too many files")
-
-        host.export_campaign = too_many
-        self.assertEqual(await self.build_next(THURSDAY.id, host), "too_big")
-        got = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertEqual((got["state"], got["reason"]), ("failed", "too_big"))
-        async with self.db.guild(THURSDAY.id) as conn:
-            cur = await conn.execute("SELECT count(*) AS n FROM web_backup_parts")
-            self.assertEqual((await cur.fetchone() or {})["n"], 0)
-
-    async def test_the_parts_go_with_their_copy_after_fifteen_minutes_and_are_not_served_late(
-        self,
-    ) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        await self.build_next(THURSDAY.id)
-        # a part is refused (and the copy no longer read) once the copy is older than 900 seconds
-        await self.db_sql(THURSDAY.id, "UPDATE web_backups SET created_at = created_at - 1000")
-        with self.assertRaises(RecapError):
-            await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        with self.assertRaises(RecapError):
-            await campaign_backup.status(self.web, self.session, ref, made)
-        # ...and the sweep takes the copy and its parts, leaving no bytes behind
-        later = WebBackups(self.db, clock=lambda: time.time() + web_backup.KEEP_FOR_S + 60)
-        self.assertEqual(await later.sweep(THURSDAY.id), 1)
-        async with self.db.guild(THURSDAY.id) as conn:
-            cur = await conn.execute("SELECT count(*) AS n FROM web_backup_parts")
-            self.assertEqual((await cur.fetchone() or {})["n"], 0)
-
-    async def test_a_part_is_refused_for_the_wrong_campaign_the_wrong_server_or_before_it_is_done(
-        self,
-    ) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        with self.assertRaises(RecapError):  # not built yet
-            await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        await self.build_next(THURSDAY.id)
-        with self.assertRaises(RecapError):  # another campaign's address
-            await campaign_backup.fetch_part(
-                self.web, self.session, self.cref(THURSDAY.id, self.two), made, 1
-            )
-        with self.assertRaises(RecapError):  # a server the copy is not in
-            await campaign_backup.fetch_part(
-                self.web, self.session, self.cref(LOST, self.lost), made, 1
-            )
-        got = await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-        self.assertTrue(got[0])  # (the right address still works: nothing above spent it)
-
-    async def test_the_door_gives_nothing_without_the_servers_scope(self) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        await self.build_next(THURSDAY.id)
-        async with self.web.user(ALICE.id, session="x") as conn:  # no `_scoped`: no server set
-            cur = await conn.execute(
-                "SELECT dmbot_web_backup_take_part(%s, %s, %s, 1) AS f",
-                (THURSDAY.id, self.one.id, made),
-            )
-            self.assertIsNone((await cur.fetchone() or {})["f"])
-
-    async def test_a_part_that_cannot_be_stored_leaves_the_copy_unfinished(self) -> None:
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        item = await self.backups.claim_next(THURSDAY.id)
-        assert item is not None
-        with self.assertRaises(TypeError):  # (`len(None)` in Python, before anything is stored)
-            await self.backups.done(
-                THURSDAY.id,
-                item,
-                b"main",
-                "n",
-                [b"ok", None],  # type: ignore[list-item]
-            )
-        got = await campaign_backup.status(self.web, self.session, ref, made)
-        self.assertEqual((got["state"], got["ready"], got["parts"]), ("running", False, []))
-
-    async def test_a_copy_whose_main_file_was_taken_is_never_handed_back(self) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        await self.build_next(THURSDAY.id)
-        await campaign_backup.fetch(self.web, self.session, ref, made)  # the main file is taken
-        again = await campaign_backup.request(self.web, self.session, ref)
-        self.assertNotEqual(again, made)  # (a retry must not get a set with no main file)
-        # The old copy's transcripts file can still be fetched until the 15-minute sweep.
-        await campaign_backup.fetch_part(self.web, self.session, ref, made, 1)
-
-    async def test_a_second_click_before_the_main_file_is_taken_gets_the_same_copy(self) -> None:
-        await self.seed_transcripts()
-        ref = self.cref(THURSDAY.id, self.one)
-        made = await campaign_backup.request(self.web, self.session, ref)
-        await self.build_next(THURSDAY.id)
-        self.assertEqual(await campaign_backup.request(self.web, self.session, ref), made)
-
-    async def test_the_names_of_the_files_are_the_ones_discord_gives(self) -> None:
-        from dmbot.ui import logic
-
-        now = 1_700_000_000
-        main = logic.backup_filename("Frostmaiden Tales", now)
-        for n in (1, 2, 7):
-            self.assertEqual(
-                campaign_backup.part_filename(main, n, 7),
-                logic.part_filename("Frostmaiden Tales", now, n, 7),
-            )
-
-    async def test_too_many_files_has_its_own_reason_and_other_sizes_stay_too_big(self) -> None:
-        from dmbot.campaigns.parts import TOO_MANY_PARTS
-
-        ref = self.cref(THURSDAY.id, self.one)
-        for message, word in ((TOO_MANY_PARTS, "too_many_files"), ("a session too big", "too_big")):
-            made = await campaign_backup.request(self.web, self.session, ref)
-            host = self.host()
-
-            async def refuse(g: int, c: str, message: str = message) -> Any:
-                raise BackupTooBig(message)
-
-            host.export_campaign = refuse
-            self.assertEqual(await self.build_next(THURSDAY.id, host), word)
-            got = await campaign_backup.status(self.web, self.session, ref, made)
-            self.assertEqual((got["state"], got["reason"]), ("failed", word))
-            await self.db_sql(THURSDAY.id, "DELETE FROM web_backups")
-
-    async def test_the_website_role_cannot_read_the_parts_table_itself(self) -> None:
-        import psycopg
-
-        async with self.web.user(ALICE.id, session="x") as conn:
-            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
-                await conn.execute("SELECT * FROM web_backup_parts")
 
     async def test_a_campaign_in_a_server_the_bot_cannot_reach_is_still_built(self) -> None:
         ref = self.cref(LOST, self.lost)
@@ -526,24 +286,6 @@ class TheRoute(Backing):
         self.assertEqual(decode_backup(got.content)["campaign"]["name"], "One")  # type: ignore[index]
         again = await self.client.get(f"{base}/{made}/file")
         self.assertEqual(again.status_code, 404)
-
-    async def test_the_transcripts_files_are_listed_and_downloaded_once_over_http(self) -> None:
-        await self.seed_transcripts()
-        base = f"/me/campaigns/{THURSDAY.id}.{self.one.id}/backup"
-        made = (await self.client.post(base, headers=HEADERS)).json()["id"]
-        await self.build_next(THURSDAY.id)
-        status = (await self.client.get(f"{base}/{made}")).json()
-        self.assertEqual(status["partsTotal"], 1)
-        self.assertEqual([p["n"] for p in status["parts"]], [1])
-        got = await self.client.get(f"{base}/{made}/file/1")
-        self.assertEqual(got.status_code, 200, got.text)
-        self.assertEqual(got.headers["content-type"], "application/gzip")
-        self.assertIn("transcripts-1-of-1", got.headers["content-disposition"])
-        self.assertEqual(got.headers["cache-control"], "no-store")
-        again = await self.client.get(f"{base}/{made}/file/1")
-        self.assertEqual(again.status_code, 404)
-        none = await self.client.get(f"{base}/{made}/file/9")
-        self.assertEqual(none.status_code, 404)
 
     async def test_the_refusals_over_http(self) -> None:
         other = await self.client.post(f"/me/campaigns/{THURSDAY.id}.nope/backup", headers=HEADERS)

@@ -580,20 +580,6 @@ class TranscriptStore:
             )
             return {r["campaign_id"]: r["n"] for r in await cur.fetchall()}
 
-    async def session_at(
-        self, guild_id: int, campaign_id: str, started_at: int
-    ) -> TranscriptSession | None:
-        """The campaign's session that began at `started_at` (Unix seconds), or None when it has
-        none: how the website names a session (#2805). The first of them if two began together."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT id FROM transcript_sessions WHERE campaign_id = %s AND started_at = %s"
-                " ORDER BY id LIMIT 1",
-                (campaign_id, started_at),
-            )
-            row = await cur.fetchone()
-        return None if row is None else await self.session(guild_id, str(row["id"]))
-
     async def session(self, guild_id: int, session_id: str) -> TranscriptSession | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

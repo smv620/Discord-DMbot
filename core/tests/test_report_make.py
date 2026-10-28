@@ -188,18 +188,6 @@ class Making(ConfirmedMemoryTest):
         # but its finish changed nothing: the new run is still the one making the report
         self.assertEqual((run.state, run.started_at), ("making", token))
 
-    async def test_a_run_cancelled_by_a_restart_is_closed_as_failed_not_left_making(self) -> None:
-        import asyncio
-
-        class Cancelled(Canned):
-            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> Reply:
-                raise asyncio.CancelledError
-
-        with self.assertRaises(asyncio.CancelledError):
-            await self.go(Cancelled())
-        run = await self.run_of()
-        self.assertEqual((run.state, run.reason), ("failed", rm.FAILED))
-
     async def test_each_call_is_counted_before_it_is_made(self) -> None:
         events: list[str] = []
         client = Canned()

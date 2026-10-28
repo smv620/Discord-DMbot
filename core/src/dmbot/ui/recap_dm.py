@@ -89,9 +89,6 @@ PLOT_OPEN = (
     "PlotBot has points about this recap that need your answer first. Open your recap page "
     '({link}), answer them ("Leave it as is" is always an answer), then approve.'
 )
-CHANGED = (
-    "The text changed after you approved it, so nothing was sent. Read it and approve it again."
-)
 TOO_LATE = "I couldn't approve that now. The text changed, or the audio is already being made."
 NO_AUDIO = (
     "Voice-over and music can't be made for this campaign right now (the plan, the narration "
@@ -406,12 +403,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
                     await _tell(interaction, DECIDED)
                 return
         elif not await bot.recaps.decide(gid, cid, self.session_at, "post", require_current=True):
-            # Two different refusals (#2545): it was decided meanwhile, or it is still a draft but
-            # its words are no longer the ones the DM approved.
-            now = await bot.recaps.get(gid, cid, self.session_at)
-            await _tell(
-                interaction, CHANGED if now is not None and now.status == "draft" else DECIDED
-            )
+            await _tell(interaction, DECIDED)  # (or the text changed since the DM approved it)
             return
         await self._sent(interaction, bot, gid, cid)
 

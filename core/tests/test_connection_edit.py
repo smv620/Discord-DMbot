@@ -421,33 +421,6 @@ class Cards(base.NamesTest):
         await connection_edit.show_one(outsider, self.campaign.id, self.bell.id, rel.id)
         self.assertFalse(outsider.response.edited)
 
-    async def test_the_dm_sees_how_a_pronoun_was_settled_in_plain_words_and_nobody_else_does(
-        self,
-    ) -> None:
-        said = "who-is-it: accepted 95%"
-        await self.know("Mara")
-        (rel,) = [
-            r
-            for r in await self.memory.relations(GUILD, self.campaign.id)
-            if r.predicate == "knows"
-        ]
-        async with self.db.guild(GUILD) as conn:
-            await conn.execute(
-                "UPDATE memory_relations SET decided = %s WHERE id = %s", (said, rel.id)
-            )
-        self.fresh()
-        dm = self.it(DM)
-        await connection_edit.show_one(dm, self.campaign.id, self.bell.id, rel.id)
-        shown = str(dm.response.edited or dm.edit_original_response.await_args)
-        self.assertIn("DMbot matched this name from your text.", shown)
-        self.assertNotIn("%", shown)
-        self.assertNotIn("who-is-it", shown)
-        text, _ = await self.card()  # the name card itself never carries it
-        self.assertNotIn("DMbot matched", text)
-        outsider = self.it(PLAYER)  # and someone who may not manage names is turned away
-        await connection_edit.show_one(outsider, self.campaign.id, self.bell.id, rel.id)
-        self.assertFalse(outsider.response.edited)
-
     async def test_the_menu_labels_are_plain_and_within_discords_limit(self) -> None:
         await self.know("K" * 100)
         view = await self.connect_menu()

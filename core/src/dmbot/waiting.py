@@ -26,22 +26,12 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from types import TracebackType
-from typing import Any
-
-import discord
 
 log = logging.getLogger(__name__)
 
 EDIT_EVERY_S = 10.0  # the most often the message is edited
 SHOW_ELAPSED_AFTER_S = 30.0  # "so far" appears once the wait is long enough to wonder
 SHOW_LAST_CHANGE_AFTER_S = 60.0  # "last change N ago" appears once nothing moved for this long
-
-
-def message_is_gone(exc: BaseException) -> bool:
-    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
-    return isinstance(exc, discord.NotFound) or (
-        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
-    )
 
 
 def elapsed_text(seconds: float) -> str:
@@ -165,57 +155,3 @@ class WaitingMessage:
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
-
-
-EDIT_FOR_S = (
-    14 * 60.0
-)  # a card edits itself this long: Discord's interaction token lives 15 minutes
-STOPPED_UPDATING = "This card has stopped updating by itself; press 🔄 Refresh to keep watching."
-
-
-async def keep_card_current(
-    render: Callable[[], Awaitable[tuple[str, Any]]],
-    edit: Callable[[str, Any], Awaitable[None]],
-    still_going: Callable[[], bool],
-    *,
-    current: Callable[[], bool] = lambda: True,
-    last: str = "",
-    late_note: Callable[[], str] = lambda: STOPPED_UPDATING,
-    every: float = EDIT_EVERY_S,
-    limit_s: float = EDIT_FOR_S,
-    clock: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    gone: Callable[[BaseException], bool] = message_is_gone,
-) -> None:
-    """Keep a card that shows a long job current while the job runs (#2564): redraw it every
-    `every` seconds (only editing when the text changed), until the job ends (one last draw), until
-    `limit_s` (the card then ends on `STOPPED_UPDATING`, because its token is about to run out and
-    a stopped card must say so, not look frozen), or until a newer card took over (`current()` is
-    False: say nothing) or the message is gone. A draw or an edit that fails for another reason is
-    logged and tried again at the next tick. The caller draws the card once before starting this."""
-    started = clock()
-    while True:
-        await sleep(every)
-        if not current():
-            return
-        ended = False
-        try:
-            text, view = await render()
-            ended = not still_going()
-            late = clock() - started >= limit_s
-            if late and not ended:
-                text = f"{text}\n\n{late_note()}"
-            if text != last:
-                await edit(text, view)
-                last = text
-            if ended or late:
-                return
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if gone(exc):
-                log.info("The card is gone; no more edits")
-                return
-            log.warning("Could not update the card", exc_info=True)
-            if clock() - started >= limit_s:
-                return

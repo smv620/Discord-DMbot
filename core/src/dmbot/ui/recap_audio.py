@@ -22,8 +22,9 @@ import discord
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.ui.name_background import message_is_gone
 from dmbot.ui.recap_dm import GONE, NOT_YOURS, RecapButton
-from dmbot.waiting import WaitingMessage, message_is_gone
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
 

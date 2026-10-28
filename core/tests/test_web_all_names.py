@@ -192,7 +192,6 @@ class TheDmsList(Listing):
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute(
                 "SELECT prosrc FROM pg_proc WHERE proname = 'dmbot_web_all_names'"
-                " AND pronamespace = current_schema()::regnamespace"
             )
             source = (await cur.fetchone() or {}).get("prosrc") or ""
         self.assertEqual(source.count("LEAST(GREATEST(size, 1), 500)"), 2)
@@ -551,7 +550,6 @@ class TheSaying(Listing):
                 "SELECT proconfig::text AS cfg, prosecdef,"
                 " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
                 " FROM pg_proc WHERE proname = 'dmbot_web_all_names_said'"
-                " AND pronamespace = current_schema()::regnamespace"
             )
             rows = await cur.fetchall()
         self.assertGreaterEqual(len(rows), 1)
@@ -568,10 +566,9 @@ class TheDoorSettings(Listing):
                 "SELECT proname, proconfig::text AS cfg, prosecdef,"
                 " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
                 " FROM pg_proc WHERE proname = 'dmbot_web_all_names'"
-                " AND pronamespace = current_schema()::regnamespace"
             )
             rows = await cur.fetchall()
-        self.assertGreaterEqual(len(rows), 1)  # (the one in this test's schema)
+        self.assertGreaterEqual(len(rows), 1)  # (one for each test schema)
         for row in rows:
             self.assertIn("search_path", row["cfg"] or "", row["proname"])
             self.assertTrue(row["prosecdef"], row["proname"])
