@@ -185,6 +185,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
             return self.queue[guild_id].pop(0) if self.queue[guild_id] else None
 
         b.report_requests = SimpleNamespace(claim_next=claim)
+        b._report_tasks = {}  # declared in DMBot.__init__
+        b._closing = False
+        b._asking = set()
         return b
 
     async def test_the_sweep_returns_while_a_report_is_still_being_made(self) -> None:
