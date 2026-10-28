@@ -317,7 +317,7 @@ describe("the backup", () => {
     const base = api.me.bind(api);
     api.me = async () => {
       const got = await base();
-      return got && { ...got, plan: { ...got.plan, id: "try-it" } };
+      return got && ({ ...got, plan: { ...got.plan, id: "try-it" } } as typeof got);
     };
     await page(api);
     const box = await open("Lost Hollow");
