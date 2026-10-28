@@ -12,7 +12,7 @@ import inspect
 import json
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
@@ -948,6 +948,7 @@ class Running(unittest.IsolatedAsyncioTestCase):
             "plan_ai": SimpleNamespace(model=MODEL),
             "plan_reads": {},
             "plan_waiting": set(),
+            "plan_clocks": {},
             "_plan_read_notice": AsyncMock(),
             "_plan_slots": asyncio.Semaphore(2),
             "campaigns": SimpleNamespace(get=AsyncMock(return_value=object())),
@@ -1239,6 +1240,7 @@ class Notices(Setup):
             plan_ai=SimpleNamespace(model=MODEL),
             plan_reads={},
             plan_waiting=set(),
+            plan_clocks={},
             _plan_slots=asyncio.Semaphore(0),
             campaigns=SimpleNamespace(get=AsyncMock(return_value=None)),
             plan_allows=AsyncMock(return_value=True),
@@ -1252,6 +1254,65 @@ class Notices(Setup):
             await task
         self.assertEqual(bot.plan_waiting, set())
         bot._plan_read_notice.assert_awaited_once()
+
+    async def test_the_card_says_how_long_a_read_has_run_and_when_it_last_moved(self) -> None:
+        doc = await self.book()
+        await self.plan.begin(GUILD_A, self.a.id, DM, doc.id)
+        states = await self.plan.states(GUILD_A, self.a.id)
+        docs = await self.adventure.documents(GUILD_A, self.a.id)
+        running = frozenset({doc.id})
+        ages = {doc.id: ui.age_words(130, 70)}
+        text = ui.card_text(docs, states, {}, running, frozenset(), ages)
+        self.assertIn("reading… 0% (running for 2 min 10 s, last change 1 min ago)", text)
+        self.assertNotIn("running for", ui.card_text(docs, states, {}, running))  # a short wait
+
+    async def test_a_read_that_stopped_moving_says_so_and_when_dmbot_gives_up(self) -> None:
+        from dmbot.memory.plan_reader import MAX_RUN_S
+
+        words = ui.age_words(900, 400, MAX_RUN_S)
+        self.assertIn("no change for 6 min", words)
+        self.assertIn("DMbot will stop by itself at 120 min and keep what it has", words)
+        self.assertEqual(ui.age_words(10, 10), "")
+        self.assertEqual(ui.age_words(40, 5), "running for 40 s")
+
+    async def test_the_bot_keeps_a_clock_for_a_read_and_drops_it_when_the_read_ends(self) -> None:
+        seen: dict[str, Any] = {}
+
+        async def run(*args: Any, progress: Any = None, **kw: Any) -> Any:
+            key = (GUILD_A, "d" * 32)
+            seen["before"] = list(bot.plan_clocks[key])
+            await progress(3)
+            seen["after"] = list(bot.plan_clocks[key])
+            return reader.Report()
+
+        bot: Any = SimpleNamespace(
+            plan=SimpleNamespace(finish=AsyncMock()),
+            plan_ai=SimpleNamespace(model=MODEL),
+            plan_reads={},
+            plan_waiting=set(),
+            plan_clocks={},
+            _plan_slots=asyncio.Semaphore(1),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=None)),
+            plan_allows=AsyncMock(return_value=True),
+            _plan_read_notice=AsyncMock(),
+        )
+        with mock.patch("dmbot.bot.plan_reader.run", run):
+            await DMBot._read_plan(bot, GUILD_A, "c" * 32, "d" * 32, 0)
+        self.assertGreaterEqual(seen["after"][1], seen["before"][1])  # a batch counts as movement
+        self.assertEqual(seen["before"][0], seen["after"][0])  # asked-at never changes
+        self.assertEqual(bot.plan_clocks, {})
+
+    async def test_the_card_gets_ages_from_the_bots_clocks_for_this_server_only(self) -> None:
+        import time as _time
+
+        now = _time.monotonic()
+        client = SimpleNamespace(
+            plan_clocks={(GUILD_A, "x" * 32): [now - 200, now - 100], (999, "y" * 32): [now, now]}
+        )
+        got = ui._ages(cast(Any, SimpleNamespace(client=client)), GUILD_A)
+        self.assertEqual(list(got), ["x" * 32])
+        self.assertIn("running for 3 min", got["x" * 32])
+        self.assertIn("last change 1 min ago", got["x" * 32])
 
     async def test_the_list_has_a_way_back_to_the_files(self) -> None:
         doc = await self.book()

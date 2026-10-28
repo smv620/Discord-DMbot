@@ -40,6 +40,7 @@ from dmbot.memory.adventure import (
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.name_documents import DocumentError, kind_of_file
 from dmbot.memory.story_plan import Counts, Listed, ReadState
+from dmbot.waiting import ago_text, elapsed_text
 
 log = logging.getLogger(__name__)
 
@@ -133,6 +134,30 @@ STOPPED_WORDS = {
 CARRY_ON = "Press Read it now to carry on."
 
 
+SHOW_RUNNING_AFTER_S = 30.0  # "running for" appears once the wait is long enough to wonder
+SHOW_LAST_CHANGE_AFTER_S = 60.0
+STALL_AFTER_S = 300.0  # one batch can take minutes (the AI), so this is well past a slow one
+
+
+def age_words(running_s: float, still_s: float, stops_at_s: float | None = None) -> str:
+    """How long a read has been going and when it last moved forward (#2564): "" for a short wait,
+    then "running for 2 min", "last change 1 min ago", and past the stall limit a plain line that
+    says nothing has changed and that DMbot stops by itself. Numbers only: nothing of the file."""
+    parts = []
+    if running_s >= SHOW_RUNNING_AFTER_S:
+        parts.append(f"running for {elapsed_text(running_s)}")
+    if still_s >= STALL_AFTER_S:
+        stall = f"no change for {ago_text(still_s)}"
+        if stops_at_s is not None:
+            stall += (
+                f"; DMbot will stop by itself at {elapsed_text(stops_at_s)} and keep what it has"
+            )
+        parts.append(stall)
+    elif still_s >= SHOW_LAST_CHANGE_AFTER_S:
+        parts.append(f"last change {ago_text(still_s)} ago")
+    return ", ".join(parts)
+
+
 def read_line(
     state: ReadState | None,
     counts: Counts | None,
@@ -140,6 +165,7 @@ def read_line(
     *,
     short: bool = False,
     waiting: bool = False,
+    ages: str = "",
 ) -> str:
     """Where a file's reading stands, in plain words ("" when it has not been read). A stopped
     read says what to do next, which depends on why it stopped."""
@@ -156,7 +182,9 @@ def read_line(
     if running and waiting:
         return "waiting for a turn" if not short else "waiting"
     if running:
-        return f"reading {state.percent}%" if short else f"reading… {state.percent}%"
+        if short:
+            return f"reading {state.percent}%"
+        return f"reading… {state.percent}%" + (f" ({ages})" if ages else "")
     stopped = f"stopped at {state.percent}%"
     if short:
         return stopped
@@ -171,8 +199,10 @@ def card_text(
     counts: dict[str, Counts] | None = None,
     running: frozenset[str] = frozenset(),
     waiting: frozenset[str] = frozenset(),
+    ages: dict[str, str] | None = None,
 ) -> str:
     states, counts = states or {}, counts or {}
+    ages = ages or {}
     lines = [INTRO, NOTE]
     if not documents:
         lines.append(EMPTY)
@@ -189,6 +219,7 @@ def card_text(
                 d.id in running,
                 short=short,
                 waiting=d.id in waiting,
+                ages=ages.get(d.id, ""),
             )
             if status:
                 size += f", {status}"
@@ -291,6 +322,19 @@ def _running(interaction: discord.Interaction, guild_id: int) -> frozenset[str]:
     return frozenset(doc for guild, doc in reads if guild == guild_id)
 
 
+def _ages(interaction: discord.Interaction, guild_id: int) -> dict[str, str]:
+    """For each read going now: how long it has run and when it last moved (#2564)."""
+    from dmbot.memory.plan_reader import MAX_RUN_S
+
+    now = time.monotonic()
+    clocks = getattr(interaction.client, "plan_clocks", None) or {}
+    return {
+        doc: age_words(now - asked, now - moved, MAX_RUN_S)
+        for (guild, doc), (asked, moved) in clocks.items()
+        if guild == guild_id
+    }
+
+
 async def _card(
     interaction: discord.Interaction, campaign: Campaign
 ) -> tuple[str, discord.ui.View]:
@@ -312,7 +356,7 @@ async def _card(
     )
     can_read = plan is not None and getattr(interaction.client, "plan_ai", None) is not None
     return (
-        card_text(docs, states, counts, running, waiting),
+        card_text(docs, states, counts, running, waiting, _ages(interaction, campaign.guild_id)),
         card_view(
             campaign,
             docs,

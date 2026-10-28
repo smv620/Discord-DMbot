@@ -1178,6 +1178,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
+        # When each going read was asked for and last moved forward (monotonic seconds), for the
+        # card's "running for" and "last change" (#2564). Memory only, like the read itself.
+        self.plan_clocks: dict[tuple[int, str], list[float]] = {}
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -8569,11 +8572,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
         key = (guild_id, document_id)
+        clock = self.plan_clocks[key] = [time.monotonic(), time.monotonic()]  # [asked, moved]
+
+        async def moved(position: int) -> None:
+            clock[1] = time.monotonic()
+
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 self.plan_waiting.add(key)
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
+                    clock[1] = time.monotonic()  # the wait for a turn is over: that is movement
                     report = await plan_reader.run(
                         ai,
                         plan,
@@ -8583,6 +8592,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         start_chunk=start,
                         model=lambda: ai.model,
                         allowed=plan_allowed,
+                        progress=moved,
                     )
                 log.info("%s", report.line())
                 if report.stopped:
@@ -8601,6 +8611,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await self._plan_read_notice(guild_id, campaign_id, document_id)
             finally:
                 self.plan_waiting.discard(key)
+                self.plan_clocks.pop(key, None)
 
     async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
         """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
