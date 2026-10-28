@@ -36,7 +36,13 @@ const problem = (kind: string): string =>
     : (w.problems.server as string);
 const ENDS = ["not-allowed", "not-found", "signed-out"]; // looking again will not mend these
 
-export default function CharacterSheetsSection({
+/** One copy of the section per campaign: switching campaign remounts it, so nothing from the campaign the page has left
+ * (a choice still going, a stage, a report, a late read) can reach the new one (#2851, #2852). */
+export default function CharacterSheetsSection({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+  return <CharacterSheetsInner key={campaignRef} api={api} campaignRef={campaignRef} />;
+}
+
+function CharacterSheetsInner({
   api,
   campaignRef,
 }: {
@@ -50,12 +56,13 @@ export default function CharacterSheetsSection({
   const [link, setLink] = useState<Record<string, string>>({});
   // What a player has typed in per character, so a re-render does not clear a half-typed form.
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
-  // Keyed by campaign too, so a draft never shows under another campaign's character (CLAUDE.md: scoped per campaign).
+  // The section is remounted per campaign (#2851), so a draft starts empty on a return to a campaign and never shows
+  // under another one. The key keeps each draft's own character apart within the campaign.
   const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
-  // The document link's draft is kept per campaign too, as the typed drafts are (#2843).
+  // A document draft: empty again on a return to a campaign, like the others (#2851).
   const documentKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [documents, setDocuments] = useState<Record<string, string>>({});
-  // The link box's draft is kept per campaign too, as the typed drafts are (#2842).
+  // The link box's draft: empty again on a return to a campaign, like the others (#2851).
   const linkKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -91,11 +98,6 @@ export default function CharacterSheetsSection({
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
-  // Another campaign's list and report must not stay on screen while this one loads (drafts are keyed by campaign).
-  useEffect(() => {
-    setData("loading");
-    setReport(null);
-  }, [campaignRef]);
 
   // One choice at a time: a press while one is on its way is ignored. The answer is looked for until the bot has
   // answered or the minute is up; then the page says so and reads the list again, so nothing is tried twice.
