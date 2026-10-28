@@ -12,6 +12,9 @@ mass"), and nothing here runs during play. Pure functions first (they need no da
 `ContinuityStore`, which reads one campaign at a time and writes only when the DM presses a
 button, in one transaction (like #1301).
 
+Not here: contradictions between beliefs of one point of view (`memory/contradictions.py`, the
+after-session grading and the DM-screen line).
+
 Isolation and consent: every read is scoped to one campaign by the memory store. A line is
 quoted only when every speaker it came from is recorded now (`opted_in`, read just before);
 otherwise the conflict is still shown, with the fact in DMbot's own words and no quote.
@@ -200,10 +203,15 @@ def _is_ended(world: World, entity_id: str) -> State | None:
     return state if state is not None and state.condition in ENDED else None
 
 
-def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
-    """The possible conflicts between these claims and the confirmed story. Pure. A claim that
-    names nothing DMbot knows, or fits no rule, makes none. At most one conflict for each claim
-    and rule; the surest first."""
+def claim_conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
+    """The possible conflicts between these waiting CLAIMS (what the extractor heard and the DM has
+    not answered) and the confirmed story. Pure. A claim that names nothing DMbot knows, or fits no
+    rule, makes none. At most one conflict for each claim and rule; the surest first.
+
+    This is the only question it answers: "does this new claim clash with what the DM confirmed?".
+    Whether two things a point of view BELIEVES clash with each other is a different question, kept
+    in `memory/contradictions.py` (#2660); nothing here reads beliefs, so there is one answer to
+    each question and not two (Supervisor, #2660)."""
     found: list[Conflict | None] = []
     ended = {
         eid: Ended(state.from_session_at, state.created_at)
@@ -434,7 +442,7 @@ class ContinuityStore:
         if not ready and not pinned:
             return Report((), facts, sessions, ready, len(waiting))
         world = await self._world(guild_id, campaign_id, opted_in, pinned)
-        found = conflicts_in(waiting, world, levels)
+        found = claim_conflicts_in(waiting, world, levels)
         if not ready:
             found = [c for c in found if c.pinned]
         return Report(tuple(found), facts, sessions, ready, len(waiting))
@@ -561,7 +569,7 @@ class ContinuityStore:
             raise MemoryRuleError("DMbot doesn't know that button any more.")
         pinned = await self._memory.pinned_connections(guild_id, campaign_id)
         world = await self._world(guild_id, campaign_id, opted_in, pinned)
-        mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
+        mine = [c for c in claim_conflicts_in([claim], world, levels) if c.claim.id == claim_id]
         clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
         revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
         # "They learned it" (#1649): the character joins the clue's list, dated to the session.

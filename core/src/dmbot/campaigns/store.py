@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import gzip
+import inspect
 import io
 import json
 import logging
@@ -1660,7 +1661,7 @@ class CampaignStore:
         replace_campaign_id: str | None = None,
         parts: Sequence[bytes] = (),
         left_out: LeftOut | None = None,
-        progress: Callable[[int, int], Awaitable[None]] | None = None,
+        progress: Callable[[int, int], Awaitable[None] | None] | None = None,
         in_transaction: Callable[[Conn, str], Awaitable[None]] | None = None,
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
@@ -1695,7 +1696,11 @@ class CampaignStore:
         async def tick(done: int) -> None:
             if progress is not None:
                 try:
-                    await progress(done, len(order))
+                    told = progress(
+                        done, len(order)
+                    )  # (Discord's is a plain call; the web's awaits)
+                    if inspect.isawaitable(told):
+                        await told
                 except Exception as exc:  # (only a progress line: never the restore's)
                     log.warning("A restore's progress line failed: %s", type(exc).__name__)
 

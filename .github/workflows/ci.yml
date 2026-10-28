@@ -182,6 +182,9 @@ jobs:
             sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=core\/\1,line=\2::\3/p' mypy.log | head -50
             exit 1
           }
+      - name: feature boundaries (import-linter)
+        if: ${{ matrix.part == 1 }}
+        run: lint-imports
       - name: test database
         run: >-
           psql "postgresql://postgres:postgres@localhost:5432/postgres"
