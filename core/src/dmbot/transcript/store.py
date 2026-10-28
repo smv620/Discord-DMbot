@@ -472,6 +472,54 @@ class TranscriptStore:
                 for r in await cur.fetchall()
             ]
 
+    async def sessions_with_put_back(self, guild_id: int, limit: int = 10) -> list[tuple[str, str]]:
+        """(campaign id, session id) of the sessions in this server that have put-back lines
+        waiting to be read (#2587), oldest first. Ids only: no words."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT s.campaign_id, s.id FROM transcript_sessions s WHERE s.guild_id = %s"
+                " AND EXISTS (SELECT 1 FROM transcript_lines l WHERE l.session_id = s.id"
+                "  AND l.reread)"
+                " ORDER BY s.started_at, s.id LIMIT %s",
+                (guild_id, limit),
+            )
+            return [(str(r["campaign_id"]), str(r["id"])) for r in await cur.fetchall()]
+
+    async def put_back_in(self, guild_id: int, session_id: str) -> list[tuple[int, int]]:
+        """(person, when the line began) of each put-back line of this session still waiting to be
+        read (#2587): which lines to read, never their words."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT l.user_id, l.started_ms FROM transcript_lines l"
+                " JOIN transcript_sessions s ON s.id = l.session_id"
+                " WHERE s.guild_id = %s AND l.session_id = %s AND l.reread"
+                " ORDER BY l.started_ms, l.id",
+                (guild_id, session_id),
+            )
+            return [(int(r["user_id"]), int(r["started_ms"])) for r in await cur.fetchall()]
+
+    async def leaned_lines(self, guild_id: int, session_id: str) -> list[Line]:
+        """The lines the end-of-session pass turned back into game talk (#2587), speech only: the
+        live readers skipped them while the session ran because they were labelled off-topic."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT l.started_ms, l.user_id, l.heard, coalesce(l.text, l.heard) AS text,"
+                " l.duration_ms FROM transcript_lines l JOIN transcript_sessions s"
+                " ON s.id = l.session_id WHERE s.guild_id = %s AND l.session_id = %s"
+                " AND l.leaned AND l.sidebar IS NULL AND NOT l.typed ORDER BY l.started_ms, l.id",
+                (guild_id, session_id),
+            )
+            return [
+                Line(
+                    int(r["started_ms"]),
+                    int(r["user_id"]),
+                    r["heard"],
+                    r["text"],
+                    int(r["duration_ms"]),
+                )
+                for r in await cur.fetchall()
+            ]
+
     async def mark_read(
         self, guild_id: int, campaign_id: str, user_id: int, started: Collection[int]
     ) -> int:
