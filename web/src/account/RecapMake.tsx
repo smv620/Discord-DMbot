@@ -33,7 +33,8 @@ const say = (error: unknown): string => w.errors[kindOf(error)] ?? w.errors["ser
 /** The question: a recap that is not finished (it failed) has nothing to keep, so the words do not talk about an old one. */
 function askWords(q: NonNullable<Asking>): string {
   if (q.what === "again") return q.finished === false ? w.askAgainUnfinished : w.askAgain(q.kept);
-  return q.finished === false ? w.askReplaceUnfinished : w.askReplaceExisting;
+  if (q.finished === false) return w.askReplaceUnfinished;
+  return q.kept ? w.askReplaceExisting : w.askReplaceDraft;
 }
 
 function length(seconds: number | null | undefined): string {
@@ -61,6 +62,9 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
+  // The session whose replacement the DM already said yes to: the rights box can come after that yes, and
+  // the form must not ask the question a second time.
+  const confirmedReplace = useRef<string | null>(null);
 
   const load = async (): Promise<void> => {
     if (!api.pastSessions) return setList("hidden");
@@ -147,17 +151,25 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
     setBusy(true);
     setProblem("");
     try {
-      if (!input.replace && (await listsFirst(s, { ref: s.ref, what: "replace", kept: false, input }))) return false;
-      const got = await api.addRecap(campaignRef, input);
+      if (input.replace) confirmedReplace.current = s.ref;
+      const sure = confirmedReplace.current === s.ref;
+      const kept = !!(s.recap?.approved || s.recap?.status === "posted");
+      if (!sure && (await listsFirst(s, { ref: s.ref, what: "replace", kept, input }))) return false;
+      const got = await api.addRecap(campaignRef, sure ? { ...input, replace: true } : input);
+      confirmedReplace.current = null;
       setAsking(null);
       setAdding(null);
       setRunning({ at: s.sessionAt, ref: got.ref });
       return true;
     } catch (error) {
       const kind = kindOf(error);
-      if (kind === "needs-confirm") ask({ ref: s.ref, what: "replace", kept: false, input }, s);
+      if (kind === "needs-confirm") ask({ ref: s.ref, what: "replace", kept: !!(s.recap?.approved || s.recap?.status === "posted"), input }, s);
       else {
-        if (kind === "needs-rights") setNeedRights(true);
+        // The rights box is in the form, which the question hides: take the question away, the yes is kept.
+        if (kind === "needs-rights") {
+          setNeedRights(true);
+          setAsking(null);
+        }
         setProblem(say(error));
       }
       return false;
@@ -207,7 +219,9 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       void load();
                     }}
                   />
-                ) : question ? (
+                ) : question || adding?.ref === s.ref ? (
+                  <>
+                  {question && (
                   <div class="stack" role="group" aria-label={askWords(question)}>
                     <p>{askWords(question)}</p>
                     {question.checking && (
@@ -231,6 +245,7 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                         disabled={busy}
                         onClick={() => {
                           if (question.what === "replace") setAdding(null); // a clean cancel, not an empty form
+                          confirmedReplace.current = null;
                           setAsking(null);
                         }}
                       >
@@ -238,14 +253,14 @@ export default function RecapMake({ api, campaignRef }: { api: AccountApi; campa
                       </button>
                     </div>
                   </div>
-                ) : adding?.ref === s.ref ? (
-                  <AddForm
-                    session={s}
-                    needRights={needRights}
-                    busy={busy}
-                    onCancel={() => setAdding(null)}
-                    onSubmit={(input) => submit(s, input)}
-                  />
+                  )}
+                  {/* The form stays, out of sight, while the question is asked: the words typed are still there when the rights box comes after the yes. */}
+                  {adding?.ref === s.ref && (
+                    <div hidden={!!question}>
+                      <AddForm session={s} needRights={needRights} busy={busy} onCancel={() => setAdding(null)} onSubmit={(input) => submit(s, input)} />
+                    </div>
+                  )}
+                  </>
                 ) : (
                   <div class="stack">
                     {!s.recap && !s.held && !s.hasTranscript && <p class="small muted">{w.noTranscript}</p>}

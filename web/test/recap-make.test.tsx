@@ -205,6 +205,24 @@ describe("making a recap", () => {
       });
     });
 
+    it("asks once, then the rights box, then sends with the yes kept (#2764)", async () => {
+      present.on = true;
+      const api = mockApi("table");
+      const base = await api.recap!("200000000000000001.cmp1.1791000000");
+      api.recap = async () => ({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
+      await open("100.cmp1", api);
+      fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!);
+      await screen.findByRole("heading", { name: w.form.heading });
+      fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+      fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      fireEvent.click(await screen.findByRole("button", { name: w.yesReplace }));
+      fireEvent.click(await screen.findByLabelText(rx(w.form.right)));
+      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      await waitFor(() => expect(api.calls.filter((c) => c.startsWith("addRecap"))).toEqual([expect.stringMatching(/:replace$/), expect.stringMatching(/:replace:rights$/)]));
+      expect(screen.queryByText(w.askReplaceExisting)).toBeNull();
+    });
+
     it("does not look while the feature is off", async () => {
       present.on = false;
       const api = await open();

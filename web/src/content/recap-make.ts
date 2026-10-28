@@ -37,6 +37,7 @@ export const makeWords = {
   // A recap that failed has nothing to keep (#2764), but its saved "who was there" lists would still go.
   askAgainUnfinished: "Make this recap again?",
   askReplaceUnfinished: "Add this one in place of the recap that didn't finish?",
+  askReplaceDraft: "This session already has a recap. Add this one in its place? The recap there isn't approved yet, so it is replaced.",
   askReplaceExisting: "This session already has a recap. Add this one in its place? The old one is kept as an earlier version.",
   yesAgain: "Yes, make a new one",
   yesReplace: "Yes, add it",
