@@ -50,7 +50,8 @@ from dmbot.recaps.text import (
     words,
 )
 
-# Re-exported with the `as` form, which mypy strict needs: callers still import it from here.
+# Re-exported with the `as` form, which mypy strict needs, so that
+# `draft.SPOKEN_WORDS_PER_HOUR` still resolves.
 from dmbot.transcript.import_plan import SPOKEN_WORDS_PER_HOUR as SPOKEN_WORDS_PER_HOUR
 
 log = logging.getLogger(__name__)
