@@ -3490,6 +3490,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_backup_add", "dmbot_web_backup_add(BIGINT, TEXT)"),
     ("dmbot_web_backup_read", "dmbot_web_backup_read(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_backup_take", "dmbot_web_backup_take(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_backup_take_part", "dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT)"),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -3586,6 +3587,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_name_action_read", "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"),
     # How a listed name is said, for the DM's row editor (#2317).
     ("dmbot_web_all_names_said", "dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])"),
+    # The Names page's search by meaning (#2733): the names nearest in meaning, DMs only.
+    ("dmbot_web_names_near", "dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)"),
     # The Settings page's choices (#2463), queued for the bot the same way.
     ("dmbot_web_setting_add", "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"),
     ("dmbot_web_setting_read", "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"),
@@ -10805,6 +10808,150 @@ ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
     1,
 ).replace("GREATEST(size, 1)", "LEAST(GREATEST(size, 1), 500)")
 
+# Search by meaning on the Names page (#2733, migration 0253).
+# `only_id` takes a short comma-separated list of ids as well as one (entry ids are 32 hex digits,
+# so a comma never belongs to one): the page asks for the rows of the names the search found, in
+# the rows' usual shape, with one call instead of one for each name.
+assert ALL_NAMES_KINDS.count("(only_id IS NULL OR v.id = only_id)") == 1
+ALL_NAMES_LIST = ALL_NAMES_KINDS.replace(
+    "(only_id IS NULL OR v.id = only_id)",
+    "(only_id IS NULL OR v.id = ANY (string_to_array(only_id, ',')))",
+    1,
+)
+NAMES_SMART = (
+    r"""
+    -- What an entry is searched by (#2733), as parts: the name and the description, the other
+    -- names it is called (not the secret ones) and its connections, each as the relationship's
+    -- key, the campaign's own label for it (NULL for a core relationship, whose words are in
+    -- code: `memory/entity_text.py` puts the text together), the other name, which way it runs
+    -- and whether it reads the same both ways. A connection the DM keeps secret, or one to an
+    -- entry the players don't know yet, is left out, so nothing a player may not know is in the
+    -- text of a name they may. NULL when the entry has no description (nothing is searched by a
+    -- bare name). The bot's numbers and the Names page's reranker both read it, so they read the
+    -- same words. The rules for what a name's text may hold are the players' own (the same as
+    -- `meaning.entry_texts` and the website's readers): a connection the DM has not revealed, one
+    -- to a story-planning entry, or one to an entry whose own name is a secret never goes in. Text
+    -- already made can lag until the next embedding run after an entry becomes hidden.
+    CREATE FUNCTION dmbot_entity_parts(g BIGINT, c TEXT, eid TEXT) RETURNS JSONB
+    LANGUAGE sql STABLE AS $fn$
+        SELECT jsonb_build_object(
+            'name', e.name,
+            'description', e.description,
+            'aliases', COALESCE((
+                SELECT jsonb_agg(t.text ORDER BY t.text)
+                FROM (SELECT DISTINCT a.text FROM memory_aliases a
+                      WHERE a.guild_id = g AND a.campaign_id = c AND a.entity_id = e.id
+                        AND a.status = 'confirmed' AND NOT a.secret
+                        AND lower(a.text) <> lower(e.name)
+                      ORDER BY a.text LIMIT 6) t), '[]'::jsonb),
+            'links', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                           'predicate', k.predicate, 'label', k.label, 'symmetric', k.symmetric,
+                           'other', k.other, 'outgoing', k.outgoing)
+                       ORDER BY k.other, k.predicate)
+                FROM (SELECT DISTINCT r.predicate, p.label, p.is_symmetric AS symmetric,
+                             o.name AS other, (r.subject_id = e.id) AS outgoing
+                      FROM memory_relations r
+                      LEFT JOIN memory_predicates p
+                        ON p.guild_id = r.guild_id AND p.campaign_id = r.campaign_id
+                       AND p.key = r.predicate
+                      JOIN memory_entities o
+                        ON o.guild_id = r.guild_id AND o.campaign_id = r.campaign_id
+                       AND o.id = CASE WHEN r.subject_id = e.id THEN r.object_id
+                                       ELSE r.subject_id END
+                      WHERE r.guild_id = g AND r.campaign_id = c
+                        AND r.status = 'confirmed' AND NOT r.secret AND NOT r.unrevealed
+                        AND (r.subject_id = e.id OR r.object_id = e.id)
+                        AND o.status = 'confirmed' AND o.merged_into IS NULL
+                        AND o.type <> 'person' AND NOT o.audience_limited
+                        AND NOT o.hidden_from_players
+                        AND o.type NOT IN ('thread', 'quest', 'mystery', 'hook', 'goal',
+                                           'promise', 'deed')
+                        AND NOT EXISTS (
+                            SELECT 1 FROM memory_aliases sa
+                            WHERE sa.guild_id = o.guild_id AND sa.campaign_id = o.campaign_id
+                              AND sa.entity_id = o.id AND sa.secret AND sa.status <> 'rejected'
+                              AND regexp_replace(lower(sa.text), '[^[:alnum:]]', '', 'g')
+                                = regexp_replace(lower(o.name), '[^[:alnum:]]', '', 'g'))
+                      ORDER BY other, predicate LIMIT 40) k), '[]'::jsonb))
+        FROM memory_entities e
+        WHERE e.guild_id = g AND e.campaign_id = c AND e.id = eid
+          AND char_length(btrim(e.description)) > 0
+    $fn$;
+    REVOKE ALL ON FUNCTION dmbot_entity_parts(BIGINT, TEXT, TEXT) FROM PUBLIC;
+
+    -- The Names page's search by meaning (#2733): the entries whose kept numbers are closest to the
+    -- search's numbers (`q`, made by the website's server from the DM's own words), best first,
+    -- with the parts of the text each was made from (`dmbot_entity_parts`) so the reranker can read
+    -- it. The comparing is done here because the website's role has no right on the numbers. A DM
+    -- of the campaign only (NULL for anyone else, a server manager who is not a DM included: the
+    -- text holds descriptions, which a manager does not see on the page). One campaign, one
+    -- model, the same number of numbers; the vectors are unit length, but the length is divided
+    -- out anyway. At most `pool` (60) rows, from the newest 10,000 numbers (about 3 seconds of one
+    -- core for 20,000 rows, measured); `capped` says there were more. An empty `q` only proves who
+    -- is asking.
+    CREATE FUNCTION dmbot_web_names_near(g BIGINT, c TEXT, m TEXT, q REAL[], pool INT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        qn DOUBLE PRECISION;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        qn := sqrt((SELECT sum(x::DOUBLE PRECISION * x) FROM unnest(q) AS x));
+        IF qn IS NULL OR qn = 0 OR cardinality(q) > 4096 THEN
+            RETURN jsonb_build_object('capped', false, 'rows', '[]'::jsonb);
+        END IF;
+        RETURN jsonb_build_object('capped', EXISTS (
+            SELECT 1 FROM memory_vectors x
+            WHERE x.guild_id = g AND x.campaign_id = c AND x.owner_kind = 'assertion'
+              AND x.model = m AND cardinality(x.vector) = cardinality(q)
+            OFFSET 9999), 'rows', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('id', n.id, 'parts', n.parts, 'score', n.score)
+                             ORDER BY n.score DESC, n.id)
+            FROM (
+                SELECT best.id, dmbot_entity_parts(g, c, best.id) AS parts, best.score
+                FROM (
+                    SELECT split_part(v.owner_id, '#', 1) AS id,
+                           max(d.dot / (qn * d.len)) AS score
+                    FROM (SELECT x.owner_id, x.vector FROM memory_vectors x
+                          WHERE x.guild_id = g AND x.campaign_id = c
+                            AND x.owner_kind = 'assertion' AND x.model = m
+                            AND cardinality(x.vector) = cardinality(q)
+                          ORDER BY x.made_at DESC, x.owner_id LIMIT 10000) v
+                    CROSS JOIN LATERAL (
+                        SELECT sum(a::DOUBLE PRECISION * b) AS dot,
+                               sqrt(sum(a::DOUBLE PRECISION * a)) AS len
+                        FROM unnest(v.vector, q) AS u(a, b)) d
+                    WHERE d.len > 0
+                    GROUP BY 1
+                    ORDER BY 2 DESC, 1
+                    LIMIT LEAST(GREATEST(pool, 1), 60)
+                ) best
+                JOIN memory_entities e
+                  ON e.guild_id = g AND e.campaign_id = c AND e.id = best.id
+                 AND e.status = 'confirmed' AND e.merged_into IS NULL AND e.type <> 'person'
+            ) n
+            WHERE n.parts IS NOT NULL), '[]'::jsonb));
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT) FROM PUBLIC;
+    """
+    + ALL_NAMES_LIST
+)
+
 
 TRANSCRIPT_SPEAKER_NAMES = """
     -- Each speaker's Discord display name as DMbot kept it (#2337): at the session, or for an older
@@ -13372,10 +13519,6 @@ WEB_BACKUPS = (
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_backup_add(BIGINT, TEXT)'
-            ' SET search_path = pg_catalog, %I, pg_temp',
-            current_schema());
-        EXECUTE format(
             'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
@@ -13493,6 +13636,112 @@ OPTIONAL_RULE_SETTING = r"""
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 """
+
+
+WEB_BACKUP_PARTS = (
+    """
+    -- The transcripts files of a copy the website downloads (#2772, #2552): Discord's backup
+    -- sends a campaign's transcripts as extra files next to the main one, and a website copy is
+    -- the same set. One row is one such file, waiting in the database for the person who asked
+    -- (like `web_backups.file`: kept 15 minutes at most, handed over once, never logged, the DM's
+    -- secrets inside no more than in any backup). `web_backups.parts` says how many there were.
+    -- The row goes with its copy; `data` is emptied as the file is fetched.
+    ALTER TABLE web_backups ADD COLUMN parts INT NOT NULL DEFAULT 0;
+    CREATE TABLE web_backup_parts (
+        guild_id  BIGINT NOT NULL,
+        backup_id TEXT NOT NULL,
+        FOREIGN KEY (guild_id, backup_id)
+            REFERENCES web_backups (guild_id, id) ON DELETE CASCADE ON UPDATE CASCADE,
+        n         INT NOT NULL CHECK (n >= 1 AND n <= 24),
+        data      BYTEA,
+        size      INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, backup_id, n)
+    );
+    """
+    + _isolate("web_backup_parts")
+    + r"""
+    -- (Asking for a copy is 0219's door, unchanged: a copy whose main file has been taken is never
+    -- handed back, so a retry after a failed part starts a fresh copy and the old one's leftovers
+    -- go with the 15-minute sweep, #2778.)
+
+    -- Where one copy stands: the same answer as before, plus the files still waiting for the
+    -- person (number and size, never the bytes).
+    CREATE OR REPLACE FUNCTION dmbot_web_backup_read(g BIGINT, c TEXT, bid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r RECORD;
+        waiting JSONB;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT b.state, b.stage, b.error, b.file_name, b.size, b.parts, b.created_at,
+               b.updated_at, (b.file IS NOT NULL) AS has_file INTO r
+            FROM web_backups b
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid
+              AND b.user_id = dmbot_current_user()
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('n', p.n, 'size', p.size) ORDER BY p.n),
+                        '[]'::jsonb) INTO waiting
+            FROM web_backup_parts p
+            WHERE p.guild_id = g AND p.backup_id = bid AND p.data IS NOT NULL;
+        -- Gone once the main file and every part have been fetched.
+        IF r.state = 'done' AND NOT r.has_file AND waiting = '[]'::jsonb THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'fileName', r.file_name, 'size', r.size, 'fileWaiting', r.has_file,
+            'parts', waiting, 'partsTotal', r.parts,
+            'createdAt', r.created_at, 'updatedAt', r.updated_at);
+    END
+    $fn$;
+
+    -- One transcripts file, once, for the person who asked: emptied from the row as it is read.
+    -- NULL when it is not theirs, not ready or already taken.
+    CREATE FUNCTION dmbot_web_backup_take_part(g BIGINT, c TEXT, bid TEXT, part INT)
+    RETURNS BYTEA
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out BYTEA;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT p.data INTO out
+            FROM web_backup_parts p JOIN web_backups b
+                ON b.guild_id = p.guild_id AND b.id = p.backup_id
+            WHERE p.guild_id = g AND p.backup_id = bid AND p.n = part AND p.data IS NOT NULL
+              AND b.campaign_id = c AND b.user_id = dmbot_current_user() AND b.state = 'done'
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900
+            FOR UPDATE OF p;
+        IF out IS NULL THEN
+            RETURN NULL;
+        END IF;
+        UPDATE web_backup_parts p SET data = NULL, size = 0
+            WHERE p.guild_id = g AND p.backup_id = bid AND p.n = part;
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT) FROM PUBLIC;
+    """
+)
 
 TOPIC_CHOICES = """
     -- Who put a line back (or left it out again) after the session, and what the off-topic filter
@@ -14339,6 +14588,71 @@ PLOT_CHAT = (
         FROM PUBLIC;
     """
 )
+
+
+def _plot_chat_followups() -> str:
+    """The three talk doors of 0211, re-made with small changes (#2545), cut out of the text that
+    made them so nothing else about them can drift: the campaign's hourly cap answers its own
+    code (`hour_full`, so the page can say it is the hour and not the issue that is full); a Save
+    is stamped with its time (`saving_at`); and a proposal still `saving` thirty minutes after
+    that (or after its message, for one saved before this) is shown as failed when the DM next
+    looks, so a Save made while PlotBot is off does not wait forever. The two give-ups (a message
+    never answered, a Save never made) write a plain sentence as their error, not a code: the
+    page prints errors word for word."""
+    start = PLOT_CHAT.index("    CREATE FUNCTION dmbot_plot_chat_send")
+    end = PLOT_CHAT.index("    DO $do$")
+    doors = PLOT_CHAT[start:end].replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION")
+    now = "floor(extract(epoch FROM clock_timestamp()))::BIGINT"
+    edits = (
+        (
+            "        UPDATE plot_chat SET state = 'failed', error = 'timed_out'\n",
+            "        UPDATE plot_chat SET state = 'failed',\n"
+            "                             error = 'PlotBot didn''t answer. Ask it again.'\n",
+        ),
+        (
+            "              AND m.created_at > now_s - 3600) >= 30 THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_many');",
+            "              AND m.created_at > now_s - 3600) >= 30 THEN\n"
+            "            RETURN jsonb_build_object('status', 'hour_full');",
+        ),
+        (
+            "THEN jsonb_set(e, '{state}', to_jsonb(want)) ELSE e END",
+            "THEN jsonb_set(e, '{state}', to_jsonb(want)) || CASE WHEN want = 'saving'\n"
+            f"                THEN jsonb_build_object('saving_at', {now})\n"
+            "                ELSE '{}'::jsonb END ELSE e END",
+        ),
+        (
+            "        RETURN jsonb_build_object('messages', COALESCE((",
+            "        -- A Save the bot has not made in thirty minutes (it was off) is given up.\n"
+            "        UPDATE plot_chat SET proposals = (\n"
+            "            SELECT jsonb_agg(CASE WHEN e->>'state' = 'saving'\n"
+            "                    AND COALESCE((e->>'saving_at')::BIGINT, created_at)\n"
+            f"                        < {now} - 1800\n"
+            "                THEN e || jsonb_build_object('state', 'failed', 'error',\n"
+            "                    'PlotBot didn''t save this in time. Ask it again.')\n"
+            "                ELSE e END ORDER BY ord)\n"
+            "            FROM jsonb_array_elements(proposals) WITH ORDINALITY AS t(e, ord))\n"
+            "            WHERE guild_id = g AND campaign_id = c AND issue_id = p_issue\n"
+            "              AND session_at = at_ AND user_id = dmbot_current_user()\n"
+            "              AND role = 'bot'\n"
+            "              AND EXISTS (SELECT 1 FROM jsonb_array_elements(proposals) x\n"
+            "                  WHERE x->>'state' = 'saving'\n"
+            "                    AND COALESCE((x->>'saving_at')::BIGINT, created_at)\n"
+            f"                        < {now} - 1800);\n"
+            "        RETURN jsonb_build_object('messages', COALESCE((",
+        ),
+    )
+    for old, new in edits:
+        if doors.count(old) != 1:  # (0211's text moved)
+            raise RuntimeError("the plot chat doors changed: the follow-ups need a new anchor")
+        doors = doors.replace(old, new, 1)
+    # Replacing a function drops its pinned search path, so the pin is made again (0211's block).
+    return (
+        doors + PLOT_CHAT[end : PLOT_CHAT.index("    REVOKE ALL ON FUNCTION dmbot_plot_chat_send")]
+    )
+
+
+PLOT_CHAT_FOLLOWUPS = _plot_chat_followups()
 
 WEB_WAITING_ACTIONS_LIST = ", ".join(
     f"'{a}'" for a in (*WAITING_ACTIONS, "backstory-which-pick", "backstory-which-neither")
@@ -16164,10 +16478,13 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0249_report_read_door", REPORT_READ_DOOR),  # a session's after-session report (#2661)
     ("0250_report_answer_door", REPORT_ANSWER_DOOR),  # the DM's answer to one item (#2661)
     ("0252_optional_rules_read", OPTIONAL_RULES_READ),  # the Settings tab reads the choices (#2753)
+    ("0253_names_smart", NAMES_SMART),  # the Names page's search by meaning (#2733)
     (
         "0254_optional_rule_setting",
         OPTIONAL_RULE_SETTING,
     ),  # a rule switched on the website is queued for the bot (#2753)
+    ("0256_plot_chat_followups", PLOT_CHAT_FOLLOWUPS),  # hour_full, Save stamped, timed out (#2545)
+    ("0258_web_backup_parts", WEB_BACKUP_PARTS),  # a website copy carries its transcripts (#2772)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -16192,6 +16509,7 @@ ISOLATED_TABLES = (
     "secret_exposures",
     "web_delete_notices",
     "web_backups",
+    "web_backup_parts",
     "merge_restores",
     "transcript_respells",
     "image_day_use",

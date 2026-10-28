@@ -49,6 +49,7 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    names_smart,
     npc_pages,
     offers,
     optional_rules,
@@ -186,6 +187,8 @@ def create_app(
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
+    smart_names: names_smart.SmartNames | None = None,
+    smart_limit: RateLimit | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -208,6 +211,10 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    if smart_limit is None:
+        # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
+        # so one person gets 20 a minute, counted by account.
+        smart_limit = RateLimit(60, count=20)
     # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
     if route_limits is None:
         route_limits = {
@@ -835,8 +842,10 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
+        "hour_full": (429, "hour_full"),  # thirty talk messages from the campaign this hour (#2545)
         "bad_answer": (422, "bad_answer"),  # PlotBot's issue answered with a word it lacks (#2122)
         "stale": (409, "stale"),  # the recap changed since its plot check (#2122) or scenes (#2577)
         "bad_present": (422, "bad_present"),  # a name that is not a character here (#2577)
@@ -1477,6 +1486,34 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/all-names/search")
+    async def me_campaign_all_names_search(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The Names page's search by meaning (#2733): the names closest in meaning to the DM's
+        words, best first, with `capped` (the campaign has more numbers than one search compares).
+        The words are in the body, never the address: an address is written to logs on the way.
+        A DM only ("not found" for anyone else). When the search cannot run (off, no credit,
+        Voyage AI not answering, too slow) the refusal is "not_available" and the page falls back
+        to the letters search."""
+        session, _token = signed
+        taken = smart_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("q") if isinstance(body, dict) else None
+        try:
+            if not isinstance(words, str):
+                raise RecapError("bad_text")
+            return await names_smart.search(db, session, ref, words, smart_names)
+        except RecapError as err:
+            smart_limit.give_back(f"user-{session.user_id}")  # a refused search costs no turn
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/web")
     async def me_campaign_web(
         ref: str,
@@ -1764,7 +1801,8 @@ def create_app(
     @app.get("/me/campaigns/{ref}/backup/{backup_id}")
     async def me_campaign_backup_status(ref: str, backup_id: str, signed: Signed) -> dict[str, Any]:
         """Where the person's own copy stands, in the shared progress shape (stage, startedAt,
-        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size` and `expiresAt`."""
+        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size`, `expiresAt` and the
+        transcripts files still to fetch (`parts`: number and size; `partsTotal`)."""
         session, _token = signed
         try:
             return await campaign_backup.status(db, session, ref, backup_id)
@@ -1783,6 +1821,26 @@ def create_app(
             status, detail = backup_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
         safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        return Response(
+            raw,
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}/file/{n}")
+    async def me_campaign_backup_part(ref: str, backup_id: str, n: int, signed: Signed) -> Response:
+        """One transcripts file of the copy (#2772), once; removed as it is sent. The status lists
+        the numbers still waiting. Same care as the main file: no store, a download."""
+        session, _token = signed
+        try:
+            raw, name = await campaign_backup.fetch_part(db, session, ref, backup_id, n)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:160] or "transcripts.dmbot.json.gz"
         return Response(
             raw,
             media_type="application/gzip",
