@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot.campaigns.store import MAX_DMS
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.rules import optional
@@ -67,6 +68,10 @@ def _optional_rule(body: object) -> tuple[str, bool] | None:
     return rule_id, on
 
 
+def _is_co_dm(body: object) -> bool:
+    return isinstance(body, dict) and body.get("setting") == CO_DM
+
+
 def _co_dm(body: object) -> tuple[str, bool] | None:
     """(person's id, add) when the body is a game master change (#2768), None otherwise. The id is
     digits only, as a Discord id is, and `on` a real yes or no: anything else is the refusal word.
@@ -89,10 +94,10 @@ async def queue_setting(
     refuses it without."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
+    if _is_co_dm(body) and not co_dms_on:  # off until the bot applies it too (DMBOT_WEB_CO_DMS)
+        raise RecapError("not_found")  # (before the body is judged: a malformed one is 404 too)
     rule = _optional_rule(body)
     master = _co_dm(body)
-    if master and not co_dms_on:  # off until the bot applies it too (DMBOT_WEB_CO_DMS, #2768)
-        raise RecapError("not_found")
     setting, value, confirmed = ("", "", False) if rule or master else _arguments(body)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
@@ -103,8 +108,8 @@ async def queue_setting(
             )
         elif master:
             cur = await conn.execute(
-                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s) AS r",
-                (guild_id, campaign_id, master[0], master[1], TERMS_VERSION),
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, master[0], master[1], TERMS_VERSION, MAX_DMS),
             )
         else:
             cur = await conn.execute(

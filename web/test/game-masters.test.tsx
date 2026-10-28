@@ -35,6 +35,7 @@ async function section(ref = "100.cmp1") {
   return api;
 }
 const person = (name: string) => screen.getByText(name, { selector: "strong" }).closest("li") as HTMLElement;
+const alerts = (): string => screen.getAllByRole("alert").map((a) => a.textContent).join("|");
 const add = (name: string) => screen.getByRole("button", { name: w.addLabel(name) });
 
 describe("while it is switched off", () => {
@@ -47,7 +48,7 @@ describe("while it is switched off", () => {
     );
     await screen.findByRole("heading", { level: 2, name: "Settings" });
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
-    expect(screen.getAllByText(/Campaign management → 👑 Game masters/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Do this in Discord: .*Game masters/).length).toBeGreaterThan(0);
     expect(calls(api, "campaignGameMasters")).toHaveLength(0);
   });
 
@@ -61,7 +62,7 @@ describe("while it is switched off", () => {
     );
     expect(await screen.findByRole("heading", { name: w.heading }, slow)).toBeTruthy();
     expect(calls(api, "campaignGameMasters")).toEqual(["campaignGameMasters:100.cmp1"]);
-    expect(screen.queryByText(/Campaign management → 👑 Game masters/)).toBeNull();
+    expect(screen.queryByText(/Do this in Discord: .*Game masters/)).toBeNull(); // (the row's own steps go; the section's line stays)
   });
 });
 
@@ -92,8 +93,8 @@ describe("adding", () => {
     fireEvent.input(screen.getByLabelText(w.searchLabel), { target: { value: "fay" } });
     await waitFor(() => expect(screen.queryByText("Dana", { selector: "strong" })).toBeNull());
     fireEvent.click(add("Fay Merrow"));
-    expect(within(person("Fay Merrow")).getByText(w.stage["waiting"] as string)).toBeTruthy();
-    await waitFor(() => expect(within(person("Fay Merrow")).getByText("Fay Merrow is now a game master.")).toBeTruthy(), slow);
+    expect(await screen.findByText(w.stage["waiting"] as string)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Fay Merrow is now a game master.")).toBeTruthy(), slow);
     expect(calls(api, "setCampaignSetting")).toEqual(["setCampaignSetting:100.cmp1:co_dm:200000000000000003:on"]);
   });
 
@@ -105,9 +106,16 @@ describe("adding", () => {
     expect(within(person("Dana")).getByRole("button", { name: w.removeLabel("Dana") })).toBeTruthy();
   });
 
-  it("says so when nobody can be offered, and where to go instead", async () => {
+  it("says so when nobody can be offered", async () => {
     await section("100.cmp1.gm-nobody");
     expect(await screen.findByText(w.nobody)).toBeTruthy();
+  });
+
+  it("always says anyone not listed can be added in Discord, with the command", async () => {
+    await section();
+    await screen.findByText("Dana", { selector: "strong" });
+    expect(screen.getByText(w.inDiscord)).toBeTruthy();
+    expect(w.inDiscord).toMatch(/\/dmbot settings/);
   });
 
   it("shows no search at the limit, and says why", async () => {
@@ -126,13 +134,13 @@ describe("adding", () => {
       note: "**Dana** is already a game master.",
     });
     fireEvent.click(await screen.findByRole("button", { name: w.addLabel("Dana") }));
-    await waitFor(() => expect(within(person("Dana")).getByRole("alert").textContent).toBe("Dana is already a game master."), slow);
+    await waitFor(() => expect(alerts()).toContain("Dana is already a game master."), slow);
   });
 
   it("says when the bot could not save it", async () => {
     await section("100.cmp1.gm-failed");
     fireEvent.click(await screen.findByRole("button", { name: w.addLabel("Dana") }));
-    await waitFor(() => expect(within(person("Dana")).getByRole("alert").textContent).toBe(w.problems["server"]), slow);
+    await waitFor(() => expect(alerts()).toContain(w.problems["server"] as string), slow);
   });
 
   it("ignores a second press while it is saving", async () => {
@@ -140,7 +148,7 @@ describe("adding", () => {
     const button = await screen.findByRole("button", { name: w.addLabel("Dana") });
     fireEvent.click(button);
     fireEvent.click(button);
-    await waitFor(() => expect(within(person("Dana")).getByText("Dana is now a game master.")).toBeTruthy(), slow);
+    await waitFor(() => expect(screen.getByText("Dana is now a game master.")).toBeTruthy(), slow);
     expect(calls(api, "setCampaignSetting")).toHaveLength(1);
   });
 
@@ -150,7 +158,64 @@ describe("adding", () => {
       throw new ApiError("not-allowed");
     };
     fireEvent.click(await screen.findByRole("button", { name: w.addLabel("Dana") }));
-    await waitFor(() => expect(within(person("Dana")).getByRole("alert").textContent).toBe(w.problems["not-allowed"]));
+    await waitFor(() => expect(alerts()).toContain(w.problems["not-allowed"] as string));
+  });
+});
+
+describe("what the last change came to", () => {
+  it("is said at the top of the section when a removed person's row is gone, even for someone who is not a candidate", async () => {
+    const api = mockApi("table");
+    const who = { userId: "300000000000000001", name: "Pat", plan: false, you: false };
+    let removed = false;
+    api.campaignGameMasters = async () => ({
+      max: 5,
+      gameMasters: [{ userId: "1", name: "Belleros", plan: true, you: true }, ...(removed ? [] : [who])],
+    });
+    api.campaignGameMasterCandidates = async () => []; // Pat never agreed to be recorded: not a candidate
+    api.campaignSettingAnswer = async () => {
+      removed = true;
+      return { state: "done", error: "", setting: "co_dm", value: who.userId, note: "**Pat** is no longer a game master." };
+    };
+    render(<GameMastersSection api={api} campaignRef="100.cmp1" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(await screen.findByRole("button", { name: w.removeLabel("Pat") }));
+    fireEvent.click(screen.getByRole("button", { name: w.confirmYes }));
+    await waitFor(() => expect(screen.getByText("Pat is no longer a game master.")).toBeTruthy(), slow);
+    expect(screen.queryByText("Pat", { selector: "strong" })).toBeNull(); // the row is gone; the note stays
+  });
+
+  it("says a refusal at the top too, when the person is not on screen", async () => {
+    const api = mockApi("table");
+    api.campaignGameMasters = async () => ({ max: 5, gameMasters: [{ userId: "1", name: "Belleros", plan: true, you: true }, { userId: "9", name: "Pat", plan: false, you: false }] });
+    api.campaignSettingAnswer = async () => ({ state: "failed", error: "refused", setting: "co_dm", value: "9", note: "They aren't a game master any more." });
+    render(<GameMastersSection api={api} campaignRef="100.cmp1" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.removeLabel("Pat") }));
+    fireEvent.click(screen.getByRole("button", { name: w.confirmYes }));
+    await waitFor(() => expect(alerts()).toContain("They aren't a game master any more."), slow);
+  });
+
+  it("keeps a waiting add on screen when a new search no longer lists the person", async () => {
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => ({ state: "waiting", error: "", setting: "co_dm", value: "200000000000000001", note: "" });
+    render(<GameMastersSection api={api} campaignRef="100.cmp1" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(await screen.findByRole("button", { name: w.addLabel("Dana") }));
+    await screen.findByText(w.stage["waiting"] as string);
+    fireEvent.input(screen.getByLabelText(w.searchLabel), { target: { value: "fay" } }); // Dana is not in this search
+    await waitFor(() => expect(screen.queryByRole("button", { name: w.addLabel("Dana") })).toBeNull());
+    expect(screen.getByRole("button", { name: w.addLabel("Fay Merrow") })).toBeTruthy();
+    expect(await screen.findByText(w.stage["waiting"] as string)).toBeTruthy(); // Dana's wait is still shown
+  });
+
+  it("sends one change for a double press on Yes, remove", async () => {
+    const api = mockApi("table");
+    api.campaignGameMasters = async () => ({ max: 5, gameMasters: [{ userId: "1", name: "Belleros", plan: true, you: true }, { userId: "9", name: "Pat", plan: false, you: false }] });
+    render(<GameMastersSection api={api} campaignRef="100.cmp1" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.removeLabel("Pat") }));
+    const yes = screen.getByRole("button", { name: w.confirmYes });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await waitFor(() => expect(calls(api, "setCampaignSetting")).toHaveLength(1));
   });
 });
 

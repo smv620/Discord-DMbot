@@ -102,7 +102,9 @@ class Talking(PlotBase):
         again = await self.say("Are you there?")
         self.assertEqual(again.status_code, 200, again.text)
         first, second = await self.messages()
-        self.assertEqual((first["state"], first["error"]), ("failed", "timed_out"))
+        self.assertEqual(
+            (first["state"], first["error"]), ("failed", "PlotBot didn't answer. Ask it again.")
+        )  # (a sentence: the page prints errors word for word)
         self.assertEqual(second["state"], "waiting")
 
     async def test_save_on_a_proposal_after_the_text_changed_is_stale(self) -> None:
@@ -165,7 +167,38 @@ class Talking(PlotBase):
                     (THURSDAY.id, self.one.id, f"{n:032x}", ALICE.id),
                 )
         got = await self.say()
-        self.assertEqual((got.status_code, got.json()["error"]), (429, "too_soon"))
+        # (its own code: it is the campaign's hour that is full, not this issue's talk)
+        self.assertEqual((got.status_code, got.json()["error"]), (429, "hour_full"))
+
+    async def test_the_followup_doors_keep_a_pinned_search_path_and_no_public_execute(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT proname, proconfig::text AS cfg, prosecdef,"
+                " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
+                " FROM pg_proc WHERE proname IN ('dmbot_plot_chat_send', 'dmbot_plot_chat_read',"
+                " 'dmbot_plot_proposal')"
+                " AND pronamespace = current_schema()::regnamespace"
+            )
+            rows = await cur.fetchall()
+        self.assertGreaterEqual(len(rows), 3)
+        for row in rows:  # (re-made by 0256: the pin and the grants must have survived)
+            self.assertIn("search_path", row["cfg"] or "", row["proname"])
+            self.assertTrue(row["prosecdef"], row["proname"])
+            self.assertFalse(row["public_may"], row["proname"])
+
+    async def test_a_talk_of_twenty_nine_days_stays_when_a_message_is_sent(self) -> None:
+        recent = "floor(extract(epoch FROM clock_timestamp())) - 29 * 86400"
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at, user_id,"
+                " role, body, state, created_at) VALUES (%s, %s, %s, 'kept', 100, %s, 'dm', 'x',"
+                f" 'done', {recent})",
+                (THURSDAY.id, self.one.id, "e" * 32, ALICE.id),
+            )
+        await self.say()
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT id FROM plot_chat WHERE issue_id = 'kept'")
+            self.assertEqual(len(await cur.fetchall()), 1)
 
     async def test_talks_older_than_thirty_days_are_deleted_when_a_message_is_sent(self) -> None:
         async with self.db.guild(THURSDAY.id) as conn:

@@ -8,6 +8,7 @@
 import type { PlanId } from "../content/pricing";
 import type {
   AccountApi,
+  BackupFile,
   Campaign,
   Character,
   ImportProgress,
@@ -53,6 +54,9 @@ import type {
   Waiting,
   MyNpcNote,
   NpcPage,
+  RuleSharing,
+  RuleSharingAnswer,
+  RuleSharingChoice,
 } from "./api";
 import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
@@ -821,7 +825,54 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   const lateLooks = new Map<string, number>();
-  const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
+  // The pretend rule sharing's memory, per campaign ref (#2783).
+const sharingState = new Map<string, RuleSharing>();
+const sharingChoices = new Map<string, { ref: string; choice: RuleSharingChoice; looks: number }>();
+let sharingCount = 0;
+const SHARING_HERE = [
+  { setId: "b".repeat(32), name: "Frostfell Table Rules", publisher: "The Winter Court", version: 3, rules: 4 },
+  { setId: "c".repeat(32), name: "Quick Combat", publisher: "Harbor Nights", version: 1, rules: 2 },
+];
+const SHARING_CODE = "ABCDEFGHJK";
+function sharingOf(ref: string): RuleSharing {
+  const known = sharingState.get(ref);
+  if (known) return structuredClone(known);
+  const start: RuleSharing = {
+    published: null,
+    following: [],
+    here: structuredClone(SHARING_HERE),
+    ruleCount: /\.rs-norules$/.test(ref) ? 0 : 3,
+    canShare: !/\.rs-free$/.test(ref),
+  };
+  sharingState.set(ref, start);
+  return structuredClone(start);
+}
+/** What the bot would do with a choice, and the words it would say (Discord's own, in the real thing). */
+function applySharing(ref: string, choice: RuleSharingChoice): string {
+  const now = sharingOf(ref);
+  let note = "";
+  if (choice.action === "publish") {
+    now.published = { name: choice.arg, shared: true, version: 1, hasCode: false };
+    note = `Shared as ${choice.arg}.`;
+  } else if (choice.action === "stop_sharing") {
+    if (now.published) now.published.shared = false;
+    note = "Stopped sharing. Campaigns that follow it keep their copy.";
+  } else if (choice.action === "look_code") {
+    note = choice.arg === SHARING_CODE ? "Found Frostfell Table Rules from The Winter Court: 4 rules would be copied." : "That code doesn't match a set.";
+  } else if (choice.action === "follow_code" || choice.action === "follow_here") {
+    const set = choice.action === "follow_here" ? now.here.find((h) => h.setId === choice.arg) : SHARING_HERE[0];
+    if (set) {
+      now.following = [{ name: set.name, publisher: set.publisher, version: set.version, updating: true }];
+      note = `Now following ${set.name}.`;
+    }
+  } else if (choice.action === "unfollow") {
+    now.following = [];
+    note = "Stopped following.";
+  }
+  sharingState.set(ref, now);
+  return note;
+}
+const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
   const ruleChoices = new Map<string, Map<string, boolean>>();
   // The pretend game masters (#2768) by campaign: the plan holder, then whoever the game master adds.
@@ -1783,7 +1834,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         })
         .filter((x) => x.score > 0)
         .sort((a, b) => b.score - a.score || a.n.name.localeCompare(b.n.name));
-      return { names: scored.slice(0, 50).map(({ n }) => ({ ...n, others: [...n.others], aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null })) };
+      const names = scored.slice(0, 50).map(({ n }) => ({ ...n, others: [...n.others], aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null }));
+      // `.smart-capped`: a campaign with more notes than the search reads, so only the newest were searched.
+      return /\.smart-capped$/.test(ref) ? { names, capped: true } : { names };
     },
     async changeName(ref, id, change: NameChange): Promise<NameChanged> {
       calls.push(`changeName:${ref}:${id}:${JSON.stringify(change)}`);
@@ -2008,6 +2061,42 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         },
       ];
     },
+    // The pretend rule sharing (#2783). Ref endings pick a case: `.rs-player` is a player (refused), `.rs-free` a
+    // campaign whose plan does not allow sharing, `.rs-norules` one with no rules of its own, `.rs-offline` a bot
+    // that never answers, `.rs-failed` one that refuses. The share code that finds a set is "ABCDEFGHJK".
+    async ruleSharing(ref): Promise<RuleSharing> {
+      calls.push(`ruleSharing:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.rs-player$/.test(ref)) throw new ApiError("not-allowed");
+      return sharingOf(ref);
+    },
+    async chooseRuleSharing(ref, choice): Promise<string> {
+      calls.push(`chooseRuleSharing:${ref}:${choice.action}${"arg" in choice ? `:${choice.arg}` : ""}`);
+      await reachable();
+      signedIn();
+      if (/\.rs-player$/.test(ref)) throw new ApiError("not-allowed");
+      const mine = sharingOf(ref);
+      if (choice.action === "publish" && !mine.canShare) throw new ApiError("plan-needed");
+      if (choice.action === "publish" && mine.ruleCount === 0) throw new ApiError("no-rules");
+      const id = String(++sharingCount).padStart(32, "0");
+      sharingChoices.set(id, { ref, choice, looks: 0 });
+      return id;
+    },
+    async ruleSharingAnswer(ref, answer): Promise<RuleSharingAnswer> {
+      calls.push(`ruleSharingAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const asked = sharingChoices.get(answer);
+      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
+      const base = { action: asked.choice.action, startedAt: 1_800_000_000, updatedAt: 1_800_000_000, serverNow: 1_800_000_005, reason: null, error: "", note: "" };
+      if (/\.rs-offline$/.test(ref)) return { ...base, state: "running", stage: "waiting" };
+      asked.looks += 1;
+      if (asked.looks < 2) return { ...base, state: "running", stage: "sharing" };
+      if (/\.rs-failed$/.test(ref))
+        return { ...base, state: "failed", stage: "failed", reason: "failed", error: "failed", note: "That code doesn't match a set. Check it and try again." };
+      return { ...base, state: "done", stage: "done", note: applySharing(ref, asked.choice) };
+    },
     async houseRules(campaignRef) {
       calls.push(`houseRules:${campaignRef}`);
       await reachable();
@@ -2192,7 +2281,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       calls.push(`plotCheck:${ref}`);
       await reachable();
       signedIn();
-      const r = await find(ref);
+      const r = await find(ref.replace(/\.(hour-full|timed-out)$/, "")); // (#2774: the endings only pick a case)
       const seen = plotText.get(ref);
       if (seen !== undefined && seen !== r.text) {
         plotText.set(ref, r.text);
@@ -2234,6 +2323,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       const key = `${ref}:${issue}`;
       const talk = plotTalk.get(key) ?? [];
       if (talk.some((m) => m.role === "dm" && m.state === "waiting")) throw new ApiError("slow-down");
+      if (/\.hour-full$/.test(ref)) throw new ApiError("hour-full"); // thirty messages this hour, on any issue (#2774)
       if (talk.filter((m) => m.role === "dm").length >= 15) throw new ApiError("too-soon");
       plotTalk.set(key, [...talk, { id: `m${talk.length}`, role: "dm", text, state: "waiting", error: "", proposals: [], at: 1790000000 + talk.length }]);
       plotAnswerIn.set(key, 1); // PlotBot's answer shows on the next look
@@ -2252,8 +2342,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           // The first message gets an answer with a suggested note; "fail" in the words makes the bot give up.
           const asked = talk.filter((m) => m.role === "dm" && m.state === "waiting");
           if (asked.some((m) => /nosave/.test(m.text))) plotWontSave.add(`p${talk.length}`);
-          talk = talk.map((m) => (m.role === "dm" && m.state === "waiting" ? { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" } : m));
-          if (asked.length > 0 && !/fail/.test(asked[0]!.text))
+          // "silent" in the words: PlotBot never answered, which the API ends with a plain sentence (#2774).
+          talk = talk.map((m) =>
+            m.role === "dm" && m.state === "waiting"
+              ? /silent/.test(m.text)
+                ? { ...m, state: "failed" as const, error: "PlotBot didn't answer. Ask it again." }
+                : { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" }
+              : m,
+          );
+          if (asked.length > 0 && !/fail|silent/.test(asked[0]!.text))
             talk = [
               ...talk,
               {
@@ -2276,6 +2373,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           const seen = plotSavingSeen.has(p.id);
           plotSavingSeen.add(p.id);
           if (!seen) return p;
+          if (/\.timed-out$/.test(ref)) return { ...p, state: "failed" as const, error: "PlotBot didn't save this in time. Ask it again." }; // (#2774)
           return plotWontSave.has(p.id)
             ? { ...p, state: "failed" as const, error: "Ulfgar's note changed while it was being saved, so nothing was changed." }
             : { ...p, state: "saved" as const };
@@ -2493,7 +2591,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
       return { channelsLeft: found.serverReachable === false };
     },
-    async campaignBackup(ref, onProgress) {
+    async campaignBackup(ref, onProgress, onFile) {
       calls.push(`campaignBackup:${ref}`);
       await reachable();
       signedIn();
@@ -2503,7 +2601,21 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       for (const stage of ["waiting", "reading", "packing"]) {
         onProgress?.({ stage, state: "running", startedAt: now, updatedAt: now, serverNow: now });
       }
-      return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
+      // A ref ending `.bk-parts` has two transcripts files besides the main one; `.bk-toomany` has more
+      // than one backup carries; `.bk-partfail` loses its second file on the way.
+      if (/\.bk-toomany$/.test(ref)) throw new ApiError("backup-too-many-files");
+      const stem = "pretend-campaign-2026-10-27";
+      const names = /\.bk-(parts|partfail)$/.test(ref)
+        ? [`${stem}.dmbot.json.gz`, `${stem}.transcripts-1-of-2.dmbot.json.gz`, `${stem}.transcripts-2-of-2.dmbot.json.gz`]
+        : [`${stem}.dmbot.json.gz`];
+      onFile?.(0, names.length);
+      const files: BackupFile[] = [];
+      for (const name of names) {
+        if (/\.bk-partfail$/.test(ref) && files.length === 2) throw new ApiError("backup-part");
+        files.push({ name, blob: new Blob([JSON.stringify({ campaign: ref, file: name })], { type: "application/gzip" }) });
+        onFile?.(files.length, names.length);
+      }
+      return { files };
     },
     async takeBackHandover(ref) {
       calls.push(`takeBackHandover:${ref}`);

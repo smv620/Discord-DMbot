@@ -72,6 +72,13 @@ class WebSettings:
     ai_key: str = field(default="", repr=False)
     support_ai_model: str = ""
     mail_inbound_secret: str = field(default="", repr=False)
+    # Search by meaning on the Names page (#2733): the same switch, key and models the bot reads
+    # (#2664), so the search words are turned into numbers with the model the kept numbers were
+    # made with. Off until the switch is 1 and a key is set.
+    meaning_search: bool = False
+    voyage_key: str = field(default="", repr=False)
+    voyage_embed_model: str = "voyage-3.5"
+    voyage_rerank_model: str = "rerank-2.5"
     # Where people's emailed replies to a support ticket go (#1717): a subdomain only the mail
     # service receives. Empty: the support sender's own domain.
     mail_reply_domain: str = ""
@@ -115,6 +122,12 @@ class WebSettings:
     # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
     # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
     co_dms_on: bool = False
+    # "Make it again" on a session's report (#2661; DMBOT_WEB_REPORT_MAKE): off, the route that
+    # queues the request answers 404, so nothing is queued before the bot (#2805) takes it.
+    report_make_on: bool = False
+    # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
+    # queue a choice answer 404, so nothing is queued before the bot can run it.
+    rule_sharing_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -136,6 +149,10 @@ class WebSettings:
     def imports_enabled_for(self, guild_id: int) -> bool:
         """Whether importing is on for this server (#2259)."""
         return imports_switch.enabled(self.imports_on, self.imports_servers, guild_id)
+
+    @property
+    def meaning_search_on(self) -> bool:
+        return self.meaning_search and bool(self.voyage_key)
 
     @property
     def site_origin(self) -> str:
@@ -226,6 +243,20 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     feedback_repo = get("GITHUB_FEEDBACK_REPO") or "smv620/Discord-DMbot"
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", feedback_repo):
         raise ConfigError("GITHUB_FEEDBACK_REPO must look like owner/name.")
+    meaning_raw = (get("DMBOT_MEANING_SEARCH") or "0").lower()
+    if meaning_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_MEANING_SEARCH must be 1 (on) or 0 (off), got "{meaning_raw}".')
+    voyage_models = []
+    for model_name, default in (
+        ("VOYAGE_EMBED_MODEL", "voyage-3.5"),
+        ("VOYAGE_RERANK_MODEL", "rerank-2.5"),
+    ):
+        model = get(model_name) or default
+        if not (
+            model.isascii() and model.replace("-", "").replace(".", "").replace("_", "").isalnum()
+        ):
+            raise ConfigError(f"{model_name} must be a model name such as {default}.")
+        voyage_models.append(model)
     support_team_email = get("SUPPORT_TEAM_EMAIL")
     if support_team_email and not one_address(support_team_email):
         raise ConfigError("SUPPORT_TEAM_EMAIL must be one email address, like team@example.com.")
@@ -311,10 +342,22 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
     if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
+    report_make_raw = (get("DMBOT_WEB_REPORT_MAKE") or "0").lower()
+    if report_make_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
+        )
+    rule_sharing_raw = (get("DMBOT_WEB_RULE_SHARING") or "0").lower()
+    if rule_sharing_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RULE_SHARING must be 1 (on) or 0 (off), got "{rule_sharing_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         co_dms_on=co_dms_raw in ("1", "true", "on"),
+        report_make_on=report_make_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
         and (get("DMBOT_PLOT_CHECK") or "0").lower() in ("1", "true", "on"),
@@ -350,6 +393,10 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         ai_key=get("ANTHROPIC_API_KEY"),
         support_ai_model=support_ai_model,
         mail_inbound_secret=get("MAIL_INBOUND_SECRET"),
+        meaning_search=meaning_raw in ("1", "true", "on"),
+        voyage_key=get("VOYAGE_API_KEY"),
+        voyage_embed_model=voyage_models[0],
+        voyage_rerank_model=voyage_models[1],
         mail_reply_domain=reply_domain(get("MAIL_REPLY_DOMAIN")),
         recap_audio_dir=get("WEB_RECAP_AUDIO_DIR"),
         outside_engine=get("TRANSCRIBER").lower()

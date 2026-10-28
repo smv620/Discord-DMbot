@@ -14,12 +14,14 @@ import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS } from "./settings-
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
+/** What the last change came to, said at the top of the section: it must outlive the person's row, which is gone from
+ * the list once a removal or an add is done. */
+type Report = { kind: "saved"; text: string } | { kind: "error"; text: string } | null;
+
 type Phase =
   | { kind: "asking" } // the remove button was pressed: one confirmation
   | { kind: "saving"; seen: "waiting" | "working" }
-  | { kind: "gaveup" }
-  | { kind: "saved"; note: string }
-  | { kind: "error"; message: string };
+  | { kind: "gaveup" };
 
 const SEARCH_DELAY_MS = 250;
 const problem = (kind: string): string => (Object.hasOwn(w.problems, kind) ? (w.problems[kind] as string) : (w.problems["server"] as string));
@@ -53,12 +55,6 @@ function Waiting({ phase }: { phase: Phase | undefined }) {
         />
       )}
       {phase?.kind === "gaveup" && <WorkProgress stage={stageWords(w.stage, "waiting")} state="stalled" frozen whatToDo={w.gaveUp} />}
-      <p class={phase?.kind === "saved" ? "" : "small muted"} role="status">
-        {phase?.kind === "saved" ? phase.note : ""}
-      </p>
-      <p class="warn small" role="alert">
-        {phase?.kind === "error" ? phase.message : ""}
-      </p>
     </>
   );
 }
@@ -68,6 +64,9 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
   const [people, setPeople] = useState<GameMasterCandidate[] | "loading" | "failed">("loading");
   const [query, setQuery] = useState("");
   const [phases, setPhases] = useState<Record<string, Phase>>({});
+  const [report, setReport] = useState<Report>(null);
+  const names = useRef<Record<string, string>>({}); // who a waiting change is about, for a row that is not on screen
+  const inFlight = useRef(new Set<string>()); // a change being sent: a second press on it is ignored
   const live = useRef(true);
   const looked = useRef(0); // the newest search; an older answer arriving late is dropped
   useEffect(() => {
@@ -120,15 +119,36 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
     await readList();
   }
 
+  const say = (next: Report) => {
+    if (live.current) setReport(next);
+  };
+
   async function send(person: { userId: string; name: string }, add: boolean) {
     const id = person.userId;
-    if (!api.setCampaignSetting || !api.campaignSettingAnswer) return phase(id, { kind: "error", message: problem("server") });
+    if (inFlight.current.has(id)) return; // a double press sends one change
+    inFlight.current.add(id);
+    try {
+      await sendOnce(person, add);
+    } finally {
+      inFlight.current.delete(id);
+    }
+  }
+
+  async function sendOnce(person: { userId: string; name: string }, add: boolean) {
+    const id = person.userId;
+    const fail = (message: string) => {
+      phase(id, null);
+      say({ kind: "error", text: message });
+    };
+    say(null);
+    if (!api.setCampaignSetting || !api.campaignSettingAnswer) return fail(problem("server"));
+    names.current[id] = person.name;
     phase(id, { kind: "saving", seen: "waiting" });
     let answer: string;
     try {
       answer = await api.setCampaignSetting(campaignRef, { setting: "co_dm", value: id, on: add });
     } catch (error) {
-      return phase(id, { kind: "error", message: problem(error instanceof ApiError ? error.kind : "server") });
+      return fail(problem(error instanceof ApiError ? error.kind : "server"));
     }
     const started = Date.now();
     for (let i = 0; live.current; i += 1) {
@@ -140,18 +160,19 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
       try {
         got = await api.campaignSettingAnswer(campaignRef, answer);
       } catch (error) {
-        if (error instanceof ApiError && ENDS.includes(error.kind)) return phase(id, { kind: "error", message: problem(error.kind) });
+        if (error instanceof ApiError && ENDS.includes(error.kind)) return fail(problem(error.kind));
         if (final) return gaveUp(id);
         continue; // a look that fails is tried again until the hour is up
       }
       if (got.state === "done") {
         await readList();
         void search(query);
-        return phase(id, { kind: "saved", note: plain(got.note) || w.saved(person.name, add) });
+        phase(id, null);
+        return say({ kind: "saved", text: plain(got.note) || w.saved(person.name, add) });
       }
       if (got.state === "failed") {
         await readList(); // the list may have changed under the person (someone else added or removed)
-        return phase(id, { kind: "error", message: botWords(got.error, got.note) });
+        return fail(botWords(got.error, got.note));
       }
       if (final) return gaveUp(id);
       phase(id, { kind: "saving", seen: got.state === "working" ? "working" : "waiting" });
@@ -177,6 +198,11 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
       </p>
     );
   const full = list.gameMasters.length >= list.max;
+  // An add that is waiting stays on screen whatever the search shows now (and whether or not the list is full).
+  // A waiting add has one place on screen, whatever the search shows: its clock keeps running and it never vanishes.
+  const pending = Object.keys(phases).filter(
+    (id) => (phases[id]?.kind === "saving" || phases[id]?.kind === "gaveup") && !list.gameMasters.some((g) => g.userId === id),
+  );
   const row = (g: GameMaster) => {
     const p = phases[g.userId];
     const busy = p?.kind === "saving";
@@ -220,7 +246,23 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
     <section class="stack" aria-labelledby="game-masters-heading" id="game-masters">
       <h3 id="game-masters-heading">{w.heading}</h3>
       <p class="muted small">{w.lead(list.max)}</p>
+      <p class={report?.kind === "saved" ? "" : "small muted"} role="status">
+        {report?.kind === "saved" ? report.text : ""}
+      </p>
+      <p class="warn small" role="alert">
+        {report?.kind === "error" ? report.text : ""}
+      </p>
       <ul class="campaigns">{list.gameMasters.map(row)}</ul>
+      {pending.length > 0 && (
+        <ul class="campaigns" aria-label={w.addHeading}>
+          {pending.map((id) => (
+            <li key={id}>
+              <strong>{names.current[id]}</strong>
+              <Waiting phase={phases[id]} />
+            </li>
+          ))}
+        </ul>
+      )}
       <h4>{w.addHeading}</h4>
       {full ? (
         <p class="small muted">{w.full(list.max)}</p>
@@ -241,6 +283,7 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
             </p>
           )}
           {Array.isArray(people) && people.length === 0 && <p class="small muted">{query.trim() === "" ? w.nobody : w.noMatch}</p>}
+          <p class="small muted">{w.inDiscord}</p>
           {Array.isArray(people) && people.length > 0 && (
             <ul class="campaigns">
               {people.map((c) => {
@@ -254,7 +297,6 @@ export default function GameMastersSection({ api, campaignRef }: { api: AccountA
                         {w.add}
                       </button>
                     </span>
-                    <Waiting phase={p} />
                   </li>
                 );
               })}

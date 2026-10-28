@@ -22,6 +22,7 @@ from dmbot.ai import AIOutOfFunds
 from dmbot.db import Database
 from dmbot.memory import vectors as vs
 from dmbot.memory.embedding import Allowed, owner_of
+from dmbot.memory.entity_text import compose
 from dmbot.memory.voyage import ProviderError, Ranked
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ PLAYER_HIDDEN_TYPES = ("thread", "quest", "mystery", "hook", "goal", "promise", 
 async def entry_texts(
     db: Database, guild_id: int, campaign_id: str, ids: Sequence[str], *, for_players: bool = False
 ) -> dict[str, str]:
-    """The text each of these confirmed entries was embedded from (name and description), by id.
+    """The text each of these confirmed entries was embedded from (`entity_text.compose`), by id.
     `for_players`: only entries a member of the campaign may see (see above), so a lead that ends in
     a player-facing answer (a sidebar reply can reach the raw transcript) never starts from a secret
     or DM-only entry. The numbers themselves hold every entry; this is the filter."""
@@ -57,12 +58,13 @@ async def entry_texts(
         return {}
     async with db.guild(guild_id) as conn:
         cur = await conn.execute(
-            "SELECT e.id, e.name, e.description FROM memory_entities e"
+            "SELECT e.id, dmbot_entity_parts(e.guild_id, e.campaign_id, e.id) AS parts"
+            " FROM memory_entities e"
             " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = ANY(%s)"
             " AND e.status = 'confirmed' AND e.merged_into IS NULL"
             " AND char_length(btrim(e.description)) > 0"
             " AND (NOT %s OR (e.type <> 'person' AND NOT e.audience_limited"
-            "   AND NOT e.hidden_from_players AND e.type <> ALL(%s)"
+            "   AND NOT e.hidden_from_players AND NOT e.unnamed AND e.type <> ALL(%s)"
             "   AND NOT EXISTS (SELECT 1 FROM memory_aliases a"
             "     WHERE a.guild_id = e.guild_id AND a.campaign_id = e.campaign_id"
             "     AND a.entity_id = e.id AND a.secret AND a.status <> 'rejected'"
@@ -70,7 +72,7 @@ async def entry_texts(
             "       = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g'))))",
             (guild_id, campaign_id, list(ids), for_players, list(PLAYER_HIDDEN_TYPES)),
         )
-        return {str(r["id"]): f"{r['name']}: {r['description']}" for r in await cur.fetchall()}
+        return {str(r["id"]): compose(r["parts"]) for r in await cur.fetchall()}
 
 
 class MeaningSeeds:

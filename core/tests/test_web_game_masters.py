@@ -81,8 +81,8 @@ class GameMastersBase(Base):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s) AS r",
-                (THURSDAY.id, self.one.id, uid, on, TERMS_VERSION),
+                "SELECT dmbot_web_co_dm_add(%s, %s, %s, %s, %s, %s) AS r",
+                (THURSDAY.id, self.one.id, uid, on, TERMS_VERSION, MAX_DMS),
             )
             row = await cur.fetchone()
         assert row is not None
@@ -255,6 +255,33 @@ class Queueing(GameMastersBase):
             await self.queue_refused({"setting": "co_dm", "value": str(DANA), "on": True}),
             "unknown_person",
         )
+
+    async def test_the_limit_is_the_one_passed_in_not_a_copy(self) -> None:
+        await self.agreed(DANA, "Dana")
+        await self.campaigns.add_dm(THURSDAY.id, self.one.id, 8000)  # two game masters now
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            got = {}
+            for limit in (2, 3):
+                cur = await conn.execute(
+                    "SELECT dmbot_web_co_dm_add(%s, %s, %s, true, %s, %s) AS r",
+                    (THURSDAY.id, self.one.id, str(DANA), TERMS_VERSION, limit),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                got[limit] = row["r"]["status"]
+        self.assertEqual(got, {2: "too_many", 3: "ok"})
+
+    async def test_a_server_the_person_is_not_in_is_not_found(self) -> None:
+        body = {"setting": "co_dm", "value": str(DANA), "on": True}
+        self.assertEqual(await self.queue_refused(body, ref=f"999.{self.one.id}"), "not_found")
+
+    async def test_a_malformed_body_is_not_found_too_while_it_is_off(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await campaign_settings.queue_setting(
+                self.web, self.session, self.cref(), {"setting": "co_dm", "value": "dana"}
+            )  # (the default is off, and the body is not even judged)
+        self.assertEqual(caught.exception.code, "not_found")
 
     async def test_it_is_off_until_the_switch_is_on(self) -> None:
         await self.agreed(DANA, "Dana")

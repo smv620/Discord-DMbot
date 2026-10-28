@@ -507,6 +507,7 @@ from dmbot.ui.name_card import (
     UndoSpellingButton,
 )
 from dmbot.ui.name_lists import UndoListButton
+from dmbot.ui.name_unnamed import UndoNamingButton
 from dmbot.ui.names import (
     SPELLED_OUT,
     ReviewButton,
@@ -1722,6 +1723,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
+        self.add_dynamic_items(UndoNamingButton)  # Undo of giving an unnamed person a name (#2790)
         self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
@@ -9491,7 +9493,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             agreed = await self.consent.consenting(gid)
             known = set(await self.memory.known_keys(gid, cid))
             added = 0
-            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            # (a person the story never named has no name to be spelled: #2790)
+            waiting = [
+                e
+                for e in await self.memory.entities(gid, cid, statuses=[PROPOSED])
+                if not e.unnamed
+            ]
             given: set[str] = set()  # suggestions that already got a spelling in this run
             for word, user_id, near in spelled:
                 key = name_key(word)
@@ -10300,9 +10307,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't finish a website-deleted campaign")
 
-    async def export_campaign(self, guild_id: int, campaign_id: str) -> Any:
-        """A campaign's complete copy, as Discord's Download makes it (#2554)."""
-        return await self.campaigns.export(guild_id, campaign_id)
+    async def export_campaign(self, guild_id: int, campaign_id: str) -> tuple[Any, list[bytes]]:
+        """A campaign's complete copy, as Discord's Download makes it (#2554): the main file's
+        data and the transcripts files (#2552, #2772), both from one moment."""
+        return await self.campaigns.export_set(guild_id, campaign_id)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a
