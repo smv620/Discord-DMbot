@@ -18,7 +18,7 @@ import discord
 from dmbot import bot as bot_module
 from dmbot.ai import Reply
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.config import Settings
 from dmbot.dm_screen import house_voice as screen
@@ -26,6 +26,7 @@ from dmbot.dm_screen.house_voice import HouseVoiceButton
 from dmbot.rules import house
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_voice import GAP_S, Clash, HouseVoice, Proposal, Said, find
+from dmbot.table import Table
 from dmbot.ui import house_rules as house_ui
 from tests.test_memory_names import FakeResponse
 

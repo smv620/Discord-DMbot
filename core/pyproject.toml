@@ -96,7 +96,6 @@ forbidden_modules = ["dmbot.bot"]
 allow_indirect_imports = true
 ignore_imports = [
     "dmbot.recaps.discord -> dmbot.bot",  # type-only (#2827)
-    "dmbot.sidebar.service -> dmbot.bot",  # type-only (#2827)
 ]
 
 [[tool.importlinter.contracts]]

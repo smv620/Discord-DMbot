@@ -12,13 +12,14 @@ import discord
 
 from dmbot import consent_dm as c
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table, consent_give
+from dmbot.bot import DMBot, consent_give
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.consent_words import CONSENT_LABEL
 from dmbot.ears.protocol import Status
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from dmbot.transcription.config import TranscriptionSettings
 from tests.pg import DatabaseTest
 
