@@ -6,6 +6,7 @@ deleted. Invented names throughout."""
 from __future__ import annotations
 
 import json
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -624,3 +625,64 @@ class ThePass(WithNpcs):
         self.assertEqual(npg.pass_delay(None, 100.0), npg.SETTLE_S)
         self.assertEqual(npg.pass_delay(100.0, 110.0), 50.0)
         self.assertEqual(npg.pass_delay(100.0, 500.0), npg.SETTLE_S)
+
+
+class TheBotsPass(unittest.IsolatedAsyncioTestCase):
+    """The bot's side of the pass, on a stand-in: the server is found when it is not known, a
+    campaign that is gone writes nothing, and a failure is retried."""
+
+    def bot(self, campaigns: Any, guilds: list[Any]) -> Any:
+        from unittest.mock import AsyncMock
+
+        bot: Any = SimpleNamespace(
+            campaigns=campaigns,
+            guilds=guilds,
+            _npcs_guilds={},
+            _npcs_last={},
+            _refresh_npc_pages=AsyncMock(),
+        )
+        return bot
+
+    async def test_an_unknown_campaign_is_looked_for_in_every_server(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        async def get(guild_id: int, campaign_id: str) -> Any:
+            return object() if guild_id == 2 else None
+
+        bot = self.bot(
+            SimpleNamespace(get=AsyncMock(side_effect=get)),
+            [SimpleNamespace(id=1), SimpleNamespace(id=2)],
+        )
+        await DMBot._sync_npcs(bot, "c1")
+        bot._refresh_npc_pages.assert_awaited_once_with(2, "c1")
+        self.assertEqual(bot._npcs_guilds, {"c1": 2})
+
+    async def test_a_campaign_that_is_gone_writes_nothing_and_does_not_raise(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot(SimpleNamespace(get=AsyncMock(return_value=None)), [SimpleNamespace(id=1)])
+        bot._npcs_guilds = {"c1": 1}
+        bot._npcs_last = {"c1": 5.0}
+        await DMBot._sync_npcs(bot, "c1")
+        bot._refresh_npc_pages.assert_not_awaited()
+        self.assertEqual((bot._npcs_guilds, bot._npcs_last), ({}, {}))
+
+    async def test_a_failed_pass_is_tried_again_not_dropped(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.bot import DMBot
+
+        bot: Any = SimpleNamespace(
+            _npcs_last={}, _npcs_dirty=set(), _npcs_sync={},
+            _sync_npcs=AsyncMock(side_effect=[RuntimeError("db"), None]),
+        )  # fmt: skip
+        with (
+            patch("dmbot.bot.pass_delay", return_value=0.0),
+            self.assertLogs("dmbot.bot", "WARNING"),
+        ):
+            await DMBot._npcs_run(bot, "c1")
+        self.assertEqual(bot._sync_npcs.await_count, 2)

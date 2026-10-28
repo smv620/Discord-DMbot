@@ -28,6 +28,7 @@ from dmbot.dm_screen.names import PREFIX
 
 log = logging.getLogger(__name__)
 
+# (web/test/help.test.ts looks for the names "dmb-rules" and "dmb-npcs" in this file.)
 RULES_PREFIX = f"{PREFIX}-rules-"
 NPCS_PREFIX = f"{PREFIX}-npcs-"
 REASON = "DMbot no longer uses this channel"  # the audit-log line

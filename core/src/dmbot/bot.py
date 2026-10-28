@@ -11371,7 +11371,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self._retire_old_channels(guild, campaign)
                 try:
                     if time.monotonic() - self._npcs_last.get(campaign.id, -1e9) >= 60:
-                        await self._refresh_npc_pages(guild.id, campaign.id)  # (not just started)
+                        await self._refresh_npc_pages(
+                            guild.id, campaign.id
+                        )  # (skipped if a start just did it)
                 except Exception as exc:
                     log.warning("Couldn't update the NPC pages' view: %s", type(exc).__name__)
                     self._npcs_changed(campaign.id)  # try again soon
