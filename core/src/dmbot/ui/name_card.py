@@ -582,6 +582,11 @@ async def show_card(
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
+        say_it_url=(
+            all_names.say_it_url(site, campaign.guild_id, campaign.id, entity.name)
+            if secrets
+            else ""
+        ),
         hide=(  # (drawn whenever it is on, so a DM can always turn it off)
             entity.hidden_from_players
             if secrets
@@ -737,6 +742,7 @@ class NameCard(_Menu):
         led: bool = False,
         book: bool = False,
         say: bool = False,
+        say_it_url: str = "",
         hide: bool | None = None,
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
@@ -818,6 +824,11 @@ class NameCard(_Menu):
             # thread's five buttons, made the card fail to build (#2339: "item would not fit at
             # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
+        if say_it_url:  # the DM's private card only: opens the name on the website (#2580)
+            try:  # placed wherever there is room; a card that is full simply goes without it
+                self.add_item(discord.ui.Button(label=all_names.SAY_IT, url=say_it_url))
+            except ValueError:
+                log.info("No room on a name card for the Say it link")
 
     async def _book(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.book_link import show_picker

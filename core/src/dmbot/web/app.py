@@ -62,6 +62,7 @@ from dmbot.web import (
     sessions,
     shared_recaps,
     sharing,
+    sheets,
     strays,
     support,
     timeline,
@@ -2382,6 +2383,66 @@ def create_app(
             return await rule_sharing.read_action(db, session, ref, answer, now=clock())
         except RecapError as err:
             status, detail = sharing_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    sheet_refusals = {
+        **setting_refusals,
+        "bad_action": (400, "bad_action"),
+        "bad_link": (400, "bad_link"),
+        "not_allowed": (403, "not_allowed"),
+        "too_soon": (429, "too_soon"),
+        "read_too_soon": (429, "read_too_soon"),
+        "queue_full": (429, "queue_full"),
+    }
+
+    @app.get("/me/campaigns/{ref}/sheets")
+    async def me_campaign_sheets(ref: str, signed: Signed) -> dict[str, Any]:
+        """The character sheets the person may see in a campaign (#2816): a player's own
+        characters' sheets, and for a DM every sheet, read only. A bad address or a server the
+        person isn't in is 404. 404 while DMBOT_WEB_SHEETS is off."""
+        session, _token = signed
+        if not settings.sheets_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await sheets.read_sheets(db, session, ref)
+        except RecapError as err:
+            status, detail = sheet_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/sheets/{entity}", status_code=202)
+    async def me_campaign_sheets_do(
+        ref: str, entity: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One sheet choice, queued for the bot (#2816): a player links their character's D&D
+        Beyond sheet (`link`, with the character's link) or forgets it (`forget`); a DM asks for
+        the campaign's sheets to be read again (`read_again`, on the address's `-`). The bot
+        fetches and applies it, checking again who plays the character. Polled at
+        `.../sheets/answers/{answer}`. 404 while DMBOT_WEB_SHEETS is off."""
+        session, _token = signed
+        if not settings.sheets_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            answer = await sheets.queue_action(db, session, ref, entity, body)
+        except RecapError as err:
+            status, detail = sheet_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": answer}
+
+    @app.get("/me/campaigns/{ref}/sheets/answers/{answer}")
+    async def me_campaign_sheets_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the signed-in person's own sheet choice stands, in the shared progress shape
+        (#2816)."""
+        session, _token = signed
+        if not settings.sheets_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await sheets.read_action(db, session, ref, answer, now=clock())
+        except RecapError as err:
+            status, detail = sheet_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/shared-rules")

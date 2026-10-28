@@ -463,7 +463,7 @@ class Buttons(base.UsageTest):
         with patch.object(self.campaigns, "import_backup", new=AsyncMock()) as restore:
             await choice.restore(it, None)
         restore.assert_not_awaited()
-        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], "Restoring…")
+        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], cmds.RESTORING)
         self.assertIn("Your plan has ended", it.edit_original_response.await_args.kwargs["content"])
 
     async def test_a_co_dm_may_replace_their_paid_owners_campaign(self) -> None:
