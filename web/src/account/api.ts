@@ -1492,6 +1492,47 @@ interface WebAnswer {
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
 
+/** One character's sheet as the page shows it (#2816): names and numbers only, the link to the player and the DMs. */
+export interface SheetCharacter {
+  entityId: string;
+  name: string;
+  /** True for the character the person plays. */
+  mine: boolean;
+  /** Where the sheet came from: a D&D Beyond link, or typed in; null when there is none. */
+  source: "dndbeyond" | "typed" | null;
+  /** The link, for the player and the campaign's DMs only; null when there isn't one. */
+  url: string | null;
+  fetchedAt: number | null;
+  summary: {
+    species: string | null;
+    level: number | null;
+    classes: { name: string; level: number; subclass: string | null }[];
+    maxHp: number | null;
+    ac: number | null;
+  } | null;
+}
+
+export interface CharacterSheets {
+  /** True for the campaign's DMs, who see every sheet and only read them. */
+  isDm: boolean;
+  sheets: SheetCharacter[];
+}
+
+/** One choice on a character sheet (#2816): a player links or forgets their own; a DM reads them again. */
+export type SheetChoice = { action: "link"; url: string } | { action: "forget" } | { action: "read_again" };
+
+/** Where a sheet choice stands, in the shared progress shape (#2816). */
+export interface SheetAnswer {
+  state: "waiting" | "working" | "done" | "failed" | "running" | "stalled";
+  stage: string;
+  action: string;
+  entityId: string;
+  error: string | null;
+  progress?: JobProgress | null;
+  startedAt?: number | null;
+  updatedAt?: number | null;
+}
+
 /** One NPC's page, as the players see it, plus the caller's own note (#2266). */
 export interface NpcPage {
   id: string;
@@ -1984,6 +2025,12 @@ export interface AccountApi {
   /** The campaign's game masters (#2768), for its game masters. Missing from an API older than that. A change is
    * sent with `setCampaignSetting({setting: "co_dm", value: <userId>, on})`. */
   campaignGameMasters?(campaignRef: string): Promise<GameMasters>;
+  /** The character sheets the person may see in a campaign (#2816): their own, and for a DM all of them, read only. */
+  campaignSheets?(campaignRef: string): Promise<CharacterSheets>;
+  /** One sheet choice (#2816), queued for the bot: returns the answer's id to poll. `entity` is "-" for a DM's read again. */
+  chooseSheet?(campaignRef: string, entity: string, choice: SheetChoice): Promise<string>;
+  /** Where one of the person's own sheet choices stands (#2816). */
+  sheetAnswer?(campaignRef: string, answer: string): Promise<SheetAnswer>;
   /** Who can be offered as a game master, searched by name (#2768): at most 25, members who agreed to be recorded. */
   campaignGameMasterCandidates?(campaignRef: string, query: string): Promise<GameMasterCandidate[]>;
   /** Where a choice sent with `setCampaignSetting` stands. */
@@ -2643,6 +2690,22 @@ export function httpApi(
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
     campaignGameMasters: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters`)) as GameMasters,
+    campaignSheets: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets`)) as CharacterSheets,
+    chooseSheet: async (campaignRef, entity, choice) => {
+      const queued = (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/${encodeURIComponent(entity)}`,
+        choice,
+      )) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      return queued.answer;
+    },
+    sheetAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/answers/${encodeURIComponent(answer)}`,
+      )) as SheetAnswer,
     campaignGameMasterCandidates: async (campaignRef, query) =>
       (
         (await call(
