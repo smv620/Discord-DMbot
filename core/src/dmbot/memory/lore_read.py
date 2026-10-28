@@ -103,11 +103,11 @@ NAMES
 
 RELATIONSHIPS
 - Ysolde Marrow — is a member of (associated with) — Lantern League | quote: "Ysolde Marrow, a scout associated with the Lantern League"
-- Ysolde Marrow — serves — Orrin Dace | quote: "serves Captain Orrin Dace and lives in Ravenmoor"
-- Ysolde Marrow — lives in — Ravenmoor | quote: "serves Captain Orrin Dace and lives in Ravenmoor"
+- Ysolde Marrow — serves — Orrin Dace | quote: "Ysolde Marrow, a scout associated with the Lantern League, serves Captain Orrin Dace"
+- Ysolde Marrow — lives in — Ravenmoor | quote: "Ysolde Marrow, a scout associated with the Lantern League, serves Captain Orrin Dace and lives in Ravenmoor"
 - Orrin Dace — mentors — Pell Wick | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane"
 - Orrin Dace — mentors — Sorrel Tane | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane"
-- Orrin Dace — founded — Lantern League | quote: "Sorrel Tane, and founded the Lantern League"
+- Orrin Dace — founded — Lantern League | quote: "Orrin Dace mentored two apprentices, Pell Wick and Sorrel Tane, and founded the Lantern League"
 
 Example 3. Input (a list of names, no relationships):
 <document>
@@ -492,15 +492,36 @@ def paragraphs(text: str) -> list[str]:
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])[\"'”’)\]]*\s+")
 
 
-def paragraph_gaps(text: str, listed: PlainList) -> list[tuple[str, list[str], int]]:
-    """The paragraphs with a sentence pass 1 skipped (#2854): `(paragraph, the listed names in it,
-    how many sentences)`, those with the most first. A sentence that holds two or more of the
-    listed names and has no relationship line between any two of them states something pass 1
-    did not write down (or is a sentence that connects them only by "his sister": asked again, and
-    the checks decide). Pass 1 stops early on a long document, so the skipped sentences cluster
-    where it stopped."""
+def _forms_and_ends(
+    listed: PlainList,
+) -> tuple[list[tuple[str, list[str]]], list[tuple[str, str]]]:
+    """Each listed name with the forms it is written in, and the relationship lines' ends as the
+    keys of the MAIN names they stand for (a line that wrote "the Fox" for Mira counts for Mira;
+    a form two names share stands for neither)."""
     forms = [(line_name(x), name_forms(x)) for x in listed.names]
-    ends = [e for e in (line_ends(x) for x in listed.links) if e is not None]
+    owner: dict[str, set[str]] = {}
+    for name, alt in forms:
+        for form in alt:
+            owner.setdefault(name_key(form), set()).add(name_key(name))
+    main = {k: next(iter(v)) for k, v in owner.items() if len(v) == 1}
+    ends: list[tuple[str, str]] = []
+    for line in listed.links:
+        pair = line_ends(line)
+        if pair is not None:
+            a, b = (main.get(name_key(e), name_key(e)) for e in pair)
+            ends.append((a, b))
+    return forms, ends
+
+
+def paragraph_gaps(text: str, listed: PlainList) -> list[tuple[str, list[str], int]]:
+    """The paragraphs with a sentence pass 1 skipped through (#2854): `(paragraph, the listed names
+    in it, how many sentences)`, those with the most first. A sentence that holds n listed names
+    states at least n - 1 relationships (a mentor with two named apprentices, three names, two
+    lines); one with fewer relationship lines between its names than that was probably skipped
+    through, or connects them only by "his sister" (asked again, and the checks decide). Pass 1
+    stops early on a long document, so the skipped sentences cluster where it stopped. Pure and
+    slow on a large text: run it in a thread."""
+    forms, ends = _forms_and_ends(listed)
     gaps: list[tuple[str, list[str], int]] = []
     for para in paragraphs(text):
         here = [name for name, alt in forms if name and bg.names_in(para, alt)]
@@ -508,10 +529,11 @@ def paragraph_gaps(text: str, listed: PlainList) -> list[tuple[str, list[str], i
             continue
         missed = 0
         for sentence in _SENTENCE_BREAK.split(para):
-            keys = {name_key(name) for name, alt in forms if name and bg.names_in(sentence, alt)}
-            if len(keys) >= 2 and not any(
-                name_key(a) in keys and name_key(b) in keys for a, b in ends
-            ):
+            keys = {name_key(n) for n, alt in forms if n and bg.names_in(sentence, alt)}
+            if len(keys) < 2:
+                continue
+            found = {(a, b) for a, b in ends if a in keys and b in keys}
+            if len(found) < len(keys) - 1:
                 missed += 1
         if missed:
             gaps.append((para, here, missed))
@@ -521,13 +543,12 @@ def paragraph_gaps(text: str, listed: PlainList) -> list[tuple[str, list[str], i
 
 def link_counts(text: str, listed: PlainList) -> str:
     """How many paragraphs have 0, 1, 2 and 3 or more relationship lines of the listed names, for
-    the log: counts only, never a word of the text (#2854)."""
-    forms = [(line_name(x), name_forms(x)) for x in listed.names]
-    ends = [e for e in (line_ends(x) for x in listed.links) if e is not None]
+    the log: counts only, never a word of the text (#2854). Slow on a large text: in a thread."""
+    forms, ends = _forms_and_ends(listed)
     buckets = [0, 0, 0, 0]
     for para in paragraphs(text):
         keys = {name_key(name) for name, alt in forms if name and bg.names_in(para, alt)}
-        found = sum(1 for a, b in ends if name_key(a) in keys and name_key(b) in keys)
+        found = sum(1 for a, b in ends if a in keys and b in keys)
         buckets[min(found, 3)] += 1
     return "/".join(map(str, buckets))
 
@@ -544,7 +565,7 @@ async def _ask_paragraph(
         ai,
         second_look_instructions(own),
         second_look_request(paragraph, names[:SECOND_LOOK_NAMES]),
-        OUTPUT_FLOOR,
+        min(OUTPUT_FLOOR, max_output(str(getattr(ai, "model", ""))) or OUTPUT_FLOOR),
     )
     return reply
 
@@ -566,8 +587,8 @@ async def _second_look(
     to pass the same checks in pass 2, so nothing is believed because it was asked for. A call
     that fails leaves the list as it was. Counts only in the log."""
     stats.lonely = len(lonely_names(listed))
-    stats.paragraph_lines_before = link_counts(text, listed)
-    gaps = paragraph_gaps(text, listed)[:PARAGRAPH_LOOKS]
+    stats.paragraph_lines_before = await asyncio.to_thread(link_counts, text, listed)
+    gaps = (await asyncio.to_thread(paragraph_gaps, text, listed))[:PARAGRAPH_LOOKS]
     stats.paragraphs_asked = len(gaps)
     if not gaps:
         stats.paragraph_lines_after = stats.paragraph_lines_before
@@ -577,8 +598,21 @@ async def _second_look(
     tasks = [
         asyncio.ensure_future(_ask_paragraph(ai, own, gate, para, names)) for para, names, _ in gaps
     ]
+
+    def _one_back(task: asyncio.Future[Any]) -> None:
+        if tick is not None and not task.cancelled() and task.exception() is None:
+            tick(stats.read_calls + 1 + sum(1 for t in tasks if t.done() and not t.cancelled()))
+
+    for task in tasks:
+        task.add_done_callback(_one_back)
     try:
-        _, pending = await asyncio.wait(tasks, timeout=budget_s)  # the rest of pass 1's time
+        # (an out-of-funds answer stops the rest at once: they would only be paid for in vain)
+        done, pending = await asyncio.wait(
+            tasks, timeout=budget_s, return_when=asyncio.FIRST_EXCEPTION
+        )
+        for task in done:
+            if not task.cancelled() and isinstance(task.exception(), AIOutOfFunds):
+                raise task.exception()  # type: ignore[misc]
     finally:
         for task in tasks:
             if not task.done():
@@ -591,8 +625,10 @@ async def _second_look(
         failure = task.exception()
         if isinstance(failure, AIOutOfFunds):
             raise failure
-        if failure is not None:  # (an AI error: this paragraph keeps what pass 1 had)
+        if isinstance(failure, AIError):  # (this paragraph keeps what pass 1 had)
             continue
+        if failure is not None:
+            raise failure  # (a bug is not swallowed as if the AI had failed)
         reply = task.result()
         stats.second_calls += 1
         if reply.cut:
@@ -606,7 +642,7 @@ async def _second_look(
     stats.extra_links = len(joined) - len(listed.links)
     listed.links = joined
     stats.links_listed = len(joined)  # the "found" count of the summary includes these lines
-    stats.paragraph_lines_after = link_counts(text, listed)
+    stats.paragraph_lines_after = await asyncio.to_thread(link_counts, text, listed)
 
 
 async def _shape(

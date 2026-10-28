@@ -16,6 +16,7 @@ own text and names, and what comes back reaches the end as a relationship.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import unittest
@@ -246,3 +247,82 @@ class TheParagraphs(unittest.TestCase):
         )
         gaps = lr.paragraph_gaps("The Fox once met Aldric on the road.", listed)
         self.assertEqual([(g[1], g[2]) for g in gaps], [(["Mira", "Aldric"], 1)])
+
+
+class TheGapRules(unittest.TestCase):
+    def test_three_names_in_a_sentence_with_one_line_is_a_gap(self) -> None:
+        listed = lr.PlainList(
+            names=["- Orrin | person", "- Pell | person", "- Sorrel | person"],
+            links=['- Orrin — mentors — Pell | quote: "x"'],
+        )
+        gaps = lr.paragraph_gaps("Orrin mentored two apprentices, Pell and Sorrel.", listed)
+        self.assertEqual([g[2] for g in gaps], [1])
+        listed.links.append('- Orrin — mentors — Sorrel | quote: "x"')
+        self.assertEqual(
+            lr.paragraph_gaps("Orrin mentored two apprentices, Pell and Sorrel.", listed), []
+        )
+
+    def test_a_line_written_with_an_other_name_counts_for_the_main_name(self) -> None:
+        listed = lr.PlainList(
+            names=["- Mira | person | other names: the Fox", "- Aldric | person"],
+            links=['- the Fox — knows — Aldric | quote: "x"'],
+        )
+        self.assertEqual(lr.paragraph_gaps("Mira, the Fox, met Aldric on the road.", listed), [])
+
+
+class TheSecondLookStops(unittest.IsolatedAsyncioTestCase):
+    NAMES = "NAMES\n- Mira | person\n- Brother Aldric | person\n- Greyfen Abbey | place\n"
+
+    async def test_out_of_funds_cancels_the_other_paragraphs_calls(self) -> None:
+        from dmbot.ai import AIOutOfFunds
+
+        text = "\n".join(
+            f"Mira met Brother Aldric at Greyfen Abbey, {n}. " + "Filler. " * 200 for n in range(5)
+        )
+        started = 0
+        finished = 0
+
+        async def complete(
+            system: str, text_: str, *, max_tokens: int, schema: Any = None
+        ) -> Reply:
+            nonlocal started, finished
+            if schema is not None:
+                return Reply(json.dumps({"names": [], "connections": []}), False)
+            if "SECOND LOOK" not in system:
+                return Reply(self.NAMES, False)
+            started += 1
+            if started == 1:
+                raise AIOutOfFunds("no credit")
+            await asyncio.sleep(5)
+            finished += 1
+            return Reply("RELATIONSHIPS\n", False)
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        with self.assertRaises(AIOutOfFunds):
+            await lr.read_lore(fake, fake, text, {}, Gate())
+        self.assertEqual(finished, 0)  # (none of the others ran to the end)
+
+    async def test_a_bug_in_a_call_is_not_swallowed_as_an_ai_failure(self) -> None:
+        text = "Mira met Brother Aldric at Greyfen Abbey. " + "Filler about nothing. " * 80
+
+        async def complete(
+            system: str, text_: str, *, max_tokens: int, schema: Any = None
+        ) -> Reply:
+            if schema is not None:
+                return Reply(json.dumps({"names": [], "connections": []}), False)
+            if "SECOND LOOK" not in system:
+                return Reply(self.NAMES, False)
+            raise KeyError("a bug")
+
+        fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
+        with self.assertRaises(KeyError):
+            await lr.read_lore(fake, fake, text, {}, Gate())
+
+    async def test_progress_is_told_as_each_paragraph_comes_back(self) -> None:
+        told: list[tuple[str, int, int]] = []
+        fake = model()
+        await lr.read_lore(
+            fake, fake, DOCUMENT, {}, Gate(), progress=lambda s, d, t: told.append((s, d, t))
+        )
+        reading = [d for s, d, _ in told if s == "reading"]
+        self.assertGreater(len(reading), 2)  # (the first call, then one beat per paragraph back)

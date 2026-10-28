@@ -139,6 +139,26 @@ class TheExamples(unittest.TestCase):
         ):
             self.assertIn(rule, prompt)
 
+    def test_every_example_quote_is_in_its_document_and_holds_both_ends(self) -> None:
+        """What the prompt teaches must pass the checks it is taught for (#2854 review)."""
+        for block in lr.EXAMPLES.split("Example ")[1:]:
+            document = block.split("<document>", 1)[1].split("</document>", 1)[0]
+            listed = lr.parse_plain(block.split("Output:\n", 1)[1])
+            for line in listed.links:
+                ends = lr.line_ends(line)
+                assert ends is not None
+                quote = line.split('quote: "', 1)[1].rsplit('"', 1)[0]
+                self.assertIn(quote, document)
+                self.assertLessEqual(len(quote.split()), bg.QUOTE_WORDS)
+                for end in ends:  # (the name, or one of the other names the list gives it)
+                    forms = [end]
+                    for name_line in listed.names:
+                        if lr.line_name(name_line) == end:
+                            forms = lr.name_forms(name_line)
+                    self.assertTrue(
+                        any(f.casefold() in quote.casefold() for f in forms), (line, end)
+                    )
+
     def test_the_third_example_gives_several_lines_for_one_sentence(self) -> None:
         third = lr.EXAMPLES.split("Example 2.", 1)[1].split("Example 3.", 1)[0]
         listed = lr.parse_plain(third.split("Output:\n", 1)[1])
