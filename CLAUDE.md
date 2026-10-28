@@ -57,13 +57,14 @@ CI runs all of the above on every pull request. Never merge red CI.
   (same patch-id), RepoManager pushes it and merges on green CI with no new approval or
   author round-trip. A conflict whose resolution touches the PR's own logic goes back to
   the author and needs a fresh "approved".
-  **The migration-list union** (Supervisor, 2026-10-16, after #1539 went dirty on #1536): two
-  PRs that each add a migration conflict only in `schema.py`'s `MIGRATIONS` list (and the
-  constants next to it). RepoManager resolves it as the union, both entries in number order,
-  where its permissions allow a push to the PR's branch; where they refuse, the author merges
-  `development` and keeps both entries. Either way the approval carries over as a merge-only
-  refresh (`git log --no-merges OLD..NEW ^origin/development` empty and the merge commit writes
-  no new line). **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
+  **Migrations are one file each** (Supervisor, 2026-10-16, replaced by #2127 with the split into
+  files): a migration is `core/src/dmbot/migrations/NNNN_name.py` with its `SQL` and, if it adds
+  them, the web role functions, isolated tables and routing tables it registers, so two PRs that
+  each add a migration no longer touch the same lines and no union is needed. Two files with one
+  number fail a test (claim the number on #2475). A PR written before the split moves its
+  constant and registrations into a new file when it merges `development`; that is mechanical,
+  and the approval carries over as a merge-only refresh (`git log --no-merges OLD..NEW
+  ^origin/development` empty). **The same union for What's new** (Supervisor, 2026-10-21, after #2273 and #2280
   were held by it): when both sides only add entries to `web/src/content/whats-new.ts` (`entries` or
   `held`) and its test's expected lists, RepoManager resolves it as the union, keeping every entry
   whole in the file's order, and the approval carries over the same way. Since #2469 (2026-10-23)
