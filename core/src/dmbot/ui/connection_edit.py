@@ -20,6 +20,7 @@ from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.who_resolve import checked_line
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import all_names, logic
 from dmbot.ui.dmbot_commands import (
@@ -158,6 +159,7 @@ async def show_one(
         + (" 🤫" if found.relation.secret else " 🙈" if found.relation.unrevealed else "")
         + (" 📌" if found.pinned else "")
         + "\n"
+        + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
         + (
             "Change the words, hide it, or remove it."
             if found.secrets

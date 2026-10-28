@@ -34,12 +34,12 @@ afterEach(() => {
 const draft = mockRecaps()[0]!;
 const calls = (api: unknown, start: string): string[] => (api as { calls: string[] }).calls.filter((c) => c.startsWith(start));
 
-async function open(text = draft.text) {
+async function open(text = draft.text, ending = "") {
   live.on = true;
   const api = mockApi("table");
   const blocked = vi.fn();
   const fix = vi.fn();
-  const view = render(<RecapPlotCheck api={api} refId={draft.ref} text={text} onBlocked={blocked} onFix={fix} />);
+  const view = render(<RecapPlotCheck api={api} refId={draft.ref + ending} text={text} onBlocked={blocked} onFix={fix} />);
   await screen.findByRole("heading", { name: w.heading });
   return { api, blocked, fix, view };
 }
@@ -132,6 +132,38 @@ describe("the plot check", () => {
     expect(await within(issue(1)).findByText(/changed while it was being saved/, undefined, { timeout: 8000 })).toBeTruthy();
   }, 30_000);
 
+  it("says the hour is full, keeps the message, and sends nothing more (#2774)", async () => {
+    const { api } = await open(draft.text, ".hour-full");
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+    const box = within(issue(1)).getByLabelText(w.chatLabel) as HTMLTextAreaElement;
+    fireEvent.input(box, { target: { value: "He was raised." } });
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
+    const alert = await within(issue(1)).findByText(w.problem["hour-full"]!);
+    expect(alert.textContent).toBe("PlotBot has answered a lot this hour. Try again in an hour.");
+    expect(box.value).toBe("He was raised."); // the message stays, so it can be sent again
+    expect(calls(api, "plotChatSend")).toHaveLength(1);
+    expect(screen.queryByText(w.problem["too-soon"]!)).toBeNull(); // not the "talked enough" words
+  });
+
+  it("shows a plain sentence from the API as it is, for a message PlotBot never answered (#2774)", async () => {
+    await open();
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+    fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "silent please" } });
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
+    expect(await within(issue(1)).findByText("PlotBot didn't answer. Ask it again.", undefined, { timeout: 8000 })).toBeTruthy();
+    expect(within(issue(1)).queryByText(w.chatFailed.failed!)).toBeNull(); // not mapped as a code
+  }, 15_000);
+
+  it("shows a Save that timed out with the API's sentence (#2774)", async () => {
+    await open(draft.text, ".timed-out");
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.answerFor(w.answers.talk, 1) }));
+    fireEvent.input(within(issue(1)).getByLabelText(w.chatLabel), { target: { value: "He was raised." } });
+    fireEvent.click(within(issue(1)).getByRole("button", { name: w.chatSend }));
+    const save = await within(issue(1)).findByRole("button", { name: new RegExp(`^${w.save}:`) }, { timeout: 8000 });
+    fireEvent.click(save);
+    expect(await within(issue(1)).findByText("PlotBot didn't save this in time. Ask it again.", undefined, { timeout: 8000 })).toBeTruthy();
+  }, 30_000);
+
   it("offers no talk when the talk calls are missing", async () => {
     live.on = true;
     const api = mockApi("table");
@@ -221,6 +253,7 @@ describe("the real client", () => {
     [409, "stale", "stale"],
     [409, "plot_open", "plot-open"],
     [429, "too_soon", "too-soon"],
+    [429, "hour_full", "hour-full"],
     [409, "not_allowed", "not-allowed"],
   ])("reads %s %s as %s", async (status, code, kind) => {
     const api = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: code }), { status })) as typeof fetch);

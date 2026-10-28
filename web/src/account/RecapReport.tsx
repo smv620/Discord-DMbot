@@ -234,6 +234,14 @@ export default function RecapReport({ api, campaignRef, sessionAt }: { api: Acco
           )}
         </div>
       )}
+      {report && report.state !== "failed" && report.state !== "making" && report.lastRequest?.state === "failed" && (
+        <div class="stack">
+          <p role="status">{w.lastFailed}</p>
+          <button type="button" class="button secondary" disabled={busy === "make"} aria-busy={busy === "make"} onClick={() => void make()}>
+            {w.makeAgain}
+          </button>
+        </div>
+      )}
       {report?.state === "ready" && <Ready report={report} busy={busy} onAnswer={answer} campaignRef={campaignRef} />}
     </section>
   );
