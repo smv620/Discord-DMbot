@@ -138,11 +138,12 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pick.candidates, ("Mara", "Bram"))  # (never the named end, Ken)
         self.assertEqual(pick.word, "She")
 
-    def test_a_doubt_with_only_one_name_to_offer_is_counted_not_guessed(self) -> None:
+    def test_a_doubt_with_only_one_name_to_offer_asks_with_that_name_and_someone_else(self) -> None:
         out = who_resolve.Settled()
         who_resolve._use(unsettled_of(), asked(("Mara", 50), (NOT_LISTED, 30), checked=False), out)
-        self.assertEqual((out.picks, out.connections, out.unresolved), ([], [], 1))
-        self.assertEqual(out.counts["unsure"], 1)
+        (pick,) = out.picks
+        self.assertEqual((pick.candidates, out.unresolved, out.unnamed), (("Mara",), 0, []))
+        self.assertEqual(out.counts["asked"], 1)
 
     def test_someone_not_listed_keeps_the_relationship_with_an_unnamed_person(self) -> None:
         out = who_resolve.Settled()
@@ -284,14 +285,61 @@ class ThePath(NamesTest):
         self.assertEqual(label, "someone (name unknown)")
         self.assertFalse(entity.hidden_from_players)
 
-    async def test_two_pronouns_for_nobody_in_one_read_are_one_unnamed_person(self) -> None:
-        lost: Counter[str] = Counter()
+    async def test_two_pronouns_for_nobody_are_two_people_never_one_invented_one(self) -> None:
         await ui_bg.queue_links(
-            self.bot, self.memory, self.campaign, [], [[]], set(), dropped=lost,
+            self.bot, self.memory, self.campaign, [], [[]], set(),
             unsettled=[unsettled_of(), unsettled_of()],
             who_ai=Scripted([(NOT_LISTED, 95)], NOT_LISTED),
         )  # fmt: skip
+        self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 2)
+
+    async def test_the_same_real_descriptor_in_one_read_is_one_person(self) -> None:
+        link = who_resolve.UnnamedLink(
+            "Ken", False, "knows", "q", "", "a hooded figure", False, "knows"
+        )
+        rows = await ui_bg._unnamed_rows(
+            self.memory, self.campaign, [link, link], lambda n: self.ken, False, "", Counter()
+        )
+        self.assertEqual(len({r.subject_id for r in rows}), 1)
         self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 1)
+
+    async def test_the_check_off_changes_nothing_but_the_one_count(self) -> None:
+        queued, lost = await self.run_links(None)
+        self.assertEqual((queued, dict(lost)), (0, {"not_in_text": 1}))
+
+    async def test_a_doubt_with_one_name_is_a_question_with_someone_else(self) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual([name for _, name in q.candidates], ["Mara"])
+        view = ui_bg.WhichOffer(self.campaign.id)
+        self.assertTrue(await view.load(self.it()))
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertIn("🙋 Someone else", labels)
+
+    async def test_a_second_press_on_someone_else_leaves_one_person_and_one_connection(
+        self,
+    ) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        first, second = ui_bg.WhichOffer(self.campaign.id), ui_bg.WhichOffer(self.campaign.id)
+        await first.load(self.it())
+        await second.load(self.it())
+        with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
+            await first.children[-2].callback(self.it())
+            await second.children[-2].callback(self.it())
+        self.assertEqual(len(await self.memory.unnamed(GUILD, self.campaign.id)), 1)
+        self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+
+    async def test_a_full_queue_leaves_no_orphan_person_and_the_question_waits(self) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        view = ui_bg.WhichOffer(self.campaign.id)
+        await view.load(self.it())
+        with (
+            patch("dmbot.memory.backstory_links.MAX_WAITING", 0),
+            patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()),
+        ):
+            await view.children[-2].callback(self.it())
+        self.assertEqual(await self.memory.unnamed(GUILD, self.campaign.id), [])
+        self.assertEqual(len(await self.store.which_waiting(GUILD, self.campaign.id)), 1)
 
     async def test_none_of_these_for_a_pronoun_keeps_the_connection_with_an_unnamed_person(
         self,
@@ -302,7 +350,7 @@ class ThePath(NamesTest):
         await self.run_links(Scripted([("Mara", 55), ("Bram", 45)], "Bram"))
         view = ui_bg.WhichOffer(self.campaign.id)
         self.assertTrue(await view.load(self.it()))
-        self.assertEqual([b.label for b in view.children][-2], "🙋 Someone else")
+        self.assertEqual([getattr(b, "label", "") for b in view.children][-2], "🙋 Someone else")
         with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
             await view.children[-2].callback(self.it())
         self.assertEqual(await self.store.which_waiting(GUILD, self.campaign.id), [])

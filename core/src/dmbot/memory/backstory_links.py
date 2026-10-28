@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
@@ -186,15 +187,22 @@ class BackstoryLinks:
             row = await cur.fetchone()
             room = max(0, MAX_WHICH - int(row["n"] if row else 0))
             for w in rows:
-                if added >= room or len(set(w.candidates)) < 2:
+                if added >= room or len(set(w.candidates)) < (1 if is_pronoun(w.word) else 2):
                     continue
+                candidates = list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES]
+                if len(candidates) < 2:
+                    # A pronoun's question with one name ("Mara, or someone else", #2790): the table
+                    # wants two, so the question's own named end fills the second place. It is never
+                    # offered (a candidate that is the other end is skipped when the question is
+                    # read), so the DM sees one name and "Someone else".
+                    candidates.append(w.other_id)
                 cur = await conn.execute(
                     "INSERT INTO backstory_which (guild_id, campaign_id, other_id,"
                     " other_is_subject, predicate, word, candidates, quote, secret, detail, truth,"
                     " upload, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
                     " %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, w.other_id, w.other_is_subject, w.predicate,
-                     w.word[:80], list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES],
+                     w.word[:80], candidates,
                      w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now),
                 )  # fmt: skip
                 added += cur.rowcount
@@ -228,7 +236,8 @@ class BackstoryLinks:
                     end = self._end(entities, candidate)
                     if end is not None and entities[end]["status"] != "rejected" and end != other:
                         live[end] = str(entities[end]["name"])
-                if other is None or entities[other]["status"] == "rejected" or len(live) < 2:
+                needs = 1 if is_pronoun(str(r["word"])) else 2  # (+ "Someone else", #2790)
+                if other is None or entities[other]["status"] == "rejected" or len(live) < needs:
                     drop.append(str(r["id"]))
                     continue
                 out.append(

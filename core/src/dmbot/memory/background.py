@@ -26,7 +26,7 @@ from dmbot.memory import kin
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import FALLBACK_PREDICATE
-from dmbot.memory.pronouns import speaker_end
+from dmbot.memory.pronouns import PRONOUNS, speaker_end
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.names import not_names
 from dmbot.word_end import at_word_end
@@ -313,12 +313,6 @@ def _variant(haystack: str, name: str, cache: dict[str, str | None]) -> str | No
     return cache[key]
 
 
-# The words that stand for a name already said (#2757): a quote is widened to the sentence before
-# only when it has one, so a quote that merely sits near a name never borrows it.
-PRONOUNS = frozenset(
-    {"he", "she", "his", "her", "hers", "him", "himself", "herself", "they", "their", "theirs",
-     "them", "its", "who", "whose", "whom"}
-)  # fmt: skip
 _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
 # Every way a document ends a paragraph or a line, not only "\n" (a pasted text may use the
 # Unicode separators).

@@ -52,6 +52,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import ACTIVE, check_named
+from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
@@ -912,23 +913,22 @@ async def queue_links(
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
-    room = max(0, bg.MAX_CONNECTIONS - len(rows))
-    if len(settled.unnamed) > room and dropped is not None:
-        dropped["over_cap"] += len(settled.unnamed) - room  # (counted; no entry is made for them)
-    rows += await _unnamed_rows(
-        memory, campaign, settled.unnamed[:room], entry, truth, upload, dropped
-    )
-    seen_rows: set[tuple[str, str, str]] = set()
-    unique: list[NewLink] = []
-    for r in rows:  # (two lines about one unnamed person are one row)
-        row_key = (r.subject_id, r.predicate, r.object_id)
-        if row_key in seen_rows:
-            if dropped is not None:
-                dropped["same_pair"] += 1
-            continue
-        seen_rows.add(row_key)
-        unique.append(r)
-    rows = unique
+    if settled.unnamed:  # (nothing here runs when the check is off: the rows are as they were)
+        room = max(0, bg.MAX_CONNECTIONS - len(rows))
+        if len(settled.unnamed) > room and dropped is not None:
+            dropped["over_cap"] += len(settled.unnamed) - room  # (counted; no entry is made)
+        made_rows = await _unnamed_rows(
+            memory, campaign, settled.unnamed[:room], entry, truth, upload, dropped
+        )
+        held = {(r.subject_id, r.predicate, r.object_id) for r in rows}
+        for r in made_rows:  # (two lines about one unnamed person are one row)
+            row_key = (r.subject_id, r.predicate, r.object_id)
+            if row_key in held:
+                if dropped is not None:
+                    dropped["same_pair"] += 1
+                continue
+            held.add(row_key)
+            rows.append(r)
     if not rows:
         return 0
     # A connection already waiting from an earlier reading is not new: it is counted as such (and
@@ -972,7 +972,9 @@ async def _unnamed_rows(
                 what=u.what,
                 anchor_id=fixed if u.anchored else None,
                 role=u.role[: unnamed_mod.MAX_ROLE],
-                read=read,
+                # ("someone" is never joined to another "someone": two pronouns for nobody
+                # are two people unless the story gives a real shared descriptor)
+                read=None if u.what == who_resolve.SOMEONE else read,
             )
         except MemoryRuleError:  # an anchor that went away meanwhile, or no word: counted
             if dropped is not None:
@@ -999,7 +1001,7 @@ async def _queue_picks(
     for p in picks:
         fixed = entry(p.fixed)
         ids = tuple(dict.fromkeys(i for n in p.candidates if (i := entry(n)) is not None))
-        if fixed is None or len(ids) < 2:
+        if fixed is None or len(ids) < (1 if is_pronoun(p.word) else 2):
             if dropped is not None:
                 dropped["which_waiting"] -= 1
                 dropped["name_not_found"] += 1
@@ -1144,7 +1146,7 @@ class WhichOffer(_Menu):
 
     @staticmethod
     def _is_pronoun(w: WhichWaiting) -> bool:
-        return {bare(w.word).casefold()} <= bg.PRONOUNS
+        return is_pronoun(bare(w.word))
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -1220,9 +1222,12 @@ class WhichOffer(_Menu):
                 await self._show(interaction, now)  # it changed: carry on with what is there
                 return
             chosen = None if index is None else same.candidates[index][0]
+            batch: int | None = (
+                None  # the unnamed person made for "someone else", to undo if needed
+            )
             made = False
             if chosen is None and self._is_pronoun(same):
-                chosen = await self._unnamed_for(interaction, campaign, same)
+                chosen, batch = await self._unnamed_for(interaction, campaign, same)
                 made = chosen is not None
                 if chosen is None:  # nothing could be made: the question stays, nothing is lost
                     await _tell(interaction, "DMbot couldn't keep that one. It stays waiting.")
@@ -1230,6 +1235,13 @@ class WhichOffer(_Menu):
             result = await store.pick_which(
                 campaign.guild_id, campaign.id, same.id, chosen, outside=made
             )
+            if made and result != DONE and batch is not None:
+                # The entry was made first (the pick needs it to exist); a full queue or a question
+                # someone answered meanwhile must not leave it behind with no connection.
+                memory = _memory(interaction)
+                if memory is not None:
+                    with contextlib.suppress(MemoryRuleError):
+                        await memory.undo(campaign.guild_id, campaign.id, batch)
             if result == FULL:
                 await _tell(
                     interaction,
@@ -1249,12 +1261,13 @@ class WhichOffer(_Menu):
 
     async def _unnamed_for(
         self, interaction: discord.Interaction, campaign: Campaign, w: WhichWaiting
-    ) -> str | None:
+    ) -> tuple[str | None, int | None]:
         """The unnamed person for "none of these" (#2790): hung off the named end when the story
-        gave a family word, else "someone". None when it could not be made."""
+        gave a family word, else a new "someone" (never joined to another). Its id and the batch
+        that made it (None when it was already there); (None, None) when it could not be made."""
         memory = _memory(interaction)
         if memory is None:
-            return None
+            return None, None
         kin_word = w.predicate == "kin_of" and bool(w.detail)
         try:
             added = await memory.add_unnamed(
@@ -1265,8 +1278,8 @@ class WhichOffer(_Menu):
                 role=(w.detail or w.predicate)[: unnamed_mod.MAX_ROLE],
             )
         except MemoryRuleError:
-            return None
-        return added.entity.id
+            return None, None
+        return added.entity.id, added.batch if added.created else None
 
     async def _pick(self, index: int, interaction: discord.Interaction) -> None:
         await self._answer(interaction, index)

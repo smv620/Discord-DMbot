@@ -97,7 +97,7 @@ def _pick(u: bg.Unsettled, quote: str, names: Sequence[str]) -> bg.Pick | None:
             continue
         chosen.append(n)
     chosen = chosen[: bg.MAX_PICK_CHOICES]
-    if len(chosen) < 2:
+    if not chosen:  # (one name is enough: "🙋 Someone else" is always the other choice)
         return None
     return bg.Pick(
         _fixed(u), not u.missing_is_a, u.phrase, tuple(chosen), u.made.how, quote, False,
@@ -132,9 +132,9 @@ def _use(u: bg.Unsettled, asked: who_ask.Asked | None, out: Settled) -> None:
     # too far back to show in the quote): the DM decides between the names.
     order = [top, _missing(u), *ranked]
     pick = _pick(u, quote, order)
-    if pick is None:
+    if pick is None:  # (no name at all to offer: the relationship is kept with an unnamed person)
         out.counts["unsure"] += 1
-        out.unresolved += 1
+        out.unnamed.append(_unnamed(u, quote))
         return
     out.counts["asked"] += 1
     out.picks.append(pick)
