@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
+import discord
 import yarl
 from pypdf import PdfWriter
 
@@ -705,3 +706,96 @@ class Uploading(SyncTest):
             await self.form(raw, name).on_submit(it)
             self.assertIn(words, it.followup.send.await_args.args[0])
         self.assertEqual(self.bot.house_file_ai.calls, [])
+
+
+class WaitingOnAFileRead(SyncTest):
+    """The DM's wait for a file read shows its stage and ends with a plain result (#2564)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        hs._ai_busy.clear()
+        hs._ai_reads.clear()
+        self.bot.house_file_ai = FakeAI()
+        self.bot.plan_allows = AsyncMock(return_value=True)
+        file_ui._last.clear()
+
+    def message_interaction(self) -> tuple[Any, Any]:
+        it = self.interaction()
+        message = SimpleNamespace(edit=AsyncMock())
+        it.followup.send = AsyncMock(return_value=message)
+        return it, message
+
+    async def test_the_message_opens_then_ends_with_a_plain_result(self) -> None:
+        it, message = self.message_interaction()
+        async with file_ui._waiting(it) as waiting:
+            waiting.step(hs.STEP_FINDING)
+            self.assertIn(hs.STEP_FINDING, waiting.text())
+        self.assertEqual(it.followup.send.await_args.args[0], file_ui.READING)
+        self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
+
+    async def test_a_read_that_breaks_ends_with_a_plain_failure_and_still_raises(self) -> None:
+        it, message = self.message_interaction()
+        with self.assertRaises(RuntimeError):
+            async with file_ui._waiting(it):
+                raise RuntimeError("the file said secret words")
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.FAILED_READING)
+        self.assertNotIn("secret", str(message.edit.await_args_list))
+
+    async def test_a_message_that_cannot_be_sent_does_not_stop_the_read(self) -> None:
+        it = self.interaction()
+        it.followup.send = AsyncMock(
+            side_effect=discord.HTTPException(SimpleNamespace(status=500, reason="x"), "x")
+        )
+        ran = []
+        async with file_ui._waiting(it):
+            ran.append(1)
+        self.assertEqual(ran, [1])
+
+    async def test_a_file_the_code_cannot_read_by_itself_announces_the_slow_step(self) -> None:
+        steps: list[str] = []
+        self.bot.house_file_ai = FakeAI(
+            answer([one("Roll once.", "roll initiative once at the start of a fight")])
+        )
+        await hs.compare_text(
+            self.bot,
+            campaign(),
+            "We roll initiative once at the start of a fight and keep the order.",
+            self.send,
+            from_link=False,
+            progress=steps.append,
+        )
+        self.assertEqual(steps, [hs.STEP_FINDING])
+
+    async def test_a_numbered_file_has_no_slow_step(self) -> None:
+        steps: list[str] = []
+        await hs.compare_text(
+            self.bot,
+            campaign(),
+            "My table\n1. Roll initiative once.\n",
+            self.send,
+            from_link=False,
+            progress=steps.append,
+        )
+        self.assertEqual(steps, [])
+
+    async def test_an_uploaded_file_is_read_with_a_waiting_message_and_nothing_of_it_in_the_edits(
+        self,
+    ) -> None:
+        raw = docx("We roll initiative once at the start of a fight and keep the order. ZZPLANTED")
+        self.bot.house_file_ai = FakeAI(
+            answer([one("Roll once.", "roll initiative once at the start of a fight")])
+        )
+        it, message = self.message_interaction()
+        form = file_ui.UploadForm(campaign())
+        attachment = SimpleNamespace(
+            size=len(raw), filename="our-rules.docx", read=AsyncMock(return_value=raw)
+        )
+        form.file.component._values = [attachment]  # type: ignore[attr-defined]
+        await form.on_submit(it)
+        sent = [c.args[0] for c in it.followup.send.await_args_list]
+        self.assertEqual(sent[0], file_ui.READING)
+        self.assertTrue(any("I found 1 new house rule" in text for text in sent))
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
+        self.assertNotIn("ZZPLANTED", str(message.edit.await_args_list))
+        self.assertNotIn("ZZPLANTED", sent[0])

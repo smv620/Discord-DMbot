@@ -11,9 +11,11 @@ Sending the file is never worth failing the change for: a problem is logged and 
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import time
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import discord
@@ -23,6 +25,8 @@ from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_file, house_reader
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
+from dmbot.ui.name_background import message_is_gone
+from dmbot.waiting import WaitingMessage
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +133,49 @@ async def _dm_campaign(interaction: discord.Interaction, campaign: Campaign) -> 
     return current
 
 
+READING = "📄 Reading your house-rules file…"
+STEP_READING = "Step 1 of 2: getting the file and reading its words"
+STALL_AFTER_S = 90.0  # one AI call; nothing changing for this long is worth saying
+DONE_READING = "Done reading."
+FAILED_READING = "Stopped: DMbot couldn't finish reading the file. Nothing was changed. Try again."
+
+
+@contextlib.asynccontextmanager
+async def _waiting(interaction: discord.Interaction) -> AsyncIterator[WaitingMessage]:
+    """The DM's wait for a file read (#2564): one private message edited in place with the step,
+    how long it has been, and a stall line, ended with a plain result. Fixed words only: nothing of
+    the file can reach it. If the message can't be sent the read goes on without one."""
+    clicked = time.monotonic()
+    message: discord.WebhookMessage | None = None
+    try:
+        message = await interaction.followup.send(
+            READING, ephemeral=True, wait=True, allowed_mentions=NO_PINGS
+        )
+    except discord.HTTPException:
+        log.warning("Couldn't send the house-rules waiting message", exc_info=True)
+
+    async def show(text: str) -> None:
+        if message is not None:
+            await message.edit(content=text, allowed_mentions=NO_PINGS)
+
+    failed = False
+    try:
+        async with WaitingMessage(
+            show, READING, stall_after_s=STALL_AFTER_S, gone=message_is_gone, started=clicked
+        ) as waiting:
+            waiting.step(STEP_READING)
+            yield waiting
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        if message is not None:
+            with contextlib.suppress(discord.HTTPException):
+                await message.edit(
+                    content=FAILED_READING if failed else DONE_READING, allowed_mentions=NO_PINGS
+                )
+
+
 def _private_send(interaction: discord.Interaction) -> Any:
     """Offer the comparison as a private message (the same buttons as on the DM screen)."""
 
@@ -207,7 +254,14 @@ async def check_now(interaction: discord.Interaction, campaign: Campaign) -> Non
         return
     try:
         bot = _bot(interaction)
-        await house_sync.check_linked(bot, current, _private_send(interaction), quiet_if_same=False)
+        async with _waiting(interaction) as waiting:
+            await house_sync.check_linked(
+                bot,
+                current,
+                _private_send(interaction),
+                quiet_if_same=False,
+                progress=lambda words: waiting.step(words),
+            )
     finally:
         _done(current)
 
@@ -232,8 +286,7 @@ async def link_file(interaction: discord.Interaction, campaign: Campaign, link: 
     await _tell(
         interaction,
         f"✅ Connected: **{discord.utils.escape_markdown(saved.site)}**. DMbot will compare it "
-        "with your house rules every time you start a session. Reading it now, this can take "
-        "a minute…",
+        "with your house rules every time you start a session.",
     )
     await check_now(interaction, current)
 
@@ -289,19 +342,22 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
             await _tell(interaction, "DMbot couldn't download that file. Try again.")
             return
         try:
-            try:
-                text = await house_reader.read_file(attachment.filename, data)
-            except DocumentError as exc:  # a scanned PDF, an empty or damaged file: said plainly
-                await _tell(interaction, str(exc))
-                return
-            words = await house_sync.compare_text(
-                _bot(interaction),
-                current,
-                text,
-                _private_send(interaction),
-                from_link=False,
-                file_name=attachment.filename,
-            )
+            async with _waiting(interaction) as waiting:
+                words: str | None
+                try:
+                    text = await house_reader.read_file(attachment.filename, data)
+                except DocumentError as exc:  # a scanned PDF, an empty or damaged file
+                    words = str(exc)
+                else:
+                    words = await house_sync.compare_text(
+                        _bot(interaction),
+                        current,
+                        text,
+                        _private_send(interaction),
+                        from_link=False,
+                        file_name=attachment.filename,
+                        progress=lambda step: waiting.step(step),
+                    )
         finally:
             _done(current)
         if words:

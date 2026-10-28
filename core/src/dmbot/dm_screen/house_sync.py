@@ -108,6 +108,8 @@ LABELS = {
 }
 
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
+Progress = Callable[[str], None]  # told the words of the step that is starting (#2564)
+STEP_FINDING = "Step 2 of 2: finding the rules in it"
 
 
 def couldnt_read(why: str) -> str:
@@ -437,6 +439,7 @@ async def compare_text(
     from_link: bool,
     respect_ignore: bool = True,
     file_name: str | None = None,
+    progress: Progress | None = None,
 ) -> str | None:
     """Compare a file's text with the campaign's house rules and, if they differ, offer
     the buttons through `send`. Returns words for the DM when there is nothing to offer
@@ -459,7 +462,9 @@ async def compare_text(
                 bot, campaign, parsed, send, from_link, respect_ignore, file_name
             )
         return no_rules(len(parsed.problems))
-    return await _compare_found(bot, campaign, text, send, from_link, respect_ignore, file_name)
+    return await _compare_found(
+        bot, campaign, text, send, from_link, respect_ignore, file_name, progress
+    )
 
 
 async def _compare_numbered(
@@ -544,8 +549,10 @@ async def _compare_found(
     from_link: bool,
     respect_ignore: bool,
     file_name: str | None,
+    progress: Progress | None = None,
 ) -> str | None:
-    """A file that is not in the numbered format: one AI call lists its rules (#2377)."""
+    """A file that is not in the numbered format: one AI call lists its rules (#2377). `progress`
+    is told when the slow step starts, for the DM's waiting message (#2564)."""
     gid = campaign.guild_id
     allows = getattr(bot, "plan_allows", None)
     if allows is not None and not await allows("ai", gid, campaign):
@@ -570,6 +577,8 @@ async def _compare_found(
         return TOO_MANY_READS
     _ai_busy.add(gid)
     found = house_ai.Found(unread=True)
+    if progress is not None:
+        progress(STEP_FINDING)
     try:
         mine = await store.list(gid, campaign.id)
         found = await house_ai.read(
@@ -655,16 +664,29 @@ async def read_link(bot: Any, campaign: Campaign) -> tuple[str | None, str | Non
         return None, couldnt_read(str(exc))
 
 
-async def check_linked(bot: Any, campaign: Campaign, send: Send, *, quiet_if_same: bool) -> None:
+async def check_linked(
+    bot: Any,
+    campaign: Campaign,
+    send: Send,
+    *,
+    quiet_if_same: bool,
+    progress: Progress | None = None,
+) -> None:
     """Read the campaign's linked file and offer what differs. Says one short line when it
     can't be read; says nothing when there is no link or (at a session start) nothing to
-    change. Never raises."""
+    change. `progress` is for a DM waiting on a button (#2564). Never raises."""
     try:
         text, problem = await read_link(bot, campaign)
         words = problem
         if text is not None:
             words = await compare_text(
-                bot, campaign, text, send, from_link=True, respect_ignore=quiet_if_same
+                bot,
+                campaign,
+                text,
+                send,
+                from_link=True,
+                respect_ignore=quiet_if_same,
+                progress=progress,
             )
             if words == SAME and quiet_if_same:
                 words = None
