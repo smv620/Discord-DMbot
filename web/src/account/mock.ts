@@ -46,6 +46,9 @@ import type {
   CampaignPage,
   CampaignSettingAnswer,
   OptionalRules,
+  GameMaster,
+  GameMasterCandidate,
+  GameMasters,
   QueuedSetting,
   Timeline,
   WebRevealTarget,
@@ -91,6 +94,15 @@ const PRETEND_RULES = [
   { id: "pretend-bones", book: "A Pretend Guide", name: "Brittle bones", summary: "A hard fall can break a bone." },
   { id: "pretend-cart", book: "Another Pretend Book", name: "Carts and loads", summary: "A cart carries as much as the party can push." },
 ];
+
+/** Invented people for the pretend game masters (#2768): the first is the plan holder and the person looking. */
+const PRETEND_GAME_MASTERS: GameMaster[] = [{ userId: "100000000000000001", name: "Belleros", plan: true, you: true }];
+const PRETEND_MEMBERS: GameMasterCandidate[] = [
+  { userId: "200000000000000001", name: "Dana" },
+  { userId: "200000000000000002", name: "Eli" },
+  { userId: "200000000000000003", name: "Fay Merrow" },
+];
+const GAME_MASTERS_MAX = 5;
 
 const user: Person = { id: "100000000000000001", name: "Belleros" };
 
@@ -872,6 +884,13 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
 const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
   const ruleChoices = new Map<string, Map<string, boolean>>();
+  // The pretend game masters (#2768) by campaign: the plan holder, then whoever the game master adds.
+  const gameMasterLists = new Map<string, GameMaster[]>();
+  const gameMastersOf = (ref: string): GameMaster[] => {
+    const found = gameMasterLists.get(ref) ?? PRETEND_GAME_MASTERS.map((g) => ({ ...g }));
+    gameMasterLists.set(ref, found);
+    return found;
+  };
   const reachable = async (): Promise<void> => {
     if (scenario === "down") throw new ApiError("network");
   };
@@ -1648,6 +1667,30 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         : PRETEND_RULES.map((r) => ({ ...r, on: chosen.get(r.id) ?? true, changed: chosen.has(r.id) }));
       return { main: "2024 rules", rules, note: "", default: true };
     },
+    // A ref ending `.gm-failed` fails to save; `.gm-full` already has five; `.gm-nobody` has nobody to offer.
+    async campaignGameMasters(ref): Promise<GameMasters> {
+      calls.push(`campaignGameMasters:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
+      const list = gameMastersOf(ref);
+      if (/\.gm-full$/.test(ref))
+        while (list.length < GAME_MASTERS_MAX)
+          list.push({ userId: `3000000000000000${list.length}`, name: `Pretend DM ${list.length}`, plan: false, you: false });
+      return { max: GAME_MASTERS_MAX, gameMasters: list.map((g) => ({ ...g })) };
+    },
+    async campaignGameMasterCandidates(ref, query): Promise<GameMasterCandidate[]> {
+      calls.push(`campaignGameMasterCandidates:${ref}:${query}`);
+      await reachable();
+      signedIn();
+      if (/\.cp-none$/.test(ref)) throw new ApiError("not-found");
+      if (/\.cp-player$/.test(ref)) throw new ApiError("not-allowed");
+      if (/\.gm-nobody$/.test(ref)) return [];
+      const have = new Set(gameMastersOf(ref).map((g) => g.userId));
+      const q = query.trim().toLowerCase();
+      return PRETEND_MEMBERS.filter((m) => !have.has(m.userId) && (q === "" || m.name.toLowerCase().includes(q)));
+    },
     async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
       calls.push(`campaignSettingAnswer:${ref}:${answer}`);
       await reachable();
@@ -1660,8 +1703,30 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (/\.cs-late$/.test(ref) && (lateLooks.set(answer, (lateLooks.get(answer) ?? 0) + 1).get(answer) ?? 0) < 40)
         return { ...base, state: "waiting" };
       if (/\.cs-refused$/.test(ref)) return { ...base, state: "failed", error: "refused", note: "That limit is **not** allowed." };
-      if (/\.cs-failed$/.test(ref) || (asked.setting === "optional_rule" && /\.or-failed$/.test(ref)))
+      if (
+        /\.cs-failed$/.test(ref) ||
+        (asked.setting === "optional_rule" && /\.or-failed$/.test(ref)) ||
+        (asked.setting === "co_dm" && /\.gm-failed$/.test(ref))
+      )
         return { ...base, state: "failed", error: "failed" };
+      if (asked.setting === "co_dm") {
+        const list = gameMastersOf(ref);
+        const person = list.find((g) => g.userId === asked.value);
+        if (asked.on === true) {
+          const member = PRETEND_MEMBERS.find((m) => m.userId === asked.value);
+          if (person) return { ...base, state: "failed", error: "refused", note: `**${person.name}** is already a game master.` };
+          if (!member) return { ...base, state: "failed", error: "bad_value" };
+          if (list.length >= GAME_MASTERS_MAX)
+            return { ...base, state: "failed", error: "refused", note: `A campaign can have at most ${GAME_MASTERS_MAX} game masters. Remove one before adding another.` };
+          list.push({ userId: member.userId, name: member.name, plan: false, you: false });
+          return { ...base, state: "done", note: `**${member.name}** is now a game master.` };
+        }
+        if (!person) return { ...base, state: "failed", error: "refused", note: "They aren't a game master any more." };
+        if (person.plan)
+          return { ...base, state: "failed", error: "refused", note: `**${person.name}** holds this campaign's plan, so they can't be removed.` };
+        list.splice(list.indexOf(person), 1);
+        return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
+      }
       if (asked.setting === "optional_rule") {
         const rule = PRETEND_RULES.find((r) => r.id === asked.value);
         if (!rule) return { ...base, state: "failed", error: "bad_value" };

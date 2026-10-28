@@ -182,3 +182,60 @@ class Wake(unittest.IsolatedAsyncioTestCase):
         self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append(text)
         self.bot._hear_dmbchat(self.chat(MIA, "Hey DMbot, off the record"))
         self.assertEqual((self.woken, asked), ([(GUILD, MIA)], []))
+
+    # ---- the consent side (#2466): paused typed lines, in-character talk ----
+
+    def table_chat(self, user: int, text: str) -> Any:
+        message = self.chat(user, text)
+        message.channel = SimpleNamespace(id=VOICE)  # the table voice channel's own chat
+        message.created_at = SimpleNamespace(timestamp=lambda: 1.0)
+        message.attachments = []
+        message.id = 99
+        return message
+
+    async def test_a_paused_persons_typed_table_chat_line_is_not_stored_or_used(self) -> None:
+        self.table.chat_on = True
+        self.consent.pause(GUILD, MIA, 300)
+        self.bot._hear_typed(self.table_chat(MIA, "we sneak past the guards at dawn"))
+        self.assertEqual(self.kept(), [])
+        self.assertEqual(len(self.table.heard), 0)  # nor fed to the names scan
+        self.assertEqual(self.table.recent.scene(lambda u: "x", 0.0, lambda u: True), "")
+
+    async def test_a_typed_table_chat_line_from_someone_not_paused_is_stored(self) -> None:
+        self.table.chat_on = True
+        self.bot._hear_typed(self.table_chat(MIA, "we sneak past the guards at dawn"))
+        self.assertEqual(len(self.kept()), 1)
+
+    async def test_a_paused_person_in_the_dmbot_chat_is_still_answered_but_nothing_is_kept(
+        self,
+    ) -> None:
+        """A question to DMbot is a deliberate act (answered); what is stored is decided at the
+        sidebar (`_save_lines`, tested in test_sidebar_service): nothing of a paused person's."""
+        self.table.dmbchat_channel_id = 55
+        self.consent.pause(GUILD, MIA, 300)
+        asked: list[tuple[int, str]] = []
+        self.bot.sidebar.ask_in_chat = lambda table, user, text: asked.append((user, text))
+        self.bot._hear_dmbchat(self.chat(MIA, "does fireball need line of sight?"))
+        self.assertEqual(asked, [(MIA, "does fireball need line of sight?")])
+        self.assertEqual(self.kept(), [])  # and the chat line itself is no transcript line
+
+    async def test_in_character_off_the_record_never_pauses_anyone(self) -> None:
+        for line in (
+            "Off the record, the baron is a spy, says the informant.",
+            'The spy leans in. "This is off the record," he whispers.',
+            "Keep it off the record, says the innkeeper.",
+            "Let's go off the record, the old man says to the party.",
+        ):
+            self.said(DM, line)
+        self.assertEqual(self.woken, [])
+        self.assertEqual(len(self.kept()), 4)
+
+    async def test_a_dm_line_the_cleaner_tags_as_a_named_npc_still_pauses_by_design(self) -> None:
+        """The issue says a line tagged as a named NPC must not trigger. The spoken phrase is
+        deliberately NOT held for the speaker label (it arrives later, from an AI call): holding
+        would keep the line, and the person, recorded meanwhile, and only the DM has labels. So
+        this pins the choice: it pauses the speaker, who presses Resume if it was a mistake. The
+        call phrase ("Hey DMbot") is what keeps an NPC's own words out (see `asks_off_record`)."""
+        self.said(DM, "Hey DMbot, off the record")
+        self.assertEqual(self.woken, [(GUILD, DM)])
+        self.assertEqual(self.kept(), [])
