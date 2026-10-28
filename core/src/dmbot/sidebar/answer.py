@@ -202,6 +202,11 @@ Names = Callable[[Campaign], Awaitable[CampaignLookup | None]]
 People = Callable[[Campaign], Awaitable[Sequence[str]]]
 # What the DM has confirmed around these entries (their ids), for the audience "players" (#1370).
 Recaller = Callable[[Campaign, Sequence[str]], Awaitable[Recall | None]]
+# Entry ids closest in meaning to the question (#2664): more starting points for the recall, for
+# a question that describes someone without naming them. Optional, and never the reason an answer
+# is late or missing.
+ENOUGH_SEEDS = 3  # names the question spelled out that make a search by meaning unnecessary
+Meaning = Callable[[Campaign, str, int], Awaitable[Sequence[str]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -473,6 +478,7 @@ class Sidebar:
         names: Names,
         people: People | None = None,
         recall: Recaller | None = None,
+        meaning: Meaning | None = None,
         brews: Brews | None = None,
         second_try: AIClient | None = None,
         settled: SettledPairs | None = None,
@@ -486,6 +492,7 @@ class Sidebar:
         self._names = names
         self._people = people
         self._recall = recall
+        self._meaning = meaning
         self._brews = brews
         self._settled = settled
         self._clock = clock
@@ -511,13 +518,19 @@ class Sidebar:
             return Answer(refusal, in_game=False, refused=True, parts=(refusal,))
         try:
             async with asyncio.timeout(TOTAL_BUDGET_S):
-                return await self._answer(campaign, question, scene, started, table)
+                return await self._answer(campaign, question, scene, started, table, asker_id)
         except TimeoutError as exc:
             log.warning("The sidebar took over %d seconds in all", TOTAL_BUDGET_S)
             raise AIError(TOO_SLOW) from exc
 
     async def _answer(
-        self, campaign: Campaign, question: str, scene: str, started: float, table: bool = False
+        self,
+        campaign: Campaign,
+        question: str,
+        scene: str,
+        started: float,
+        table: bool = False,
+        asker_id: int = 0,
     ) -> Answer:
         question = " ".join(question.split())[: context.QUESTION_MAX]
         # The names are the DM screen's memory (secret names, NPC and plot facts the players
@@ -543,7 +556,13 @@ class Sidebar:
         index = self._index() if callable(self._index) else self._index
         recalled = None
         if self._recall is not None and not table:
-            seeds = context.mentioned_ids(question, lookup)
+            seeds = list(context.mentioned_ids(question, lookup))
+            if self._meaning is not None and len(seeds) < ENOUGH_SEEDS:
+                # (a question that already names enough needs no search by meaning: no call)
+                by_meaning = await self._safely(
+                    self._meaning(campaign, question, asker_id), [], "meaning"
+                )
+                seeds += [i for i in by_meaning if i not in seeds]
             if seeds:
                 recalled = await self._safely(
                     self._recall(campaign, seeds), None, "confirmed story"

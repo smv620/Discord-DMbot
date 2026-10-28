@@ -99,6 +99,9 @@ class Settings:
     # minor, and the grades are kept for the DM. Off until the extractor is; it runs inside the
     # extractor's plan check and call limits (at most a few calls a session).
     story_contradictions_on: bool = False
+    # After a session, the report for the website (#2661): PlotBot grades the minor contradictions
+    # and sorts what the party has wrong, and the DM answers on the page. Same gates as the grades.
+    story_report_on: bool = False
     # Images posted in the table chat are described once by the AI (#2450). Off until dev1 has run
     # a live check; with it off no image is fetched or sent anywhere. `table_images_per_day` is the
     # most images one campaign has described in a day (each counts toward its AI use); past it an
@@ -159,6 +162,8 @@ class Settings:
     continuity: Levels = field(default_factory=Levels)
     # A story thread (#1662) is stalled when this many sessions have started since it last moved.
     thread_stalled_sessions: int = 3
+    # Settle open pronouns in a lore read with the AI (#2790); off until the calibration run.
+    who_is_it: bool = False
     # The most characters of story the recall service hands one helper (#1350).
     recall_budget: int = DEFAULT_BUDGET
     # The DM sidebar answers from recall (#1370): on by default; off is exactly the old prompt.
@@ -258,6 +263,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             f'DMBOT_THREAD_STALLED_SESSIONS must be a whole number from 1 up, got "{stalled_raw}".'
         )
+    who_raw = (get("DMBOT_WHO_IS_IT") or "0").lower()
+    if who_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError('DMBOT_WHO_IS_IT must be 1 (on) or 0 (off), got "' + who_raw + '".')
     recall_budget = _recall_budget(get)
     sidebar_recall_raw = (get("DMBOT_SIDEBAR_RECALL") or "1").lower()
     if sidebar_recall_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -322,6 +330,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             + contradictions_raw
             + '".'
         )
+    report_raw = (get("DMBOT_STORY_REPORT") or "0").lower()
+    if report_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(f'DMBOT_STORY_REPORT must be 1 (on) or 0 (off), got "{report_raw}".')
     extractor_tier = (get("DMBOT_STORY_EXTRACTOR_TIER") or "fast").lower()
     if extractor_tier not in ("fast", "careful", "deep"):
         raise ConfigError(
@@ -476,6 +487,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_extractor_on=extractor_raw in ("1", "true", "on"),
         story_readings_on=readings_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
+        story_report_on=report_raw in ("1", "true", "on"),
         table_images_on=images_raw in ("1", "true", "on"),
         table_images_per_day=int(images_day_raw),
         recaps_on=recaps_raw in ("1", "true", "on"),
@@ -502,6 +514,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         cleaner_rank_max=int(rank_raw),
         continuity=continuity,
         thread_stalled_sessions=int(stalled_raw),
+        who_is_it=who_raw in ("1", "true", "on"),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
         live_heads_up=live_raw in ("1", "true", "on"),

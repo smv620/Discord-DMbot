@@ -119,6 +119,7 @@ FEATURES: tuple[Feature, ...] = (
             "story_extractor_on",
             "story_readings_on",
             "story_contradictions_on",
+            "story_report_on",
             "story_extractor_tier",
             "story_extractor_max_calls",
             "story_extractor_max_calls_day",
@@ -185,6 +186,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.table_images_on,
         ("table_images_on",),
         for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
+    ),
+    Feature(
+        "who is he",
+        'Who "he" and "she" are in a document',
+        "",
+        lambda s: s.who_is_it,
+        ("who_is_it",),
+        for_dms=False,  # not live yet: on only after the calibration run on #2790
     ),
     Feature(
         "test recordings",

@@ -75,7 +75,7 @@ from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.significance import Memory
-from dmbot.recaps.store import Job
+from dmbot.recaps.store import Job, SavedLists
 from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.transcript.cleaner import (
     clean,
@@ -129,6 +129,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.recaps.plot_talk_run import TalkRunner
     from dmbot.recaps.store import RecapStore
     from dmbot.recaps.style import NoteStore, StyleStore
+    from dmbot.rules.web_sharing import ActionStore as RuleActionStore
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.import_job import ImportJob
     from dmbot.transcript.store import TranscriptStore
@@ -249,6 +250,7 @@ class RecapFeatures:
         web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
+        web_rule_actions: RuleActionStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -301,6 +303,8 @@ class RecapFeatures:
         async def run_name_actions(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
+        async def run_web_rule_sharing(self) -> None: ...
+        async def run_web_report_requests(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -1912,6 +1916,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website settings failed: %s", type(exc).__name__)
             try:
+                await self.run_web_rule_sharing()
+            except Exception as exc:
+                log.warning("The website rule choices failed: %s", type(exc).__name__)
+            try:
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
@@ -1923,6 +1931,10 @@ class RecapFeatures:
                 await self.run_web_backups()
             except Exception as exc:
                 log.warning("The website backups failed: %s", type(exc).__name__)
+            try:  # last: a report is many AI calls, and the quick ones above must not wait for it
+                await self.run_web_report_requests()
+            except Exception as exc:
+                log.warning("The website report requests failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -1934,6 +1946,8 @@ class RecapFeatures:
                             await self.name_actions.sweep(guild.id)
                         if self.web_settings is not None:
                             await self.web_settings.sweep(guild.id)
+                        if self.web_rule_actions is not None:
+                            await self.web_rule_actions.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
@@ -2252,6 +2266,24 @@ class RecapFeatures:
                 remember=("recap", cid, session_at),
             )
         return True
+
+    async def recap_saved_lists(
+        self, campaign: Campaign, session_at: int, user_id: int
+    ) -> SavedLists | None:
+        """What making this recap again would throw away, for the question first (#2727): the
+        count of scenes whose "who was there" list the DM saved, and whether a finished recap
+        stands. None: nothing to warn about (no recap yet, or not a DM). A count of None when it
+        cannot be told, so the question warns anyway, as the website's does. Only a DM of the
+        campaign is told anything."""
+        if self.recaps is None or user_id not in campaign.dm_user_ids:
+            return None
+        try:
+            return await self.recaps.saved_lists(campaign.guild_id, campaign.id, session_at)
+        except Exception:
+            log.exception("Recap again: couldn't read whether lists were saved")
+            return SavedLists(
+                None, None, None
+            )  # (neither is known: warn, and do not claim an old one)
 
     async def recap_again(
         self, campaign: Campaign, session_at: int, user_id: int, *, replace_ok: bool = False

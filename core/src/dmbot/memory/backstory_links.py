@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
@@ -27,6 +28,9 @@ MAX_CANDIDATES = 10
 # its candidates), or too many connections wait already, so the question stays.
 DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
+DECIDED_MAX = 60  # how a pronoun was settled (#2790), in fixed words (the column's limit)
+DECIDED_BY_DM = "who-is-it: picked by the DM"  # the DM chose one of the names offered
+DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
 UPLOAD_MAX = 120  # the upload's name and date (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
 
@@ -41,6 +45,7 @@ class NewLink:
     detail: str = ""  # the catch-all's own words ("pays"), else "" (#2454)
     truth: bool = False  # the DM said this upload is 100% truth (#2447): pinned when kept
     upload: str = ""  # the upload's name and date, as the DM saw them (#2650)
+    decided: str = ""  # how a pronoun was settled (#2790): "who-is-it: accepted 95%", else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +63,7 @@ class NewWhich:
     detail: str = ""
     truth: bool = False
     upload: str = ""
+    decided: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +78,7 @@ class WhichWaiting:
     quote: str
     detail: str
     upload: str
+    decided: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +105,7 @@ class Waiting:
     id: str = ""  # the waiting row's own id, for the website's queue (#2635)
     upload: str = ""  # the upload it came from ("" for one queued before #2650)
     told: bool = False  # the DM screen has said it is ready (#2650)
+    decided: str = ""  # how a pronoun was settled (#2790), else ""
 
 
 class BackstoryLinks:
@@ -129,12 +137,12 @@ class BackstoryLinks:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
-                    " object_id, quote, secret, detail, truth, created_at, upload)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                    " ON CONFLICT DO NOTHING",
+                    " object_id, quote, secret, detail, truth, created_at, upload, decided)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
-                     link.upload[:UPLOAD_MAX]),
+                     link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX]),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
@@ -186,16 +194,24 @@ class BackstoryLinks:
             row = await cur.fetchone()
             room = max(0, MAX_WHICH - int(row["n"] if row else 0))
             for w in rows:
-                if added >= room or len(set(w.candidates)) < 2:
+                if added >= room or len(set(w.candidates)) < (1 if is_pronoun(w.word) else 2):
                     continue
+                candidates = list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES]
+                if len(candidates) < 2:
+                    # A pronoun's question with one name ("Mara, or someone else", #2790): the table
+                    # wants two, so the question's own named end fills the second place. It is never
+                    # offered (a candidate that is the other end is skipped when the question is
+                    # read), so the DM sees one name and "Someone else".
+                    candidates.append(w.other_id)
                 cur = await conn.execute(
                     "INSERT INTO backstory_which (guild_id, campaign_id, other_id,"
                     " other_is_subject, predicate, word, candidates, quote, secret, detail, truth,"
-                    " upload, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s) ON CONFLICT DO NOTHING",
+                    " upload, created_at, decided) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, w.other_id, w.other_is_subject, w.predicate,
-                     w.word[:80], list(dict.fromkeys(w.candidates))[:MAX_CANDIDATES],
-                     w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now),
+                     w.word[:80], candidates,
+                     w.quote[:QUOTE_MAX], w.secret, w.detail, w.truth, w.upload[:UPLOAD_MAX], now,
+                     w.decided[:DECIDED_MAX]),
                 )  # fmt: skip
                 added += cur.rowcount
         return added
@@ -205,12 +221,15 @@ class BackstoryLinks:
     async def which_waiting(self, guild_id: int, campaign_id: str) -> list[WhichWaiting]:
         """The questions still worth asking, oldest first. A candidate that was refused or merged
         away is dropped (or follows the merge); a question left with fewer than two candidates,
-        or about a name that is gone or refused, is not asked and is deleted."""
+        or about a name that is gone or refused, is not asked and is deleted. A question about a
+        pronoun ("she", #2790) is the exception for its candidates: it is kept with one name or
+        none, because "Someone else" keeps its connection; only its own end going away deletes it.
+        (Its stored second candidate, the question's own end, is never in the list returned.)"""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, other_id, other_is_subject, predicate, word, candidates, quote, detail,"
-                " upload FROM backstory_which WHERE guild_id = %s AND campaign_id = %s"
+                " upload, decided FROM backstory_which WHERE guild_id = %s AND campaign_id = %s"
                 " ORDER BY created_at, id",
                 (guild_id, campaign_id),
             )
@@ -228,7 +247,10 @@ class BackstoryLinks:
                     end = self._end(entities, candidate)
                     if end is not None and entities[end]["status"] != "rejected" and end != other:
                         live[end] = str(entities[end]["name"])
-                if other is None or entities[other]["status"] == "rejected" or len(live) < 2:
+                # A pronoun's question is never dropped for want of names: "Someone else" keeps its
+                # connection (#2790), so it waits even when every name it offered is gone.
+                needs = 0 if is_pronoun(str(r["word"])) else 2
+                if other is None or entities[other]["status"] == "rejected" or len(live) < needs:
                     drop.append(str(r["id"]))
                     continue
                 out.append(
@@ -236,6 +258,7 @@ class BackstoryLinks:
                         str(r["id"]), other, str(entities[other]["name"]),
                         bool(r["other_is_subject"]), str(r["predicate"]), str(r["word"]),
                         tuple(live.items()), str(r["quote"]), str(r["detail"]), str(r["upload"]),
+                        str(r["decided"]),
                     )
                 )  # fmt: skip
             if drop:
@@ -247,17 +270,25 @@ class BackstoryLinks:
         return out
 
     async def pick_which(
-        self, guild_id: int, campaign_id: str, which_id: str, entity_id: str | None
+        self,
+        guild_id: int,
+        campaign_id: str,
+        which_id: str,
+        entity_id: str | None,
+        *,
+        outside: bool = False,
     ) -> str:
         """The DM's answer: one of the candidates (the connection joins the waiting ones, ready
         as soon as both its names are answered) or None for "Neither" (it is dropped). `GONE` when
         the question is gone or the pick is not one of its candidates, `FULL` when the queue is.
-        Under the campaign lock, so two presses answer once."""
+        `outside`: the entry is not one of the candidates (an unnamed person made for "none of
+        these", #2790): the connection still joins the waiting ones. Under the campaign lock, so
+        two presses answer once."""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT other_id, other_is_subject, predicate, candidates, quote, secret, detail,"
-                " truth, upload, created_at FROM backstory_which WHERE guild_id = %s"
+                " truth, upload, created_at, decided FROM backstory_which WHERE guild_id = %s"
                 " AND campaign_id = %s AND id = %s",
                 (guild_id, campaign_id, which_id),
             )
@@ -270,8 +301,14 @@ class BackstoryLinks:
                 )
                 ends = {self._end(entities, c) for c in row["candidates"]}
                 end = self._end(entities, entity_id)
-                if end is None or end not in ends or entities[end]["status"] == "rejected":
+                if (
+                    end is None
+                    or (end not in ends and not outside)
+                    or entities[end]["status"] == "rejected"
+                ):
                     return GONE
+                if end == row["other_id"] and not outside:
+                    return GONE  # (the question's own end is no answer: the question stays)
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
                     " AND campaign_id = %s",
@@ -289,14 +326,17 @@ class BackstoryLinks:
                         if row["other_is_subject"]
                         else (end, row["other_id"])
                     )
+                    # The note says who decided now: after the DM's pick, "DMbot wasn't sure" would
+                    # read as if it were still open (only a connection DMbot checked has a note).
+                    decided = (DECIDED_ELSE if outside else DECIDED_BY_DM) if row["decided"] else ""
                     await conn.execute(
                         "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
-                        " object_id, quote, secret, detail, truth, created_at, upload)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        " object_id, quote, secret, detail, truth, created_at, upload, decided)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                         " ON CONFLICT DO NOTHING",
                         (guild_id, campaign_id, a, row["predicate"], b, row["quote"],
                          row["secret"], row["detail"], row["truth"], row["created_at"],
-                         row["upload"]),
+                         row["upload"], decided),
                     )  # fmt: skip
             await conn.execute(
                 "DELETE FROM backstory_which WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -314,7 +354,7 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at, upload, told"
+                " created_at, upload, told, decided"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
                 " predicate, object_id",
@@ -367,7 +407,7 @@ class BackstoryLinks:
                         a, predicate, b, str(r["quote"]), bool(r["secret"]) or hidden,
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
-                        str(r["upload"]), bool(r["told"]),
+                        str(r["upload"]), bool(r["told"]), str(r["decided"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -377,11 +417,12 @@ class BackstoryLinks:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
-                    " told)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    " told, decided)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     " ON CONFLICT DO NOTHING",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
-                     r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"]),
+                     r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
+                     r["decided"]),
                 )  # fmt: skip
         return out
 

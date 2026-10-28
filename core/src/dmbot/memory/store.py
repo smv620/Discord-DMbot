@@ -33,8 +33,18 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, evidence, kin, merge_restore, notify, standing, states
+from dmbot.memory import (
+    beliefs,
+    evidence,
+    kin,
+    merge_restore,
+    notify,
+    report_fixed,
+    standing,
+    states,
+)
 from dmbot.memory import threads as threads_mod
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
@@ -99,6 +109,7 @@ from dmbot.memory.models import (
     MENTION_METHODS,
     MERGE_MANY_MAX,
     MERGED,
+    NPC,
     PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
@@ -216,6 +227,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
         r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
         r["manipulated_by"],
+        r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
     )  # fmt: skip
 
 
@@ -242,6 +254,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
+        r.get("decided"),
     )  # fmt: skip
 
 
@@ -265,6 +278,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "definition_version": rel.definition_version,
         "unrevealed": rel.unrevealed,
         "directional": rel.directional,
+        "decided": rel.decided,
     }
 
 
@@ -337,6 +351,18 @@ YIELD_AFTER_S = 0.015  # the flag check gives the event loop a turn this often
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class UnnamedAdded:
+    """What `add_unnamed` did: the entry (new or the one already there), whether it was made, and
+    the earlier unnamed entries with no anchor and the same word from other reads, which the caller
+    may ask the DM about joining (two hooded figures a month apart are often two people)."""
+
+    entity: Entity
+    created: bool
+    similar: tuple[str, ...] = ()
+    batch: int | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class PersonAdded:
     """What a player or DM row of a names list did (#1559)."""
 
@@ -405,6 +431,10 @@ class MemoryStore:
                 undoes=undoes,
             )  # fmt: skip
             yield changes
+            if changes.relation_changes or changes.belief_additions or changes.deleted_items:
+                await self._report_fixed(conn, guild_id, campaign_id, changes)
+            if changes.restored or changes.unbelieved:
+                await self._report_unfixed(conn, guild_id, campaign_id, changes)
             if changes.version != start:
                 await conn.execute(
                     "UPDATE campaigns SET memory_version = %s WHERE guild_id = %s AND id = %s",
@@ -413,6 +443,52 @@ class MemoryStore:
                 names_changed = bool(changes.tables & notify.LOOKUP_TABLES)
                 kinds_changed = bool(changes.tables & notify.KIND_TABLES)
                 await notify.send(conn, campaign_id, changes.version, names_changed, kinds_changed)
+
+    async def _report_fixed(
+        self, conn: Any, guild_id: int, campaign_id: str, changes: Changes
+    ) -> None:
+        """The DM changed a connection: an after-session item that names it is what they fixed
+        (#2661). In the same transaction as the change, so a failed write marks nothing."""
+        moved: set[str] = set()
+        for op, before, after in changes.relation_changes:
+            # (a delete was looked up before it ran: see `Changes.deleted_items`)
+            if after is not None and report_fixed.changed_meaning(op, before, after):
+                moved.add(str(after["id"]))
+        keys = set(changes.deleted_items)
+        keys |= await report_fixed.names(conn, guild_id, campaign_id, moved)
+        keys |= await report_fixed.denied_by(conn, guild_id, campaign_id, changes.belief_additions)
+        await report_fixed.record(conn, guild_id, campaign_id, keys, int(self._clock()))
+
+    async def _report_unfixed(
+        self, conn: Any, guild_id: int, campaign_id: str, changes: Changes
+    ) -> None:
+        """An Undo gave connections their old meaning back, or took The truth's belief away: a
+        `fixed` answer on an item that change fixed was the change just taken back, so the item
+        shows again, with a "remind me" it replaced (#2661). A pin, a secret flag or a reveal
+        undone changes none of that. Other answers stay."""
+        keys = await report_fixed.names(conn, guild_id, campaign_id, changes.restored)
+        if changes.unbelieved:
+            cur = await conn.execute(
+                "SELECT DISTINCT u.r FROM unnest(%s::text[], %s::text[]) AS u(p, r)"
+                " JOIN memory_perspectives t ON t.guild_id = %s AND t.campaign_id = %s"
+                " AND t.id = u.p AND t.kind = 'truth'"  # only The truth's beliefs fix an item
+                " WHERE NOT EXISTS (SELECT 1 FROM memory_beliefs b"
+                " JOIN memory_perspectives p ON p.guild_id = b.guild_id"
+                " AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
+                " AND p.kind = 'truth'"
+                " WHERE b.guild_id = %s AND b.campaign_id = %s AND b.relation_id = u.r)",
+                (
+                    [p for p, _ in changes.unbelieved],
+                    [r for _, r in changes.unbelieved],
+                    guild_id,
+                    campaign_id,
+                    guild_id,
+                    campaign_id,
+                ),
+            )  # (a belief of The truth's that is still there keeps the fix)
+            bare = [row["r"] for row in await cur.fetchall()]
+            keys |= await report_fixed.denied_names(conn, guild_id, campaign_id, bare)
+        await report_fixed.give_back(conn, guild_id, campaign_id, [k for _, k in keys])
 
     @asynccontextmanager
     async def _read(
@@ -1353,6 +1429,106 @@ class MemoryStore:
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
             return _entity(row)
 
+    # ---- a person the story describes but never names (#2790) ----
+
+    async def add_unnamed(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        what: str,
+        anchor_id: str | None = None,
+        role: str | None = None,
+        details: str = "",
+        read: dict[str, str] | None = None,
+    ) -> UnnamedAdded:
+        """The unnamed person a stated relationship needs ("Ken's sister", "a hooded figure"):
+        a proposed character with no alias, so no name match can find it.
+
+        The same person is found again, not made twice: with an `anchor_id`, one with the same
+        anchor, relationship and word (a second "Ken's sister"; "his other sister" is another
+        word, so another person). With no anchor only `read` (this read's own record, key to entry
+        id, which the caller keeps) joins them: two hooded figures a month apart are often two
+        people, so earlier ones come back as `similar` for the caller to ask the DM about.
+        Written as the extractor, so it is a proposal under the DM-confirmed rule."""
+        word = unnamed_mod.tidy(what)
+        if not word:
+            raise MemoryRuleError("Say who they are described as.")
+        role = (role or "").strip() or None
+        if role is not None and len(role) > unnamed_mod.MAX_ROLE:
+            raise MemoryRuleError("That relationship word is too long.")
+        if len(details) > DESCRIPTION_MAX:
+            raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
+        same = unnamed_mod.same_person_key(word, role)
+        async with self._write(guild_id, campaign_id, "extractor") as w:
+            anchor_name: str | None = None
+            if anchor_id is not None:
+                anchor = await _entity_row(w, anchor_id)
+                if anchor["status"] not in (PROPOSED, CONFIRMED):
+                    raise MemoryRuleError("That entry is not in the story any more.")
+                anchor_name = anchor["name"]
+            live = await w.select(
+                ENTITIES, " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY id"
+            )
+            found = [
+                r
+                for r in live
+                if r["unnamed_anchor"] == anchor_id
+                and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
+            ]
+            key = f"{anchor_id or ''}|{same}"
+            if anchor_id is not None and found:
+                return UnnamedAdded(_entity(found[0]), False)
+            if anchor_id is None and read is not None and key in read:
+                for r in found:
+                    if r["id"] == read[key]:
+                        return UnnamedAdded(_entity(r), False)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(),
+                    "type": "character",
+                    "name": unnamed_mod.stored(word, anchor_name),
+                    "description": details.strip(),
+                    "status": PROPOSED,
+                    "merged_into": None,
+                    "source": "extractor",
+                    "created_at": w.now,
+                    "played_by": None,
+                    "role": NPC,
+                    "needs_look": False,
+                    "unique_item": None,
+                    "unnamed": True,
+                    "unnamed_anchor": anchor_id,
+                    "unnamed_role": role,
+                    "unnamed_what": word,
+                },
+            )
+            if read is not None and anchor_id is None:
+                read[key] = row["id"]
+            similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
+            return UnnamedAdded(_entity(row), True, similar, w.batch)
+
+    async def unnamed(self, guild_id: int, campaign_id: str) -> list[tuple[Entity, str]]:
+        """The campaign's unnamed people, each with the label to show now: built from the anchor's
+        present name, never the one stored when they were made."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                ENTITIES,
+                " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY created_at, id",
+            )
+            names = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            }
+        # one unnamed person may hang off another ("the king's sister"): built from the parts
+        for _ in range(2):
+            for r in rows:
+                names[str(r["id"])] = unnamed_mod.shown(
+                    r["unnamed_what"], r["unnamed_anchor"], names
+                )
+        return [(_entity(r), names[str(r["id"])]) for r in rows]
+
     # ---- a clue only some people know (#1649) ----
 
     async def clue_audience(self, guild_id: int, campaign_id: str, clue_id: str) -> list[Entity]:
@@ -1418,7 +1594,7 @@ class MemoryStore:
                 " AND NOT r.secret AND (SELECT count(*) FROM memory_entities e"
                 "  WHERE e.guild_id = r.guild_id AND e.campaign_id = r.campaign_id"
                 "  AND e.id IN (r.subject_id, r.object_id) AND e.status = 'confirmed'"
-                "  AND NOT e.hidden_from_players AND NOT e.audience_limited) = 2",
+                "  AND NOT e.hidden_from_players AND NOT e.audience_limited AND NOT e.unnamed) = 2",
                 (*scope.ids, list(touching), list(touching)),
             )
             row = await cur.fetchone()
@@ -1812,6 +1988,8 @@ class MemoryStore:
             current = await _entity_row(w, entity_id)
             if current["type"] == PERSON:
                 raise MemoryRuleError(PERSON_NOT_LISTED)
+            if current["unnamed"]:
+                raise MemoryRuleError(unnamed_mod.NAME_FIRST)
             check_named(asked, current["name"])
             if role is None and type == current["type"]:
                 role = current["role"]  # same kind, no new role said: it keeps its role
@@ -1949,7 +2127,23 @@ class MemoryStore:
             if clash and clash[0]["secret"]:
                 # Never turn a secret name into the name everyone hears.
                 raise MemoryRuleError(SPELLING_TAKEN)
-            row = await w.update(ENTITIES, entity_id, {"name": name})
+            changes: dict[str, Any] = {"name": name}
+            if current["unnamed"]:
+                # The DM giving a person the story never named a name (#2790): they are named now,
+                # and the label they had is no name, so it is not kept as an old spelling.
+                changes |= {
+                    "unnamed": False,
+                    "unnamed_anchor": None,
+                    "unnamed_role": None,
+                    "unnamed_what": None,
+                }
+                keep_old = False
+            row = await w.update(ENTITIES, entity_id, changes)
+            await _relabel_unnamed(
+                w,
+                name,
+                await w.select(ENTITIES, " AND unnamed AND unnamed_anchor = %s", [entity_id]),
+            )
             if own and (not clash or clash[0]["id"] == own[0]["id"]):
                 # The same name, spelled right (listened for, and never secret).
                 await w.update(
@@ -2155,7 +2349,8 @@ class MemoryStore:
                 confirmed += await w.update_where(
                     ENTITIES,
                     {**fields, **extra},
-                    " AND status = 'proposed' AND id = ANY(%s)",
+                    # (a person the story never named is not retyped in bulk: #2790)
+                    " AND status = 'proposed' AND NOT unnamed AND id = ANY(%s)",
                     [group],
                 )
             ids = [row["id"] for row in confirmed]
@@ -2206,6 +2401,8 @@ class MemoryStore:
                     await w.delete(PLAN_SAME_AS, link["id"])
             if current["role"] == PLAYER_CHARACTER:
                 await _sync_plays(w, entity_id)  # a rejected character has no player
+            if status == REJECTED:
+                await _let_go_of_anchored(w, entity_id)
             return Written(_entity(row), w.batch)
 
     async def add_alias(
@@ -2539,7 +2736,7 @@ class MemoryStore:
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
         async with self._write(guild_id, campaign_id, source) as w:
-            await self._merge_in(
+            kept = await self._merge_in(
                 w,
                 keep_id,
                 gone_id,
@@ -2547,7 +2744,7 @@ class MemoryStore:
                 dm_said_same=dm_said_same,
                 confirm_keys=confirm_keys,
             )
-            final = await w.get(ENTITIES, keep_id)
+            final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
 
@@ -2575,7 +2772,10 @@ class MemoryStore:
             raise MemoryRuleError(f"Merge up to {MERGE_MANY_MAX} names at a time.")
         async with self._write(guild_id, campaign_id, source) as w:
             for gone_id in gone:
-                await self._merge_in(w, keep_id, gone_id, source=source, dm_said_same=True)
+                # (a named entry is kept over an unnamed one, whichever way round: #2790)
+                keep_id = await self._merge_in(
+                    w, keep_id, gone_id, source=source, dm_said_same=True
+                )
             final = await w.get(ENTITIES, keep_id)
             assert final is not None
             return Written(_entity(final), w.batch)
@@ -2599,7 +2799,7 @@ class MemoryStore:
                 " WHERE m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id"
                 " AND m.entity_id = e.id) AS heard FROM memory_entities e"
                 " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.status = 'confirmed'"
-                " AND e.type <> %s",
+                " AND e.type <> %s AND NOT e.unnamed",  # (no name to be alike: #2790)
                 (*scope.ids, PERSON),
             )
             names = [
@@ -2669,11 +2869,15 @@ class MemoryStore:
         source: str,
         dm_said_same: bool,
         confirm_keys: Collection[str] = (),
-    ) -> None:
-        """One merge inside an open write (see `merge`)."""
+    ) -> str:
+        """One merge inside an open write (see `merge`). Returns the id that was kept: a named
+        entry is always the one kept when the other has no name (#2790), so the DM giving a name
+        to "Ken's sister" keeps the real name whichever way round the merge was asked."""
         onto = await _load_ontology(w)
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
+        if keep["unnamed"] and not gone["unnamed"]:
+            keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
         if (keep["type"] == PERSON) != (gone["type"] == PERSON):
             raise MemoryRuleError("A player or the DM can't be the same as a character.")
         needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
@@ -2734,6 +2938,26 @@ class MemoryStore:
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
         await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
+        # People who hang off the merged-away entry now hang off the kept one (#2790): "Ken's
+        # sister" follows Ken when two Kens are one. One statement, because a merge is counted in
+        # statements; an unnamed entry that hung off the one it was merged with just keeps pointing
+        # at the merged-away entry (still there), and its label leaves the anchor out.
+        # (the new anchor and the new stored label in ONE update of each row: a second change to
+        # the same entry in one batch could not be undone)
+        hanging = await w.select(
+            ENTITIES, " AND unnamed_anchor = %s AND id <> %s", [gone_id, keep_id]
+        )
+        if hanging:
+            await w.update_rows(
+                ENTITIES,
+                {
+                    str(r["id"]): {
+                        "unnamed_anchor": keep_id,
+                        "name": unnamed_mod.stored(r["unnamed_what"], kept["name"]),
+                    }
+                    for r in hanging
+                },
+            )
         # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
         await w.update(
             ENTITIES,
@@ -2747,6 +2971,7 @@ class MemoryStore:
         # batch is known.
         assert w.batch is not None
         await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
+        return keep_id
 
     async def check_people(
         self, guild_id: int, campaign_id: str, dm_ids: Collection[int]
@@ -3349,6 +3574,7 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        decided: str | None = None,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -3362,7 +3588,7 @@ class MemoryStore:
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
-                directional=directional,
+                directional=directional, decided=decided,
             )  # fmt: skip
             return Written(value, w.batch)
 
@@ -3382,6 +3608,7 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        decided: str | None = None,
         fresh: bool = False,
         leave: bool = False,
         made_by: str | None = None,
@@ -3434,7 +3661,7 @@ class MemoryStore:
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-            pred.version, unrevealed, directional,
+            pred.version, unrevealed, directional, (decided or None),
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -3497,7 +3724,8 @@ class MemoryStore:
                 if not unrevealed:
                     ends = await w.select(
                         ENTITIES,
-                        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited",
+                        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited"
+                        " AND NOT unnamed",
                         [[current["subject_id"], current["object_id"]]],
                     )
                     if len(ends) < 2:
@@ -4531,6 +4759,56 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
     before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
     changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
     return bool(changed_keys) and changed_keys <= {"secret", "unrevealed"}
+
+
+async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:
+    """The people who hang off an entry that was rejected (#2790). One whose only connections are
+    to that entry is rejected with it: nothing else says they exist. One with other connections is
+    kept, with no anchor, and its label built from its word alone ("a sister (name unknown)"). All
+    in the rejection's own change, so one Undo brings every one of them back."""
+    hanging = await w.select(
+        ENTITIES, " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')", [anchor_id]
+    )
+    if not hanging:
+        return
+    ids = [str(r["id"]) for r in hanging]
+    others: set[str] = set()
+    for rel in await w.select(
+        RELATIONS,
+        " AND status IN ('proposed', 'confirmed')"
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        [ids, ids],
+    ):
+        for mine, other in (
+            (rel["subject_id"], rel["object_id"]),
+            (rel["object_id"], rel["subject_id"]),
+        ):
+            if mine in ids and other != anchor_id:
+                others.add(str(mine))
+    await w.update_rows(
+        ENTITIES,
+        {
+            str(r["id"]): (
+                {"unnamed_anchor": None, "name": unnamed_mod.stored(r["unnamed_what"], None)}
+                if str(r["id"]) in others
+                else {"status": REJECTED}
+            )
+            for r in hanging
+        },
+    )
+
+
+async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str, Any]]) -> None:
+    """The stored label of people who hang off an entry whose name just changed or that others
+    were merged into (#2790), in the same change: lists that show the stored name stay right, and
+    one Undo takes it back. (The label shown is always built from the parts; this is the copy.)"""
+    changed = {
+        str(r["id"]): {"name": unnamed_mod.stored(r["unnamed_what"], anchor_name)}
+        for r in rows
+        if r["unnamed"] and r["name"] != unnamed_mod.stored(r["unnamed_what"], anchor_name)
+    }
+    if changed:
+        await w.update_rows(ENTITIES, changed)
 
 
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:

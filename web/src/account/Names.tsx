@@ -9,7 +9,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
-import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, namesPage as words } from "../content/names-words";
+import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
+import { NOT_NAMED_LIVE } from "../content/not-named-switch";
+import { notNamedWords as notNamed } from "../content/not-named-words";
 import {
   type AccountApi,
   ApiError,
@@ -20,7 +22,11 @@ import {
   type NameSort,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import NameThem, { type NamedInfo } from "./NameThem";
+import { useObservedWait } from "./useObservedWait";
+import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
+import LazyPanel from "./LazyPanel";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -75,10 +81,24 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const kind = kinds.join(",");
   const [size, setSize] = useState<number>(NAMES_PAGE_SIZE);
   const [sort, setSort] = useState<NameSort>("name");
+  // "Search by meaning" (#2733) is a separate file (NamesSmart, fetched only when it is on and for a DM). Here is
+  // only what the list needs of it: the names it found (replacing the list until "Back to all names"), and two
+  // counters that tell it a name changed (read the search again) or the list's own controls were used (it is over).
+  const [smart, setSmart] = useState<NameRow[] | null>(null);
+  const [smartRefresh, setSmartRefresh] = useState(0);
+  const [smartLeave, setSmartLeave] = useState(0);
+  const smartNow = useRef<NameRow[] | null>(null);
+  smartNow.current = smart;
   const [busy, setBusy] = useState(false);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [news, setNews] = useState<{ ok: boolean; text: string; n: number } | null>(null);
+  // A name just given (#2803) can be taken back until the next change; `undoing` is the wait for the bot.
+  const [undo, setUndo] = useState<{ answer: string; rowId: string; join: boolean } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undoLooks, setUndoLooks] = useState(0);
+  const undoFlight = useRef(false);
+  const undoSeen = useObservedWait(undoing, String(undoLooks));
   // Only the newest read may set what is shown, so a slow old answer never overwrites a new one.
   const latest = useRef(0);
   const pageNow = useRef(1);
@@ -105,7 +125,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     setBusy(true);
     const asked = queryNow.current;
     try {
-      const read = await api.allNames(ref, { ...asked, page });
+      const read = await api.allNames(ref, { ...asked, page, unnamed: NOT_NAMED_LIVE && api.nameThem !== undefined });
       if (mine !== latest.current) return pageNow.current;
       setData(read);
       setView("ok");
@@ -155,6 +175,11 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     const wait = first.current ? 0 : SEARCH_MS;
     first.current = false;
     setNews(null);
+    if (smartNow.current !== null) {
+      // (typing in Find a name, or a type, sort or size, is back to the list)
+      setSmart(null);
+      setSmartLeave((n) => n + 1);
+    }
     const timer = setTimeout(() => void load(1), wait);
     return () => clearTimeout(timer);
     // `load` reads the latest query through a ref, so only these restart the read.
@@ -204,7 +229,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       setMerging(false);
       setNews({ ok: true, text: words.mergedMany(keep.name), n: ++sayings.current });
       setTimeout(() => newsBox.current?.focus(), 0);
-      await load(pageNow.current, true);
+      await reload();
     } catch (error) {
       const said = refusal(error);
       if (said === null) {
@@ -217,7 +242,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         // It may have happened, or a name is gone: read the list again and start the ticking over.
         setPicked([]);
         setMerging(false);
-        await load(pageNow.current, true);
+        await reload();
       }
     } finally {
       mergeFlight.current = false;
@@ -225,9 +250,49 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     }
   }
 
+  /** A person was given a name (#2803): say so, offer Undo, close the editor and read the list again. */
+  async function named(row: NameRow, info: NamedInfo): Promise<void> {
+    setNews({ ok: true, text: info.text, n: ++sayings.current });
+    setUndo(info.undo ? { answer: info.undo, rowId: row.id, join: info.join } : null);
+    setEditing(null);
+    setTimeout(() => newsBox.current?.focus(), 0);
+    await reload();
+  }
+
+  async function undoNamed(): Promise<void> {
+    if (!undo || !ref || !api.nameThem || undoFlight.current) return;
+    undoFlight.current = true;
+    setUndoing(true);
+    setUndoLooks(0);
+    try {
+      await api.nameThem(ref, undo.rowId, { action: "name-undo", answer: undo.answer }, () => setUndoLooks((n) => n + 1));
+      setUndo(null);
+      setNews({ ok: true, text: notNamed.undone, n: ++sayings.current });
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "network";
+      if (kind === "signed-out") return void setView("signed-out");
+      // It may still be applied: a second press would queue a second undo of the same step.
+      if (kind === "still-waiting") setUndo(null);
+      setNews({ ok: false, text: notNamed.undoProblems[kind] ?? notNamed.undoProblems["server"]!, n: ++sayings.current });
+    } finally {
+      undoFlight.current = false;
+      setUndoing(false);
+    }
+    await reload();
+  }
+
+  /** The list as it is now, and the search results too when they are showing (they would be out of date). */
+  function reload(): Promise<unknown> {
+    const read = load(pageNow.current, true);
+    // (no extra step when no search is showing: the editor stays busy only as long as the list read takes)
+    if (smartNow.current !== null) void read.then(() => setSmartRefresh((n) => n + 1)); // (the search is read again)
+    return read;
+  }
+
   /** One change to one name. Resolves with the refusal's words, or null when it worked. */
   async function act(row: NameRow, change: NameChange, ok: string): Promise<string | null> {
     if (!ref || !api.changeName) return words.errorFallback;
+    setUndo(null); // a later change ends the chance to undo a name just given
     try {
       await api.changeName(ref, row.id, change);
       // A name that has gone (removed, or merged into another) is not ticked any more.
@@ -243,7 +308,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       if (error instanceof ApiError && error.kind === "still-waiting") {
         // It may still happen: say so, and read the list again so it shows if it did.
         setNews({ ok: false, text: said, n: ++sayings.current });
-        await load(pageNow.current, true);
+        await reload();
         return null;
       }
       if (error instanceof ApiError && error.kind === "not-found") {
@@ -252,7 +317,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         setNews({ ok: false, text: said, n: ++sayings.current });
         // The editor is gone: the keyboard goes to the news, as after a remove or a merge.
         setTimeout(() => newsBox.current?.focus(), 0);
-        await load(pageNow.current, true);
+        await reload();
         return null;
       }
       return said;
@@ -263,7 +328,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       // The editor is gone: the keyboard goes to the news, where the result is said.
       setTimeout(() => newsBox.current?.focus(), 0);
     }
-    await load(pageNow.current, true);
+    await reload();
     return null;
   }
 
@@ -295,8 +360,12 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
   // The API never sends a secret name to someone who isn't a DM; this keeps one from showing if
   // it ever did (the rule is the API's, this is only a backstop).
-  const shown = data.names.filter((n) => data.canEdit || !n.secret);
-  const everything = data.kinds.reduce((sum, k) => sum + k.count, 0);
+  // "Not named yet" is a DM's, and only while the switch is on (the API sends it to a DM only; this is the backstop).
+  const unnamedOn = NOT_NAMED_LIVE && data.canEdit && api.nameThem !== undefined;
+  const shown = (smart ?? data.names).filter((n) => (data.canEdit || !n.secret) && (unnamedOn || !n.unnamed));
+  const kindList = unnamedOn ? data.kinds : data.kinds.filter((k) => k.key !== "not_named");
+  const smartOn = NAMES_SMART_LIVE && data.canEdit && api.smartNames !== undefined;
+  const everything = kindList.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
       <section class="stack" aria-labelledby="names-campaign">
@@ -353,7 +422,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         <fieldset class="names-types">
           <legend>{words.kindLabel}</legend>
           <div class="names-type-list">
-            {data.kinds.map((k) => (
+            {kindList.map((k) => (
               <label class="choice names-type" key={k.key}>
                 <input
                   type="checkbox"
@@ -379,9 +448,26 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </fieldset>
       </form>
 
+      {smartOn && (
+        <LazyPanel
+          load={() => import("./NamesSmart")}
+          what="the search by meaning"
+          props={{
+            api,
+            campaignRef: ref,
+            onResults: setSmart,
+            showing: smart !== null,
+            refreshKey: smartRefresh,
+            leaveKey: smartLeave,
+            count: smart?.length ?? 0,
+            onSignedOut: () => setView("signed-out"),
+          }}
+        />
+      )}
+
       {/* Always on the page, so a screen reader hears each new count and each result. */}
       <p class="small" role="status" aria-live="polite" aria-busy={busy}>
-        {words.howMany(data.total)}
+        {words.howMany(smart !== null ? smart.length : data.total)}
       </p>
       {/* Two boxes that are always there, each with one role for good: a role that changes is
           missed by screen readers. A result that repeats ("Saved." twice) is a new node, so it is
@@ -392,6 +478,25 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       <p class={news && !news.ok ? "warn" : "visually-hidden"} role="alert">
         {news && !news.ok ? <span key={news.n}>{news.text}</span> : ""}
       </p>
+
+      {undo && !undoing && (
+        <p class="row">
+          <button type="button" class="button secondary" onClick={() => void undoNamed()}>
+            {undo.join ? notNamed.undoJoin : notNamed.undo}
+          </button>
+          <span class="small muted">{notNamed.undoHint}</span>
+        </p>
+      )}
+      {undoing && (
+        <WorkProgress
+          stage={undoLooks === 0 ? (notNamed.stage["waiting"] as string) : (notNamed.stage["undoing"] as string)}
+          startedAt={undoSeen.startedAt}
+          updatedAt={undoSeen.movedAt}
+          state={undoSeen.quiet ? "stalled" : "running"}
+          progressUnknown
+          whatToDo={notNamed.quiet}
+        />
+      )}
 
       {data.canEdit && picked.length >= 1 && (
         <section class="panel merge-bar" aria-label={words.selectedBar}>
@@ -426,14 +531,14 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
 
       {shown.length === 0 ? (
-        <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
+        smart !== null ? null : <p class="muted">{q.trim() !== "" || kinds.length > 0 ? words.noMatch : words.noNames}</p>
       ) : (
         <ul class="names-list" aria-label={words.listLabel} aria-busy={busy}>
           {shown.map((row) => (
             <NameItem
               key={row.id}
               row={row}
-              kinds={data.kinds}
+              kinds={kindList}
               canEdit={data.canEdit}
               ticked={picked.some((r) => r.id === row.id)}
               onTick={() => pick(row)}
@@ -441,6 +546,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
               focusSaid={focusRow === row.id}
               onToggle={() => setEditing(editing === row.id ? null : row.id)}
               act={act}
+              onNamed={(info) => named(row, info)}
+              onSignedOut={() => setView("signed-out")}
               api={api}
               refId={ref}
               campaignPath={`/account/npc/${encodeURIComponent(ref)}/`}
@@ -449,7 +556,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         </ul>
       )}
 
-      <PageBar
+      {smart === null && <PageBar
         id="names-page"
         label={words.pagesNav}
         moves={{ first: words.pageFirst, previous: words.pagePrevious, next: words.pageNext, last: words.pageLast }}
@@ -458,7 +565,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         busy={busy}
         notice={pageNotice}
         onGo={(wanted) => load(wanted)}
-      />
+      />}
     </div>
   );
 }
@@ -560,17 +667,19 @@ interface ItemProps {
   focusSaid?: boolean;
   onToggle: () => void;
   act: (row: NameRow, change: NameChange, ok: string) => Promise<string | null>;
+  onNamed: (info: NamedInfo) => Promise<void>;
+  onSignedOut: () => void;
   api: AccountApi;
   refId: string;
   campaignPath: string;
 }
 
-function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, api, refId, campaignPath }: ItemProps) {
+function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onToggle, act, onNamed, onSignedOut, api, refId, campaignPath }: ItemProps) {
   const panel = `name-edit-${row.id}`;
   return (
     <li class="name-row">
       <div class="name-head">
-        {canEdit && (
+        {canEdit && !row.unnamed && (
           <label class="name-tick">
             <input
               type="checkbox"
@@ -617,7 +726,10 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           )}
         </span>
       </div>
-      {canEdit && open && (
+      {canEdit && open && row.unnamed && (
+        <NameThem id={panel} row={row} api={api} refId={refId} onDone={onNamed} onSignedOut={onSignedOut} />
+      )}
+      {canEdit && open && !row.unnamed && (
         <NameEditor id={panel} row={row} kinds={kinds} act={act} api={api} refId={refId} focusSaid={focusSaid === true} />
       )}
     </li>

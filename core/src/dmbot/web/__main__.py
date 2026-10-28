@@ -18,9 +18,10 @@ from dmbot.ai import DEFAULT_MODELS, AIModelTier, AnthropicClient, Feature
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
 from dmbot.logs import LOG_FORMATS, LOG_LEVELS, configure_logging
+from dmbot.memory import meaning, voyage
 from dmbot.schema import WEB_ROLE
 from dmbot.sharding import ShardSettings
-from dmbot.web import feedback, move_sync, sessions, strays, support
+from dmbot.web import feedback, move_sync, names_smart, sessions, strays, support
 from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
@@ -188,6 +189,20 @@ async def serve(settings: WebSettings) -> None:
         link_secret=settings.link_token_secret,
         reply_domain=settings.mail_reply_domain,
     )
+    # Search by meaning on the Names page (#2733): only with the switch on and the Voyage key set.
+    voyage_http: voyage.HttpTransport | None = None
+    smart_names: names_smart.SmartNames | None = None
+    if settings.meaning_search_on:
+        voyage_http = voyage.HttpTransport(settings.voyage_key)
+        smart_names = names_smart.SmartNames(
+            voyage.Voyage(
+                voyage_http,
+                embed_model=settings.voyage_embed_model,
+                rerank_model=settings.voyage_rerank_model,
+            ),
+            settings.voyage_embed_model,
+            meaning.CallCounter(time.time).count,
+        )
     app = create_app(
         settings,
         db,
@@ -199,6 +214,7 @@ async def serve(settings: WebSettings) -> None:
         mailer=mailer,
         move_codes=move_codes,
         helper=helper,
+        smart_names=smart_names,
     )
     sweeper = asyncio.create_task(_sweep(db, helper))
     helping = asyncio.create_task(_help_with_tickets(helper)) if ai_client is not None else None
@@ -234,6 +250,8 @@ async def serve(settings: WebSettings) -> None:
             stray_sweeper.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await stray_sweeper
+        if voyage_http is not None:
+            await voyage_http.close()
         await discord.close()
         if discussions is not None:
             await discussions.close()

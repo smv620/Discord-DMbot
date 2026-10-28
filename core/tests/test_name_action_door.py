@@ -14,6 +14,7 @@ EVERY_ACTION = (
     "claim-confirm", "claim-reject", "backstory-keep", "backstory-skip", "backstory-keep-all",
     "backstory-which-pick", "backstory-which-neither",
     "reading-place", "reading-no", "reading-undo", "names-fixed-undo",
+    "name", "name-join", "name-undo",  # "Not named yet" on the Names page (#2803)
 )  # fmt: skip
 
 
