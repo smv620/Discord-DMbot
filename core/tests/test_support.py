@@ -1327,11 +1327,13 @@ class DoorBoundary(unittest.TestCase):
     ROOT = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 
     def callers(self, needle: str) -> set[str]:
-        return {
+        found = {
             str(f.relative_to(self.ROOT))
             for f in self.ROOT.rglob("*.py")
             if needle in f.read_text(encoding="utf-8")
         }
+        # The migrations are files of their own since #2127; they stand where schema.py stood.
+        return {"schema.py" if name.startswith("migrations/") else name for name in found}
 
     def test_only_support_opens_the_door_and_only_the_admin_routes_use_support(self) -> None:
         self.assertEqual(self.callers("db.support_admin("), {"web/support.py"})
