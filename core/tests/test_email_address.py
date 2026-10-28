@@ -24,4 +24,5 @@ class TheMove(unittest.TestCase):
                 modules += [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
                 modules.append(node.module)
-        self.assertEqual([m for m in modules if m.startswith("dmbot.web")], [])
+        # Exact package or its submodules only, so a future dmbot.webhooks is not a website import.
+        self.assertEqual([m for m in modules if m == "dmbot.web" or m.startswith("dmbot.web.")], [])
