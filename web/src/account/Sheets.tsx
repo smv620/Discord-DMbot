@@ -57,7 +57,8 @@ function CharacterSheetsInner({
   // What a player has typed in per character, so a re-render does not clear a half-typed form.
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
   // Every draft (typed, link, document) is keyed by campaign and character. The section is remounted per campaign
-  // (#2851), so a draft starts empty on a return to a campaign and never shows under another one.
+  // (#2851), so a draft starts empty on a return to a campaign and never shows under another one; the campaign in
+  // the key is a second guard, in case the section is ever reused without a remount.
   const draftKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [documents, setDocuments] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);

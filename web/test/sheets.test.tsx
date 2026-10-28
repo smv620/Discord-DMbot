@@ -365,6 +365,17 @@ describe("Use a document link", () => {
     expect(documentCalls(api)).toHaveLength(0);
   });
 
+  it("a half-typed document link does not show under another campaign, and is empty on return", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/half" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(docBox("Ivy").value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(docBox("Ivy").value).toBe(""));
+  });
+
   it("a DM does not see the document form", async () => {
     await open(".sheets-dm");
     expect(screen.queryByText(w.documentSummary)).toBeNull();
