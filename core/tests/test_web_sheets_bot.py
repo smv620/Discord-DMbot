@@ -399,8 +399,10 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
 
     async def test_while_closing_no_choice_is_started(self) -> None:
         queue: list[Any] = [SimpleNamespace(campaign_id="c")]
+        claimed: list[int] = []
 
         async def claim(guild_id: int) -> Any:
+            claimed.append(guild_id)
             return queue.pop(0) if queue else None
 
         b: Any = DMBot.__new__(DMBot)
@@ -421,8 +423,45 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         ):
             await b.run_web_sheets()
         await asyncio.sleep(0)  # a started task would run now, so `ran` below means something
-        # Nothing kept; the row stays claimed until RETAKE_AFTER_S.
         self.assertEqual(b._sheet_tasks, {})
+        self.assertEqual(ran, [])
+        self.assertEqual(claimed, [])  # claim_next was never awaited: the row stays unclaimed
+
+    async def test_closing_during_one_claim_stops_before_the_next_server(self) -> None:
+        # The guard is checked again for each server: closing that starts while server 1's claim
+        # is in flight must keep server 2's row unclaimed.
+        queue: dict[int, list[Any]] = {
+            1: [SimpleNamespace(campaign_id="c")],
+            2: [SimpleNamespace(campaign_id="d")],
+        }
+        claimed: list[int] = []
+        b: Any = DMBot.__new__(DMBot)
+
+        async def claim(guild_id: int) -> Any:
+            claimed.append(guild_id)
+            if guild_id == 1:
+                b._closing = True
+            return queue[guild_id].pop(0) if queue[guild_id] else None
+
+        b.web_sheets = SimpleNamespace(claim_next=claim)
+        b.sheets = object()
+        b._sheet_tasks = {}  # declared in DMBot.__init__
+        b._closing = False
+        b._asking = set()
+        ran: list[int] = []
+
+        async def never(self: Any, store: Any, guild_id: int, item: Any) -> None:
+            ran.append(guild_id)
+
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        with (
+            patch.object(DMBot, "guilds", guilds),
+            patch.object(DMBot, "_run_sheet_choice", never),
+        ):
+            await b.run_web_sheets()
+        await asyncio.sleep(0)
+        self.assertEqual(claimed, [1])  # server 2 was never claimed
+        self.assertEqual(len(queue[2]), 1)
         self.assertEqual(ran, [])
 
     async def test_without_a_store_nothing_happens(self) -> None:
