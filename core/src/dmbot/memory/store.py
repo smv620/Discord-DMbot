@@ -35,6 +35,7 @@ from psycopg import errors, sql
 from dmbot.db import Database, row_int
 from dmbot.memory import beliefs, evidence, kin, merge_restore, notify, standing, states
 from dmbot.memory import threads as threads_mod
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
@@ -99,6 +100,7 @@ from dmbot.memory.models import (
     MENTION_METHODS,
     MERGE_MANY_MAX,
     MERGED,
+    NPC,
     PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
@@ -216,6 +218,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         r["source"], r["created_at"], r["played_by"], r["role"], r["needs_look"], r["unique_item"],
         r["audience_limited"], r["party"], r["hidden_from_players"], r["made_before_name_gate"],
         r["manipulated_by"],
+        r["unnamed"], r["unnamed_anchor"], r["unnamed_role"], r["unnamed_what"],
     )  # fmt: skip
 
 
@@ -334,6 +337,18 @@ def _stronger(status_a: str, status_b: str) -> str:
 DAY = 24 * 60 * 60
 PEOPLE_CACHE_MAX = 512  # campaigns whose who-is-who is kept
 YIELD_AFTER_S = 0.015  # the flag check gives the event loop a turn this often
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class UnnamedAdded:
+    """What `add_unnamed` did: the entry (new or the one already there), whether it was made, and
+    the earlier unnamed entries with no anchor and the same word from other reads, which the caller
+    may ask the DM about joining (two hooded figures a month apart are often two people)."""
+
+    entity: Entity
+    created: bool
+    similar: tuple[str, ...] = ()
+    batch: int | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1353,6 +1368,103 @@ class MemoryStore:
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
             return _entity(row)
 
+    # ---- a person the story describes but never names (#2790) ----
+
+    async def add_unnamed(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        what: str,
+        anchor_id: str | None = None,
+        role: str | None = None,
+        details: str = "",
+        read: dict[str, str] | None = None,
+    ) -> UnnamedAdded:
+        """The unnamed person a stated relationship needs ("Ken's sister", "a hooded figure"):
+        a proposed character with no alias, so no name match can find it.
+
+        The same person is found again, not made twice: with an `anchor_id`, one with the same
+        anchor, relationship and word (a second "Ken's sister"; "his other sister" is another
+        word, so another person). With no anchor only `read` (this read's own record, key to entry
+        id, which the caller keeps) joins them: two hooded figures a month apart are often two
+        people, so earlier ones come back as `similar` for the caller to ask the DM about.
+        Written as the extractor, so it is a proposal under the DM-confirmed rule."""
+        word = unnamed_mod.tidy(what)
+        if not word:
+            raise MemoryRuleError("Say who they are described as.")
+        role = (role or "").strip() or None
+        if role is not None and len(role) > unnamed_mod.MAX_ROLE:
+            raise MemoryRuleError("That relationship word is too long.")
+        if len(details) > DESCRIPTION_MAX:
+            raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
+        same = unnamed_mod.same_person_key(word, role)
+        async with self._write(guild_id, campaign_id, "extractor") as w:
+            anchor_name: str | None = None
+            if anchor_id is not None:
+                anchor = await _entity_row(w, anchor_id)
+                if anchor["status"] not in (PROPOSED, CONFIRMED):
+                    raise MemoryRuleError("That entry is not in the story any more.")
+                anchor_name = anchor["name"]
+            live = await w.select(
+                ENTITIES, " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY id"
+            )
+            found = [
+                r
+                for r in live
+                if r["unnamed_anchor"] == anchor_id
+                and unnamed_mod.same_person_key(r["unnamed_what"], r["unnamed_role"]) == same
+            ]
+            key = f"{anchor_id or ''}|{same}"
+            if anchor_id is not None and found:
+                return UnnamedAdded(_entity(found[0]), False)
+            if anchor_id is None and read is not None and key in read:
+                for r in found:
+                    if r["id"] == read[key]:
+                        return UnnamedAdded(_entity(r), False)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(),
+                    "type": "character",
+                    "name": unnamed_mod.label(word, anchor_name)[:100],
+                    "description": details.strip(),
+                    "status": PROPOSED,
+                    "merged_into": None,
+                    "source": "extractor",
+                    "created_at": w.now,
+                    "played_by": None,
+                    "role": NPC,
+                    "needs_look": False,
+                    "unique_item": None,
+                    "unnamed": True,
+                    "unnamed_anchor": anchor_id,
+                    "unnamed_role": role,
+                    "unnamed_what": word,
+                },
+            )
+            if read is not None and anchor_id is None:
+                read[key] = row["id"]
+            similar = tuple(str(r["id"]) for r in found) if anchor_id is None else ()
+            return UnnamedAdded(_entity(row), True, similar, w.batch)
+
+    async def unnamed(self, guild_id: int, campaign_id: str) -> list[tuple[Entity, str]]:
+        """The campaign's unnamed people, each with the label to show now: built from the anchor's
+        present name, never the one stored when they were made."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                ENTITIES,
+                " AND unnamed AND status IN ('proposed', 'confirmed') ORDER BY created_at, id",
+            )
+            names = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
+            }
+        return [
+            (_entity(r), unnamed_mod.shown(r["unnamed_what"], r["unnamed_anchor"], names))
+            for r in rows
+        ]
+
     # ---- a clue only some people know (#1649) ----
 
     async def clue_audience(self, guild_id: int, campaign_id: str, clue_id: str) -> list[Entity]:
@@ -1949,7 +2061,18 @@ class MemoryStore:
             if clash and clash[0]["secret"]:
                 # Never turn a secret name into the name everyone hears.
                 raise MemoryRuleError(SPELLING_TAKEN)
-            row = await w.update(ENTITIES, entity_id, {"name": name})
+            changes: dict[str, Any] = {"name": name}
+            if current["unnamed"]:
+                # The DM giving a person the story never named a name (#2790): they are named now,
+                # and the label they had is no name, so it is not kept as an old spelling.
+                changes |= {
+                    "unnamed": False,
+                    "unnamed_anchor": None,
+                    "unnamed_role": None,
+                    "unnamed_what": None,
+                }
+                keep_old = False
+            row = await w.update(ENTITIES, entity_id, changes)
             if own and (not clash or clash[0]["id"] == own[0]["id"]):
                 # The same name, spelled right (listened for, and never secret).
                 await w.update(
@@ -2539,7 +2662,7 @@ class MemoryStore:
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
         async with self._write(guild_id, campaign_id, source) as w:
-            await self._merge_in(
+            kept = await self._merge_in(
                 w,
                 keep_id,
                 gone_id,
@@ -2547,7 +2670,7 @@ class MemoryStore:
                 dm_said_same=dm_said_same,
                 confirm_keys=confirm_keys,
             )
-            final = await w.get(ENTITIES, keep_id)
+            final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
 
@@ -2575,7 +2698,10 @@ class MemoryStore:
             raise MemoryRuleError(f"Merge up to {MERGE_MANY_MAX} names at a time.")
         async with self._write(guild_id, campaign_id, source) as w:
             for gone_id in gone:
-                await self._merge_in(w, keep_id, gone_id, source=source, dm_said_same=True)
+                # (a named entry is kept over an unnamed one, whichever way round: #2790)
+                keep_id = await self._merge_in(
+                    w, keep_id, gone_id, source=source, dm_said_same=True
+                )
             final = await w.get(ENTITIES, keep_id)
             assert final is not None
             return Written(_entity(final), w.batch)
@@ -2599,7 +2725,7 @@ class MemoryStore:
                 " WHERE m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id"
                 " AND m.entity_id = e.id) AS heard FROM memory_entities e"
                 " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.status = 'confirmed'"
-                " AND e.type <> %s",
+                " AND e.type <> %s AND NOT e.unnamed",  # (no name to be alike: #2790)
                 (*scope.ids, PERSON),
             )
             names = [
@@ -2669,11 +2795,15 @@ class MemoryStore:
         source: str,
         dm_said_same: bool,
         confirm_keys: Collection[str] = (),
-    ) -> None:
-        """One merge inside an open write (see `merge`)."""
+    ) -> str:
+        """One merge inside an open write (see `merge`). Returns the id that was kept: a named
+        entry is always the one kept when the other has no name (#2790), so the DM giving a name
+        to "Ken's sister" keeps the real name whichever way round the merge was asked."""
         onto = await _load_ontology(w)
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
+        if keep["unnamed"] and not gone["unnamed"]:
+            keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
         if (keep["type"] == PERSON) != (gone["type"] == PERSON):
             raise MemoryRuleError("A player or the DM can't be the same as a character.")
         needs_dm = CONFIRMED in (keep["status"], gone["status"]) or (
@@ -2734,6 +2864,16 @@ class MemoryStore:
         for table in (MENTIONS, CORRECTIONS):  # one statement each (#164)
             await w.update_where(table, {"entity_id": keep_id}, " AND entity_id = %s", [gone_id])
         await w.update(ENTITIES, keep_id, {"status": _stronger(keep["status"], gone["status"])})
+        # People who hang off the merged-away entry now hang off the kept one (#2790): "Ken's
+        # sister" follows Ken when two Kens are one. One statement, because a merge is counted in
+        # statements; an unnamed entry that hung off the one it was merged with just keeps pointing
+        # at the merged-away entry (still there), and its label leaves the anchor out.
+        await w.update_where(
+            ENTITIES,
+            {"unnamed_anchor": keep_id},
+            " AND unnamed_anchor = %s AND id <> %s",
+            [gone_id, keep_id],
+        )
         # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
         await w.update(
             ENTITIES,
@@ -2747,6 +2887,7 @@ class MemoryStore:
         # batch is known.
         assert w.batch is not None
         await merge_restore.save(w.conn, w.ids, w.batch, keep_id, gone_id, before_moves)
+        return keep_id
 
     async def check_people(
         self, guild_id: int, campaign_id: str, dm_ids: Collection[int]
