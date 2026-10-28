@@ -18087,8 +18087,8 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0269_report_fixed_remind",
         REPORT_FIXED_REMIND,
     ),  # Undo of a fix gives a reminder back (#2661)
-    ("0271_web_restores", WEB_RESTORES),  # a backup loaded from the website (#2745)
     ("0270_web_pronoun_which", WEB_PRONOUN_WHICH),  # pronoun questions on the website (#2811)
+    ("0271_web_restores", WEB_RESTORES),  # a backup loaded from the website (#2745)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
