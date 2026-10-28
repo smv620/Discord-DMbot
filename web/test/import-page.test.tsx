@@ -267,12 +267,26 @@ describe("Google Doc links", () => {
     expect(w.fileError[code]).toBeTruthy();
   });
 
-  it("accepts a link with no scheme or with http", () => {
+  it("accepts a link with no scheme or with https", () => {
     open();
     add("docs.google.com/document/d/abc/edit");
-    add("http://docs.google.com/document/d/def/edit");
+    add("https://docs.google.com/document/d/def/edit");
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(w.linkName(2))).toBeTruthy();
+  });
+
+  it("refuses an http link with its own words, and adds no row", () => {
+    open();
+    add("http://docs.google.com/document/d/def/edit");
+    expect(screen.getByRole("alert").textContent).toContain(w.googleDocNeedsHttps);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+  });
+
+  it("refuses an upper-case HTTP link the same way", () => {
+    open();
+    add("HTTP://docs.google.com/document/d/def/edit");
+    expect(screen.getByRole("alert").textContent).toContain(w.googleDocNeedsHttps);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
   });
 
   it("shows a doc that stops opening at Check, and says so at Import", async () => {

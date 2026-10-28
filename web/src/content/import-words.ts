@@ -78,6 +78,7 @@ export const importPage = {
     "DMbot reads the doc without signing in to your Google account, and only when you press Preview, Check or Import. It never changes the doc. Anyone with the link can open it. Keep sharing on until you press Import and it has started, then you can switch it off.",
   linkPlaceholder: "https://docs.google.com/document/d/…",
   notAGoogleDocLink: "That doesn't look like a Google Doc link. It starts with docs.google.com/document.",
+  googleDocNeedsHttps: "That link starts with http://. Paste the https:// address of the Google Doc.",
   linkAlreadyAdded: "You already added this doc.",
   tooManyToAdd: `That is ${IMPORT_MAX_FILES} already, the most DMbot takes. Remove one first.`,
   added: (name: string, total: number): string => `Added ${name}. ${total} ${total === 1 ? "item" : "items"} chosen.`,

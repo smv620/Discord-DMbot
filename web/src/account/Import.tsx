@@ -429,6 +429,11 @@ export default function Import({
   const addLink = (): void => {
     const link = linkText.trim();
     if (link === "" || busy) return;
+    // An explicit http:// link is refused here: the bot fetches only https, so it would fail later (#2861).
+    if (/^http:\/\//i.test(link)) {
+      setLinkProblem(words.googleDocNeedsHttps);
+      return;
+    }
     // Caught here so a typo does not cost a round trip. The API still checks (not_a_google_doc).
     if (!/^(https?:\/\/)?docs\.google\.com\/document\//i.test(link)) {
       setLinkProblem(words.notAGoogleDocLink);
