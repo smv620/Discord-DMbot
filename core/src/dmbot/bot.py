@@ -1391,7 +1391,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # recorded()'s database lookups still running, one per person: a press while one
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
-        self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        # Private-message rounds and the website's background work in flight.
+        self._asking: set[asyncio.Task[None]] = set()
         # Loops that last as long as a session (#1128, #1129): kept apart from `_asking`, which
         # tests and `close()` wait on until it is empty.
         self._loops: set[asyncio.Task[None]] = set()
@@ -10576,7 +10577,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             gid = guild.id
             task = self._track(self._run_report_request(store, gid, req), "web-report-request")
             if task is None:
-                continue  # shutting down: the row is retaken after the door's ten minutes
+                # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
+                # (web_report_requests.py).
+                continue
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
@@ -10707,7 +10710,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             gid = guild.id
             task = self._track(self._run_sheet_choice(store, gid, item), "web-sheet-choice")
             if task is None:
-                continue  # shutting down: the row is retaken after the door's ten minutes
+                # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
+                # (web_sheets.py).
+                continue
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
