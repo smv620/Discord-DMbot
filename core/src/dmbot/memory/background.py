@@ -267,7 +267,9 @@ def _in_text(haystack: str, name: str) -> bool:
     words = _squash(name).split()
     if len(words) < 2 or any(len(re.sub(r"\W", "", w)) < SHORTEST for w in words):
         return False
-    gap = rf"(?:\W+\w+){{0,{SPLIT_GAP}}}?\W+"
+    # (no sentence end or line break between the words: "Brannoc met the smith. Ashgrove..." is not)
+    sep = r"[^\w.!?\n\r\u2028\u2029\x85]+"
+    gap = rf"(?:{sep}\w+){{0,{SPLIT_GAP}}}?{sep}"
     pattern = gap.join(rf"(?<!\w){re.escape(w)}(?!\w)" for w in words)
     return re.search(pattern, haystack) is not None
 
@@ -348,6 +350,7 @@ _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
 _BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 
+MIN_BORROWED_WORDS = 3  # the paragraph before must end in at least this many words to lend
 LONG_QUOTE_WORDS = 2 * QUOTE_WORDS  # a widened quote's most, when 20 cannot hold both ends
 
 
@@ -396,7 +399,10 @@ def _widen(
             tail = piece[before_par:upto]
             ends = [m.end() for m in _SENTENCE_END.finditer(tail)]
             origin = before_par + (ends[-1] if ends else 0)
-            borrowed = bool(tail.strip())
+            # (a heading of a word or two is no sentence to borrow)
+            borrowed = len(piece[origin:upto].split()) >= MIN_BORROWED_WORDS
+            if not borrowed:
+                origin = paragraph
         tokens = piece[origin:end].split()
         for limit in (QUOTE_WORDS, LONG_QUOTE_WORDS):
             window = tokens[-limit:]  # (the quote's end is always in it; the front is cut last)
@@ -405,20 +411,9 @@ def _widen(
                 if lost is not None:
                     if len(window) > QUOTE_WORDS:
                         lost["quote_long"] += 1
-                    if borrowed:
-                        lost["quote_prev_paragraph"] += 1
+                    if borrowed and len(tokens) - len(window) < len(piece[origin:upto].split()):
+                        lost["quote_prev_paragraph"] += 1  # (the window really reaches into it)
                 return window
-    return None
-
-
-def _alias(haystack: str, end: str, aliases: Mapping[str, Sequence[str]]) -> str | None:
-    """The campaign's confirmed alias of this name that the (squashed) text uses instead of it
-    (#2762): the text says "the Ashen King" where the AI wrote the canonical "Aldric Vane". The
-    map holds only aliases that fit this one entry (`aliases` is built that way), so any of them in
-    the text stands for the end; None when none is there."""
-    for alias in aliases.get(name_key(end), ()):
-        if _has(haystack, alias):
-            return alias
     return None
 
 
@@ -671,8 +666,11 @@ def _groups(aliases: Mapping[str, Sequence[str]]) -> dict[str, set[str]]:
     entry (#2841): the campaign's confirmed aliases and the spellings this read listed. A spelling
     two entries both claim belongs to neither (it would be a guess which one is meant)."""
     claimed: dict[str, set[str]] = {}
+    mains = {name_key(m) for m in aliases}
     for main, spellings in aliases.items():
         for sp in spellings:
+            if name_key(sp) in mains and name_key(sp) != name_key(main):
+                continue  # (another entry's own name is never this one's spelling)
             claimed.setdefault(name_key(sp), set()).add(name_key(main))
     out: dict[str, set[str]] = {}
     for main, spellings in aliases.items():
@@ -698,7 +696,8 @@ def read_connections(
     names are checked against the merged list later (`keep_connections`). `dropped` counts why
     each line that failed did. `aliases` (a name key of the campaign to its confirmed public alias
     keys, each fitting that one entry only) lets a text that uses only an alias back the canonical
-    name the AI wrote (#2762): secret aliases are never in it, so nothing secret is matched here.
+    name the AI wrote (#2762). A read's own spellings, secret ones too, are in it for this check
+    alone (#2841): a connection found through a secret one is kept secret (`keep_connections`).
     `unsettled` (#2790): when given, a connection whose pronoun the sentence before did not settle
     is added there instead of being dropped as `not_in_text`, for the caller to settle; the caller
     then counts what became of each (the counts add up to the lines found)."""
@@ -801,17 +800,36 @@ def read_connections(
         ):
             lost["not_in_text"] += 1
         elif holds(said_squashed, seen[0]) and holds(said_squashed, seen[1]):
-            out.append(made)
+            out.append(_via(made, said_squashed, seen, forms))
         elif (wide := _widen(piece, words, seen[0], seen[1], holds, lost)) is not None:
             # The quote named one end ("his sister…"): the sentence before it joins, word for word.
             lost["quote_widened"] += 1
-            out.append(replace(made, quote=" ".join(wide)))
+            joined = replace(made, quote=" ".join(wide))
+            out.append(_via(joined, _squash(" ".join(wide)), seen, forms))
         elif unsettled is not None and (
             open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
         ):
             unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
+    return out
+
+
+def _via(
+    made: Connection, said: str, seen: list[str], forms: Callable[[str], list[str]]
+) -> Connection:
+    """The connection with, for an end the quote holds only through another spelling of its
+    entry, that spelling as the end's variant (#2841). `keep_connections` then keeps the link
+    secret when the spelling is a disguise, and drops it when the spelling is another entry's."""
+    out = made
+    for index, end in enumerate(seen):
+        if _in_quote(said, end):
+            continue
+        via = next((f for f in forms(end)[1:] if _in_quote(said, f)), "")
+        if via and index == 0 and not made.variant_a:
+            out = replace(out, variant_a=via)
+        elif via and index == 1 and not made.variant_b:
+            out = replace(out, variant_b=via)
     return out
 
 
@@ -862,6 +880,7 @@ def keep_connections(
     questions: list[str] | None = None,
     speaker: str | None = None,
     picks: list[Pick] | None = None,
+    secret_keys: Collection[str] = (),
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -886,6 +905,8 @@ def keep_connections(
     for f in names:  # every public name first: another name's spelling never takes it over
         ends.setdefault(name_key(f.name), f.name)
     hidden = {name_key(x) for f in names for x in f.secret} - {name_key(f.name) for f in names}
+    # (disguises of names this read did not offer, such as the campaign's own: `secret_keys`)
+    hidden |= {name_key(x) for x in secret_keys} - {name_key(f.name) for f in names}
     claimed: dict[str, set[str]] = {}
     for f in names:
         for spelling in (*f.also, *f.secret):
@@ -933,7 +954,16 @@ def keep_connections(
             ):
                 fixed, other = (first, second) if second.ambiguous else (second, first)
                 # (a pick is secret as a connection would be, so its card is kept so too)
-                secret = bool({name_key(c.a), name_key(c.b), fixed.key} & hidden)
+                secret = bool(
+                    {
+                        name_key(c.a),
+                        name_key(c.b),
+                        name_key(c.variant_a),
+                        name_key(c.variant_b),
+                        fixed.key,
+                    }
+                    & hidden
+                )
                 word = c.b if second.ambiguous else c.a
                 again = (name_key(fixed.name or ""), c.how, name_key(word), bool(second.ambiguous))
                 if again in seen_picks:
@@ -994,7 +1024,17 @@ def keep_connections(
                 c.quote,
                 # secret when the end was written under a secret spelling, with a title in
                 # front of it too ("Lady Nightshade", #2591): the matched key counts
-                bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
+                bool(
+                    {
+                        name_key(c.a),
+                        name_key(c.b),
+                        name_key(c.variant_a),
+                        name_key(c.variant_b),
+                        first.key,
+                        second.key,
+                    }
+                    & hidden
+                ),
                 c.words,
                 decided=c.decided,
             )

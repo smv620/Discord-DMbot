@@ -36,6 +36,7 @@ from typing import Any
 
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
+from dmbot.memory.end_match import usable_alias
 from dmbot.memory.models import name_key
 from dmbot.memory.name_documents import request_text
 
@@ -328,6 +329,8 @@ class LoreRead:
     # New public spellings the text gives names the campaign already has (name as the campaign
     # writes it -> its spellings), so a link written with one still finds its name (#2841).
     known_spellings: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Every disguise ("secret:") this read listed, as name keys: a link found through one is secret.
+    secret_spellings: frozenset[str] = frozenset()
 
 
 async def _call(
@@ -555,8 +558,7 @@ async def _halves(
 
 def _gives_spellings(line: str) -> bool:
     """Whether a pass-1 name line lists other names or a disguise for the name."""
-    low = line.casefold()
-    return "other names:" in low or "secret:" in low
+    return re.search(r"(?:other names|secret):\s*[^|\s]", line, re.I) is not None
 
 
 def line_name(line: str) -> str:
@@ -672,8 +674,10 @@ async def read_lore(
     # to hold the same person under one of them, and a connection is shown to the DM alone), is
     # known now, so a quote written with a spelling backs an end written with the name (#2841).
     spelled: dict[str, list[str]] = {}
-    for f in names:
-        spelled.setdefault(f.name, []).extend((*f.also, *f.secret))
+    for f in names:  # (a spelling too plain to name anyone, "the King", is not one: #2762)
+        spelled.setdefault(f.name, []).extend(
+            sp for sp in (*f.also, *f.secret) if usable_alias(name_key(sp))
+        )
     here = {**{k: list(v) for k, v in (aliases or {}).items()}}
     for main, others in spelled.items():
         here.setdefault(main, []).extend(others)
@@ -681,6 +685,7 @@ async def read_lore(
         links += bg.read_connections(
             reply_text, text, set(own), stats.dropped, here, stats.unsettled
         )
+    secrets = frozenset(name_key(sp) for f in names for sp in f.secret)
     known: dict[str, tuple[str, ...]] = {}
     if skip_name is not None:
         known = {f.name: f.also for f in names if skip_name(f.name) and f.also}
@@ -695,4 +700,4 @@ async def read_lore(
         stats.extra_links, stats.shape_calls,
         stats.shape_cut, stats.names_kept, stats.links_kept, ", still cut off" if cut else "",
     )  # fmt: skip
-    return LoreRead(names, links, cut, stats, known)
+    return LoreRead(names, links, cut, stats, known, secrets)

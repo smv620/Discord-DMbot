@@ -247,3 +247,77 @@ class TwoFormsOfOnePronoun(unittest.TestCase):
         rows = [link("Brannoc", "Mira", "His father cared for him and his sister, Mira.", "family")]
         got, lost = read_links(rows, self.TEXT + " Brannoc", unsettled=None)
         self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))
+
+
+class ASecretSpellingKeepsTheLinkSecret(unittest.TestCase):
+    """The quote may hold a disguise only when the link is kept as secret (#2841 review)."""
+
+    TEXT = "Ken is known to the guild as Lady Nightshade. Lady Nightshade taught Mira the knife."
+
+    def kept(self, secret_keys: tuple[str, ...] = ("Lady Nightshade",)) -> list[bg.Connection]:
+        rows = [link("Ken", "Mira", "Lady Nightshade taught Mira the knife.")]
+        got, _ = read_links(rows, self.TEXT, {"Ken": ["Lady Nightshade"]})
+        names = [
+            bg.Found("Ken", "npc", (), ("Lady Nightshade",), ""),
+            bg.Found("Mira", "npc", (), (), ""),
+        ]
+        return bg.keep_connections([got], names, {}, dropped=Counter(), secret_keys=secret_keys)
+
+    def test_a_link_whose_quote_holds_only_the_disguise_is_secret(self) -> None:
+        out = self.kept()
+        self.assertEqual(len(out), 1)
+        self.assertTrue(out[0].secret)
+
+    def test_the_disguise_of_a_known_name_marks_it_through_secret_keys(self) -> None:
+        rows = [link("Ken", "Mira", "Lady Nightshade taught Mira the knife.")]
+        got, _ = read_links(rows, self.TEXT, {"Ken": ["Lady Nightshade"]})
+        names = [bg.Found("Mira", "npc", (), (), "")]  # (Ken is the campaign's: not in the list)
+        out = bg.keep_connections(
+            [got], names, {"ken": "Ken"}, dropped=Counter(), secret_keys=("Lady Nightshade",)
+        )
+        self.assertEqual([c.secret for c in out], [True])
+
+
+class TwoEntriesInTheGroups(unittest.TestCase):
+    def test_an_entry_listing_another_entrys_name_as_a_spelling_does_not_merge_with_it(
+        self,
+    ) -> None:
+        text = "Ken met Tavin. Tavin taught Mira the knife."
+        rows = [link("Ken", "Mira", "Tavin taught Mira the knife.")]
+        got, lost = read_links(rows, text, {"Ken": [], "Tavin": ["Ken"]})
+        self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))
+
+
+class TheSurnameMustBeCloseAndInOneSentence(unittest.TestCase):
+    def read(self, text: str) -> list[bg.Found]:
+        reply = json.dumps(
+            {"names": [{"name": "Brannoc Ashgrove", "kind": "person", "also": [], "secret": []}]}
+        )
+        return bg.read_answer(reply, text)
+
+    def test_across_a_sentence_end_it_is_not_a_name(self) -> None:
+        self.assertEqual(self.read("Brannoc met the smith. Ashgrove is a town."), [])
+
+
+class ALongWindowStillNeedsBothEnds(unittest.TestCase):
+    def test_forty_words_that_still_miss_one_end_are_refused(self) -> None:
+        text = "Brannoc mentored apprentices. " + "She became his closest friend."
+        rows = [link("Brannoc", "Mira", "She became his closest friend.")]
+        got, lost = read_links(rows, text)
+        self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))  # (Mira is not in the text)
+
+    def test_a_heading_before_the_quote_is_not_borrowed(self) -> None:
+        text = "Brannoc\n\nHis sister, Mira, ran the farm."
+        rows = [link("Brannoc", "Mira", "His sister, Mira, ran the farm.", "family")]
+        got, lost = read_links(rows, text)
+        self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))
+
+
+class TheCountsOfTheWindow(unittest.TestCase):
+    def test_the_previous_paragraph_is_counted_only_when_the_window_reaches_it(self) -> None:
+        early = "Brannoc " + "walked slowly " * 25 + "home.\n\n"
+        text = early + "His sister, Mira, ran the farm."
+        rows = [link("Brannoc", "Mira", "His sister, Mira, ran the farm.", "family")]
+        got, lost = read_links(rows, text)
+        self.assertEqual(got, [])  # (the name is more than 40 words back: no window holds both)
+        self.assertEqual(lost["quote_prev_paragraph"], 0)

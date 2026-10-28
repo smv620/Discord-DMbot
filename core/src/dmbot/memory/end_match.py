@@ -95,6 +95,15 @@ FILLER = frozenset(
 SHORTEST = 3  # a word shorter than this is no name's whole claim to a match ("of", "de")
 
 
+def usable_alias(key: str) -> bool:
+    """Whether a spelling is distinctive enough to stand for a name on its own (#2762): after the
+    titles and articles are taken off ("the King" is nothing, "the Ashen King" is "ashen"), it
+    needs two words, or one of five letters or more. A bare title or a short word is shared by
+    too many people to be a name."""
+    core = [w for w in key.split() if w not in FILLER]
+    return bool(core) and (len(core) >= 2 or len(core[0]) >= 5)
+
+
 @dataclass(frozen=True, slots=True)
 class Matched:
     """`name` is the name the end stands for; `ambiguous` lists the names that fit equally well
