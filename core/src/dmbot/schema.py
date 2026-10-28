@@ -16562,6 +16562,14 @@ WEB_RULE_ACTIONS = (
 """
 )
 
+REPORT_FIXED_REMIND = """
+    -- A `fixed` answer (#2661) replaces a "remind me": the date goes here, so Undoing the change
+    -- that fixed the item puts the reminder back as it was.
+    ALTER TABLE report_answers ADD COLUMN remind_was BIGINT;
+    ALTER TABLE report_answers ADD CONSTRAINT report_answers_remind_was
+        CHECK (remind_was IS NULL OR answer = 'fixed');
+"""
+
 WEB_REPORT_REQUESTS = (
     r"""
     -- A DM's "make the report again" for one session, asked for on the website (#2661), waiting
@@ -17410,6 +17418,10 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # make the report again, on the website (#2661)
     ("0266_web_name_unnamed", WEB_NAME_UNNAMED),  # "Not named yet" on the Names page (#2803)
     ("0267_who_is_it_decided", BACKSTORY_DECIDED),  # how a pronoun was settled (#2790)
+    (
+        "0269_report_fixed_remind",
+        REPORT_FIXED_REMIND,
+    ),  # Undo of a fix gives a reminder back (#2661)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
