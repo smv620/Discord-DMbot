@@ -278,14 +278,21 @@ describe("Google Doc links", () => {
   it("refuses an http link with its own words, and adds no row", () => {
     open();
     add("http://docs.google.com/document/d/def/edit");
-    expect(screen.getByRole("alert").textContent).toContain(w.googleDocNeedsHttps);
+    expect(screen.getByRole("alert").textContent).toBe(w.googleDocNeedsHttps);
     expect(screen.queryByText(w.linkName(1))).toBeNull();
   });
 
   it("refuses an upper-case HTTP link the same way", () => {
     open();
     add("HTTP://docs.google.com/document/d/def/edit");
-    expect(screen.getByRole("alert").textContent).toContain(w.googleDocNeedsHttps);
+    expect(screen.getByRole("alert").textContent).toBe(w.googleDocNeedsHttps);
+    expect(screen.queryByText(w.linkName(1))).toBeNull();
+  });
+
+  it("refuses a padded http link too, since the link is trimmed first", () => {
+    open();
+    add("  http://docs.google.com/document/d/def/edit  ");
+    expect(screen.getByRole("alert").textContent).toBe(w.googleDocNeedsHttps);
     expect(screen.queryByText(w.linkName(1))).toBeNull();
   });
 
