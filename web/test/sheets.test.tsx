@@ -249,7 +249,7 @@ describe("Use a document link", () => {
     ["", "empty"],
     ["a word with spaces", "not-web"],
     ["ftp://example.com/x", "not-web"],
-  ])("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
+  ] as const)("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
     const api = await open();
     fireEvent.input(docBox(1), { target: { value: text } });
     sendDocument(1);
@@ -263,6 +263,15 @@ describe("Use a document link", () => {
     sendDocument(1);
     expect(await screen.findByText(w.problems["bad-link"] as string, {}, { timeout: 8000 })).toBeTruthy();
     expect(documentCalls(api)).toHaveLength(1);
+  });
+
+  it("a link longer than 400 characters is refused with the plain words, not cut short", async () => {
+    const api = await open();
+    const long = "https://example.com/" + "a".repeat(401 - "https://example.com/".length);
+    fireEvent.input(docBox(1), { target: { value: long } });
+    sendDocument(1);
+    expect(await screen.findByText(w.documentProblems["too-long"]!)).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(0);
   });
 
   it("a DM does not see the document form", async () => {

@@ -1,3 +1,4 @@
+import type { DocumentLinkProblem } from "../account/sheets-document";
 // The words of "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554): a player links or
 // forgets their own character's sheet, and a DM reads every sheet (read only) and asks for them to be read
 // again. Plain words. The bot fetches the link; the page never does. The link is shown to the player and the campaign's
@@ -45,7 +46,7 @@ export const sheetWords = {
     empty: "Nothing was sent: paste the link first.",
     "not-web": "Nothing was sent: the link must start with https:// or http://.",
     "too-long": "Nothing was sent: the link is longer than 400 characters.",
-  } as Record<string, string>,
+  } satisfies Record<DocumentLinkProblem, string>,
   typedNeedsClass: "Nothing was saved: type the class first.",
   readAgain: "Read the sheets again",
   readAgainNote:

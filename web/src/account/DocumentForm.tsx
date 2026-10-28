@@ -33,9 +33,10 @@ export default function DocumentForm({
           <legend class="visually-hidden">{w.documentFor(sheet.name)}</legend>
           <label>
             {w.documentLabel}
+            {/* No maxLength: a browser would cut a long paste to 400 characters without a word, and the too-long check
+                would never see it. The check gives the plain words instead. */}
             <input
               type="url"
-              maxLength={400}
               value={value}
               onInput={(e) => onValue((e.target as HTMLInputElement).value)}
             />

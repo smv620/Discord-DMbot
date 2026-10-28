@@ -338,7 +338,7 @@ function Character({
     if (busy) return;
     const checked = checkDocumentLink(documentValue);
     if (!checked.ok) {
-      onProblem(w.documentProblems[checked.problem]!);
+      onProblem(w.documentProblems[checked.problem]);
       return;
     }
     onDocument(checked.url);

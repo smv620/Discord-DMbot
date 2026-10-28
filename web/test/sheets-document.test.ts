@@ -17,6 +17,11 @@ describe("checkDocumentLink", () => {
     expect(checkDocumentLink("   ")).toEqual({ ok: false, problem: "empty" });
   });
 
+  it("refuses a link with a control character in it, even at its start", () => {
+    expect(checkDocumentLink("\u0001https://example.com/sheet")).toEqual({ ok: false, problem: "not-web" });
+    expect(checkDocumentLink("https://example.com/\tsheet")).toEqual({ ok: false, problem: "not-web" });
+  });
+
   it("refuses a word with spaces, a link with another scheme, and a script link", () => {
     expect(checkDocumentLink("a word with spaces")).toEqual({ ok: false, problem: "not-web" });
     expect(checkDocumentLink("ftp://x")).toEqual({ ok: false, problem: "not-web" });
