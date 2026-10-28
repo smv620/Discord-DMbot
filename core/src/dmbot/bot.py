@@ -59,7 +59,7 @@ from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, Gemin
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
-from dmbot.campaigns import Campaign, CampaignStore, web_backup
+from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_restore
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -914,6 +914,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
+        # Copies restored from the website, waiting for the bot to apply them (#2746).
+        self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
             int, asyncio.Task[None]
@@ -10326,6 +10328,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
                     why = await web_backup.build(self, guild_id, item, store)
                     log.info("Website backup: %s", why or "done")  # the word only
+
+    async def run_web_restores(self) -> None:
+        """Apply the copies DMs uploaded on the website (#2746), one at a time per server, with
+        the same code and the same checks as Discord's `/dmbot restore`. Only the servers the bot
+        is in: the person must be in the server for it to count. The copy is never logged."""
+        store = self.web_restores
+        if store is None:
+            return
+        store.beat()  # a round began: the worker is alive
+        for guild in list(self.guilds):
+            for _ in range(web_restore.PER_ROUND):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id):
+                    if not await web_restore.run_one(self, store, guild.id, item):
+                        break
+
+    async def tidy_web_restores(self) -> None:
+        """The upkeep of the website's restore rows (#2746), about once a minute: end what a
+        stopped bot left, end the rows of a server DMbot has left (they hold whole campaigns;
+        decided from the install record, never from the cache), delete what is a day old. Every
+        server that has rows, not only the ones the bot is in."""
+        if self.web_restores is not None:
+            await web_restore.tidy(self.web_restores)
+
+    async def keep_web_restores_alive(self) -> None:
+        """Show the website's queued restores as alive (#2746), from a task of its own so a long
+        restore ahead of them does not make them look stalled."""
+        if self.web_restores is not None:
+            await self.web_restores.keep_waiting_alive()
+
+    async def restorer_in_server(self, guild_id: int, user_id: int) -> bool:
+        """Whether this person is still in the server (a website restore is judged at the moment
+        it is applied, not when it was asked for). The cache first, then one lookup. Only "no such
+        member" is False: a Discord error is not an answer, so it rises."""
+        guild = self.get_guild(guild_id)
+        if guild is None:
+            return False
+        if guild.get_member(user_id) is not None:
+            return True
+        try:
+            await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return False
+        return True  # (any other Discord error rises: the restore fails and can be tried again)
+
+    async def restore_copy(
+        self, guild_id: int, data: object, importer_id: int, **kw: Any
+    ) -> Campaign:
+        """Restore a copy the way Discord's `/dmbot restore` does (for a website restore)."""
+        return await self.campaigns.import_backup(guild_id, data, importer_id, **kw)
+
+    async def after_restore(self, guild_id: int, campaign_id: str, replaced: bool) -> None:
+        """What Discord's restore does once the copy is in: refresh the planner's statistics (a
+        big restore adds thousands of rows at once, #2376) and, for a replaced campaign, its rules
+        channel."""
+        memory = getattr(self, "memory", None)
+        if memory is not None:
+            await memory.analyze(guild_id)
+        if replaced:
+            self._rules_archive_changed(guild_id, campaign_id)
 
     async def run_web_delete_notices(self) -> None:
         """Finish the campaigns the website deleted (#2554): tidy their Discord channels and tell
