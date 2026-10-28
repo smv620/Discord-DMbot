@@ -22,6 +22,7 @@ from dmbot.dm_screen import messages, setup_dm_screen
 from dmbot.dm_screen import web_settings as ws
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import saved_text
+from dmbot.rules.optional import OptionalRule
 from dmbot.web import campaign_settings, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
@@ -62,6 +63,13 @@ class FakeBot:
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign:
         self.calls.append(("retention", str(days)))
         return await self.store.set_transcript_keep(campaign.guild_id, campaign.id, days)
+
+    async def apply_optional_rule(
+        self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
+    ) -> bool:
+        self.calls.append(("optional_rule", f"{rule.id}:{turn_on}"))
+        await self.store.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
+        return True
 
 
 class Settings(Base):
