@@ -328,12 +328,22 @@ describe("Use a document link", () => {
     ["", "empty"],
     ["a word with spaces", "not-web"],
     ["ftp://example.com/x", "not-web"],
+    ["http://example.com/x", "not-web"],
   ] as const)("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
     const api = await open();
     fireEvent.input(docBox("Ivy"), { target: { value: text } });
     sendDocument("Ivy");
     expect(await screen.findByText(w.documentProblems[problem]!)).toBeTruthy();
     expect(documentCalls(api)).toHaveLength(0);
+  });
+
+  it("an upper-case https link is sent, and the mock reads it as a web address", async () => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "HTTPS://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(1);
+    expect(api.calls).toContain(`chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "document", url: "https://example.com/sheet.pdf" })}`);
   });
 
   it("the mock refuses a link it can't read with bad-document-link, in the document's own words", async () => {
