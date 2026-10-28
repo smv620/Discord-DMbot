@@ -5,8 +5,14 @@ names and numbers throughout."""
 
 from __future__ import annotations
 
+import asyncio
+import unittest
+from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import PropertyMock, patch
 
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.memory import sheets
 from dmbot.memory import web_sheets as ws
@@ -30,6 +36,7 @@ class FakeHost:
         self.members = {PLAYER, OTHER, DM}
         self.read: list[int] = []
         self.refreshed = 0
+        self.sheets_read = 0
         self.too_soon_link = False
         self.too_soon_read = False
         self.changed = 0
@@ -47,8 +54,12 @@ class FakeHost:
             raise self.fail
         return sheets.parse(answer())
 
-    async def read_all(self, guild_id: int, campaign_id: str) -> None:
+    async def read_all(
+        self, guild_id: int, campaign_id: str, progress: Callable[[], Awaitable[None]]
+    ) -> None:
         self.refreshed += 1
+        for _ in range(self.sheets_read):  # one tick per sheet, as the real refresh makes
+            await progress()
 
     def link_too_soon(self, guild_id: int, user_id: int) -> bool:
         return self.too_soon_link
@@ -165,9 +176,17 @@ class Linking(Base):
         self.host.fail = sheets.SheetError("private", refused=True)
         rid = await self.put(ws.LINK)
         await self.take_and_run()
-        self.assertEqual(await self.state_of(rid), ("failed", ws.NOT_PUBLIC))
+        self.assertEqual(await self.state_of(rid), ("done", ws.NOT_PUBLIC))  # linked, with a note
         (sheet,) = await self.store.sheets(GUILD_A, self.c)  # linked, as Discord does
         self.assertIsNone(sheet.sheet)
+
+    async def test_a_site_that_did_not_answer_is_done_with_a_note_and_the_link_stays(self) -> None:
+        self.host.fail = sheets.SheetError("busy")
+        rid = await self.put(ws.LINK)
+        await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("done", ws.UNREACHABLE))
+        (sheet,) = await self.store.sheets(GUILD_A, self.c)
+        self.assertEqual(sheet.url, LINK)
 
     async def test_a_link_taken_twice_after_a_slow_try_is_one_link(self) -> None:
         first = await self.put(ws.LINK)
@@ -240,6 +259,27 @@ class ReadingAgain(Base):
         self.assertEqual(await self.state_of(rid), ("done", ""))
         self.assertEqual(self.host.refreshed, 0)
 
+    async def test_each_sheet_read_moves_the_row(self) -> None:
+        clock = [NOW]
+        queue = ws.ActionStore(self.db, clock=lambda: clock[0])
+        rid = await self.put(ws.READ_AGAIN, user=DM)
+        item = await queue.claim_next(GUILD_A)
+        assert item is not None
+
+        async def progress() -> None:
+            clock[0] += 5
+            await queue.touch(GUILD_A, item)
+
+        self.host.sheets_read = 3
+        await self.host.read_all(GUILD_A, self.c, progress)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT updated_at FROM web_sheet_actions WHERE id = %s", (rid,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["updated_at"], NOW + 15)
+
     async def test_a_player_is_refused(self) -> None:
         rid = await self.put(ws.READ_AGAIN, user=PLAYER)
         await self.take_and_run()
@@ -250,7 +290,7 @@ class ReadingAgain(Base):
         self.host.too_soon_read = True
         rid = await self.put(ws.READ_AGAIN, user=DM)
         await self.take_and_run()
-        self.assertEqual(await self.state_of(rid), ("failed", ws.TOO_SOON))
+        self.assertEqual(await self.state_of(rid), ("failed", ws.READ_TOO_SOON))
         self.assertEqual(self.host.refreshed, 0)
 
 
@@ -319,3 +359,43 @@ class TheQueue(Base):
         await self.put(ws.READ_AGAIN, user=DM)
         self.assertEqual(await self.queue.sweep(GUILD_A), 1)
         self.assertEqual(len(await self.rows()), 1)
+
+
+class TheSweep(unittest.IsolatedAsyncioTestCase):
+    """The poll loop does not wait for a sheet read (#2817): a choice is a background task, one at
+    a time for a server, so the other website actions in the loop are not held up."""
+
+    async def test_the_sweep_returns_while_a_choice_is_still_being_applied(self) -> None:
+        started, release = asyncio.Event(), asyncio.Event()
+        queue: dict[int, list[Any]] = {1: [SimpleNamespace(campaign_id="c")] * 2, 2: []}
+
+        async def claim(guild_id: int) -> Any:
+            return queue[guild_id].pop(0) if queue[guild_id] else None
+
+        async def slow(self: Any, store: Any, guild_id: int, item: Any) -> None:
+            started.set()
+            await release.wait()
+
+        b: Any = DMBot.__new__(DMBot)
+        b.web_sheets = SimpleNamespace(claim_next=claim)
+        b.sheets = object()
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        with (
+            patch.object(DMBot, "guilds", guilds),
+            patch.object(DMBot, "_run_sheet_choice", slow),
+        ):
+            await asyncio.wait_for(b.run_web_sheets(), timeout=1)  # returns at once
+            await started.wait()
+            await asyncio.wait_for(b.run_web_sheets(), timeout=1)  # and again
+            self.assertEqual(len(b._sheet_tasks), 1)  # one at a time for the server
+            self.assertEqual(len(queue[1]), 1)  # the second was not even claimed
+            release.set()
+            await asyncio.gather(*b._sheet_tasks.values())
+        await asyncio.sleep(0)
+        self.assertEqual(b._sheet_tasks, {})  # forgotten when done
+
+    async def test_without_a_store_nothing_happens(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_sheets = None
+        b.sheets = None
+        await b.run_web_sheets()

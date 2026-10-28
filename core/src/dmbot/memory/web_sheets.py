@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -34,7 +34,6 @@ from dmbot.memory.sheet_store import PlayerCharacter, SheetRefused
 
 log = logging.getLogger(__name__)
 
-ACTIONS_PER_ROUND = 5  # choices applied for one server in one round (a read-again is slow)
 RETAKE_AFTER_S = 600  # a claim this old belongs to a bot that stopped: the door's own limit
 KEEP_FOR_S = 86400  # as long as the website reads an answer back
 
@@ -44,9 +43,13 @@ LINK, FORGET, READ_AGAIN = "link", "forget", "read_again"
 NOT_ALLOWED = "not_allowed"  # not theirs to change, or they left the server
 NOT_FOUND = "not_found"  # the campaign, the character or the sheet is gone
 BAD_LINK = "bad_link"  # not a D&D Beyond character link
-TOO_SOON = "too_soon"  # the cooldown, checked again
+TOO_SOON = "too_soon"  # the link cooldown, checked again
+READ_TOO_SOON = "read_too_soon"  # the read-again cooldown: the page words it apart
+# Two notes on a link that was saved: the choice is `done` and the page says what to do, as Discord
+# does ("Linked, but ..."). Not failures.
 NOT_PUBLIC = "not_public"  # D&D Beyond refused it: set the sheet to Public
 UNREACHABLE = "unreachable"  # D&D Beyond did not answer; the link is kept and read later
+NOTES = (NOT_PUBLIC, UNREACHABLE)
 SERVER = "server"  # anything unexpected; the choice can be sent again
 
 
@@ -77,8 +80,11 @@ class Host(Protocol):
         """One read of D&D Beyond. Raises `sheets.SheetError`."""
         ...
 
-    async def read_all(self, guild_id: int, campaign_id: str) -> None:
-        """Read every linked sheet of the campaign again, as Discord's Refresh sheets does."""
+    async def read_all(
+        self, guild_id: int, campaign_id: str, progress: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Read every linked sheet of the campaign again, as Discord's Refresh sheets does, and
+        call `progress` after each sheet so the page sees the choice still moving."""
         ...
 
     def link_too_soon(self, guild_id: int, user_id: int) -> bool:
@@ -142,16 +148,29 @@ class ActionStore:
             bool(row["retried"]),
         )
 
+    async def touch(self, guild_id: int, item: Action) -> bool:
+        """The choice is still moving: the page's "no news" line and the door's ten-minute
+        put-back both read `updated_at`. Only the claiming worker."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE web_sheet_actions SET updated_at = %s"
+                " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                (int(self._now()), guild_id, item.id, item.claimed_at),
+            )
+            return bool(cur.rowcount)
+
     async def finish(self, guild_id: int, item: Action, error: str) -> bool:
-        """Done, or failed with why, for the page to read. Only the worker that holds the current
-        claim can write. False: not its row any more."""
+        """Done, or failed with why, for the page to read; a note (`NOTES`) is done with the
+        word. Only the worker that holds the current claim can write. False: not its row any
+        more."""
+        state = "failed" if error and error not in NOTES else "done"
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE web_sheet_actions SET state = %s, stage = %s, error = %s, updated_at = %s"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
                 (
-                    "failed" if error else "done",
-                    "failed" if error else "done",
+                    state,
+                    state,
                     error[:40],
                     int(self._now()),
                     guild_id,
@@ -171,7 +190,7 @@ class ActionStore:
             return int(cur.rowcount)
 
 
-async def apply(host: Host, guild_id: int, item: Action) -> str:
+async def apply(host: Host, guild_id: int, item: Action, store: ActionStore | None = None) -> str:
     """Apply one queued choice the way Discord's button would. The error word, "" when done.
     Never raises for a refusal."""
     campaign = await host.get_campaign(guild_id, item.campaign_id)
@@ -180,7 +199,7 @@ async def apply(host: Host, guild_id: int, item: Action) -> str:
     if not await host.in_server(guild_id, item.user_id):
         return NOT_ALLOWED
     if item.action == READ_AGAIN:
-        return await _read_again(host, guild_id, campaign, item)
+        return await _read_again(host, guild_id, campaign, item, store)
     if item.action not in (LINK, FORGET):
         return SERVER
     mine = await host.sheets.characters_of(guild_id, item.user_id, campaign.id)
@@ -195,14 +214,21 @@ def _is(character: PlayerCharacter, entity_id: str) -> bool:
     return character.entity_id == entity_id
 
 
-async def _read_again(host: Host, guild_id: int, campaign: Campaign, item: Action) -> str:
+async def _read_again(
+    host: Host, guild_id: int, campaign: Campaign, item: Action, store: ActionStore | None
+) -> str:
     if item.user_id not in campaign.dm_user_ids:  # checked again: they may have handed over
         return NOT_ALLOWED
     if not any(s.url is not None for s in await host.sheets.sheets(guild_id, campaign.id)):
         return ""  # nothing linked: nothing to read, and no cooldown spent (as in Discord)
     if host.read_too_soon(guild_id, campaign.id):
-        return TOO_SOON
-    await host.read_all(guild_id, campaign.id)
+        return READ_TOO_SOON
+
+    async def progress() -> None:
+        if store is not None:
+            await store.touch(guild_id, item)
+
+    await host.read_all(guild_id, campaign.id, progress)
     return ""
 
 
@@ -246,7 +272,7 @@ async def run_one(host: Host, store: ActionStore, guild_id: int, item: Action) -
     (the loop stops; the row is taken again later and `apply` is safe to run twice). Only the
     outcome word is logged."""
     try:
-        error = await apply(host, guild_id, item)
+        error = await apply(host, guild_id, item, store)
     except Exception as exc:
         log.warning("A website sheet choice failed: %s", type(exc).__name__)
         error = SERVER
@@ -256,5 +282,5 @@ async def run_one(host: Host, store: ActionStore, guild_id: int, item: Action) -
     except Exception as exc:
         log.warning("A website sheet choice could not be marked: %s", type(exc).__name__)
         return False
-    log.info("Website sheet %s: %s", item.action, error or "done")
+    log.info("Website sheet %s: %s", item.action, error or "done")  # (a note is done)
     return True

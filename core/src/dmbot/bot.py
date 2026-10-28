@@ -10557,13 +10557,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def fetch_sheet(self, character: int) -> dict[str, Any]:
         return await sheets_memory.fetch(character)
 
-    async def read_all(self, guild_id: int, campaign_id: str) -> None:
+    async def read_all(
+        self, guild_id: int, campaign_id: str, progress: Callable[[], Awaitable[None]]
+    ) -> None:
         """Refresh sheets, as the names panel does it: every linked sheet read again."""
         store = self.sheets
         if store is None:
             return
         now = int(time.time())
-        await refresh_sheets(store, guild_id, campaign_id, now)
+        await refresh_sheets(store, guild_id, campaign_id, now, progress=progress)
         self.sheets_changed(guild_id, campaign_id)
 
     def link_too_soon(self, guild_id: int, user_id: int) -> bool:
@@ -10578,19 +10580,36 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def run_web_sheets(self) -> None:
         """What players and DMs chose on the website's character sheets page (#2817), applied the
-        way Discord's 📜 buttons apply it. Each asker must still play the character (or be a DM);
-        only the outcome word is logged, never a link."""
+        way Discord's 📜 buttons apply it. Each asker must still play the character (or be a DM).
+        A link is a 10-second read of D&D Beyond and a read-again is one per sheet, so each runs as
+        a tracked background task, at most one a server: this returns at once and the poll loop's
+        other website actions do not wait. Only outcome words are logged, never a link."""
         store = self.web_sheets
         if store is None or self.sheets is None:
             return
+        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_sheet_tasks", {})
         for guild in list(self.guilds):
-            for _ in range(web_sheets.ACTIONS_PER_ROUND):
-                item = await store.claim_next(guild.id)
-                if item is None:
-                    break
-                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
-                    if not await web_sheets.run_one(self, store, guild.id, item):
-                        break
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one at a time for a server; the loop does not wait for it
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            task = asyncio.create_task(self._run_sheet_choice(store, gid, item))
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_sheet_choice(
+        self, store: web_sheets.ActionStore, guild_id: int, item: web_sheets.Action
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_sheets.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
