@@ -11,6 +11,8 @@ export const reportWords = {
   none: "No report for this session yet.",
   make: "Make the report",
   makeAgain: "Try again",
+  // The last "make it again" did not work, and the report shown is the one made before.
+  lastFailed: "The new report couldn't be made, so this is the one from before. Nothing was changed.",
   // The wait (owner rule 2026-10-23): the stage, how far, how long, and when it last moved.
   stages: {
     waiting: "Waiting for DMbot to start",

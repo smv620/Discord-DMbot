@@ -1205,8 +1205,11 @@ def create_app(
         """Make the session's report, or make it again (#2661): queued for the bot, answered with
         the report as it now stands (`making`, with its progress). DM only: 403 `not_allowed`; 404
         for a session that is not the campaign's; 429 `too_soon` past five a campaign an hour. A
-        report being made right now is not queued again: the same report comes back."""
+        report being made right now is not queued again: the same report comes back. 404 while
+        DMBOT_WEB_REPORT_MAKE is off (the bot step that takes the request is #2805)."""
         session, _token = signed
+        if not settings.report_make_on:
+            raise HTTPException(status_code=404, detail="not_found")
         when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
         try:
             return await report.make_again(db, session, ref, when)

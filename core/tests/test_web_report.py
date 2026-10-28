@@ -708,8 +708,8 @@ class TheRoute(Reading):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://s.example"),
-            clock=lambda: NOW,
+            settings(report_make_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
         )  # fmt: skip
         self.client = await self.client_for(ALICE)
 
@@ -846,7 +846,14 @@ class TheRequest(Reading):
         await self.difference("disguised")
         await self.ask()
         await self.sql("UPDATE web_report_requests SET state = 'failed', error = 'unavailable'")
-        self.assertEqual((await self.read())["state"], "ready")
+        got = await self.read()
+        self.assertEqual(got["state"], "ready")
+        # ...and says that this try did not work, so the DM is not left looking at an old report
+        self.assertEqual(got["lastRequest"]["state"], "failed")
+
+    async def test_a_report_that_was_never_asked_again_has_no_failed_request(self) -> None:
+        await self.difference("disguised")
+        self.assertNotIn("lastRequest", await self.read())
 
     async def test_a_done_request_is_not_shown_as_making(self) -> None:
         await self.ask()
@@ -925,6 +932,21 @@ class TheMakeRoute(TheRoute):
         self.assertEqual((body["state"], body["progress"]["stage"]), ("making", "waiting"))
         again = await self.client.post(url)
         self.assertEqual((again.status_code, again.json()["state"]), (202, "making"))
+
+    async def test_make_again_is_404_while_the_server_switch_is_off(self) -> None:
+        off = create_app(
+            settings(), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+        )  # fmt: skip
+        self.app = off
+        client = await self.client_for(ALICE)
+        got = await client.post(f"/me/campaigns/{self.cref}/sessions/{S1}/report/make")
+        self.assertEqual((got.status_code, got.json()), (404, {"error": "not_found"}))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM web_report_requests")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # (nothing was queued)
 
     async def test_refusals_over_http_for_make_again(self) -> None:
         base = f"/me/campaigns/{self.cref}/sessions"

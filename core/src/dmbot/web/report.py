@@ -297,7 +297,12 @@ def with_request(
             "state": shown,
             "reason": "stalled" if shown == "stalled" else None,
         }
-    elif state == "failed" and report["state"] in ("none", "failed"):
+    elif state == "failed" and report["state"] not in ("none", "failed"):
+        # A report is there to read, but this try at making it again did not work: say so beside it,
+        # unless a report was made after the request (the bot may have died before closing the row).
+        if ready_at is None or ready_at < created:
+            report["lastRequest"] = {"state": "failed", "updatedAt": updated}
+    elif state == "failed":
         report["state"] = "failed"
         report["progress"] = {
             "stage": "waiting",

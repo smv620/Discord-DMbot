@@ -329,6 +329,17 @@ describe("making the report", () => {
     expect(screen.queryByRole("button", { name: w.make })).toBeNull(); // no second press while it waits
   });
 
+  it("says so when making it again did not work, keeps the old report, and offers Try again (#2661)", async () => {
+    const api = mockApi("table");
+    const first = await api.sessionReport!("100.cmp1", AT);
+    api.sessionReport = async () => ({ ...first, lastRequest: { state: "failed", updatedAt: 5 } });
+    await open("100.cmp1", api);
+    expect(await screen.findByText(w.lastFailed)).toBeTruthy();
+    expect(screen.getByText(/2 that may not fit/)).toBeTruthy(); // the old report is still there
+    fireEvent.click(screen.getByRole("button", { name: w.makeAgain }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("makeSessionReport"))).toBe(true));
+  });
+
   it("stops looking after 30 minutes and says so", async () => {
     const api = mockApi("table");
     const stuck: SessionReport = {
