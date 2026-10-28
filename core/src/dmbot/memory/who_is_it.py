@@ -40,6 +40,7 @@ class Decision:
     verdict: Verdict
     name: str | None  # the accepted name, or the top pick being asked about
     snr: float | None  # only when the rule had to compute it
+    top: float = 0.0  # the top confidence the rule used, after dropping and clamping
 
 
 def noise(others: list[float]) -> float:
@@ -73,12 +74,14 @@ def decide(candidates: list[Candidate]) -> Decision:
         return Decision(Verdict.UNNAMED, None, None)
     top = ranked[0]
     if _is_not_listed(top.name) or top.confidence < UNNAMED_BELOW:
-        return Decision(Verdict.UNNAMED, None, None)
+        return Decision(Verdict.UNNAMED, None, None, top.confidence)
     if top.confidence >= ACCEPT_AT:
-        return Decision(Verdict.ACCEPT, top.name, None)
+        return Decision(Verdict.ACCEPT, top.name, None, top.confidence)
     others = [c.confidence for c in ranked[1:]]
     if not others:  # nothing to compare with: no signal-to-noise, 40% or more is enough
-        return Decision(Verdict.ACCEPT, top.name, None)
+        return Decision(Verdict.ACCEPT, top.name, None, top.confidence)
     level = noise(others)
     snr = math.inf if level == 0 else top.confidence / level
-    return Decision(Verdict.ACCEPT if snr >= MIN_SNR else Verdict.ASK, top.name, snr)
+    return Decision(
+        Verdict.ACCEPT if snr >= MIN_SNR else Verdict.ASK, top.name, snr, top.confidence
+    )

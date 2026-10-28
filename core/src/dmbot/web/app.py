@@ -1802,7 +1802,8 @@ def create_app(
     @app.get("/me/campaigns/{ref}/backup/{backup_id}")
     async def me_campaign_backup_status(ref: str, backup_id: str, signed: Signed) -> dict[str, Any]:
         """Where the person's own copy stands, in the shared progress shape (stage, startedAt,
-        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size` and `expiresAt`."""
+        updatedAt, serverNow, state, reason), with `ready`, `fileName`, `size`, `expiresAt` and the
+        transcripts files still to fetch (`parts`: number and size; `partsTotal`)."""
         session, _token = signed
         try:
             return await campaign_backup.status(db, session, ref, backup_id)
@@ -1821,6 +1822,26 @@ def create_app(
             status, detail = backup_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
         safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:120] or "campaign.dmbot.json.gz"
+        return Response(
+            raw,
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.get("/me/campaigns/{ref}/backup/{backup_id}/file/{n}")
+    async def me_campaign_backup_part(ref: str, backup_id: str, n: int, signed: Signed) -> Response:
+        """One transcripts file of the copy (#2772), once; removed as it is sent. The status lists
+        the numbers still waiting. Same care as the main file: no store, a download."""
+        session, _token = signed
+        try:
+            raw, name = await campaign_backup.fetch_part(db, session, ref, backup_id, n)
+        except RecapError as err:
+            status, detail = backup_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        safe = re.sub(r"[^A-Za-z0-9._-]", "-", name)[:160] or "transcripts.dmbot.json.gz"
         return Response(
             raw,
             media_type="application/gzip",
