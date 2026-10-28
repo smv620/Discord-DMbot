@@ -142,7 +142,8 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
       {/* Delete is the last thing on the page (#2879): the person who holds the plan, and only while the switch is on. */}
-      {CAMPAIGN_DELETE_LIVE && ref && api.deleteCampaign && (card?.canDelete ?? page.role === "owner") && (
+      {/* Only a DM is offered it; the plan holder (or the owner, without the flag) within the DMs. */}
+      {isDm && CAMPAIGN_DELETE_LIVE && ref && api.deleteCampaign && (card?.canDelete ?? page.role === "owner") && (
         <div class="stack">
           <CampaignDelete
             api={api}

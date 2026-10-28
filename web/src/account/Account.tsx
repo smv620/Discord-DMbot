@@ -1032,15 +1032,14 @@ function CampaignRow({
       {HANDOVER_LIVE && campaign.role === "owner" && !tryIt && campaign.ref && api.offerHandover && api.takeBackHandover && (
         <EmailHandover campaign={campaign} refId={campaign.ref} />
       )}
-      {/* Only the plan holder is offered Delete: the API says so with `canDelete` (a campaign with no owner yet
-          can be deleted by its game masters); an API without it falls back to the owner. */}
-      {/* Delete is on the campaign's own page (#2879); here only for a server DMbot can't reach, where that page
-          would say not found. */}
+      {/* Delete is on the campaign's own page (#2879). Here it is only for a server DMbot can't reach, where that
+          page would not open. Only the plan holder is offered it: the API says so with `canDelete`; an API without
+          it falls back to the owner. */}
       {CAMPAIGN_DELETE_LIVE &&
-        campaign.serverReachable === false &&
-        (campaign.canDelete ?? campaign.role === "owner") &&
-        campaign.ref &&
-        api.deleteCampaign && (
+      campaign.serverReachable === false &&
+      (campaign.canDelete ?? campaign.role === "owner") &&
+      campaign.ref &&
+      api.deleteCampaign && (
         <CampaignDelete
           api={api}
           refId={campaign.ref}

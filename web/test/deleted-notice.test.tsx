@@ -23,21 +23,39 @@ describe("the deleted notice", () => {
     expect(takeDeleted()).toBeNull();
   });
 
+  // Blocked storage: the session store itself throws on every access, as a browser that blocks it does. Returns the
+  // way back, which puts the original property (or its absence) exactly as it was.
+  const blocked = (): (() => void) => {
+    const original = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+    Object.defineProperty(window, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new Error("blocked");
+      },
+    });
+    return () => {
+      if (original) Object.defineProperty(window, "sessionStorage", original);
+      else delete (window as unknown as { sessionStorage?: unknown }).sessionStorage;
+    };
+  };
+
   it("storage that throws gives null and does not throw", () => {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-    expect(takeDeleted()).toBeNull();
+    rememberDeleted("Lost Hollow", true);
+    const unblock = blocked();
+    try {
+      expect(takeDeleted()).toBeNull();
+    } finally {
+      unblock();
+    }
   });
 
   it("writing to blocked storage does not throw", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("full");
-    });
-    expect(() => rememberDeleted("Lost Hollow", false)).not.toThrow();
+    const unblock = blocked();
+    try {
+      expect(() => rememberDeleted("Lost Hollow", false)).not.toThrow();
+    } finally {
+      unblock();
+    }
   });
 
   it("My Account shows the line once after a delete, and not again on a reload", async () => {

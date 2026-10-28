@@ -109,7 +109,6 @@ describe("the page", () => {
     expect(within(section).getByRole("button", { name: "🔔 Normal" })).toBeTruthy();
     for (const key of ["handOver", "pause"] as const) expect(within(section).queryByText(w.doThisInDiscord(w.paths[key])), key).toBeNull();
     expect(within(section).getByText(w.ownerOnlyNote)).toBeTruthy();
-    expect(within(section).getByText(w.ownerOnlyNote)).toBeTruthy();
   });
 
   it("says retention is for ever when no days are set, and leaves a missing choice's value out", async () => {
@@ -425,6 +424,30 @@ describe("Delete this campaign, at the bottom of the page (#2879)", () => {
 
   it("is not shown to a player", async () => {
     await open(PLAYER, mockApi("table"));
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("is not shown to a player even when the API says the campaign may be deleted", async () => {
+    const api = mockApi("table");
+    const base = api.me.bind(api);
+    api.me = async () => {
+      const got = await base();
+      return got && { ...got, campaigns: got.campaigns.map((c) => ({ ...c, canDelete: true })) };
+    };
+    await open(PLAYER, api);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("is not shown to a co-DM the API does not let delete it", async () => {
+    const api = mockApi("table");
+    const base = api.me.bind(api);
+    api.me = async () => {
+      const got = await base();
+      return got && { ...got, campaigns: got.campaigns.map((c) => ({ ...c, canDelete: false })) };
+    };
+    await open("/account/campaigns/100.cmp3.cp-co", api);
+    await new Promise((r) => setTimeout(r, 50));
     expect(deleteButton()).toBeNull();
   });
 });
