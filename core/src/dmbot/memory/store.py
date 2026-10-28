@@ -33,7 +33,16 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, evidence, kin, merge_restore, notify, standing, states
+from dmbot.memory import (
+    beliefs,
+    evidence,
+    kin,
+    merge_restore,
+    notify,
+    report_fixed,
+    standing,
+    states,
+)
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
@@ -420,6 +429,10 @@ class MemoryStore:
                 undoes=undoes,
             )  # fmt: skip
             yield changes
+            if changes.relation_changes or changes.belief_additions or changes.deleted_items:
+                await self._report_fixed(conn, guild_id, campaign_id, changes)
+            if changes.restored:
+                await self._report_unfixed(conn, guild_id, campaign_id, changes.restored)
             if changes.version != start:
                 await conn.execute(
                     "UPDATE campaigns SET memory_version = %s WHERE guild_id = %s AND id = %s",
@@ -428,6 +441,29 @@ class MemoryStore:
                 names_changed = bool(changes.tables & notify.LOOKUP_TABLES)
                 kinds_changed = bool(changes.tables & notify.KIND_TABLES)
                 await notify.send(conn, campaign_id, changes.version, names_changed, kinds_changed)
+
+    async def _report_fixed(
+        self, conn: Any, guild_id: int, campaign_id: str, changes: Changes
+    ) -> None:
+        """The DM changed a connection: an after-session item that names it is what they fixed
+        (#2661). In the same transaction as the change, so a failed write marks nothing."""
+        moved: set[str] = set()
+        for op, before, after in changes.relation_changes:
+            # (a delete was looked up before it ran: see `Changes.deleted_items`)
+            if after is not None and report_fixed.changed_meaning(op, before, after):
+                moved.add(str(after["id"]))
+        keys = set(changes.deleted_items)
+        keys |= await report_fixed.names(conn, guild_id, campaign_id, moved)
+        keys |= await report_fixed.denied_by(conn, guild_id, campaign_id, changes.belief_additions)
+        await report_fixed.record(conn, guild_id, campaign_id, keys, int(self._clock()))
+
+    async def _report_unfixed(
+        self, conn: Any, guild_id: int, campaign_id: str, restored: set[str]
+    ) -> None:
+        """An Undo brought connections back: a `fixed` answer on an item naming them was the change
+        just taken back, so the item shows again (#2661). Other answers stay."""
+        keys = await report_fixed.names(conn, guild_id, campaign_id, restored)
+        await report_fixed.forget_found(conn, guild_id, campaign_id, [k for _, k in keys])
 
     @asynccontextmanager
     async def _read(

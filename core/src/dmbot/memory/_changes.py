@@ -328,6 +328,16 @@ class Changes(Scope):
         self.undoes = undoes
         self.batch: int | None = None
         self.tables: set[str] = set()  # tables this write changed
+        # The DM's own writes to connections, (op, before, after): what the after-session report
+        # reads to mark an item "fixed" (#2661). Not an Undo's, not another source's.
+        self.relation_changes: list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]] = []
+        # Beliefs the DM's write added, (point of view, connection): The truth taking up a
+        # connection is how the DM fixes a "denied" difference (#2661).
+        self.belief_additions: list[tuple[str, str]] = []
+        # Items that name a connection the DM deleted, found before the delete takes them with it
+        # (the database cascades them away), and connections an Undo brought back (#2661).
+        self.deleted_items: set[tuple[str, str]] = set()
+        self.restored: set[str] = set()
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
@@ -398,6 +408,10 @@ class Changes(Scope):
         before = await self.get(table, row_id)
         if before is None:
             return
+        if table is RELATIONS and self.source == "dm" and self.undoes is None:
+            from dmbot.memory import report_fixed
+
+            self.deleted_items |= await report_fixed.names(self.conn, *self.ids, [row_id])
         if table is RELATIONS and self.undoes is None:
             # its beliefs go with it, each logged, so an Undo brings the connection back whole
             for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
@@ -586,6 +600,10 @@ class Changes(Scope):
                 }
             )
         self.tables.add(table.name)
+        if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
+            self.relation_changes += [(op, b, a) for _, b, a in rows]
+        if self.undoes is not None and table.name in ("memory_relations", "memory_beliefs"):
+            self._note_restored(table, [b or a for _, b, a in rows])
         await self.conn.execute(
             "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
             " row_id, op, before, after, source, undoes, made_at)"
@@ -593,6 +611,11 @@ class Changes(Scope):
             " undoes, made_at FROM jsonb_populate_recordset(NULL::memory_changes, %s)",
             (*self.ids, Jsonb(entries)),
         )
+
+    def _note_restored(self, table: Table, rows: Sequence[dict[str, Any] | None]) -> None:
+        """An Undo touched these rows: the connections they belong to may be back as they were."""
+        key = "id" if table.name == "memory_relations" else "relation_id"
+        self.restored |= {str(r[key]) for r in rows if r is not None}
 
     async def _log(
         self,
@@ -606,6 +629,15 @@ class Changes(Scope):
             return
         self.version += 1
         self.tables.add(table.name)
+        if self.source == "dm" and self.undoes is None:
+            if table.name == "memory_relations":
+                self.relation_changes.append((op, before, after))
+            elif table.name == "memory_beliefs" and op == "insert" and after is not None:
+                self.belief_additions.append(
+                    (str(after["perspective_id"]), str(after["relation_id"]))
+                )
+        if self.undoes is not None and table.name in ("memory_relations", "memory_beliefs"):
+            self._note_restored(table, [before or after])
         if self.batch is None:
             self.batch = self.version
         await self.conn.execute(
