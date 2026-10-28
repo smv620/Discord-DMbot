@@ -17,6 +17,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import random
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -24,7 +26,7 @@ from typing import Any, Protocol
 
 from dmbot.ai import Reply
 from dmbot.memory.models import name_key
-from dmbot.memory.who_is_it import MAX_CANDIDATES, NOT_LISTED, Candidate
+from dmbot.memory.who_is_it import MAX_CANDIDATES, NOT_LISTED, Candidate, Decision, Verdict, decide
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +34,9 @@ SAMPLES = 5  # picks that check the top score holds; start here and tune on the 
 BLEND_WEIGHT = 0.5  # the share of the score; the rest is how often the sample picks agreed
 MAX_PASSAGE_CHARS = 1500  # the local window only; the end is kept, nearest the pronoun
 MAX_OFFERED = 40  # names offered at most (the campaign's known names and those before the phrase)
+MAX_ITEM_CHARS = 100  # one name or the phrase; the passage has its own, larger limit
+MIN_PICKS = 3  # usable sample picks needed before a high score can be trusted on its own
+MAX_PARALLEL = 3  # sample calls in flight at once, so one pronoun cannot flood the service
 SCORE_TOKENS = 2_000  # an estimate: the floor in ai.py raises it, so an answer is never cut
 PICK_TOKENS = 500
 
@@ -93,6 +98,7 @@ class Asked:
     scored: list[float]  # the raw score of each of those, same order (logged, to tune the blend)
     agreement: list[float]  # percent of usable picks for each of those, same order
     picks: int  # how many sample picks gave a usable answer
+    checked: bool = True  # enough samples came back to trust the score on its own
 
 
 def quoted(text: str) -> str:
@@ -100,23 +106,49 @@ def quoted(text: str) -> str:
     return " ".join(text.split()).replace("<", "‹").replace(">", "›")
 
 
-def question(passage: str, phrase: str, names: Sequence[str], ask: str) -> str:
+def _item(text: str) -> str:
+    return quoted(text)[:MAX_ITEM_CHARS]
+
+
+def ordered(names: Sequence[str], passage: str) -> list[str]:
+    """The names to offer: each once (by how names are compared), those that appear in the passage
+    first and the one nearest its end (nearest the pronoun) before the rest, then the others in the
+    caller's order, cut at MAX_OFFERED. A long list therefore never cuts the likeliest answers."""
+    text = passage.casefold()
+    unique: dict[str, str] = {}
+    for name in names:
+        unique.setdefault(name_key(name), name)
+    last = {k: text.rfind(n.casefold()) for k, n in unique.items()}
+    near = sorted((k for k in unique if last[k] >= 0), key=lambda k: -last[k])
+    rest = [k for k in unique if last[k] < 0]
+    return [unique[k] for k in [*near, *rest]][:MAX_OFFERED]
+
+
+def question(
+    passage: str, phrase: str, names: Sequence[str], ask: str, *, shuffle: int | None = None
+) -> str:
+    """The question. `shuffle`: show the names in a seeded random order, so each sample sees a
+    different one and position bias cannot make the samples agree for free."""
     local = quoted(passage)[-MAX_PASSAGE_CHARS:]
-    listed = "\n".join(quoted(n) for n in list(dict.fromkeys(names))[:MAX_OFFERED])
+    shown = ordered(names, passage)
+    if shuffle is not None:
+        random.Random(shuffle).shuffle(shown)
+    listed = "\n".join(_item(n) for n in shown)
     return (
-        f"<passage>\n{local}\n</passage>\n<phrase>{quoted(phrase)}</phrase>\n"
+        f"<passage>\n{local}\n</passage>\n<phrase>{_item(phrase)}</phrase>\n"
         f"<names>\n{listed}\n</names>\n{ask}"
     )
 
 
-def _offered(names: Sequence[str]) -> dict[str, str]:
-    """name_key -> the name as DMbot knows it, plus the not-listed choice."""
-    table = {name_key(n): n for n in list(dict.fromkeys(names))[:MAX_OFFERED]}
+def _offered(names: Sequence[str], passage: str) -> dict[str, str]:
+    """name_key -> the name as DMbot knows it, plus the not-listed choice. The same names as
+    `question` shows."""
+    table = {name_key(n): n for n in ordered(names, passage)}
     table[name_key(NOT_LISTED)] = NOT_LISTED
     return table
 
 
-def parse_scores(text: str, names: Sequence[str]) -> list[Candidate] | None:
+def parse_scores(text: str, names: Sequence[str], passage: str = "") -> list[Candidate] | None:
     """The AI's candidates, kept only if they are an offered name (or not listed), each name once
     (its best score), with not-listed always present. None when the answer cannot be read."""
     try:
@@ -125,7 +157,7 @@ def parse_scores(text: str, names: Sequence[str]) -> list[Candidate] | None:
         return None
     if not isinstance(rows, list):
         return None
-    table = _offered(names)
+    table = _offered(names, passage)
     best: dict[str, float] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -134,46 +166,77 @@ def parse_scores(text: str, names: Sequence[str]) -> list[Candidate] | None:
         confidence = row.get("confidence")
         if name is None or isinstance(confidence, bool) or not isinstance(confidence, int | float):
             continue
-        best[name] = max(best.get(name, float("-inf")), float(confidence))
+        if not math.isfinite(confidence):  # json.loads accepts NaN and Infinity
+            continue
+        held = min(max(float(confidence), 0.0), 100.0)  # before the blend, so 500 cannot outvote it
+        best[name] = max(best.get(name, 0.0), held)
     best.setdefault(NOT_LISTED, 0.0)
     return [Candidate(n, c) for n, c in best.items()]
 
 
-def parse_pick(text: str, names: Sequence[str]) -> str | None:
+def parse_pick(text: str, names: Sequence[str], passage: str = "") -> str | None:
     try:
         name = json.loads(text)["name"]
     except (ValueError, KeyError, TypeError):
         return None
-    return _offered(names).get(name_key(str(name)))
+    return _offered(names, passage).get(name_key(str(name)))
 
 
 def blend(
     scored: list[Candidate], picks: list[str], weight: float = BLEND_WEIGHT
 ) -> tuple[list[Candidate], list[float], list[float]]:
     """(blended candidates best-first, each one's raw score, each one's agreement percent). With
-    no usable picks the scores stand alone."""
+    no usable picks the scores stand alone. A name only the samples picked (the scorer left it out)
+    is not a candidate, but its picks still count in the total, so it only lowers the others'
+    agreement, the safe side. A tie puts "someone not listed" first, as `decide` does."""
     counts = Counter(picks)
     rows: list[tuple[Candidate, float, float]] = []
     for c in scored:
         agree = 100.0 * counts[c.name] / len(picks) if picks else 0.0
         mixed = weight * c.confidence + (1 - weight) * agree if picks else c.confidence
         rows.append((Candidate(c.name, mixed), c.confidence, agree))
-    rows.sort(key=lambda r: (-r[0].confidence, r[0].name == NOT_LISTED))
+    rows.sort(key=lambda r: (-r[0].confidence, r[0].name != NOT_LISTED))
     return [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]
 
 
-async def _sample(client: Client, passage: str, phrase: str, names: Sequence[str]) -> str | None:
-    try:
-        reply = await client.complete(
-            SYSTEM,
-            question(passage, phrase, names, PICK_ASK),
-            max_tokens=PICK_TOKENS,
-            schema=pick_schema(),
-        )
-    except Exception as exc:
-        log.warning("Who-is-it: a sample failed (%s)", type(exc).__name__)
+def trimmed(
+    rows: tuple[list[Candidate], list[float], list[float]],
+) -> tuple[list[Candidate], list[float], list[float]]:
+    """The best MAX_CANDIDATES, and "someone not listed" kept even if it ranks lower."""
+    candidates, raw, agree = rows
+    keep = list(range(min(MAX_CANDIDATES, len(candidates))))
+    for i, c in enumerate(candidates):
+        if c.name == NOT_LISTED and i not in keep:
+            keep[-1] = i
+    return [candidates[i] for i in keep], [raw[i] for i in keep], [agree[i] for i in keep]
+
+
+async def _sample(
+    client: Client,
+    passage: str,
+    phrase: str,
+    names: Sequence[str],
+    seed: int,
+    gate: asyncio.Semaphore,
+) -> str | None:
+    async with gate:
+        try:
+            reply = await client.complete(
+                SYSTEM,
+                question(passage, phrase, names, PICK_ASK, shuffle=seed),
+                max_tokens=PICK_TOKENS,
+                schema=pick_schema(),
+            )
+        except Exception as exc:
+            log.warning("Who-is-it: a sample failed (%s)", type(exc).__name__)
+            return None
+    if reply.refused or reply.cut:
+        log.warning("Who-is-it: a sample was %s", "refused" if reply.refused else "cut")
         return None
-    return None if reply.refused or reply.cut else parse_pick(reply.text, names)
+    picked = parse_pick(reply.text, names, passage)
+    if picked is None:
+        log.warning("Who-is-it: a sample could not be read")
+    return picked
 
 
 async def ask(
@@ -187,7 +250,10 @@ async def ask(
     """Scored candidates for who `phrase` means in `passage`, blended with the samples. None when
     the scoring call failed or could not be read (the caller keeps the relationship as an unnamed
     person and says nothing was guessed); a failed sample only leaves it out. Never raises for the
-    AI's trouble."""
+    AI's trouble. When fewer than MIN_PICKS samples came back (a busy service) `Asked.checked` is
+    False, and `decide_asked` turns an accept into a question for the DM. The caller processes
+    pronouns one at a time: each costs `samples` + 1 calls.
+    """
     try:
         reply = await client.complete(
             SYSTEM,
@@ -199,20 +265,35 @@ async def ask(
         log.warning("Who-is-it: the scoring call failed (%s)", type(exc).__name__)
         return None
     if reply.refused or reply.cut:
+        log.warning("Who-is-it: the scoring answer was %s", "refused" if reply.refused else "cut")
         return None
-    scored = parse_scores(reply.text, names)
+    scored = parse_scores(reply.text, names, passage)
     if scored is None:
+        log.warning("Who-is-it: the scoring answer could not be read")
         return None
+    gate = asyncio.Semaphore(MAX_PARALLEL)
     results = await asyncio.gather(
-        *(_sample(client, passage, phrase, names) for _ in range(samples))
+        *(_sample(client, passage, phrase, names, i, gate) for i in range(samples))
     )
     picks = [p for p in results if p is not None]
-    blended, raw, agreement = blend(scored, picks)
+    candidates, raw, agreement = trimmed(blend(scored, picks))
+    checked = len(picks) >= min(MIN_PICKS, samples)
+    if max(raw) <= 1.0 and len(raw) > 1:  # a 0-to-1 scale would put every answer under 40%
+        log.warning("Who-is-it: every score was 1 or less; the scale may be wrong")
     log.info(
         "Who-is-it: scores %s, picks agreeing %s of %d, blended %s",
         [round(x) for x in raw],
         [round(a) for a in agreement],
         len(picks),
-        [round(c.confidence) for c in blended],
+        [round(c.confidence) for c in candidates],
     )
-    return Asked(blended, raw, agreement, len(picks))
+    return Asked(candidates, raw, agreement, len(picks), checked)
+
+
+def decide_asked(asked: Asked) -> Decision:
+    """The rule's decision on the blended answer, except that an answer the samples did not check
+    (too few came back) is never accepted on the score alone: the DM is asked instead."""
+    decision = decide(asked.candidates)
+    if decision.verdict is Verdict.ACCEPT and not asked.checked:
+        return Decision(Verdict.ASK, decision.name, decision.snr, decision.top)
+    return decision
