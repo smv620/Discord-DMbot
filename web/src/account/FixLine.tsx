@@ -5,6 +5,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { ApiError, type AccountApi, type FixAnswer } from "./api";
+// The refusals that end a wait (looking again will not mend them); a network blip does not end it (#2564).
+const ENDS = ["not-allowed", "not-found", "signed-out"];
 import { OFFLINE_AFTER_MS, POLL_MS, LATE_POLL_MS, GIVE_UP_MS } from "./settings-timing";
 import { fixLineWords as w } from "../content/fix-line-words";
 import WorkProgress from "./WorkProgress";
@@ -39,6 +41,8 @@ export default function FixLine({
   const [text, setText] = useState(() => w.wordsOf(line));
   const [stage, setStage] = useState<string | null>(null);
   const [since, setSince] = useState<number | null>(null);
+  // The last answer the bot gave while the fix is going: its progress, for the wait panel (#2564).
+  const [last, setLast] = useState<FixAnswer | null>(null);
   const [said, setSaid] = useState<string | null>(null);
   const live = useRef(true);
   const shown = useRef(campaignRef + ":" + number);
@@ -59,6 +63,7 @@ export default function FixLine({
     setSaid(null);
     setStage(w.stage.waiting);
     setSince(Math.floor(Date.now() / 1000));
+    setLast(null);
     try {
       const queued = await api.fixTranscriptLine(campaignRef, number, { speaker, startedMs }, text.trim());
       const started = Date.now();
@@ -70,8 +75,9 @@ export default function FixLine({
         try {
           got = await api.fixAnswer(campaignRef, number, queued.answer);
         } catch (error) {
-          if (error instanceof ApiError && error.kind !== "server") throw error;
+          if (error instanceof ApiError && ENDS.includes(error.kind)) throw error;
         }
+        if (got && here()) setLast(got);
         if (got?.state === "done") {
           if (!here()) return;
           setStage(w.stage.done);
@@ -84,8 +90,11 @@ export default function FixLine({
           if (got.result === "changed") setOpen(false);
           return;
         }
-        if (got?.state === "failed") throw new ApiError("server");
-        if (got && here()) setStage(stageWords(w.stage as unknown as Record<string, string>, got.stage));
+        if (got?.state === "failed") {
+          if (here()) setSaid(w.failures[got.reason ?? ""] ?? w.failures.failed ?? null);
+          return;
+        }
+        if (got && here()) setStage(stageWords(w.stage, got.stage));
         if (final) {
           if (here()) setSaid(w.quiet);
           return;
@@ -93,8 +102,8 @@ export default function FixLine({
       }
     } catch (error) {
       if (!live.current || shown.current !== asked) return;
-      // The API's kind is hyphenated ("not-yours"); the words are keyed by the code ("not_yours").
-      const kind = error instanceof ApiError ? error.kind.replace(/-/g, "_") : "other";
+      // The API's kind is hyphenated, and fix kinds carry a "fix-" prefix ("fix-open" is the words' "open").
+      const kind = error instanceof ApiError ? error.kind.replace(/^fix-/, "").replace(/-/g, "_") : "other";
       setSaid(w.refusals[kind] ?? w.failures[kind] ?? w.failures.failed ?? null);
     } finally {
       if (live.current) {
@@ -148,7 +157,13 @@ export default function FixLine({
         </form>
       )}
       {busy && stage && since !== null && (
-        <WorkProgress stage={stage} startedAt={since} serverNow={since} state="running" progressUnknown />
+        <WorkProgress
+          stage={stage}
+          startedAt={since}
+          updatedAt={last?.updatedAt ?? null}
+          serverNow={last?.serverNow ?? null}
+          state={last?.state === "stalled" ? "stalled" : "running"}
+        />
       )}
       {said && (
         <p class={said === w.quiet || said === w.sentToDm || said.startsWith(w.changed) ? "ok small" : "warn small"} role="status">

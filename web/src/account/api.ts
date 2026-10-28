@@ -1123,7 +1123,14 @@ export interface TranscriptView {
   viewer?: { id: string; isDm: boolean };
   /** The lines this viewer may fix, by their index in THIS page's `lines`, with the speaker and start to name them to
    * the API (#2858). Only the cleaned reading has them. */
-  fixable?: { line: number; speaker: string; startedMs: number }[];
+  fixable?: FixableLine[];
+}
+
+/** A line the viewer may fix: its index in the page's lines, and the speaker and start that name it (#2858). */
+export interface FixableLine {
+  line: number;
+  speaker: string;
+  startedMs: number;
 }
 
 /** A line fix's answer: a suggestion to the DM, or a change made at once (#2858). */
@@ -1136,6 +1143,8 @@ export interface FixAnswer extends JobProgress {
   result: "sent" | "changed" | null;
   /** True when a rewrite can be undone from the fix notes in Discord. */
   undo: boolean;
+  /** Why it failed, as the words key it (`line_changed`, `secret`, …); null otherwise. */
+  reason?: string | null;
 }
 
 /** One stretch of off-topic chat left out of the cleaned transcript. `line` is its marker's index in the

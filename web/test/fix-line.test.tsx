@@ -43,15 +43,19 @@ async function openCleaned(api: Mock = mockApi("table") as Mock, path = CLEANED)
 }
 
 describe("switched off", () => {
-  it("no button while the switch is off or the API lacks the call", async () => {
+  it("no button while the switch is off, even where the API lists a fixable line", async () => {
+    live.on = false;
     render(<Transcripts api={mockApi("table")} path={CLEANED} />);
     await new Promise((r) => setTimeout(r, 50));
     expect(fixButtons()).toHaveLength(0);
   });
 
-  it("no button where the API has the call but the switch is off", async () => {
-    live.on = false;
-    render(<Transcripts api={mockApi("table")} path={CLEANED} />);
+  it("no button when the API has no fix call, even with the switch on", async () => {
+    const api = mockApi("table");
+    delete (api as { fixTranscriptLine?: unknown }).fixTranscriptLine;
+    delete (api as { fixAnswer?: unknown }).fixAnswer;
+    live.on = true;
+    render(<Transcripts api={api} path={CLEANED} />);
     await new Promise((r) => setTimeout(r, 50));
     expect(fixButtons()).toHaveLength(0);
   });
@@ -60,7 +64,9 @@ describe("switched off", () => {
 describe("the button", () => {
   it("no button on a line the API did not list as fixable, and none on the as-heard reading", async () => {
     await openCleaned();
-    expect(fixButtons()).toHaveLength(2);
+    // Only the spoken line is listed; the off-topic marker and the first line get no button.
+    expect(fixButtons()).toHaveLength(1);
+    expect(screen.queryAllByRole("button", { name: /^Fix this line/ })[0]!.closest("li")!.textContent).toContain("Ka'zeth");
     cleanup();
     live.on = true;
     render(<Transcripts api={mockApi("table")} path={HEARD} />);
@@ -115,7 +121,7 @@ describe("the outcome", () => {
 
   it("a rewrite ends with \"Changed.\" and the undo sentence only when undo is true", async () => {
     const api = await openCleaned();
-    fireEvent.click(fixButtons()[1]!);
+    fireEvent.click(fixButtons()[0]!);
     const box = screen.getByLabelText(w.label) as HTMLTextAreaElement;
     fireEvent.input(box, { target: { value: "Did you see the match!" } });
     fireEvent.click(screen.getByRole("button", { name: w.send }));
@@ -167,5 +173,58 @@ describe("the outcome", () => {
     expect(offTopic).toBeTruthy();
     await openCleaned();
     expect(fixButtons().length).toBeGreaterThan(0);
+  });
+
+  it("a rewrite that cannot be undone ends with \"Changed.\" and no undo sentence", async () => {
+    const api = mockApi("table");
+    const base = api.fixAnswer!.bind(api);
+    api.fixAnswer = async (ref, number, answer): Promise<FixAnswer> => ({ ...(await base(ref, number, answer)), undo: false });
+    await openCleaned(api);
+    fireEvent.click(fixButtons()[0]!);
+    fireEvent.input(screen.getByLabelText(w.label), { target: { value: "Did you see the match!" } });
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.changed, {}, { timeout: 8000 })).toBeTruthy();
+    expect(screen.queryByText(w.undoNote, { exact: false })).toBeNull();
+  });
+
+  it("a failure shows the words for the reason the answer gives", async () => {
+    const api = mockApi("table");
+    api.fixAnswer = async (): Promise<FixAnswer> => ({ stage: "failed", state: "failed", mode: "suggest", result: null, undo: false, reason: "line_changed" });
+    await openCleaned(api);
+    fireEvent.click(fixButtons()[0]!);
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.failures.line_changed!, {}, { timeout: 8000 })).toBeTruthy();
+  });
+
+  it("each refusal the API can give shows its own words", async () => {
+    for (const [code, kind] of [["open", "fix-open"], ["many", "fix-many"]] as const) {
+      cleanup();
+      const api = mockApi("table");
+      api.fixTranscriptLine = async () => {
+        throw new ApiError(kind);
+      };
+      await openCleaned(api);
+      fireEvent.click(fixButtons()[0]!);
+      fireEvent.click(screen.getByRole("button", { name: w.send }));
+      expect(await screen.findByText(w.failures[code]!)).toBeTruthy();
+    }
+  });
+
+  it("a network blip while it waits does not end the wait; the fix keeps going", async () => {
+    const api = mockApi("table");
+    const base = api.fixAnswer!.bind(api);
+    let blips = 0;
+    api.fixAnswer = async (ref, number, answer): Promise<FixAnswer> => {
+      if (blips < 1) {
+        blips += 1;
+        throw new ApiError("network");
+      }
+      return base(ref, number, answer);
+    };
+    await openCleaned(api);
+    fireEvent.click(fixButtons()[0]!);
+    fireEvent.click(screen.getByRole("button", { name: w.send }));
+    expect(await screen.findByText(w.sentToDm, {}, { timeout: 8000 })).toBeTruthy();
+    expect(screen.queryByText(w.refusals.network!)).toBeNull();
   });
 });

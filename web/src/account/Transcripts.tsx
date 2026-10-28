@@ -17,6 +17,7 @@ import {
   type TranscriptSkip,
   type TranscriptVersion,
   type TranscriptView,
+  type FixableLine,
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import FixLine from "./FixLine";
@@ -547,7 +548,7 @@ function Lines({
   // The left-out stretches of the pages loaded after the first, with the marker's place among all the lines.
   const [extraSkips, setExtraSkips] = useState<{ skip: TranscriptSkip; index: number }[]>([]);
   // The lines this viewer may fix, with the place each stands among all the lines (#2858), like the skips above.
-  const [extraFix, setExtraFix] = useState<{ fix: NonNullable<TranscriptView["fixable"]>[number]; index: number }[]>([]);
+  const [extraFix, setExtraFix] = useState<{ fix: FixableLine; index: number }[]>([]);
   const [fixBusy, setFixBusy] = useState(false);
   const [next, setNext] = useState<number | null>(view.next ?? null);
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
@@ -557,9 +558,9 @@ function Lines({
     ...(view.skips ?? []).map((s): [number, TranscriptSkip] => [s.line, s]),
     ...extraSkips.map((e): [number, TranscriptSkip] => [e.index, e.skip]),
   ]);
-  const fixAt = new Map<number, NonNullable<TranscriptView["fixable"]>[number]>([
-    ...(view.fixable ?? []).map((f): [number, NonNullable<TranscriptView["fixable"]>[number]] => [f.line, f]),
-    ...extraFix.map((e): [number, NonNullable<TranscriptView["fixable"]>[number]] => [e.index, e.fix]),
+  const fixAt = new Map<number, FixableLine>([
+    ...(view.fixable ?? []).map((f): [number, FixableLine] => [f.line, f]),
+    ...extraFix.map((e): [number, FixableLine] => [e.index, e.fix]),
   ]);
   const isDm = useIsDm(api, campaignRef);
   // Only the cleaned reading has fixes, and only when the switch is on and the API has the calls (#2858).
