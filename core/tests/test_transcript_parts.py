@@ -127,6 +127,27 @@ class TheSet(_Base):
         main, files = await self.campaigns.export_set(GUILD_A, self.cid)
         self.assertEqual((files, "parts" in main), ([], False))
 
+    async def test_a_restore_tells_how_far_through_the_transcripts_files_it_is(self) -> None:
+        await self.seed()
+        main, files = await self.campaigns.export_set(GUILD_A, self.cid)
+        told: list[tuple[int, int]] = []
+        await self.campaigns.import_backup(
+            GUILD_B,
+            main,
+            DM_B,
+            parts=files,
+            progress=lambda done, total: told.append((done, total)),
+        )
+        total = len(files)
+        self.assertEqual(told, [(0, total), *[(n, total) for n in range(1, total + 1)]])
+        # a copy with no transcripts files tells nothing (there is nothing to count)
+        plain, _none = await self.campaigns.export_set(GUILD_A, self.cid)
+        told.clear()
+        await self.campaigns.import_backup(
+            GUILD_B, plain, DM_B, parts=[], progress=lambda d, t: told.append((d, t))
+        )
+        self.assertEqual(told, [])
+
     async def test_the_set_restores_into_another_server_row_for_row_with_new_ids(self) -> None:
         await self.seed()
         main, files = await self.campaigns.export_set(GUILD_A, self.cid)

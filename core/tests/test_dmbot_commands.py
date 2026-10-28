@@ -4,11 +4,12 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
+from dmbot import waiting as waiting_module
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, encode_backup
@@ -388,7 +389,7 @@ class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
         restoring = asyncio.create_task(choice.restore(it, None))
         for _ in range(5):
             await asyncio.sleep(0)
-        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], "Restoring…")
+        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], cmds.RESTORING)
         bot.campaigns.import_backup.assert_not_awaited()  # still waiting for the lock
         lock.release()
         await restoring
@@ -710,3 +711,255 @@ class SettingsWhereTheDmLooks(CommandTests):
         it = self.interaction()
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         self.assertIn("/dmbot start", it.response.sent[0][0])
+
+
+class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
+    """The wait for a restore keeps itself current (#2564): the step, how long, and a plain end."""
+
+    async def run_restore(
+        self, replace_id: str | None = None, final: Any = None, **bot_kw: Any
+    ) -> tuple[list[str], str]:
+        edits: list[str] = []
+        real = waiting_module.WaitingMessage
+
+        def quick(*args: Any, **kw: Any) -> Any:
+            return real(*args, every=0.01, show_after=0.0, **kw)
+
+        with patch.object(cmds, "WaitingMessage", quick):
+            defaults: dict[str, Any] = {
+                "session_lock": lambda _gid: asyncio.Lock(),
+                "is_campaign_playing": AsyncMock(return_value=False),
+                "restore_gate": AsyncMock(return_value=None),
+                "campaigns": SimpleNamespace(
+                    import_backup=AsyncMock(
+                        return_value=SimpleNamespace(id="c", name="Frostmaiden")
+                    ),
+                    get=AsyncMock(return_value=None),
+                ),
+            }
+            bot = SimpleNamespace(**{**defaults, **bot_kw})
+            it = fake_interaction(bot)  # type: ignore[arg-type]
+            it.response.done = False
+
+            async def answered(**_: Any) -> None:
+                it.response.done = True
+
+            it.response.edit_message = AsyncMock(side_effect=answered)
+
+            async def edited(**kw: Any) -> None:
+                is_result = not str(kw["content"]).startswith(cmds.RESTORING)
+                if final is not None and is_result:
+                    if not isinstance(final, list):
+                        raise final
+                    if final:
+                        raise final.pop(0)
+                edits.append(str(kw["content"]))
+
+            it.edit_original_response = AsyncMock(side_effect=edited)
+            choice = cmds.RestoreChoice({}, "Frostmaiden", [])
+            self.user = it.user
+            self.last_edit = ""
+            it.user.send = AsyncMock()
+            try:
+                await choice.restore(it, replace_id)
+            finally:
+                self.last_edit = edits[-1] if edits else ""
+        return edits, (edits[-1] if edits else "")
+
+    async def test_a_slow_restore_shows_the_step_and_how_long_then_the_result(self) -> None:
+        async def slow(*args: Any, **kw: Any) -> Any:
+            await asyncio.sleep(0.15)
+            return SimpleNamespace(id="c", name="Frostmaiden")
+
+        campaigns = SimpleNamespace(import_backup=slow, get=AsyncMock(return_value=None))
+        edits, last = await self.run_restore(campaigns=campaigns)
+        waiting = [e for e in edits if "Step 2 of 3" in e]
+        self.assertTrue(waiting)
+        self.assertTrue(any("so far" in e for e in waiting))
+        self.assertTrue(all(e.startswith(cmds.RESTORING) for e in waiting))
+        self.assertIn("✅ Restored **Frostmaiden**.", last)
+        self.assertNotIn("Step", last)  # the last word is the result, not a step
+
+    async def test_a_plan_that_refuses_ends_with_its_words_not_a_step(self) -> None:
+        _edits, last = await self.run_restore(
+            restore_gate=AsyncMock(return_value="Not on this plan.")
+        )
+        self.assertEqual(last, "Not on this plan.")
+
+    async def test_a_check_that_breaks_unexpectedly_ends_with_a_plain_failure(self) -> None:
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _edits, last = await self.run_restore(
+                restore_gate=AsyncMock(side_effect=RuntimeError("boom"))
+            )
+        self.assertEqual(last, cmds.RESTORE_FAILED)
+
+    async def test_every_step_is_named_in_order(self) -> None:
+        async def slow_import(*args: Any, **kw: Any) -> Any:
+            await asyncio.sleep(0.1)
+            return SimpleNamespace(id="c", name="Frostmaiden")
+
+        async def slow_analyze(_gid: int) -> None:
+            await asyncio.sleep(0.1)
+
+        async def slow_gate(*args: Any, **kw: Any) -> None:
+            await asyncio.sleep(0.1)
+
+        edits, _last = await self.run_restore(
+            restore_gate=slow_gate,
+            memory=SimpleNamespace(analyze=slow_analyze),
+            campaigns=SimpleNamespace(import_backup=slow_import, get=AsyncMock(return_value=None)),
+        )
+        steps = [e.splitlines()[1].split(":")[0] for e in edits if "Step" in e]
+        self.assertEqual(
+            sorted(set(steps), key=steps.index), ["Step 1 of 3", "Step 2 of 3", "Step 3 of 3"]
+        )
+
+    async def test_a_problem_after_the_restore_landed_is_never_told_as_nothing_restored(
+        self,
+    ) -> None:
+        memory = SimpleNamespace(analyze=AsyncMock(side_effect=RuntimeError("x")))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _edits, last = await self.run_restore(memory=memory)
+        self.assertIn("✅ Restored **Frostmaiden**.", last)
+        self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
+        self.assertNotIn("nothing was restored", last)
+
+    async def test_replacing_tells_the_rules_channel_and_a_campaign_error_is_shown(self) -> None:
+        changed = MagicMock()
+        _e, last = await self.run_restore(
+            replace_id="c" * 32,
+            _rules_archive_changed=changed,
+            campaigns=SimpleNamespace(
+                import_backup=AsyncMock(return_value=SimpleNamespace(id="c", name="Frostmaiden")),
+                get=AsyncMock(return_value=SimpleNamespace(name="Old")),
+            ),
+        )
+        changed.assert_called_once()
+        self.assertIn("now holds everything", last)
+        from dmbot.campaigns import CampaignError
+
+        _e, last = await self.run_restore(
+            campaigns=SimpleNamespace(
+                import_backup=AsyncMock(side_effect=CampaignError("That copy is damaged.")),
+                get=AsyncMock(return_value=None),
+            )
+        )
+        self.assertEqual(last, "That copy is damaged.")
+
+    async def test_a_campaign_that_is_playing_and_a_check_that_breaks_end_with_words(self) -> None:
+        _e, last = await self.run_restore(
+            replace_id="c" * 32,
+            is_campaign_playing=AsyncMock(return_value=True),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(name="Old"))),
+        )
+        self.assertIn("playing right now", last)
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _e, last = await self.run_restore(
+                replace_id="c" * 32,
+                is_campaign_playing=AsyncMock(side_effect=OSError()),
+                campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(name="Old"))),
+            )
+        self.assertEqual(last, cmds.RESTORE_FAILED)
+
+    async def test_a_message_that_ran_out_gets_its_result_privately_instead(self) -> None:
+        import discord
+
+        gone = discord.NotFound(cast(Any, SimpleNamespace(status=404, reason="x")), "gone")
+        edits, _last = await self.run_restore(final=gone)
+        self.assertEqual(edits, [e for e in edits if e.startswith(cmds.RESTORING)])
+        sent = self.user.send.await_args
+        self.assertIn("✅ Restored **Frostmaiden**.", sent.args[0])
+
+    async def test_cancelling_a_restore_stops_cleanly(self) -> None:
+        started = asyncio.Event()
+
+        async def hang(*args: Any, **kw: Any) -> Any:
+            started.set()
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(
+            self.run_restore(
+                campaigns=SimpleNamespace(import_backup=hang, get=AsyncMock(return_value=None))
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    def http_error(self, status: int) -> Any:
+        import discord
+
+        return discord.HTTPException(cast(Any, SimpleNamespace(status=status, reason="x")), "x")
+
+    async def test_a_500_on_the_final_edit_is_retried_then_told_privately(self) -> None:
+        with patch("dmbot.ui.dmbot_commands.asyncio.sleep", AsyncMock()):
+            edits, _last = await self.run_restore(final=self.http_error(500))
+        self.assertEqual([e for e in edits if not e.startswith(cmds.RESTORING)], [])
+        self.assertIn("✅ Restored **Frostmaiden**.", self.user.send.await_args.args[0])
+
+    async def test_a_500_that_clears_on_the_retry_needs_no_private_message(self) -> None:
+        with patch("dmbot.ui.dmbot_commands.asyncio.sleep", AsyncMock()):
+            _edits, last = await self.run_restore(final=[self.http_error(500)])
+        self.assertIn("✅ Restored **Frostmaiden**.", last)
+        self.user.send.assert_not_awaited()
+
+    async def test_the_transcripts_file_it_is_on_is_shown(self) -> None:
+        async def importing(*args: Any, progress: Any = None, **kw: Any) -> Any:
+            progress(0, 3)
+            await asyncio.sleep(0.08)
+            progress(2, 3)
+            await asyncio.sleep(0.08)
+            return SimpleNamespace(id="c", name="Frostmaiden")
+
+        edits, _last = await self.run_restore(
+            campaigns=SimpleNamespace(import_backup=importing, get=AsyncMock(return_value=None))
+        )
+        self.assertTrue(any("transcripts files (2 of 3)" in e for e in edits))
+
+    async def test_a_restore_that_stops_moving_says_so_and_who_to_ask(self) -> None:
+        async def hung(*args: Any, **kw: Any) -> Any:
+            await asyncio.sleep(0.25)
+            return SimpleNamespace(id="c", name="Frostmaiden")
+
+        with patch.object(cmds, "RESTORE_STALL_S", 0.05):
+            edits, _last = await self.run_restore(
+                campaigns=SimpleNamespace(import_backup=hung, get=AsyncMock(return_value=None))
+            )
+        stalled = [e for e in edits if "No change for" in e]
+        self.assertTrue(stalled)
+        self.assertIn("Ask whoever runs DMbot", stalled[-1])
+        self.assertIn("waits until the restore ends", stalled[-1])
+
+    async def test_one_tidy_up_step_failing_does_not_skip_the_other(self) -> None:
+        changed = MagicMock()
+        memory = SimpleNamespace(analyze=AsyncMock(side_effect=RuntimeError("x")))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _e, last = await self.run_restore(
+                replace_id="c" * 32,
+                memory=memory,
+                _rules_archive_changed=changed,
+                campaigns=SimpleNamespace(
+                    import_backup=AsyncMock(
+                        return_value=SimpleNamespace(id="c", name="Frostmaiden")
+                    ),
+                    get=AsyncMock(return_value=SimpleNamespace(name="Old")),
+                ),
+            )
+        changed.assert_called_once()
+        self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
+
+    async def test_a_cancel_after_the_copy_is_in_still_tells_the_person(self) -> None:
+        started = asyncio.Event()
+
+        async def hang(_gid: int) -> None:
+            started.set()
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(self.run_restore(memory=SimpleNamespace(analyze=hang)))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertIn("✅ Restored **Frostmaiden**.", self.last_edit)
+        self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), self.last_edit)
