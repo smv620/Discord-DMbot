@@ -270,9 +270,13 @@ from dmbot.memory import (
     voyage,
     web_actions,
     web_report_requests,
+    web_sheets,
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
+from dmbot.memory import (
+    sheets as sheets_memory,
+)
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
@@ -461,6 +465,7 @@ from dmbot.ui import (
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import sheets as sheets_ui
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
@@ -903,6 +908,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
         )
+        # What players and DMs chose on the website's character sheets page (#2817).
+        self.web_sheets = web_sheets.ActionStore(recaps.db) if recaps is not None else None
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -10646,6 +10653,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_sharing.run_one(self, store, guild_id, item)
+
+    # ---- the website's character sheets page (#2817): the Host of memory.web_sheets ----
+
+    async def in_server(self, guild_id: int, user_id: int) -> bool:
+        return await self.find_member(guild_id, user_id) is not None
+
+    async def fetch_sheet(self, character: int) -> dict[str, Any]:
+        return await sheets_memory.fetch(character)
+
+    async def read_all(
+        self, guild_id: int, campaign_id: str, progress: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Refresh sheets, as the names panel does it: every linked sheet read again."""
+        store = self.sheets
+        if store is None:
+            return
+        now = int(time.time())
+        await refresh_sheets(store, guild_id, campaign_id, now, progress=progress)
+        self.sheets_changed(guild_id, campaign_id)
+
+    def link_too_soon(self, guild_id: int, user_id: int) -> bool:
+        return sheets_ui.too_soon(
+            sheets_ui.last_link, (guild_id, user_id), sheets_ui.LINK_COOLDOWN_S
+        )
+
+    def read_too_soon(self, guild_id: int, campaign_id: str) -> bool:
+        return sheets_ui.too_soon(
+            sheets_ui.last_refresh, (guild_id, campaign_id), sheets_ui.REFRESH_COOLDOWN_S
+        )
+
+    async def run_web_sheets(self) -> None:
+        """What players and DMs chose on the website's character sheets page (#2817), applied the
+        way Discord's 📜 buttons apply it. Each asker must still play the character (or be a DM).
+        A link is a 10-second read of D&D Beyond and a read-again is one per sheet, so each runs as
+        a tracked background task, at most one a server: this returns at once and the poll loop's
+        other website actions do not wait. Only outcome words are logged, never a link."""
+        store = self.web_sheets
+        if store is None or self.sheets is None:
+            return
+        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_sheet_tasks", {})
+        for guild in list(self.guilds):
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one at a time for a server; the loop does not wait for it
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            task = asyncio.create_task(self._run_sheet_choice(store, gid, item))
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_sheet_choice(
+        self, store: web_sheets.ActionStore, guild_id: int, item: web_sheets.Action
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_sheets.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a

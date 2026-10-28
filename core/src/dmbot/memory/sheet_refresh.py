@@ -48,6 +48,7 @@ async def refresh(
     found: Sequence[CharacterSheet] | None = None,
     fetch: Fetch | None = None,
     still_wanted: Callable[[], bool] = lambda: True,
+    progress: Callable[[], Awaitable[None]] | None = None,
 ) -> list[CharacterSheet]:
     """Read every linked sheet again, one at a time (one request per character, over one
     connection), and return the campaign's sheets. `found`: the sheets if already read.
@@ -65,6 +66,8 @@ async def refresh(
             if not still_wanted():
                 break
             await _refresh_one(store, guild_id, campaign_id, sheet, now, fetch)
+            if progress is not None:  # (the website shows a long read-again still moving)
+                await progress()
     return await store.sheets(guild_id, campaign_id)
 
 
