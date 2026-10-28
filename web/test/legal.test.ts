@@ -1,6 +1,6 @@
 // The legal drafts (#433): each has the short version, the draft notice, and facts that
 // match the plan file, so the pages and the pricing never disagree.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
@@ -394,7 +394,12 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("keeps no record of the sender");
   });
   it("is true: the publisher's table of suggestions has no column for who sent one (#1313)", () => {
-    const schema = readFileSync(new URL("../../core/src/dmbot/schema.py", import.meta.url), "utf8");
+    // (the migrations are one file each since #2127: read them all)
+    const dir = new URL("../../core/src/dmbot/migrations/", import.meta.url);
+    const schema = readdirSync(dir)
+      .filter((f) => f.endsWith(".py"))
+      .map((f) => readFileSync(new URL(f, dir), "utf8"))
+      .join("\n");
     const table = /CREATE TABLE rule_set_suggestions \(([\s\S]*?)\n    \);/.exec(schema)?.[1] ?? "";
     expect(table).toContain("set_id");
     expect(table).not.toMatch(/sent_by|follower|sender|from_guild|from_campaign/);

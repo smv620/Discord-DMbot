@@ -13,7 +13,7 @@ The split is a pure move of source text. Every statement that builds a migration
 migration that needs it (or to `_shared.py` when two or more do); each module's `SQL` is the same
 expression the old tuple held. Before it writes anything it captures what the old module evaluates
 to (names, a SHA-256 of each migration's SQL, the isolated, user-isolated and routing tables, the
-website role's functions) in `core/tests/data/migrations_before.json`; `tests/test_migration_files.py`
+website role's functions) in `core/tests/fixtures/migrations_before.json`; `tests/test_migration_files.py`
 holds the built package to that file. The script is a one-time tool: once the split has merged,
 new migrations are written as files by hand.
 """
@@ -35,7 +35,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 SCHEMA = ROOT / "core" / "src" / "dmbot" / "schema.py"
 PACKAGE = ROOT / "core" / "src" / "dmbot" / "migrations"
-FIXTURE = ROOT / "core" / "tests" / "data" / "migrations_before.json"
+FIXTURE = ROOT / "core" / "tests" / "fixtures" / "migrations_before.json"
 
 # The registrations that move into each migration's own file: the tuples in schema.py, and the
 # attribute each module declares.

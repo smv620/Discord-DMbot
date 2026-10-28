@@ -1,0 +1,1177 @@
+{
+ "isolated": [
+  "active_sessions",
+  "adventure_chunks",
+  "adventure_documents",
+  "adventure_reads",
+  "backstory_links",
+  "backstory_which",
+  "campaign_dms",
+  "campaign_handover_offers",
+  "campaign_optional_rules",
+  "campaigns",
+  "character_sheets",
+  "consent",
+  "fightbot_players",
+  "game_clock_groups",
+  "game_clocks",
+  "game_effects",
+  "homebrew_entries",
+  "house_rule_wins",
+  "house_rules",
+  "house_rules_file",
+  "image_day_use",
+  "import_plays",
+  "import_speakers",
+  "map_notes",
+  "member_directory",
+  "memory_aliases",
+  "memory_attitudes",
+  "memory_beliefs",
+  "memory_changes",
+  "memory_claims",
+  "memory_contradictions",
+  "memory_corrections",
+  "memory_differences",
+  "memory_entities",
+  "memory_evidence",
+  "memory_flags",
+  "memory_heard",
+  "memory_impressions",
+  "memory_mentions",
+  "memory_perspectives",
+  "memory_predicates",
+  "memory_relations",
+  "memory_report_runs",
+  "memory_rule_links",
+  "memory_states",
+  "memory_types",
+  "memory_vectors",
+  "merge_restores",
+  "name_actions",
+  "name_answers",
+  "name_later",
+  "name_not_same",
+  "name_pass_fixes",
+  "name_pass_reports",
+  "npc_notes",
+  "npc_roster",
+  "npcs_channel_messages",
+  "pack_suggestions",
+  "pack_suggestions_sent",
+  "plan_divergences",
+  "plan_links",
+  "plan_nodes",
+  "plan_position",
+  "plan_same_as",
+  "plan_spend",
+  "plot_chat",
+  "plot_checks",
+  "plot_fine",
+  "plot_issues",
+  "recap_accepted",
+  "recap_dictionaries",
+  "recap_holds",
+  "recap_jobs",
+  "recap_name_checks",
+  "recap_requests",
+  "recap_style_examples",
+  "recap_style_notes",
+  "recap_upload_rights",
+  "report_answers",
+  "rule_set_codes",
+  "rule_set_editors",
+  "rule_set_follows",
+  "rule_set_suggestions",
+  "rule_set_suggestions_sent",
+  "rule_set_versions",
+  "rule_sets",
+  "said_as_suggestions",
+  "secret_exposures",
+  "session_imports",
+  "session_usage",
+  "setting_actions",
+  "shared_confirmations",
+  "site_approvals",
+  "test_voice_consent",
+  "transcript_erasures",
+  "transcript_lines",
+  "transcript_respells",
+  "transcript_sessions",
+  "transcript_suggestions",
+  "waiting_name_questions",
+  "web_backup_parts",
+  "web_backups",
+  "web_delete_notices",
+  "web_peeks",
+  "web_report_requests",
+  "web_rule_actions",
+  "web_sheet_actions"
+ ],
+ "names": [
+  "0001_initial",
+  "0002_active_sessions",
+  "0003_channel_number",
+  "0004_campaign_memory",
+  "0005_consent_terms",
+  "0006_consent_outside",
+  "0007_transcript_channel",
+  "0008_played_by",
+  "0009_transcripts",
+  "0010_memory_heard",
+  "0011_web_accounts",
+  "0012_transcript_engines",
+  "0013_web_session_name",
+  "0014_installs_left_at",
+  "0015_dm_screen_level",
+  "0016_web_role_limits",
+  "0017_try_it_bare_id",
+  "0018_payment_event_subscription",
+  "0019_shared_confirmations",
+  "0020_campaign_owner",
+  "0021_campaign_handover_offers",
+  "0022_handover_offer_names",
+  "0023_handover_offer_indexes",
+  "0024_transcript_topics",
+  "0025_handover_delivered",
+  "0026_feedback",
+  "0027_handover_expiry",
+  "0028_character_sheets",
+  "0029_sheet_player",
+  "0030_access_grants",
+  "0031_house_rules",
+  "0032_usage",
+  "0033_usage_grace",
+  "0034_owner_campaigns",
+  "0035_rules_cards",
+  "0036_transcript_sidebar",
+  "0037_pause",
+  "0038_payment_event_kind",
+  "0039_retention",
+  "0040_house_rules_file",
+  "0041_game_clocks",
+  "0042_game_effects",
+  "0043_test_voice_consent",
+  "0044_memory_kinds",
+  "0045_campaign_guilds",
+  "0046_transcript_entity",
+  "0047_owner_left",
+  "0048_plan_ends",
+  "0049_game_effects_extended",
+  "0050_gametime_channel",
+  "0051_dndbeyond_invite",
+  "0052_table_chat",
+  "0053_combat_state",
+  "0054_sheet_questions",
+  "0055_fightbot",
+  "0056_dmbchat_channel",
+  "0057_table_questions",
+  "0058_people",
+  "0059_definitions",
+  "0060_owner_missing",
+  "0061_rule_sets",
+  "0062_set_updates",
+  "0063_dmbot_id",
+  "0064_mail",
+  "0065_trial",
+  "0066_email_sign_in",
+  "0067_payment_email",
+  "0068_moves",
+  "0069_web_move_codes",
+  "0070_memory_states",
+  "0071_email_records",
+  "0072_rule_suggestions",
+  "0073_memory_claims",
+  "0074_support_tickets",
+  "0075_support_email",
+  "0076_claims_by_fact",
+  "0077_extractor_progress",
+  "0078_support_own",
+  "0079_recap_jobs",
+  "0080_recap_audio_addon",
+  "0081_recap_audio_follow_ups",
+  "0082_recap_audio_jobs",
+  "0083_memory_said_as",
+  "0084_recap_switches",
+  "0085_recap_audio_again",
+  "0086_support_thread",
+  "0087_web_names",
+  "0088_support_mine_answer",
+  "0089_memory_from_set",
+  "0090_support_reason",
+  "0091_web_recap_choices",
+  "0092_support_handed_over",
+  "0093_transcript_suggestions",
+  "0094_web_transcripts",
+  "0095_web_transcript_pages",
+  "0096_support_week_mail",
+  "0097_homebrew_entries",
+  "0098_web_house_rules",
+  "0099_homebrew_from_book",
+  "0100_web_homebrew",
+  "0101_transcript_keep",
+  "0102_pack_suggestions",
+  "0103_web_transcript_deleted",
+  "0104_homebrew_book_edition",
+  "0105_web_transcript_keep",
+  "0106_waiting_name_questions",
+  "0107_web_homebrew_book",
+  "0108_web_homebrew_packs",
+  "0109_game_clock_groups",
+  "0110_improvement_opt_outs",
+  "0111_homebrew_rules_to_house_rules",
+  "0112_homebrew_enabled",
+  "0113_homebrew_sources",
+  "0114_homebrew_pack_doors",
+  "0115_clue_audience",
+  "0116_web_homebrew_source",
+  "0117_standing",
+  "0118_story_threads",
+  "0119_homebrew_more_kinds",
+  "0120_dm_bot_channel",
+  "0121_story_mode",
+  "0122_adventure_text",
+  "0123_story_plan",
+  "0124_plan_same_as",
+  "0125_plan_divergences",
+  "0126_plan_position",
+  "0127_rules_channel",
+  "0128_npcs_channel",
+  "0129_initiative_style",
+  "0130_initiative_style_backfill",
+  "0131_recap_to_confirm",
+  "0132_quiet_stop",
+  "0133_recap_style",
+  "0134_recap_style_notes",
+  "0135_recap_approval",
+  "0136_session_imports",
+  "0137_recap_share",
+  "0138_member_directory",
+  "0139_recap_requests",
+  "0140_recap_voice",
+  "0141_recap_holds",
+  "0142_plan_pending",
+  "0143_old_spelling",
+  "0144_transcript_respells",
+  "0145_recap_respelled",
+  "0146_own_writing",
+  "0147_said_as_suggestions",
+  "0148_support_mail_ids",
+  "0149_audio_again_posted",
+  "0150_support_mine_thread",
+  "0151_recap_hold_names",
+  "0152_recap_hold_reminded",
+  "0153_import_recaps",
+  "0154_import_progress",
+  "0155_support_ticket_times",
+  "0156_names_later",
+  "0157_name_answers",
+  "0158_recap_split",
+  "0159_npc_notes",
+  "0160_installs_left_except",
+  "0161_import_suggest",
+  "0162_recap_critics",
+  "0163_import_plays",
+  "0164_house_rule_wins",
+  "0165_house_rule_source",
+  "0166_quiet_stop_choices",
+  "0167_hidden_from_players",
+  "0168_email_changes",
+  "0169_made_before_name_gate",
+  "0170_all_names_page",
+  "0171_all_names_actions",
+  "0172_house_file_read",
+  "0173_backstory_links",
+  "0174_all_names_speed",
+  "0175_recap_address_co_dm",
+  "0176_transcript_speaker_names",
+  "0177_web_relationships",
+  "0178_web_link_actions",
+  "0179_beliefs",
+  "0180_shared_recap_session",
+  "0181_campaign_card",
+  "0182_share_unposted",
+  "0183_merge_many",
+  "0184_recap_posting_clock",
+  "0185_web_graph_party",
+  "0186_web_graph_views",
+  "0187_unrevealed_connections",
+  "0188_all_names_said",
+  "0189_recap_held_names",
+  "0190_pinned_truth",
+  "0191_backstory_link_words",
+  "0192_campaign_facts",
+  "0193_link_pin_action",
+  "0194_shared_rules_page",
+  "0195_session_pauses",
+  "0196_story_timeline",
+  "0197_web_setting_actions",
+  "0198_off_record_lines",
+  "0199_merge_restores",
+  "0200_secret_exposures",
+  "0201_exposure_summary",
+  "0202_image_lines",
+  "0203_map_notes",
+  "0204_relation_directional",
+  "0205_recap_call_log",
+  "0206_timeline_stable",
+  "0207_recap_approve_unchecked",
+  "0208_web_image_lines",
+  "0209_recap_accepted",
+  "0210_plot_issues",
+  "0211_plot_chat",
+  "0212_handover_email_offers",
+  "0213_handover_claim",
+  "0214_handover_move",
+  "0215_campaign_move_cascade",
+  "0216_web_owned_campaigns",
+  "0217_import_progress",
+  "0218_web_delete_notices",
+  "0219_web_backups",
+  "0220_line_topic_choices",
+  "0221_recap_story_room",
+  "0222_npc_or_pc",
+  "0223_transcript_erasures",
+  "0224_recap_again",
+  "0225_recap_uploaded",
+  "0226_audio_told",
+  "0227_name_pass",
+  "0228_graph_overview",
+  "0229_link_decide",
+  "0230_audio_remake",
+  "0231_link_upload",
+  "0232_link_which",
+  "0233_web_waiting",
+  "0234_move_cascade_late",
+  "0235_memory_evidence",
+  "0236_claim_readings",
+  "0237_web_readings",
+  "0238_contradiction_grades",
+  "0239_name_pass_reports",
+  "0240_names_fixed_door",
+  "0241_names_fixed_undo",
+  "0242_name_change_words",
+  "0243_recap_present",
+  "0244_report_storage",
+  "0245_recap_name_places",
+  "0246_names_read_campaign",
+  "0247_all_names_kinds",
+  "0248_memory_vectors",
+  "0249_report_read_door",
+  "0250_report_answer_door",
+  "0252_optional_rules_read",
+  "0253_names_smart",
+  "0254_optional_rule_setting",
+  "0256_plot_chat_followups",
+  "0257_game_masters_read",
+  "0258_web_backup_parts",
+  "0259_co_dm_setting",
+  "0261_rule_sharing_read",
+  "0262_web_rule_actions",
+  "0263_unnamed_people",
+  "0264_unnamed_hidden_from_players",
+  "0265_web_report_requests",
+  "0266_web_name_unnamed",
+  "0267_who_is_it_decided",
+  "0268_web_sheet_actions",
+  "0269_report_fixed_remind"
+ ],
+ "routing": [
+  "campaign_guilds",
+  "live_session_guilds"
+ ],
+ "sha256": {
+  "0001_initial": "e8ffdfe02b29f7b39e1c02176cb9668792bfa02e232a2f3387c5e681ddc5309d",
+  "0002_active_sessions": "31a48992fd8eb97169257099a76e5782e07e2866f314004f48638d17873dd7f2",
+  "0003_channel_number": "5b2cd6f053a5590d7ee4eb8878c7cc3c1492d4246492d5e030769f54713c189e",
+  "0004_campaign_memory": "8b81927dc4cff62af2715a58fcb163672b630e182c0f45c61a30f2d8717f69eb",
+  "0005_consent_terms": "1d91d6289ca45726bcd161aac1d8f0710c4c46e727d5c2cc3d5ae700b58b2560",
+  "0006_consent_outside": "9d45e7bdaeed5ac94c8e1340168f4dbf2b917152e941789e4463d92afec310c5",
+  "0007_transcript_channel": "cb36a2f6a7a6e18d82c91ce46cfe8c5c8393249d7ff64b37aaa67c14b96e3d17",
+  "0008_played_by": "a5edaea148311852dcc117829776b62eb8f4824fdc313378208e77ef6def26ad",
+  "0009_transcripts": "6dffd9e31cb87f6145511b612a84e35b8ba6ea883070ce11fe7c6d682d248fa3",
+  "0010_memory_heard": "a20d4c9dfbe5a9540c127d18e689e931481ff43f79655ae0aa2ef760a2a00a4c",
+  "0011_web_accounts": "36c123b2dc1caeea3e2974629243ff00e97373a6daca8c48dfc9f57e06d7231c",
+  "0012_transcript_engines": "27170806d01f3992a460e9a85aa950aed8d5459f5ce1cb86e6e2fb865b1338cc",
+  "0013_web_session_name": "0000bbb10910ca67812a06a1fcfea541d22b1186eac48ed65e156ec02313ebd1",
+  "0014_installs_left_at": "f8c6e6c49c1cd173f036509c2e8220b13e42f72fc05c1698c08070308b0788b5",
+  "0015_dm_screen_level": "ac138fa2fd1f5bb0d5d5b1867f0bc31859f26e350b021270ec98e5ff27748b66",
+  "0016_web_role_limits": "c8605b19fe2e6047fb7ac6b115d6008726e474bf5cbbaca79fe24a3ce7927320",
+  "0017_try_it_bare_id": "27e4b027da23a93cca001c720709b367956bfc34144d43b5c834e2568e3f543c",
+  "0018_payment_event_subscription": "6e7b1fe372fa451554e4d2e4d8fd85850b97059cc19f08d0a28d8d86948c7f89",
+  "0019_shared_confirmations": "95e7d6aea05bd08359c44f435d791fa08787b0ed06741295f0343536691d66fc",
+  "0020_campaign_owner": "5a0829e9a2a662b9e5915a3a1ae9ae1b4156fe2146cb85ee1e850b3a1fef651d",
+  "0021_campaign_handover_offers": "9e124aa4a749d3faadec34e909964a4e31a790e10c3cbdda66ecc0f4babb1339",
+  "0022_handover_offer_names": "0f0b280da36540c88873a150b7b5e3bdcc1775ebfb46ef8832e01965ffc34068",
+  "0023_handover_offer_indexes": "8d7c72c8504ac5ca1ff3ffdf71ba036a2d3e92a7a30f534c445c5ed75a35f93d",
+  "0024_transcript_topics": "d28bb5d4bbf73f058689c25501470325a3adc3d91f91b47d4eb5bdbd9501fc06",
+  "0025_handover_delivered": "f3ef02b4f45814f14959de24728e2f2d7752d483361105689f6dbdcd2b95f560",
+  "0026_feedback": "c9b2f71fbd01cf6ef45c40facf8ef62d5d81db36dbb068da1a6c66b107f683dd",
+  "0027_handover_expiry": "79f30898274822af27a0692ebdc398c9cbf0d8c6ac4e039bac6c9f509a96ea40",
+  "0028_character_sheets": "7fefdda8c4a38515e440d3b32719afbd3deae8a6a76d77160e1104fc1104d67c",
+  "0029_sheet_player": "1c73f6121be6f9d2f76326bb5edd79a3f65b74eb80ac0c687ae00bac7ef3c181",
+  "0030_access_grants": "09b369f0f40a4770f67ee6a83b2425f797922a5220b809e444fda2688f7aadcc",
+  "0031_house_rules": "5e3420b235f6e301193cb24032d4f1889bc7b9ac04b2d255718f285e0175bac6",
+  "0032_usage": "f5dd4cbedc2b60a7b3b295ba7bb5dc1c0429eb1b48ea171e45f36a6934a47306",
+  "0033_usage_grace": "311b6b4f61f3f38b566f603e2bca2b803b26bceec2f40f72ebf8a4d0eb6f23d8",
+  "0034_owner_campaigns": "3926cb947643f3de0bff906d5e3960840b7dbb1fe77f6cd90360afc7c247346e",
+  "0035_rules_cards": "a2bfb4c81f0ed0d02144b4380720a9676a192920f67ea507519749626c20c00f",
+  "0036_transcript_sidebar": "7e633db2c42c148592bed64790981b92a092d9c7a517fb659d8b1b6e99d90a5e",
+  "0037_pause": "895988dbe91cf79e2aeac8d069fb03dee798b75e50218d9397eb7ecb96cc8775",
+  "0038_payment_event_kind": "1b9f4a3ca59e1b4b489ae7053bcf1bd546ed9798fda5c117ff67db3e1c373421",
+  "0039_retention": "dc799f4b1ea62fdd92d51566dabff856ad37f76177498a4a4b4bb0f56b51c9b1",
+  "0040_house_rules_file": "5927aa8f6a74a514e8e866119b60aa6727247cc762be8fd7f2ed05ce98447bec",
+  "0041_game_clocks": "89abbf3440b3590731d7c7cf17657ab466f6e9f798865d93d82e580ef24973d9",
+  "0042_game_effects": "79be4ddf322dac29f26da314cf4cc3bae5fe832070ce3b43b8de35d8e57f08b5",
+  "0043_test_voice_consent": "f73cfbb3b0d04dbbdf0e5ff8e49ee4621e26bf1e480a9941129d1ca5d4b2c530",
+  "0044_memory_kinds": "3fc2860f2261d059b538b030323a90d6df3306e69f7ab1dc6800bd71bc087e4c",
+  "0045_campaign_guilds": "a49fd7e42dfe258a3e5ce47e2091d77b1bf57f32fdf25e46a8718d00dd288bf0",
+  "0046_transcript_entity": "b139587e78ee5816408bc110b965364f2d9b54627847270aaba8a1d12062d06c",
+  "0047_owner_left": "1db5c2dd9ff72a261d97a30ce12e0d3628417cdedbe7c81da4bb669c9f1dc41f",
+  "0048_plan_ends": "61594903af046b0ad52a98252277cef9e4584404f672e5f0e801e58929b39144",
+  "0049_game_effects_extended": "713935445470de000757ad33b6394522bb76d629ec74c2ae54ee84cfe4adb8de",
+  "0050_gametime_channel": "601cbd160d9b82b559c4516995c43ea9da64bb696b3b4606e5ad569ada2fd2d3",
+  "0051_dndbeyond_invite": "090c14662643997892ad46c55b9ae01050a52d004617f4b5054932e11e1f704b",
+  "0052_table_chat": "2948898a13c855bce2ffa5f007467a40406070b6c900548420b7e6c04837936b",
+  "0053_combat_state": "2e91aad6f2e2bc707e11aea00fd69c024971eeae2acb8bdd78e848258cd79eb8",
+  "0054_sheet_questions": "249cc9b2547bbd48ea0b1a1470f96420ac1f93b9149ae1169a3a519a4735f83f",
+  "0055_fightbot": "e4749fa42d350c26f98b30331640f1e18135479ef0a74d50154295b1c4f5c9b9",
+  "0056_dmbchat_channel": "5ce12aef4674ae762f112c76d4a09cde6bb96d892e9083d6bd930d7b2bac37f4",
+  "0057_table_questions": "49f244b0864373f77301e09c955a1d0577ab8f94ed898a68f81b9584d491333f",
+  "0058_people": "81780545be89ddd0802f109adf54ff0eb445c38319d07214ef477f52a5ad8d7e",
+  "0059_definitions": "f62ef8a2090c004ecc81ec2c9467a2e24068e404386bb24e09c3efc79ba60269",
+  "0060_owner_missing": "bcd852df53b9833d683542c72111a0b6f4fdc38611a6124dfe941f7204e3aaec",
+  "0061_rule_sets": "df8f485ffd6ca0b58d411e778af9099d1c17ce4d748b58c308228e6a77ddfb02",
+  "0062_set_updates": "d661662abd15879b7ff64142203cbd5d3e1bdbb1356e1e8d8fe08fc1f386fbaf",
+  "0063_dmbot_id": "7627f29bcfc5296b3c681984acd503123183656d38605c361c2472a9904a2c8a",
+  "0064_mail": "1f061049f2477d7a2061d85ea8631aff46e5883cc62e15af87c6872e8b2e8194",
+  "0065_trial": "8929ce00c44e3d82e5cff46355c85206a955e75d201b0062ff84830034edd115",
+  "0066_email_sign_in": "9c87e9e2c288b85708fa3f2ab91c90a7b8350dfdd9faa66ccb5b1c568eb3ee1e",
+  "0067_payment_email": "6cb1fb01bd35b036ae3a171a63e176ad722342b940d0632fb8e50788a8fa7523",
+  "0068_moves": "17314547be92ce188c6c711382de97a0aa3121a6e9e7cddef9a18de08902a259",
+  "0069_web_move_codes": "3291955b6cf7f827cc560322b6ff86012953e877c508ac4920aadedb9d45da6c",
+  "0070_memory_states": "ce32647dd1e0e91fc56ee1f8458533279f87debec6e1929bbae6e4623a11abb1",
+  "0071_email_records": "889b8fc51bf72f0903e3f9c6e0cf4dad1745cca6a39863cf068456af17ff7e75",
+  "0072_rule_suggestions": "db336a7a63ef56f76f0455b203ffaa5896ace9a4c895f7cc4b3a4b81b5b26ec5",
+  "0073_memory_claims": "1286a36e55df36d693d123f7fd2330e44976179b22322531264850ad7845bc14",
+  "0074_support_tickets": "a36c7e6953b830fd3cb5404967f58bc2e50bd14ff19a9ae2cc25b6a2e7c1ce75",
+  "0075_support_email": "c6d32f904425686fa93f3a2582f50085cc6aace3ae9c86f7d5e945264f5a9d2a",
+  "0076_claims_by_fact": "fbf9d829f33acfd5c811fafa6d6ea6aa9e51fb254d34d3cc8a4ce5ab6f5a4fe9",
+  "0077_extractor_progress": "79f7e5376353e5f91572d52ab15d13bae8fd9668f5d45c2dbff3f33e63300ec5",
+  "0078_support_own": "d1ca8dc669b6e1ca32c202b70ddb0531da219d4b44b16ad5fcb261b2ec20e793",
+  "0079_recap_jobs": "59ea3f5a1a17f887be9464c84a8b984ebc69a8921b87926cbcca3b81e8d273de",
+  "0080_recap_audio_addon": "1066b36fc2755606e3e93f54a3ce74d33b0669bcad110e7840280c3e07571447",
+  "0081_recap_audio_follow_ups": "4835f84a2622b5a22e789e81142ca90ccdee12893e3fb99ee4f3579aba2e8f5c",
+  "0082_recap_audio_jobs": "365d54dc5ddbed7d39813048b0c889025e9abc0c3eaadd203283db4c535baa98",
+  "0083_memory_said_as": "83dc69005dfe54d28305f4f96cbd4f0bbfd12e48719d63c05d6da04481e98228",
+  "0084_recap_switches": "5136851fa3bef7b676683f2d08f345de58fb304daacb1842fe896b4c7fe7d14a",
+  "0085_recap_audio_again": "cb07f0587b35af0245dde2700e16442439559badb9ee832a516b9fb31a30cdf8",
+  "0086_support_thread": "95a029c4ff74ca74f837662de2e082a69c1fa02eabe353f6c52c47dcfbf4d256",
+  "0087_web_names": "a835a7dd3d1621887fda0615d6bed9f4c2fba7546746fc676a0a9b08f3cbd02a",
+  "0088_support_mine_answer": "8e0e3d804c4263e8641555b55fbf5cb466ceb7660fb8972ef28bb21f8da0a240",
+  "0089_memory_from_set": "21de5a1acd39a8b2b3ce180e6f217d4bc520663f4268a0ff6d8a3f53ea9e2904",
+  "0090_support_reason": "48da161782d89f6f204e6b18a54826d164683d35c585474defd62e12ee700047",
+  "0091_web_recap_choices": "cfafb3291ae498e93d4c9214ed4c4c62b2ebba9869d52112120f1174b7d1da67",
+  "0092_support_handed_over": "b111d32e8cf238c900ca3807c9e09fac4c3e4dcbfcfddc56fed989160592aba7",
+  "0093_transcript_suggestions": "64d75a09543af6d1ee8a75aad882d9358f7203de065b3008dc3366fe7093ac4f",
+  "0094_web_transcripts": "ae81d1f221b38def9200878f2885e2f02dbc8b3f8b37c7967c3edcede3157b0f",
+  "0095_web_transcript_pages": "4af274132562daacfec8fa636d375af9f1e9cb422545cd9fb1d4c7c5a39b0a99",
+  "0096_support_week_mail": "eed50de297bedc9b4a0547a19475d698397db43cc6fe666574b96ff5de481503",
+  "0097_homebrew_entries": "dd89eadb4f225d8082b684222c7aa77c817e054ffd248ba15963781837407226",
+  "0098_web_house_rules": "d66754e578577eb70e9f1eafef9bc29ed81c5b9af5efbc7175d0c529824e1b9d",
+  "0099_homebrew_from_book": "4c9f9cbdeacdd581ab2933be9bf4284dc071002256beadcafe4cdbc7d1a6730c",
+  "0100_web_homebrew": "75e66288c79ee9447d74890b75523456ccb8e123d398df76b7c151cc84f6423c",
+  "0101_transcript_keep": "52859fb3deb4a9f7e275215c5868e850e6b0dd72f3ec0b044579b7add7b1c9ea",
+  "0102_pack_suggestions": "f4c5aa733e162524953489cb450e9f3a8f0f305aebd8cc88aa6b754037ee4532",
+  "0103_web_transcript_deleted": "dd121270cfd5451ffeaf7f31d38274291be45f4614dce5f62b1aa3756f3b0384",
+  "0104_homebrew_book_edition": "fdcf09cb8a20ed89ba98b29317b87182f126b9fb1c228db06b5a21dd00389c64",
+  "0105_web_transcript_keep": "2ecadc4ca8d4826789a97576146022ba63319a7a5bee44f9f4a597eba33b6e79",
+  "0106_waiting_name_questions": "8db28487c235580d0a880c23fafc6d5ae367bdac080c162476dfc57bd0e3abc9",
+  "0107_web_homebrew_book": "05c5fcda3335aa33864be2a29106b43162195d4a0fcc63668ceffba91ba2f30b",
+  "0108_web_homebrew_packs": "671afb00f246f699b5ec55deb1b739fc73e894cda93dbadf67bb55a8d371ea7b",
+  "0109_game_clock_groups": "d67afc3d8f8246778caf1f8e723ac6a2fe6eeac17704c81d5d1b1cc7cc7c5d81",
+  "0110_improvement_opt_outs": "c6dc3fb14d30bc9334c856c3b67369bc0857bafc388573e342b4dadb8329a5cf",
+  "0111_homebrew_rules_to_house_rules": "1f59b3be9337df3eb1d6bca63f81ce9aad1bc0e760e13450069219da6acf9b79",
+  "0112_homebrew_enabled": "576652f8e833886e2ff66f45bceda611144503c611ff6d2e40f3db515f417914",
+  "0113_homebrew_sources": "67c8e06078cb1b3859c377b61d00729edeae286d038b5c0412a17707beb6cd73",
+  "0114_homebrew_pack_doors": "2cec6702a1921d9c720138f9f2684b71abd0655cfb8669c6c8fe15b7b4c0f6d7",
+  "0115_clue_audience": "1a601ec89caf3102c1ca1ff5c82c467fdfc51e0fc63a9e1fba6669622f435936",
+  "0116_web_homebrew_source": "92184d916e2838ad1de07032997b97433a7233dcb298fbdee7f9e502aadf69df",
+  "0117_standing": "5af22175d562d03cc744348446676b8a45c510e3cfe6e0e069f1340c81543d73",
+  "0118_story_threads": "caf28568952d79e5426312158d4d3e1fdcd983bff91dcba30b480e5ca4b09022",
+  "0119_homebrew_more_kinds": "f20fe975f4ba0854f6add2867964c520f04d3ba5d8ef98b56d469d5c71ec11e8",
+  "0120_dm_bot_channel": "d0ffbc11d3c5a383f3fa5cc85cc596c22a5df7f0b9485255dce31f652ad474ee",
+  "0121_story_mode": "c8a1c329ac02b925a758807aa60c89db4af342d7960cd4835371e7121989929c",
+  "0122_adventure_text": "f07e9073556f6cc418e1d269a4fea8e09b9d1cee9b552dfbeb78c6e4c0e074b7",
+  "0123_story_plan": "ac80d4c806b5bfb1361bff608ffe80b44536f4145ff057fd207bc5d5743eafd2",
+  "0124_plan_same_as": "3c96cfd13d161ec43f67ca8307578f51a4abd7119fd7862b03abfa897a481984",
+  "0125_plan_divergences": "e2cd42ec38e90753fb9ec7b68ec9920aef45fe305588fb3dfc09ee305124b42f",
+  "0126_plan_position": "6d6bcb27aacadcc8796081df9746df67200e9f4b29ff4e007f50cf08622dab73",
+  "0127_rules_channel": "c094ad8b736c01ff0823be673c14e698a4f3ac0fe458f8474a655e0a5d3ba0cf",
+  "0128_npcs_channel": "9bee4dd0e53fc775bb39eb090e44e932f346c0527e259a0b10bff0769123a652",
+  "0129_initiative_style": "dfa8228d7fc1f99db03c8f98f732f1173e73b282f0f4e2dbadd1d9a9c3427c19",
+  "0130_initiative_style_backfill": "b804fd6e4b97f82fe6e1d621564381fe865d983b153bfd0b26d3f2d7769906dc",
+  "0131_recap_to_confirm": "b188b93ae0acca1e8ee517a2589ef4808f38e953e85dece53d336633d6c6895b",
+  "0132_quiet_stop": "8183bbc72fdb86b4aea9a5bbeb38859586ff84b40e3964ee396a99c2a77a5a97",
+  "0133_recap_style": "230dc97467d6ff273f1b213aa8529fc1e8c66576fa704e377a96696cdb6a997e",
+  "0134_recap_style_notes": "9071c04e57db25455edec49b5dc3f873df412e1374d11a7d19f0969703ee7b91",
+  "0135_recap_approval": "b023928d422d7cb05aa9b263f560dca019870109c210b91540ac8db58d5de9c5",
+  "0136_session_imports": "5ae1c118813ce8957ab8668b8d3a8655839d7f51bccecf7a5e8616b33b37ca87",
+  "0137_recap_share": "ea36fa6e20a06a2b268948901eede835e49a1dc5abb1a0ef584b40f5f69ed24e",
+  "0138_member_directory": "71a0092e58b8fef86c5787718033683fc065decd86e61551af723bb6296f2d89",
+  "0139_recap_requests": "e3d80e576e640d740edd2d5bf9086ae6b7f9a6e896b45d5500aaa64aab597ce9",
+  "0140_recap_voice": "8a92c44d4a5c49dd650f574c2cfe28091e283b56ddf01c97c08506fb0a6f536e",
+  "0141_recap_holds": "4dcf5520b36f7cda3e713afb3fd3dd7d5f990bc8fd8e70d53a9bf889f3db8ef3",
+  "0142_plan_pending": "1d6a4a583b8a84f3f105230641fe5cfcf3174d42a3c325a216661382f778bfb7",
+  "0143_old_spelling": "9c16e1eab11a5f05a6a84733d9bf89d7ec8aeb84df56337ace919dc388e5e35c",
+  "0144_transcript_respells": "b2f3f9181562fb4c9517c910091729c7f54e45c992af9174929c1d86187516fc",
+  "0145_recap_respelled": "68785dc4aec2979d498bc1d3c2af2e6dc0e2fdcfd718b2691a67e44935721533",
+  "0146_own_writing": "54301d875a74ee24f13278477846f8d651663946d36fa984a22cb6a8c9ca6f97",
+  "0147_said_as_suggestions": "8673721e09b254be9ac189b5fe075844ac7405cd174d50857f68f9a1bae128f5",
+  "0148_support_mail_ids": "a121eec42e723da6ce830e31d21999338c98dd5879a64bba073b2d76766e95d6",
+  "0149_audio_again_posted": "4a30a0409ec84fd3c27d2e837b5bc26b705ba67ad51c57f7cdcd33ebfb0f86ad",
+  "0150_support_mine_thread": "60757ebce16b1dafc9cb4bf5e8e262c5cfe6ccacd25085d310e3fed86ec7ba05",
+  "0151_recap_hold_names": "dd3cfa3dc4d86475af08d641f6dd6a448c087d183fb02e89306f68b5530abdc0",
+  "0152_recap_hold_reminded": "496d495ceabce927adabaf234feb2fcee6b4d0d26886cced4022798b4df1cc62",
+  "0153_import_recaps": "2232261b6c7f98525d7b4a65a30b20e8c83fa1eeb3761b93b81d30f4cabc534c",
+  "0154_import_progress": "1a7d7b3bd32eb71194d62a1b58a5fdc81daa6392959f2e6bd7a9dda57db0965c",
+  "0155_support_ticket_times": "091cc4d5e3b022ae37f20df545560fd62cc5fe1faabfbbc792935752b847ec86",
+  "0156_names_later": "255a08818995fb8bb81f547706bf419a63bbe61bd8dda36abc673c0540e1b78a",
+  "0157_name_answers": "f13d374e962399780cb64a6a928534e34f6627dc9c99f347f44104e97e36c0dc",
+  "0158_recap_split": "f336ccc4af1524d02106570f4e32762f48cab4280517f0babb8f448e427a460c",
+  "0159_npc_notes": "6ba73e72dc168001c1e24bf939feb9ca676bc825d18c86fb7b0a22ab904b0812",
+  "0160_installs_left_except": "2c0a5a4bea09883209ecdf3b136e9f9ae8efd21a48645e79b15b8890197094a3",
+  "0161_import_suggest": "d18fe41d52ce453477dd5f331997718a4407aea2c5bae14561496c7a0e2f513c",
+  "0162_recap_critics": "9186f2b6024e4477d7fd9111bae31f450c006de87b1011d1302e8fbb8a3e56e9",
+  "0163_import_plays": "a50e65740386ba82bf8ebfd741a6465417a64be7fc481b30184d4560475f7a17",
+  "0164_house_rule_wins": "c37031b41018be67a652a4f6898e9f862ab3ba36cede5d884b634d191949456e",
+  "0165_house_rule_source": "a14ff6bf47abd305b2fb359eba82bbaaa4e17063ba77c8c9e2f2fc4a15e6a96b",
+  "0166_quiet_stop_choices": "409c9cedc63f9aabbb6d35ef092f70624464de0f4d84e69679590ba97d27fc6a",
+  "0167_hidden_from_players": "9e2cf803f8035f7a0051fc525d95a8f8b82d54f9213d35cb5e50eece1ebc7dd4",
+  "0168_email_changes": "28996b084f5335401eab20161d82cc701fb1b9828149e2609a6e9e48dbb516bd",
+  "0169_made_before_name_gate": "9dcdda28c0d26e9a716041912a524d5a9a435e5a82821c49e659b54c4163f7d7",
+  "0170_all_names_page": "51adfba116fd0212026c301dc7b83e6617458800093e32a598fc287a5ef0a4a3",
+  "0171_all_names_actions": "94a1fc6d220612661ac43bb1977757b94c072070abf47a176c3a40fec9419e51",
+  "0172_house_file_read": "bb07855093ba69b8b30eaaecde446c8fb163fbf1dc22a54cda4f71f627b511dd",
+  "0173_backstory_links": "6025a7bede83b795d2244a03d797cd9a9ae4218c3015e420dea0010f45da38fc",
+  "0174_all_names_speed": "25b34b4f879b5da5eb6711a94b28af3daa8f7bd79dbd1a7f11aaf39deda51adc",
+  "0175_recap_address_co_dm": "ac9fd1649ed33cd4cf0021255e09613107bba0eb6d8c7e287594c326e83ab118",
+  "0176_transcript_speaker_names": "f4adb0b2615f4dbcfcea0cb5a0b200711c10b85ee0f24f352e1f25706b5f485a",
+  "0177_web_relationships": "0fa45e9ae4f9d00eb6b1bd875e85aebf1a230d5db185e55b745134ae0c2c6813",
+  "0178_web_link_actions": "37941da4af286cc50bc2cde92b2da4e20177ed9394ba1be091dbc8315a5976fe",
+  "0179_beliefs": "4e1f4fb728cd32f9692a9f7b2e6f9b9c55f14b9dc098acbd9ed6c89778975cb5",
+  "0180_shared_recap_session": "67d4bc1ef709a1a766f96d8df0e074b3e5f0ef4b61a74008be97d58e0014d0ab",
+  "0181_campaign_card": "da447cc6bcb815633a2844e78e4d3321287ae12e8642420e242b3a87b0b5b5e8",
+  "0182_share_unposted": "2658804e895ec74e81c65bf9344ad34177b6b9ad31b01f2879286914f92ff971",
+  "0183_merge_many": "fff28e2de3927782d3287fdf37a63da49d1f09c1a415026a52e52b79dc661233",
+  "0184_recap_posting_clock": "8d13a2e2ac12daef845823558dd27392a4a0452e901208bc1bbe054f989ee78a",
+  "0185_web_graph_party": "5b83c5ae63bc2c6e9446061ef2d80249ea5b2112b72690813d441f4f85575aaa",
+  "0186_web_graph_views": "fa5be86a8a366703319a935a1382779d1e5f8ca0b1b474941c175f9aaffb2ee4",
+  "0187_unrevealed_connections": "ec8cf620490aa02bd519c8965a59a3ca2ded490d3d577b4b92b0543608f188ce",
+  "0188_all_names_said": "53e45d31804b258b94f13d08f635ab0c85bb4ec9eba38ac3226e3dd459dafbce",
+  "0189_recap_held_names": "710e22d27c0dd52e3110f08d51f0c33504f87332e942cd3036f612e7b3fe910f",
+  "0190_pinned_truth": "039790db1f34eb959f62fd6d021deafc77280d6515c9f09903b1851a353f7c42",
+  "0191_backstory_link_words": "2471a0c4f2fe4e4281f6e57dac10a08d932aa8b449d486fdddbedf8b8b39a17e",
+  "0192_campaign_facts": "289301fefc8d34f62fec9f5849da32b102453ac4dbcad45aabdf2423493ca711",
+  "0193_link_pin_action": "3b5982599ddb487284da3c03797ab852a4c1609079ebd3dfeeaae3e8dd00449c",
+  "0194_shared_rules_page": "aae58c316b5be72c5a564badfebb9161a3ff1a3577506e547ae39102417fdeec",
+  "0195_session_pauses": "db9cf3b6b1dd48f5776d5e3cac1b3e9968b0a30bbd2fc921502e45c8f23295f1",
+  "0196_story_timeline": "283fbde1e881fb4b27d2425cd13c1a072a491e85606ce8869b710de8e678ff46",
+  "0197_web_setting_actions": "1d5247c5b6bc079b48a8f08f5455b8d7080a202d5f728118d1bdd703333f4a66",
+  "0198_off_record_lines": "f7e0f3e85c26bd3958ee0b15a78b37e62db1fee148cb6ea0b7cfd5bc51da36d5",
+  "0199_merge_restores": "eaeb627c54e8a33ddc9156db043c7a2ee047e199d14771c97ebc2b334c5cd259",
+  "0200_secret_exposures": "03be548395f5007488cd1b32a28959c35ee4b16cee4218051c28b8aa9e4904ec",
+  "0201_exposure_summary": "e575408678548a291e573d975aca271503262145e8e6685998bab2ce7cccec43",
+  "0202_image_lines": "971da10b16447642933580ab48600618ffd60e368bf3f30087cb045e34e69e93",
+  "0203_map_notes": "a208fda1823b75ab19e492f0ebc9ba5a6c00116b2c690abe1176b28be381e223",
+  "0204_relation_directional": "9a3bd0342b33a3fe43f864b602cf9908f77285ff96fce585ffa9c3281fc511cb",
+  "0205_recap_call_log": "e667050de19409790ed075c9710531c62f374541fbcca8eb41cda7aa29a13ebf",
+  "0206_timeline_stable": "b71edffed862f72e27964d776ef1db37dac26daf2d36a9e6bde5cb06ad22c525",
+  "0207_recap_approve_unchecked": "4238b18a6e3ae2ebe224b32e04a5f3555ebd6c32e4bba1fc85a3b91b9762ac97",
+  "0208_web_image_lines": "68df2f407a9fefc037f650875151344becac2c360ba8971922aa8c2140b9f688",
+  "0209_recap_accepted": "5cb05f7678ba61ed5972cc967f723c29e3fe44555795c3182c885f3faead6516",
+  "0210_plot_issues": "ec5eb931082ca1038188fd458b48ab5bc5d295c5b2e7f4a3598fe2a76b94d087",
+  "0211_plot_chat": "8fda2cc4c5d3efab4948752720beb568a4b7cd2a4a07918a92debaae71b837a8",
+  "0212_handover_email_offers": "6bd8660919ed17468472ae6d535c81d8ee3980431f738bcb5d68fabf3b178ccb",
+  "0213_handover_claim": "dfd4eb02230d13a69b82beed7b9eb9337a8567d8234b6c42af1a7473920e9e29",
+  "0214_handover_move": "603e6272ec7f192dc200cbf1f51de5908bce5173fd1944ae8ca9755275c63ae6",
+  "0215_campaign_move_cascade": "dfbf0164149436c01f636d76503a5ce3045a622e4a9ca6e22e09868600663ba9",
+  "0216_web_owned_campaigns": "e8b3760f7d95de915c5b68b2a3a47ac262f62db8956b0cf73c9ec0a7fa815125",
+  "0217_import_progress": "33005f56fb30a70ccdaedced78fe99c762b07012f914adf29859178fe27fe920",
+  "0218_web_delete_notices": "3059f84619070ab1ca330feb8e4079c2e3307a21e5af0712e5dd5abf4ae95e20",
+  "0219_web_backups": "63b76d2588fc55af59d12202268c8665d036ec0fcedc50967b0dbbcba8e03ff0",
+  "0220_line_topic_choices": "38ecff17b65a079739f857a03435e22765388c25ef0ab2fea4e3e5acba41002c",
+  "0221_recap_story_room": "8801cf00eaafba30b11f5d1f294894b93dfc4430212c24b9abeb655f3e9d36d1",
+  "0222_npc_or_pc": "6447d63b40f5ec5bcab38fccf31eb623eb9984ee76a60c18b00640154cd16244",
+  "0223_transcript_erasures": "e64d4e022559116b50ccae0b33d6f13f3785bfc51425fabad0cc0406a5c3137e",
+  "0224_recap_again": "3099449d0aaf5a743fde1497fdf3635a42063d1a4365fdfcea6b717097ae3c50",
+  "0225_recap_uploaded": "5ef984f283b39cb8ccaa9f1e1bbabfd91872f9127ac851db905a4ff2fec7bf5b",
+  "0226_audio_told": "977c8a6c978099070b7bde8297ddd411e8c300e540849186b0e05eb126a01fa1",
+  "0227_name_pass": "defa119f45769796b46507283b39f02bba82ce4934e9f72141eac9a2de4a3a1b",
+  "0228_graph_overview": "c4aef12bd8208d23104958d99477aedb451b8328e0ba9f58bbfac0991860ccb0",
+  "0229_link_decide": "a2161511ce272889afa18d650a674086bad56213d823b681ca372c69c4a0ff69",
+  "0230_audio_remake": "d6bab76d58f6b1631697e1bbbab21d48cc13452d0fb9f737b0b04a2eaaa9213d",
+  "0231_link_upload": "4df8752fb7bac9667758e8ab78b445fa453f3c940df27b56d1244e7f872212f6",
+  "0232_link_which": "46ff4f02484a5772e449de2faf29734c3f9884b8c2f5805935599b1f9de039c5",
+  "0233_web_waiting": "f2f3ef8cfbcee5484627c7e24296e6b0041599451cea9e50593c8d14dc952803",
+  "0234_move_cascade_late": "043997ae4bf6e7edaae72c720e185713780638ae8531d03ca84022a65235dc02",
+  "0235_memory_evidence": "ff97de0dc602d6e1fc65c9eadedb5759e3a2c5c62a5d240192ee2403a713a529",
+  "0236_claim_readings": "bf3f4c33ec6fc06d1ad45e025b63cf23725a32b0596286c86be4fa5f010eb2d2",
+  "0237_web_readings": "6cadb3a91bf81c62cd2999ff1f571d9e41252a4e4019109bdd0d0a166a3c988b",
+  "0238_contradiction_grades": "b37405f2c1050097cdf5adda9a35f09388d4dc387535f6e7e8edfc890583d878",
+  "0239_name_pass_reports": "2943359e8085bb6fa1557b5735b976755ffce374c1235f6642c31fa2d0e27f17",
+  "0240_names_fixed_door": "9f11b26d22ad229a30fe262986da0713538cad3b72bceae8770c505526f76aec",
+  "0241_names_fixed_undo": "ba9b6888562b8ab433a0ccea4e5e1cb299b6f6338d80ec1b67db92e54fef19a2",
+  "0242_name_change_words": "567d7cf71ef018087a352b834aafde6198e21da3a2d31c87d48676921fbee422",
+  "0243_recap_present": "3c4f0482fdeaf0aa923a7f2c42640dbc0425521a9e68dc1448aabde0541503c4",
+  "0244_report_storage": "9f070f3492e880e00ce72122d573b9a8ab0e2494b64e4bc8872b305b20cae249",
+  "0245_recap_name_places": "5f842bbd1a7fcf2524234644acf132003426a2003f8128049d7180f57d3c91f2",
+  "0246_names_read_campaign": "13095230c7c4a1c42bb988f793fc48d97338387eed1ba5fbbd076b6beaf4c16d",
+  "0247_all_names_kinds": "0e246398573ac3b9e25f26806822b8afacbb30852c61e1d597160deadfd2a8dc",
+  "0248_memory_vectors": "c80594cd395e6d9dc0dc51d0066aacbc1cb93fb0de258522b9c5539417b6db3c",
+  "0249_report_read_door": "d6252b558fca3431f7d7777d97277cbca9e5af023bdfacc703f622a949393cae",
+  "0250_report_answer_door": "6cbb57717261e8eb6bd7cf2372ac704f949209183e0e2116ed7a324ee0ead192",
+  "0252_optional_rules_read": "c023aef884dae6e29143c6aeb60f98d434aea53fa1a4c375653c41427e37361f",
+  "0253_names_smart": "4f06bdf96988720cbae5db8c9c203a2b8423f0fe09f5e1b78d449cd205933180",
+  "0254_optional_rule_setting": "65d010a0233d0ba04ab8e4507226e9382ea9421886742705314efc4ed83c6aa1",
+  "0256_plot_chat_followups": "8cc8c8ab80537d93fd2a0416c78598c32ab481376a92e6485662f5dcea111e7d",
+  "0257_game_masters_read": "94c386f9356a66bc340c65367234974ed0496c43700d3a531a802958c3905168",
+  "0258_web_backup_parts": "7d1d9374b790a4e576cdb3577d7618a1f83b92f27e190c0552491db5ba45ebd8",
+  "0259_co_dm_setting": "894efe821fc533d7c6d79d8823c59372518d2faabf98b12240f879e050944167",
+  "0261_rule_sharing_read": "79a7a9b340b01cac3bb1674e1514103b08de4dd0ecf4bef8453a3acaf1690abe",
+  "0262_web_rule_actions": "b57f9a103fda5b744728634d2616855b8b9373b4c2bdc101f0a5ca6e3a81dd9d",
+  "0263_unnamed_people": "b1ed360e5ec679a4b235285875d314e35086aff797eadb723c1e8203ba8b6c04",
+  "0264_unnamed_hidden_from_players": "265e8200932c082fba763c3486c5f4352007d03e0e1d9801a4f141585af6118d",
+  "0265_web_report_requests": "83364c1905943f750e155a7034cb9ff125ffe8afd5ecd33c1914ec093c8927a2",
+  "0266_web_name_unnamed": "9b6d27be5bc145f95d2f3c3b6a2f89b81206971ba64974b7442c7287b338b5fd",
+  "0267_who_is_it_decided": "a7302258cf3c06a6c56e0983cb8496acfc658cabd88e80946a6ad9f62dea505f",
+  "0268_web_sheet_actions": "42ad7e62a359600c8f5b57fcc7d5c23fbb8987635168860a7fe3c79df7803a5b",
+  "0269_report_fixed_remind": "485c539777d21f8a46f2d2dcc53c6bdc6e1ee08a99ddcdd79433fb7053785561"
+ },
+ "user_isolated": [
+  "access_grants",
+  "access_log",
+  "account_id_history",
+  "email_changes",
+  "email_sign_in_links",
+  "entitlements",
+  "improvement_opt_outs",
+  "installs",
+  "owner_campaigns",
+  "owner_hours",
+  "payment_events",
+  "support_mail_ids",
+  "support_replies",
+  "support_tickets",
+  "support_week_mail",
+  "try_it_used",
+  "web_sessions",
+  "web_users"
+ ],
+ "web_role_functions": [
+  [
+   "dmbot_claim_email",
+   "dmbot_claim_email(BIGINT, TEXT, BOOLEAN, INTEGER, INTEGER)"
+  ],
+  [
+   "dmbot_email_taken",
+   "dmbot_email_taken(TEXT)"
+  ],
+  [
+   "dmbot_forget_account_history",
+   "dmbot_forget_account_history()"
+  ],
+  [
+   "dmbot_forget_email_records",
+   "dmbot_forget_email_records()"
+  ],
+  [
+   "dmbot_handover_decline",
+   "dmbot_handover_decline(BIGINT, BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_handover_emails_since",
+   "dmbot_handover_emails_since(BIGINT, BIGINT)"
+  ],
+  [
+   "dmbot_handover_move_failed",
+   "dmbot_handover_move_failed(BIGINT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_handover_open",
+   "dmbot_handover_open(BIGINT, BIGINT, TEXT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_handover_release",
+   "dmbot_handover_release(BIGINT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_handover_request_move",
+   "dmbot_handover_request_move(BIGINT, BIGINT, TEXT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_handover_shares_rules",
+   "dmbot_handover_shares_rules(BIGINT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_hours_used",
+   "dmbot_hours_used(BIGINT)"
+  ],
+  [
+   "dmbot_import_agreed",
+   "dmbot_import_agreed(BIGINT, TEXT, INT, TEXT)"
+  ],
+  [
+   "dmbot_import_mapping",
+   "dmbot_import_mapping(BIGINT, TEXT, JSONB, INT, TEXT)"
+  ],
+  [
+   "dmbot_import_members",
+   "dmbot_import_members(BIGINT, TEXT, TEXT, INT, TEXT)"
+  ],
+  [
+   "dmbot_import_plays",
+   "dmbot_import_plays(BIGINT, TEXT, JSONB, INT, TEXT)"
+  ],
+  [
+   "dmbot_import_progress",
+   "dmbot_import_progress(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_import_store",
+   "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT)"
+  ],
+  [
+   "dmbot_import_suggest",
+   "dmbot_import_suggest(BIGINT, TEXT, JSONB, INT, TEXT)"
+  ],
+  [
+   "dmbot_import_write_recap",
+   "dmbot_import_write_recap(BIGINT, TEXT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_minutes_total",
+   "dmbot_minutes_total()"
+  ],
+  [
+   "dmbot_move_failed",
+   "dmbot_move_failed(BIGINT)"
+  ],
+  [
+   "dmbot_move_synced",
+   "dmbot_move_synced(BIGINT)"
+  ],
+  [
+   "dmbot_moved_to",
+   "dmbot_moved_to(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_moves_to_sync",
+   "dmbot_moves_to_sync()"
+  ],
+  [
+   "dmbot_name_answer_add",
+   "dmbot_name_answer_add(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_note_stray_addon",
+   "dmbot_note_stray_addon(TEXT)"
+  ],
+  [
+   "dmbot_orphan_owned_campaigns",
+   "dmbot_orphan_owned_campaigns(BIGINT)"
+  ],
+  [
+   "dmbot_owned_campaigns",
+   "dmbot_owned_campaigns()"
+  ],
+  [
+   "dmbot_plot_answer",
+   "dmbot_plot_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_plot_chat_read",
+   "dmbot_plot_chat_read(BIGINT, TEXT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_plot_chat_send",
+   "dmbot_plot_chat_send(BIGINT, TEXT, BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_plot_proposal",
+   "dmbot_plot_proposal(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_plot_read",
+   "dmbot_plot_read(BIGINT, TEXT, BIGINT, BIGINT)"
+  ],
+  [
+   "dmbot_previous_ids",
+   "dmbot_previous_ids()"
+  ],
+  [
+   "dmbot_recap_approve",
+   "dmbot_recap_approve(BIGINT, TEXT, BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_recap_approve_unchecked",
+   "dmbot_recap_approve_unchecked(BIGINT, TEXT, BIGINT, BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_recap_audio_again",
+   "dmbot_recap_audio_again(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_recap_check_names",
+   "dmbot_recap_check_names(BIGINT, TEXT, INT, TEXT)"
+  ],
+  [
+   "dmbot_recap_held_names",
+   "dmbot_recap_held_names(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_recap_name_places",
+   "dmbot_recap_name_places(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_recap_names_fixed",
+   "dmbot_recap_names_fixed(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_recap_names_read",
+   "dmbot_recap_names_read(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_recap_present",
+   "dmbot_recap_present(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_recap_redo",
+   "dmbot_recap_redo(BIGINT, TEXT, BIGINT, BOOLEAN)"
+  ],
+  [
+   "dmbot_recap_request_add",
+   "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_recap_request_read",
+   "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_recap_rewrite",
+   "dmbot_recap_rewrite(BIGINT, TEXT, BIGINT, TEXT, TEXT[], TEXT[])"
+  ],
+  [
+   "dmbot_recap_set_present",
+   "dmbot_recap_set_present(BIGINT, TEXT, BIGINT, INT, JSONB)"
+  ],
+  [
+   "dmbot_recap_share",
+   "dmbot_recap_share(BIGINT, TEXT, BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_recap_shared",
+   "dmbot_recap_shared(TEXT)"
+  ],
+  [
+   "dmbot_recap_upload",
+   "dmbot_recap_upload(BIGINT, TEXT, BIGINT, TEXT, TEXT, TEXT, BOOLEAN, BOOLEAN)"
+  ],
+  [
+   "dmbot_recap_voice_add",
+   "dmbot_recap_voice_add(BIGINT, TEXT, BIGINT, BYTEA, TEXT, INT, TEXT)"
+  ],
+  [
+   "dmbot_recap_voice_read",
+   "dmbot_recap_voice_read(BIGINT, TEXT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_set_payment_email",
+   "dmbot_set_payment_email(TEXT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_stray_addon_done",
+   "dmbot_stray_addon_done(TEXT)"
+  ],
+  [
+   "dmbot_stray_addon_tried",
+   "dmbot_stray_addon_tried(TEXT)"
+  ],
+  [
+   "dmbot_strays_to_cancel",
+   "dmbot_strays_to_cancel()"
+  ],
+  [
+   "dmbot_support_email",
+   "dmbot_support_email(BIGINT)"
+  ],
+  [
+   "dmbot_support_latest_answer",
+   "dmbot_support_latest_answer(BIGINT)"
+  ],
+  [
+   "dmbot_support_message",
+   "dmbot_support_message(BIGINT)"
+  ],
+  [
+   "dmbot_support_mine_thread",
+   "dmbot_support_mine_thread(BIGINT)"
+  ],
+  [
+   "dmbot_support_thread",
+   "dmbot_support_thread(BIGINT)"
+  ],
+  [
+   "dmbot_user_by_email",
+   "dmbot_user_by_email(TEXT)"
+  ],
+  [
+   "dmbot_user_of",
+   "dmbot_user_of(TEXT)"
+  ],
+  [
+   "dmbot_web_all_names",
+   "dmbot_web_all_names(BIGINT, TEXT, TEXT, TEXT, BOOLEAN, INT, INT, TEXT)"
+  ],
+  [
+   "dmbot_web_all_names_said",
+   "dmbot_web_all_names_said(BIGINT, TEXT, TEXT[])"
+  ],
+  [
+   "dmbot_web_backup_add",
+   "dmbot_web_backup_add(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_backup_read",
+   "dmbot_web_backup_read(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_backup_take",
+   "dmbot_web_backup_take(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_backup_take_part",
+   "dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT)"
+  ],
+  [
+   "dmbot_web_campaign_card",
+   "dmbot_web_campaign_card(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_campaign_facts",
+   "dmbot_web_campaign_facts(BIGINT)"
+  ],
+  [
+   "dmbot_web_cancel_move_code",
+   "dmbot_web_cancel_move_code(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_co_dm_add",
+   "dmbot_web_co_dm_add(BIGINT, TEXT, TEXT, BOOLEAN, INT, INT)"
+  ],
+  [
+   "dmbot_web_delete_campaign",
+   "dmbot_web_delete_campaign(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_forget_move_asks",
+   "dmbot_web_forget_move_asks(BIGINT)"
+  ],
+  [
+   "dmbot_web_game_master_candidates",
+   "dmbot_web_game_master_candidates(BIGINT, TEXT, TEXT, INT)"
+  ],
+  [
+   "dmbot_web_game_masters",
+   "dmbot_web_game_masters(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_graph_overview",
+   "dmbot_web_graph_overview(BIGINT, TEXT, INT, INT)"
+  ],
+  [
+   "dmbot_web_homebrew",
+   "dmbot_web_homebrew(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_homebrew_campaigns",
+   "dmbot_web_homebrew_campaigns(BIGINT)"
+  ],
+  [
+   "dmbot_web_house_rules",
+   "dmbot_web_house_rules(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_house_rules_campaigns",
+   "dmbot_web_house_rules_campaigns(BIGINT)"
+  ],
+  [
+   "dmbot_web_move_code",
+   "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_name_action_add",
+   "dmbot_web_name_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_name_action_read",
+   "dmbot_web_name_action_read(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_names",
+   "dmbot_web_names(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_names_near",
+   "dmbot_web_names_near(BIGINT, TEXT, TEXT, REAL[], INT)"
+  ],
+  [
+   "dmbot_web_npc_note_put",
+   "dmbot_web_npc_note_put(BIGINT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_npc_notes_delete",
+   "dmbot_web_npc_notes_delete(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_npc_notes_mine",
+   "dmbot_web_npc_notes_mine(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_npc_page",
+   "dmbot_web_npc_page(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_optional_rule_add",
+   "dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_optional_rules",
+   "dmbot_web_optional_rules(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_owned_campaigns",
+   "dmbot_web_owned_campaigns()"
+  ],
+  [
+   "dmbot_web_peek",
+   "dmbot_web_peek(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_readings",
+   "dmbot_web_readings(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_recap_choices",
+   "dmbot_web_recap_choices(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_recap_holds",
+   "dmbot_web_recap_holds(BIGINT)"
+  ],
+  [
+   "dmbot_web_relationships",
+   "dmbot_web_relationships(BIGINT, TEXT, TEXT, INT, INT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_report",
+   "dmbot_web_report(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_report_answer",
+   "dmbot_web_report_answer(BIGINT, TEXT, BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_report_make",
+   "dmbot_web_report_make(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_report_request",
+   "dmbot_web_report_request(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_rule_action_add",
+   "dmbot_web_rule_action_add(BIGINT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_rule_action_read",
+   "dmbot_web_rule_action_read(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_rule_sharing",
+   "dmbot_web_rule_sharing(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_set_recap_choice",
+   "dmbot_web_set_recap_choice(BIGINT, TEXT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_set_said_as",
+   "dmbot_web_set_said_as(BIGINT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_setting_add",
+   "dmbot_web_setting_add(BIGINT, TEXT, TEXT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_setting_read",
+   "dmbot_web_setting_read(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_shared_rules",
+   "dmbot_web_shared_rules(BIGINT)"
+  ],
+  [
+   "dmbot_web_sheet_action_add",
+   "dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_sheet_action_read",
+   "dmbot_web_sheet_action_read(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_sheet_read",
+   "dmbot_web_sheet_read(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_story_timeline",
+   "dmbot_web_story_timeline(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_transcript_campaigns",
+   "dmbot_web_transcript_campaigns(BIGINT)"
+  ],
+  [
+   "dmbot_web_transcript_characters",
+   "dmbot_web_transcript_characters(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_transcript_choices",
+   "dmbot_web_transcript_choices(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_transcript_choose",
+   "dmbot_web_transcript_choose(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_transcript_lines",
+   "dmbot_web_transcript_lines(BIGINT, TEXT, TEXT, BIGINT, BIGINT)"
+  ],
+  [
+   "dmbot_web_transcript_sessions",
+   "dmbot_web_transcript_sessions(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_transcript_speakers",
+   "dmbot_web_transcript_speakers(BIGINT, TEXT, TEXT)"
+  ],
+  [
+   "dmbot_web_transcript_stretch",
+   "dmbot_web_transcript_stretch(BIGINT, TEXT, TEXT, BIGINT, BIGINT, BIGINT)"
+  ],
+  [
+   "dmbot_web_waiting",
+   "dmbot_web_waiting(BIGINT, TEXT)"
+  ]
+ ]
+}

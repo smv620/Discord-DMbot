@@ -1,7 +1,7 @@
 """One file per migration (#2127): the package builds the same migrations the old `schema.py`
 tuple held, and a number can only be taken once.
 
-`tests/data/migrations_before.json` was captured from the monolithic schema.py by
+`tests/fixtures/migrations_before.json` was captured from the monolithic schema.py by
 `scripts/split_migrations.py` before the move: each migration's name and the SHA-256 of its SQL,
 and the registrations (isolated, user-isolated and routing tables, the website role's functions).
 A migration may be added after those, never changed or removed, so the fixture stays a prefix of
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dmbot import migrations, schema
 
-BEFORE = json.loads((Path(__file__).parent / "data" / "migrations_before.json").read_text())
+BEFORE = json.loads((Path(__file__).parent / "fixtures" / "migrations_before.json").read_text())
 
 
 def sha(text: str) -> str:
