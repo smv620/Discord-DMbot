@@ -271,6 +271,7 @@ from dmbot.memory import (
     report_make,
     voyage,
     web_actions,
+    web_report_requests,
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
@@ -1148,6 +1149,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
+        # "Make the report again", asked for on the website (#2805).
+        self.report_requests = (
+            web_report_requests.RequestStore(recaps.db) if recaps is not None else None
+        )
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -8787,27 +8792,42 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
         DM-confirmed names and relationships the campaign already stores."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        await self._make_report_for(table.guild_id, table.campaign_id, table.transcript_session_id)
+
+    async def report_for_session_at(self, guild_id: int, campaign_id: str, started_at: int) -> str:
+        """The same report for a session the website named by when it began (#2805), when a DM
+        asks for it again. "" when it was made; else why not, as one short word (the website's
+        row carries it)."""
+        if self.transcripts is None:
+            return web_report_requests.UNAVAILABLE
+        session = await self.transcripts.session_at(guild_id, campaign_id, started_at)
+        if session is None:
+            return web_report_requests.FAILED
+        return await self._make_report_for(guild_id, campaign_id, session.id)
+
+    async def _make_report_for(self, gid: int, cid: str, sid: str) -> str:
+        """Make one session's report (see `make_report`). "" when it was made; else why it was
+        not: `unavailable` (switched off, or no AI), `plan`, `limit` (the extractor's call limit is
+        used) or `failed` (the campaign or session is gone)."""
         if (
             not self.settings.story_report_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
-            return
-        gid, cid = table.guild_id, table.campaign_id
+            return web_report_requests.UNAVAILABLE
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or not await self.plan_allows(
-                "story", gid, campaign, fail_open=False
-            ):
-                return  # closed: a plan that can't be checked is not run
-            sid = table.transcript_session_id
+            if campaign is None:
+                return web_report_requests.FAILED
+            if not await self.plan_allows("story", gid, campaign, fail_open=False):
+                return web_report_requests.PLAN  # closed: a plan that can't be checked is not run
             session = await self.transcripts.session(gid, sid)
             if session is None:
-                return
+                return web_report_requests.FAILED
             _, used = await self.transcripts.extraction(gid, sid)
             day_used = await self.transcripts.extractor_calls_since(
                 gid, cid, int(time.time()) - 86400
@@ -8823,7 +8843,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             if allowed == 0:
                 log.info("Report: not made, the extractor's call limit is used")
-                return
+                return web_report_requests.LIMIT
             transcripts = self.transcripts
             made = await report_make.make(
                 self.memory,
@@ -8840,6 +8860,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(made.line())
+            # What the website's row says (the after-session step ignores it): a report that never
+            # started (a run was going) is not "done", and neither is one that failed inside.
+            if not made.ran:
+                return web_report_requests.BUSY
+            if made.failed == report_make.OUT_OF_FUNDS:
+                return web_report_requests.UNAVAILABLE
+            if made.failed:
+                return web_report_requests.FAILED
+            return ""
 
     async def meaning_leads(self, campaign: Campaign, question: str, asker_id: int) -> list[str]:
         """More starting points for the sidebar's recall by what the question means (#2664).
@@ -10490,6 +10519,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     break
                 with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
                     if not await web_settings.run_one(self, store, guild.id, item):
+                        break
+
+    async def run_web_report_requests(self) -> None:
+        """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
+        the campaign, and the report is made the way it is after a session, inside the same plan
+        check and call limits. A few a round (a report is many AI calls); only the outcome word is
+        logged."""
+        store = self.report_requests
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(web_report_requests.PER_ROUND):
+                req = await store.claim_next(guild.id)
+                if req is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=req.campaign_id):
+                    if not await web_report_requests.run_one(self, store, guild.id, req):
                         break
 
     async def _trial_loop(self) -> None:

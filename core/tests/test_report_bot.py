@@ -107,6 +107,72 @@ class Making(unittest.IsolatedAsyncioTestCase):
         make.assert_not_awaited()
 
 
+class FromTheWebsite(unittest.IsolatedAsyncioTestCase):
+    """The same step for a session the website named by when it began (#2805): the word it gives
+    back is what the request row carries."""
+
+    async def make(self, b: Any) -> tuple[str, AsyncMock]:
+        b.transcripts.session_at = AsyncMock(
+            return_value=SimpleNamespace(id="s", started_at=1_700_000_000)
+        )
+        with (
+            patch("dmbot.bot.report_make.make", new=AsyncMock(return_value=Made(ran=True))) as m,
+            patch("dmbot.bot.GradeStore.of", return_value=object()),
+            patch("dmbot.bot.ReportStore.of", return_value=object()),
+        ):
+            return await b.report_for_session_at(1, "c", 1_700_000_000), m
+
+    async def test_a_report_that_is_made_gives_no_word(self) -> None:
+        word, make = await self.make(bot(used=4))
+        self.assertEqual(word, "")
+        call = make.await_args
+        assert call is not None
+        self.assertEqual(call.kwargs["max_calls"], min(REPORT_CALLS, 10 - 4))  # the same limits
+
+    async def test_each_reason_not_to_is_one_short_word(self) -> None:
+        for kwargs, want in (
+            ({"report": False}, "unavailable"),
+            ({"extractor": False}, "unavailable"),
+            ({"plan": False}, "plan"),
+            ({"used": 10}, "limit"),
+        ):
+            with self.subTest(kwargs=kwargs):
+                word, make = await self.make(bot(**kwargs))
+                self.assertEqual(word, want)
+                make.assert_not_awaited()
+
+    async def test_a_report_that_never_started_or_failed_inside_is_not_done(self) -> None:
+        for made, want in (
+            (Made(ran=False), "busy"),
+            (Made(ran=True, failed="failed"), "failed"),
+            (Made(ran=True, failed="out_of_funds"), "unavailable"),
+            (Made(ran=True), ""),
+        ):
+            with self.subTest(want=want):
+                b = bot()
+                b.transcripts.session_at = AsyncMock(
+                    return_value=SimpleNamespace(id="s", started_at=1_700_000_000)
+                )
+                with (
+                    patch("dmbot.bot.report_make.make", new=AsyncMock(return_value=made)),
+                    patch("dmbot.bot.GradeStore.of", return_value=object()),
+                    patch("dmbot.bot.ReportStore.of", return_value=object()),
+                ):
+                    self.assertEqual(await b.report_for_session_at(1, "c", 1_700_000_000), want)
+
+    async def test_a_session_the_campaign_does_not_have_is_failed(self) -> None:
+        b = bot()
+        b.transcripts.session_at = AsyncMock(return_value=None)
+        self.assertEqual(await b.report_for_session_at(1, "c", 5), "failed")
+
+    async def test_a_campaign_that_is_gone_is_failed(self) -> None:
+        b = bot()
+        b.campaigns = SimpleNamespace(get=AsyncMock(return_value=None))
+        word, make = await self.make(b)
+        self.assertEqual(word, "failed")
+        make.assert_not_awaited()
+
+
 class Setting(unittest.TestCase):
     def test_the_switch_is_off_by_default_and_must_be_a_switch(self) -> None:
         from dmbot.config import ConfigError
