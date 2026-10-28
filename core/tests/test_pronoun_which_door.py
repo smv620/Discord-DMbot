@@ -13,21 +13,25 @@ class PronounWhichDoorTests(unittest.TestCase):
         self.assertEqual(set(schema.PRONOUN_WORDS), set(PRONOUNS))
         self.assertEqual(len(schema.PRONOUN_WORDS), len(set(schema.PRONOUN_WORDS)))
 
-    def test_the_migration_is_last_and_re_creates_both_doors_with_their_settings(self) -> None:
-        self.assertEqual(schema.MIGRATIONS[-1][0], "0270_web_pronoun_which")
-        sql = schema.WEB_PRONOUN_WHICH
-        for door, _args in (
-            ("dmbot_web_waiting", "(BIGINT, TEXT)"),
-            ("dmbot_web_name_action_add", "(BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN)"),
-        ):
-            self.assertEqual(sql.count(f"CREATE OR REPLACE FUNCTION {door}("), 1, door)
-            self.assertIn(f"REVOKE ALL ON FUNCTION {door}", sql)
-        self.assertEqual(sql.count("SET search_path = pg_catalog"), 2)
+    def test_the_migration_is_registered(self) -> None:
+        self.assertIn(("0270_web_pronoun_which", schema.WEB_PRONOUN_WHICH), schema.MIGRATIONS)
 
-    def test_only_a_pronoun_question_may_have_fewer_than_two_names(self) -> None:
+    def test_both_doors_are_widened_in_place_so_earlier_changes_to_them_stay(self) -> None:
+        """0266 widened the name door at run time ('name' actions, unnamed guards); making it again
+        from older text would undo that, so this migration reads each door back as it is."""
         sql = schema.WEB_PRONOUN_WHICH
-        self.assertIn(">= CASE WHEN w.pron THEN 0 ELSE 2 END", sql)
-        self.assertIn("clean <> w.other_id", sql)  # the own end is no answer
+        self.assertEqual(sql.count("pg_get_functiondef"), 2)
+        self.assertNotIn("CREATE OR REPLACE FUNCTION dmbot_web", sql)
+        for door in ("dmbot_web_waiting", "dmbot_web_name_action_add"):
+            self.assertIn(f"p.proname = '{door}'", sql)
+
+    def test_the_questions_candidates_are_never_null(self) -> None:
+        self.assertIn(
+            "COALESCE(w.cands, ''[]''::jsonb)".replace("''", "'"), schema.WEB_PRONOUN_WHICH
+        )
+
+    def test_the_pronoun_test_trims_before_it_strips_punctuation_as_the_bot_does(self) -> None:
+        self.assertIn("btrim(btrim(regexp_replace(q.word", schema._PRONOUN_SQL)
 
 
 if __name__ == "__main__":

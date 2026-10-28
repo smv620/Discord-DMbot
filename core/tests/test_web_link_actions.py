@@ -894,8 +894,13 @@ class TheEdits(Editing):
         refused = await self.refused_queue(kind="which", action="pick", id=which, entity=self.rook)
         self.assertEqual(refused, "not_found")  # the bot would refuse it too; nothing is queued
 
-    async def test_a_player_sees_no_pronoun_question(self) -> None:
-        await self.pronoun_question()
+    async def test_a_player_sees_no_pronoun_question_and_cannot_answer_it(self) -> None:
+        which = await self.pronoun_question()
+        for action in ("neither", "pick"):
+            refused = await self.refused_queue(
+                self.player, kind="which", action=action, id=which, entity=self.mara_a
+            )
+            self.assertEqual(refused, "not_allowed")
         with self.assertRaises(RecapError) as caught:
             await self.waiting_now(self.player)
         self.assertEqual(caught.exception.code, "not_found")

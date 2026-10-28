@@ -15652,7 +15652,7 @@ NAMES_FIXED_UNDO = (
 def _swap(text: str, pairs: tuple[tuple[str, str], ...]) -> str:
     for old, new in pairs:
         if text.count(old) != 1:  # (an explicit raise: `python -O` drops an assert)
-            raise RuntimeError(f"the names-to-check door no longer has: {old[:50]}")
+            raise RuntimeError(f"a door no longer has the text this migration changes: {old[:50]}")
         text = text.replace(old, new, 1)
     return text
 
@@ -17694,41 +17694,71 @@ PRONOUN_WORDS = (
     "them", "its", "who", "whose", "whom",
 )  # fmt: skip
 _PRONOUN_SQL = (
-    "lower(btrim(regexp_replace(q.word, '\\s+', ' ', 'g'), '.,;:!?\"''“”‘’()')) = ANY (ARRAY["
-    + ", ".join(f"'{w}'" for w in PRONOUN_WORDS)
-    + "])"
+    "lower(btrim(btrim(regexp_replace(q.word, '\\s+', ' ', 'g')), '.,;:!?\"''“”‘’()'))"
+    " = ANY (ARRAY[" + ", ".join(f"'{w}'" for w in PRONOUN_WORDS) + "])"
 )
-WEB_PRONOUN_WHICH = _swap(
-    CLAIM_READINGS[CLAIM_READINGS.index("CREATE OR REPLACE FUNCTION dmbot_web_waiting(") :],
+_PRONOUN_WAITING_SWAPS = (
     (
-        (
-            "-- (a question left with fewer than two live candidates is not shown: nothing can be\n"
-            "            -- picked, and the bot deletes it when it next reads the queue)",
-            "-- (a question about a name left with fewer than two live candidates is not shown:\n"
-            "            -- nothing can be picked, and the bot deletes it when it next reads the\n"
-            "            -- queue.\n"
-            '            -- One about a pronoun is shown with one name or none: "Someone else")',
-        ),
-        (
-            "'upload', w.upload, 'candidates', w.cands)",
-            "'upload', w.upload, 'candidates', w.cands,\n                    'pronoun', w.pron)",
-        ),
-        ("SELECT q.*, (\n", "SELECT q.*, " + _PRONOUN_SQL + " AS pron, (\n"),
-        (
-            ">= 2), '[]'::jsonb));",
-            ">= CASE WHEN w.pron THEN 0 ELSE 2 END), '[]'::jsonb));",
-        ),
+        "-- (a question left with fewer than two live candidates is not shown: nothing can be\n"
+        "            -- picked, and the bot deletes it when it next reads the queue)",
+        "-- (a question about a name left with fewer than two live candidates is not shown:\n"
+        "            -- nothing can be picked, and the bot deletes it when it next reads the\n"
+        '            -- queue. One about a pronoun is shown with one name or none: "Someone else")',
     ),
-) + _swap(
-    NAMES_FIXED_UNDO[
-        NAMES_FIXED_UNDO.index("    CREATE OR REPLACE FUNCTION dmbot_web_name_action_add(") :
-    ],
     (
-        (
-            "OR clean = ANY (w.candidates))) THEN",
-            "OR (clean = ANY (w.candidates) AND clean <> w.other_id))) THEN",
-        ),
+        "'upload', w.upload, 'candidates', w.cands)",
+        "'upload', w.upload,\n"
+        "                    'candidates', COALESCE(w.cands, '[]'::jsonb), 'pronoun', w.pron)",
     ),
+    ("SELECT q.*, (\n", "SELECT q.*, " + _PRONOUN_SQL + " AS pron, (\n"),
+    (
+        ">= 2), '[]'::jsonb));",
+        ">= CASE WHEN w.pron THEN 0 ELSE 2 END), '[]'::jsonb));",
+    ),
+)
+_PRONOUN_PICK_SWAPS = (
+    (
+        "OR clean = ANY (w.candidates))) THEN",
+        "OR (clean = ANY (w.candidates) AND clean <> w.other_id))) THEN",
+    ),
+)
+# Both doors are read back from the database as they are now, as 0266 does, and not rebuilt from
+# the text of the migration that last wrote them: 0266 widened the name door in place (the
+# 'name' actions and the unnamed guards), and making it again from older text would undo that.
+WEB_PRONOUN_WHICH = (
+    r"""
+    CREATE OR REPLACE FUNCTION pg_temp.swap_once(def text, old text, new text) RETURNS text
+    LANGUAGE plpgsql AS $f$
+    BEGIN
+        IF (length(def) - length(replace(def, old, ''))) <> length(old) THEN
+            RAISE EXCEPTION 'not found exactly once: %', left(old, 80);
+        END IF;
+        RETURN replace(def, old, new);
+    END
+    $f$;
+
+    DO $do$
+    DECLARE
+        def text;
+    BEGIN
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_waiting';
+"""
+    + _swaps("def", _PRONOUN_WAITING_SWAPS)
+    + r"""
+        EXECUTE def;
+
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_name_action_add';
+"""
+    + _swaps("def", _PRONOUN_PICK_SWAPS)
+    + r"""
+        EXECUTE def;
+    END
+    $do$;
+"""
 )
 
 
