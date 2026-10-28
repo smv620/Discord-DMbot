@@ -8,6 +8,7 @@
 import type { PlanId } from "../content/pricing";
 import type {
   AccountApi,
+  BackupFile,
   Campaign,
   Character,
   ImportProgress,
@@ -2215,7 +2216,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`plotCheck:${ref}`);
       await reachable();
       signedIn();
-      const r = await find(ref);
+      const r = await find(ref.replace(/\.(hour-full|timed-out)$/, "")); // (#2774: the endings only pick a case)
       const seen = plotText.get(ref);
       if (seen !== undefined && seen !== r.text) {
         plotText.set(ref, r.text);
@@ -2257,6 +2258,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const key = `${ref}:${issue}`;
       const talk = plotTalk.get(key) ?? [];
       if (talk.some((m) => m.role === "dm" && m.state === "waiting")) throw new ApiError("slow-down");
+      if (/\.hour-full$/.test(ref)) throw new ApiError("hour-full"); // thirty messages this hour, on any issue (#2774)
       if (talk.filter((m) => m.role === "dm").length >= 15) throw new ApiError("too-soon");
       plotTalk.set(key, [...talk, { id: `m${talk.length}`, role: "dm", text, state: "waiting", error: "", proposals: [], at: 1790000000 + talk.length }]);
       plotAnswerIn.set(key, 1); // PlotBot's answer shows on the next look
@@ -2275,8 +2277,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           // The first message gets an answer with a suggested note; "fail" in the words makes the bot give up.
           const asked = talk.filter((m) => m.role === "dm" && m.state === "waiting");
           if (asked.some((m) => /nosave/.test(m.text))) plotWontSave.add(`p${talk.length}`);
-          talk = talk.map((m) => (m.role === "dm" && m.state === "waiting" ? { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" } : m));
-          if (asked.length > 0 && !/fail/.test(asked[0]!.text))
+          // "silent" in the words: PlotBot never answered, which the API ends with a plain sentence (#2774).
+          talk = talk.map((m) =>
+            m.role === "dm" && m.state === "waiting"
+              ? /silent/.test(m.text)
+                ? { ...m, state: "failed" as const, error: "PlotBot didn't answer. Ask it again." }
+                : { ...m, state: /fail/.test(m.text) ? ("failed" as const) : ("done" as const), error: /fail/.test(m.text) ? "no_answer" : "" }
+              : m,
+          );
+          if (asked.length > 0 && !/fail|silent/.test(asked[0]!.text))
             talk = [
               ...talk,
               {
@@ -2299,6 +2308,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           const seen = plotSavingSeen.has(p.id);
           plotSavingSeen.add(p.id);
           if (!seen) return p;
+          if (/\.timed-out$/.test(ref)) return { ...p, state: "failed" as const, error: "PlotBot didn't save this in time. Ask it again." }; // (#2774)
           return plotWontSave.has(p.id)
             ? { ...p, state: "failed" as const, error: "Ulfgar's note changed while it was being saved, so nothing was changed." }
             : { ...p, state: "saved" as const };
@@ -2516,7 +2526,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
       return { channelsLeft: found.serverReachable === false };
     },
-    async campaignBackup(ref, onProgress) {
+    async campaignBackup(ref, onProgress, onFile) {
       calls.push(`campaignBackup:${ref}`);
       await reachable();
       signedIn();
@@ -2526,7 +2536,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       for (const stage of ["waiting", "reading", "packing"]) {
         onProgress?.({ stage, state: "running", startedAt: now, updatedAt: now, serverNow: now });
       }
-      return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
+      // A ref ending `.bk-parts` has two transcripts files besides the main one; `.bk-toomany` has more
+      // than one backup carries; `.bk-partfail` loses its second file on the way.
+      if (/\.bk-toomany$/.test(ref)) throw new ApiError("backup-too-many-files");
+      const stem = "pretend-campaign-2026-10-27";
+      const names = /\.bk-(parts|partfail)$/.test(ref)
+        ? [`${stem}.dmbot.json.gz`, `${stem}.transcripts-1-of-2.dmbot.json.gz`, `${stem}.transcripts-2-of-2.dmbot.json.gz`]
+        : [`${stem}.dmbot.json.gz`];
+      onFile?.(0, names.length);
+      const files: BackupFile[] = [];
+      for (const name of names) {
+        if (/\.bk-partfail$/.test(ref) && files.length === 2) throw new ApiError("backup-part");
+        files.push({ name, blob: new Blob([JSON.stringify({ campaign: ref, file: name })], { type: "application/gzip" }) });
+        onFile?.(files.length, names.length);
+      }
+      return { files };
     },
     async takeBackHandover(ref) {
       calls.push(`takeBackHandover:${ref}`);
