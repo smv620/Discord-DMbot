@@ -4,6 +4,7 @@ migration screen do not import the website package (#2547)."""
 from __future__ import annotations
 
 import ast
+import types
 import unittest
 from pathlib import Path
 
@@ -33,8 +34,19 @@ class TheAccountHelpers(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIs(getattr(accounts, name), getattr(web_accounts, name))
 
+    def test_the_list_names_every_public_name_the_module_defines(self) -> None:
+        # A name added later must be re-exported too, so the list is checked against the module.
+        defined = {
+            name
+            for name, value in vars(accounts).items()
+            if not name.startswith("_")
+            and not isinstance(value, types.ModuleType)
+            and getattr(value, "__module__", accounts.__name__) == accounts.__name__
+        }
+        self.assertEqual(defined, set(PUBLIC_NAMES))
+
     def test_the_bot_and_the_migrate_screen_do_not_import_the_website(self) -> None:
-        for module in (dmbot.bot, dmbot.ui.migrate):
+        for module in (dmbot.bot, dmbot.ui.migrate, accounts):
             assert module.__file__ is not None
             tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
             names: list[str] = []
