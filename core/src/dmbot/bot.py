@@ -349,7 +349,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice
+from dmbot.rules import house_voice, optional
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -360,6 +360,7 @@ from dmbot.rules.homebrew_sources import SiteApprovalsSection, SourceStore
 from dmbot.rules.homebrew_spotter import HomebrewMention, HomebrewSpotter
 from dmbot.rules.house import HouseRule, HouseRulesSection, HouseRuleStore
 from dmbot.rules.house_file_link import HouseFileLinkStore
+from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
@@ -505,6 +506,7 @@ from dmbot.ui.name_card import (
     UndoSpellingButton,
 )
 from dmbot.ui.name_lists import UndoListButton
+from dmbot.ui.name_unnamed import UndoNamingButton
 from dmbot.ui.names import (
     SPELLED_OUT,
     ReviewButton,
@@ -1720,6 +1722,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
+        self.add_dynamic_items(UndoNamingButton)  # Undo of giving an unnamed person a name (#2790)
         self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
@@ -9489,7 +9492,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             agreed = await self.consent.consenting(gid)
             known = set(await self.memory.known_keys(gid, cid))
             added = 0
-            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            # (a person the story never named has no name to be spelled: #2790)
+            waiting = [
+                e
+                for e in await self.memory.entities(gid, cid, statuses=[PROPOSED])
+                if not e.unnamed
+            ]
             given: set[str] = set()  # suggestions that already got a spelling in this run
             for word, user_id, near in spelled:
                 key = name_key(word)
@@ -10298,9 +10306,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't finish a website-deleted campaign")
 
-    async def export_campaign(self, guild_id: int, campaign_id: str) -> Any:
-        """A campaign's complete copy, as Discord's Download makes it (#2554)."""
-        return await self.campaigns.export(guild_id, campaign_id)
+    async def export_campaign(self, guild_id: int, campaign_id: str) -> tuple[Any, list[bytes]]:
+        """A campaign's complete copy, as Discord's Download makes it (#2554): the main file's
+        data and the transcripts files (#2552, #2772), both from one moment."""
+        return await self.campaigns.export_set(guild_id, campaign_id)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a
@@ -10447,6 +10456,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign:
         return await self.campaigns.set_transcript_keep(campaign.guild_id, campaign.id, days)
+
+    async def apply_optional_rule(
+        self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
+    ) -> bool:
+        """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
+        saved, then noted in the DM screen if the campaign has one. A line that could not be
+        posted is not the choice's failure (the rule is saved): False says so, for the page to
+        mention. The note never pings."""
+        await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
+        if campaign.dm_screen_channel_id is None:
+            return True
+        try:
+            return await self.post(
+                campaign.dm_screen_channel_id,
+                optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
+            )
+        except Exception as exc:  # the type only
+            log.warning("The DM screen line for an optional rule failed: %s", type(exc).__name__)
+            return False
 
     async def run_web_settings(self) -> None:
         """What DMs chose on the website's Settings page (#2463), applied the way Discord's

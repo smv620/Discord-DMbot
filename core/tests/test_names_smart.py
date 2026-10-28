@@ -462,6 +462,7 @@ class ThePrivacy(Smart):
             cur = await conn.execute(
                 "SELECT has_function_privilege('public', oid, 'EXECUTE') AS open"
                 " FROM pg_proc WHERE proname = 'dmbot_entity_parts'"
+                " AND pronamespace = current_schema()::regnamespace"
             )
             rows = await cur.fetchall()
         self.assertTrue(rows)
