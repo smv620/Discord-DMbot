@@ -351,7 +351,7 @@ from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
-from dmbot.rules import house_voice, optional
+from dmbot.rules import house_voice, optional, set_sync, web_sharing
 from dmbot.rules import index as rules_index
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import followed_rules, own_first
@@ -465,6 +465,7 @@ from dmbot.ui import (
     name_pass_undo,
     recap_audio,
     rule_card,
+    shared_rules_defs,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -1150,6 +1151,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's Settings page, waiting to be applied (#2463).
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
+        # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
+        self.web_rule_actions = web_sharing.ActionStore(recaps.db) if recaps is not None else None
+        self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
@@ -10816,6 +10820,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         website action in it) does not wait for the many AI calls of a report."""
         with log_context(guild_id=guild_id, campaign_id=req.campaign_id):
             await web_report_requests.run_one(self, store, guild_id, req)
+
+    # ---- the website's rule sharing (#2793): the Host of rules.web_sharing ----
+
+    async def share_refusal(self, campaign: Campaign, user_id: int) -> str | None:
+        return await self.plan_gate("share", campaign.guild_id, campaign, user_id)
+
+    async def own_rules(self, campaign: Campaign) -> tuple[list[HouseRule], str | None]:
+        """The campaign's house rules and its rules document link, as Discord's Share reads
+        them; rules from a followed set or a rulebook are not among them."""
+        if self.house_rules is None:
+            return [], None
+        rules = await self.house_rules.list(campaign.guild_id, campaign.id)
+        links = self.house_file_links
+        link = await links.get(campaign.guild_id, campaign.id) if links is not None else None
+        return rules, getattr(link, "link", None)
+
+    async def settle(self, campaign: Campaign, *, following: bool) -> str:
+        """After a follow or an unfollow: the relationship definitions borrowed from the set
+        match it again (#1456), and the sentence Discord adds to its answer. A failure here
+        never undoes the follow."""
+        if self.memory is None or self.rule_sets is None:
+            return ""
+        done = await set_sync.safely(
+            set_sync.reconcile(self.memory, self.rule_sets, campaign.guild_id, campaign.id)
+        )
+        if following:
+            return shared_rules_defs.followed_note(done)
+        return shared_rules_defs.stopped_note(done)
+
+    async def run_web_rule_sharing(self) -> None:
+        """What DMs chose on the website's rule sharing (#2793), applied the way Discord's
+        📚 Shared rules buttons apply it. Each asker must still be a DM of the campaign. Each
+        runs as a tracked background task, at most one a server, so this returns at once and the
+        poll loop's other website actions do not wait; only outcome words are logged."""
+        store = self.web_rule_actions
+        if store is None or self.rule_sets is None:
+            return
+        running = self._rule_tasks
+        for guild in list(self.guilds):
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one at a time for a server; the loop does not wait for it
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            task = self._track(self._run_rule_choice(store, gid, item), "web-rule-choice")
+            if task is None:
+                continue  # shutting down: the row is retaken after the door's ten minutes
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_rule_choice(
+        self, store: web_sharing.ActionStore, guild_id: int, item: web_sharing.Action
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_sharing.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
