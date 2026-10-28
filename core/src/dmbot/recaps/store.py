@@ -24,8 +24,8 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
-# Re-exported with the `as` form, which mypy strict needs: the worker and the tests read both
-# names from here.
+# Re-exported with the `as` form, which mypy strict needs: the worker reads AUDIO_MAX_TRIES from
+# here, and the tests read both.
 from dmbot.audio_due import AUDIO_DUE_WHERE as AUDIO_DUE_WHERE
 from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
