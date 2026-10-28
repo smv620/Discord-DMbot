@@ -331,7 +331,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     // For anyone but a DM the label is rebuilt from the known connections, so a secret one's words can
     // never ride along on the line even if the API sent them.
     .map((e) => {
-      // A pin is the DM's alone: dropped for a player who peeks, and in the players' view.
+      // A pin and DMbot's check are the DM's alone: dropped for a player who peeks, and in the players' view.
       if (showAll && canEdit) return e;
       if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, ...l }) => l) };
       const links = e.links

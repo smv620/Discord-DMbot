@@ -118,6 +118,8 @@ export default function WebWaiting({
   const busy = sending !== null;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
+  // The DMbot's-check lines below are DM-only by the callers: Web.tsx draws this part for a DM alone, and the API
+  // answers only a DM of the campaign. Keep that true before drawing a check anywhere else.
   // A pronoun question can have one name or none, and its "Someone else" keeps the connection with a person
   // who isn't named yet, so it gets its own group and words; a name question keeps the "Neither" words.
   const names = list.which.filter((q) => !q.pronoun);

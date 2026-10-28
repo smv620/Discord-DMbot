@@ -81,6 +81,27 @@ describe("DMbot's check on a connection's card (#2859)", () => {
     await openPanel(pageWith(withCheck(false)));
     expect(screen.queryByText(w.checkLine(CHECK))).toBeNull();
   });
+
+  it("not to a player who peeks, even if the API sent one", async () => {
+    const api = pageWith(withCheck(false));
+    render(<Web api={api} path="/account/web/100.cmp1.web-player" />);
+    await screen.findByText(/names?, \d+ lines?/);
+    fireEvent.click(screen.getByRole("switch", { name: "Peek behind the DM screen" }));
+    fireEvent.click(await screen.findByRole("button", { name: w.peekYes }));
+    await waitFor(() => expect(screen.getByText(w.peeking)).toBeTruthy());
+    fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
+    await screen.findByRole("heading", { level: 2, name: /.+ and .+/ });
+    expect(screen.queryByText(w.checkLine(CHECK))).toBeNull();
+  });
+
+  it("the pretend API sends DMbot's check to a DM's Full View only", async () => {
+    const api = mockApi("table");
+    const dmFull = await api.webGraph!("100.cmp1", { center: null, hops: 6, view: "full" });
+    const peek = await api.webGraph!("100.cmp1.web-player", { center: null, hops: 6, view: "full" }).catch(() => null);
+    const checked = (g: WebGraph | null) => (g?.edges ?? []).some((e) => e.links.some((l) => l.check));
+    expect(checked(dmFull)).toBe(true);
+    expect(checked(peek)).toBe(false);
+  });
 });
 
 describe("a DM's pins", () => {

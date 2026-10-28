@@ -808,7 +808,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ...(full ? { revealed: l.revealed !== false } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
-          ...(full && l.check ? { check: l.check } : {}),
+          // DMbot's check is the DM's alone, like a pin: never to a player or a peeker (#2859).
+          ...(pins && l.check ? { check: l.check } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };
