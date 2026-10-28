@@ -20,12 +20,13 @@ _ALLOWED = re.compile(r"[A-Za-z' -]+")
 STRESS = "ˈ"
 SECONDARY = "ˌ"
 _IGNORED = set("͡‿ʰʲʷˠˤ̩̯̥̬̪̃̚ʼ")  # tie bars, aspiration, palatalisation, nasalisation...
+WORD_BREAK = "|"  # the recogniser's word delimiter; a bare space only separates phonemes
 DOT = "."  # the recogniser's own syllable break
 _SEPARATORS = {"-"}
 
 # Longest first, so an affricate or a diphthong is one sound, not two.
 _CONSONANTS = {
-    "ŋɡ": "ng", "ŋg": "ng", "tʃ": "ch", "dʒ": "j", "ts": "ts", "dz": "dz",
+    "ʧ": "ch", "ʤ": "j", "tʃ": "ch", "dʒ": "j", "ts": "ts", "dz": "dz",
     "p": "p", "b": "b", "t": "t", "d": "d", "k": "k", "g": "g", "ɡ": "g", "q": "k", "c": "k",
     "ɟ": "j", "ʔ": "", "f": "f", "v": "v", "θ": "th", "ð": "th", "s": "s", "z": "z", "ʃ": "sh",
     "ʒ": "zh", "h": "h", "x": "kh", "χ": "kh", "ɣ": "g", "m": "m", "n": "n", "ŋ": "ng", "ɲ": "ny",
@@ -34,7 +35,8 @@ _CONSONANTS = {
 }  # fmt: skip
 # Vowels: (letters in an open syllable, letters in a closed one).
 _VOWELS = {
-    "aɪ": ("eye", "eye"), "aʊ": ("ow", "ow"), "eɪ": ("ay", "ay"), "oʊ": ("oh", "oh"),
+    "aɪ": ("eye", "eye"), "ɑɪ": ("eye", "eye"), "ɑʊ": ("ow", "ow"), "ɔʊ": ("oh", "oh"),
+    "aʊ": ("ow", "ow"), "eɪ": ("ay", "ay"), "oʊ": ("oh", "oh"),
     "əʊ": ("oh", "oh"), "ɔɪ": ("oy", "oy"), "ɪə": ("eer", "eer"), "ɛə": ("air", "air"),
     "ʊə": ("oor", "oor"), "ɑ": ("ah", "ah"), "ɒ": ("ah", "o"), "a": ("ah", "ah"),
     "æ": ("a", "a"), "ɛ": ("eh", "e"), "e": ("ay", "ay"), "ɪ": ("ih", "i"), "i": ("ee", "ee"),
@@ -65,7 +67,7 @@ class _Sound:
 def _sounds(word: str) -> list[_Sound | str]:
     """The word as sounds, with STRESS / SECONDARY marks kept in place. Anything unknown is
     skipped (a recogniser's rare symbol is not worth failing the whole name)."""
-    text = unicodedata.normalize("NFC", word).replace(":", "ː")
+    text = unicodedata.normalize("NFC", word)
     out: list[_Sound | str] = []
     i = 0
     while i < len(text):
@@ -74,7 +76,8 @@ def _sounds(word: str) -> list[_Sound | str]:
             out.append(ch)
             i += 1
             continue
-        if ch in _IGNORED or ch in _SEPARATORS or ch == "ː" or ch.isspace():
+        # (length marks and spaces between the recogniser's phonemes carry nothing we spell)
+        if ch in _IGNORED or ch in _SEPARATORS or ch in ":ː" or ch.isspace():
             i += 1
             continue
         for token in _TOKENS:
@@ -132,6 +135,8 @@ def _onset_start(cluster: list[_Sound]) -> int:
     """Where, in the consonants between two vowels, the next syllable begins."""
     for start in range(max(len(cluster) - 3, 0), len(cluster)):
         tail = tuple(s.ipa.replace("ɹ", "r").replace("ɡ", "g") for s in cluster[start:])
+        if tail[0] == "ŋ":
+            continue  # "ng" never starts a syllable: "FING-ger", not "FIN-nger"
         if len(tail) == 1 or tail in _ONSETS:
             return start
     return len(cluster) - 1
@@ -159,6 +164,7 @@ def respell_word(word: str) -> str:
     parts = [p for p in parts if p]
     if not parts:
         return ""
+    parts[-1] = re.sub(r"ngg$", "ng", parts[-1])  # a final "ng" + g is just "ng": "ling"
     if len(parts) == 1:
         return parts[0]
     if stressed is None or stressed >= len(parts):
@@ -167,9 +173,9 @@ def respell_word(word: str) -> str:
 
 
 def respell(ipa: str) -> str:
-    """The recogniser's IPA (words separated by spaces) as a plain respelling; "" when there is
-    nothing usable to show (no sounds, or longer than MAX_CHARS)."""
-    words = [respell_word(w) for w in ipa.split()]
+    """The recogniser's IPA (phonemes, usually space-separated; words split by "|") as a plain
+    respelling; "" when there is nothing usable to show (no sounds, or longer than MAX_CHARS)."""
+    words = [respell_word(w) for w in ipa.split(WORD_BREAK)]
     return clean(" ".join(w for w in words if w)) or ""
 
 
@@ -177,9 +183,11 @@ def clean(text: str) -> str | None:
     """A respelling the DM may see and save: only letters, hyphens, spaces and apostrophes, tidy
     spaces, at most MAX_CHARS. None when it is empty or cannot be made to fit those rules (an AI
     answer with a sentence or a symbol in it is dropped, never trimmed into something odd)."""
-    tidy = " ".join(text.replace("’", "'").split())
+    tidy = " ".join(text.replace("’", "'").split())  # (a pasted line break becomes a space)
     if not tidy or len(tidy) > MAX_CHARS or not _ALLOWED.fullmatch(tidy):
         return None
+    if tidy[0] == "-" or tidy[-1] == "-" or "--" in tidy:
+        return None  # plain ASCII letters only, so "Zoë" is typed as "zoh-ee"
     if not any(c.isalpha() for c in tidy):
         return None
     return tidy

@@ -45,11 +45,26 @@ class FromSpeechSounds(unittest.TestCase):
 
     def test_a_one_syllable_name_has_no_capitals_and_a_ng_is_one_sound(self) -> None:
         self.assertEqual(respell("ˈlɪŋɡ"), "ling")
+        self.assertEqual(respell("fɪŋɡɚ"), "FING-ger")  # "ng" never starts a syllable
         self.assertEqual(respell("ˈgɹɔmʃ"), "grawmsh")
 
     def test_words_stay_apart_and_dots_and_length_marks_are_ignored(self) -> None:
-        self.assertEqual(respell("ˈnɔɪbɑ ˈfɹɛd"), "NOY-bah fred")
+        self.assertEqual(respell("ˈnɔɪbɑ | ˈfɹɛd"), "NOY-bah fred")
         self.assertEqual(respell("ɑˈɹæs.ta"), "ah-RAS-tah")
+
+    def test_phonemes_separated_by_spaces_are_one_word(self) -> None:
+        """The recogniser's real shape: spaces between phonemes, "|" between words."""
+        self.assertEqual(respell("k ɑ ˈz ɛ θ"), "kah-ZETH")
+        self.assertEqual(respell("ˈk ɑ z ɛ θ | ˈf ɹ ɛ d"), "KAH-zeth fred")
+
+    def test_variant_spellings_of_sounds_and_a_stress_inside_a_cluster(self) -> None:
+        self.assertEqual(respell("ʤɑn"), "jahn")
+        self.assertEqual(respell("ʧɑɪ"), "cheye")
+        self.assertEqual(respell("kɑpˈtɛn"), "kahp-TEN")
+        self.assertEqual(respell("ɑˈstɑ"), "ah-STAH")
+
+    def test_an_unknown_symbol_inside_a_word_is_skipped_not_fatal(self) -> None:
+        self.assertEqual(respell("ˈkɑ☃zɛθ"), "KAH-zeth")
 
     def test_nothing_usable_is_nothing(self) -> None:
         for ipa in ("", "   ", "ʔ", "ˈ", "☃"):
@@ -70,6 +85,12 @@ class TheCheck(unittest.TestCase):
 
     def test_a_sentence_a_symbol_a_number_or_nothing_is_refused(self) -> None:
         for text in ("", "   ", "say it: KAH-zeth", "kah/zeth", "zeth2", "'-'", "kah\nzeth!"):
+            with self.subTest(text=text):
+                self.assertIsNone(clean(text))
+
+    def test_a_line_break_becomes_a_space_and_bad_hyphens_and_accents_are_refused(self) -> None:
+        self.assertEqual(clean("kah\nzeth"), "kah zeth")
+        for text in ("-kah", "kah-", "kah--zeth", "Zoë"):
             with self.subTest(text=text):
                 self.assertIsNone(clean(text))
 
