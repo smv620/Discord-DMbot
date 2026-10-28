@@ -56,6 +56,7 @@ from dmbot.web import (
     past_sessions,
     relationships,
     report,
+    rule_sharing,
     sessions,
     shared_recaps,
     sharing,
@@ -2247,6 +2248,67 @@ def create_app(
         return {"campaigns": await house_rule_pages.list_campaigns(db, session)}
 
     # The Shared rules page (#2460 part 2): what the person's campaigns publish and follow.
+    @app.get("/me/campaigns/{ref}/rule-sharing")
+    async def me_campaign_rule_sharing(ref: str, signed: Signed) -> dict[str, Any]:
+        """What the campaign shares and follows, the sets it could follow in its server, how many
+        house rules it has and whether its plan lets it share (#2783), for its DMs only: a player
+        or another campaign's DM gets 403 `not_allowed`; a bad address 404. Never a share code."""
+        session, _token = signed
+        try:
+            return await rule_sharing.read_sharing(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    sharing_refusals = {
+        **setting_refusals,
+        "bad_action": (400, "bad_action"),
+        "bad_arg": (400, "bad_arg"),
+        "plan": (403, "plan"),
+        "no_rules": (409, "no_rules"),
+    }
+
+    @app.post("/me/campaigns/{ref}/rule-sharing", status_code=202)
+    async def me_campaign_rule_sharing_do(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """One sharing choice of a DM, queued for the bot (#2783): publish the house rules, stop
+        sharing, look at a set by its share code, follow a set shared in the server or by code,
+        stop following. Re-checked by the bot when it applies it. Polled at
+        `.../rule-sharing/answers/{answer}`. 404 while DMBOT_WEB_RULE_SHARING is off."""
+        session, _token = signed
+        if not settings.rule_sharing_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            answer = await rule_sharing.queue_action(
+                db, session, ref, body, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = sharing_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": answer}
+
+    @app.get("/me/campaigns/{ref}/rule-sharing/answers/{answer}")
+    async def me_campaign_rule_sharing_answer(
+        ref: str, answer: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where the signed-in DM's own sharing choice stands, in the shared progress shape
+        (#2783)."""
+        session, _token = signed
+        if not settings.rule_sharing_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await rule_sharing.read_action(db, session, ref, answer, now=clock())
+        except RecapError as err:
+            status, detail = sharing_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/shared-rules")
     async def me_shared_rules(signed: Signed) -> dict[str, Any]:
         """The campaigns the person runs that publish or follow a house-rules set or homebrew
