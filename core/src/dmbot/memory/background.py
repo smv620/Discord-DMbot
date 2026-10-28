@@ -166,6 +166,7 @@ class Connection:
     # own end is no variant, and the line is dropped.
     variant_a: str = ""
     variant_b: str = ""
+    decided: str = ""  # how a pronoun was settled (#2790), kept with the waiting connection
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +183,7 @@ class Pick:
     quote: str
     secret: bool = False
     words: str = ""
+    decided: str = ""  # how the pronoun was checked (#2790), else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -888,6 +890,7 @@ def keep_connections(
                 # front of it too ("Lady Nightshade", #2591): the matched key counts
                 bool({name_key(c.a), name_key(c.b), first.key, second.key} & hidden),
                 c.words,
+                decided=c.decided,
             )
             role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
             pair = (min(ka, kb), max(ka, kb))
