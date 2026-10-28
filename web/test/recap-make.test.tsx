@@ -109,7 +109,7 @@ describe("making a recap", () => {
       expect(screen.queryByText(w.askAgainLists)).toBeNull();
     });
 
-    it("holds the Yes button until it has looked, then says the lists will be deleted", async () => {
+    it("looks before it asks, and holds the buttons meanwhile", async () => {
       present.on = true;
       const api = mockApi("table");
       const base = await api.recap!("200000000000000001.cmp1.1791000000");
@@ -117,11 +117,11 @@ describe("making a recap", () => {
       api.recap = () => new Promise((resolve) => (release = resolve));
       await open("100.cmp1", api);
       fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
-      await screen.findByText(w.askAgain(true));
-      expect(screen.getByText(w.checkingLists)).toBeTruthy();
-      expect((screen.getByRole("button", { name: w.yesAgain }) as HTMLButtonElement).disabled).toBe(true);
+      await waitFor(() => expect((screen.getAllByRole("button", { name: w.again })[0] as HTMLButtonElement).disabled).toBe(true));
+      expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
       release({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
       expect(await screen.findByText(w.askAgainLists)).toBeTruthy();
+      expect(screen.getByText(w.askAgain(true))).toBeTruthy();
       expect((screen.getByRole("button", { name: w.yesAgain }) as HTMLButtonElement).disabled).toBe(false);
     });
 
@@ -136,11 +136,176 @@ describe("making a recap", () => {
       fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
       fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
       fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
-      const right = await screen.findByLabelText(rx(w.form.right));
-      fireEvent.click(right);
-      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
       expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
       expect(await screen.findByText(w.askAgainLists)).toBeTruthy();
+    });
+
+    describe("which question each kind of recap gets (#2764)", () => {
+      /** The pretend list with the newest session's recap set to what the case needs. */
+      const withRecap = async (recap: Record<string, unknown>) => {
+        present.on = true;
+        const api = mockApi("table");
+        const base = await api.recap!("200000000000000001.cmp1.1791000000");
+        api.recap = async () => ({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
+        const list = api.pastSessions!;
+        api.pastSessions = async (ref) => {
+          const got = await list(ref);
+          const first = got.sessions[0]!;
+          return { sessions: [{ ...first, recap: { ...first.recap!, ...recap } }, ...got.sessions.slice(1)] } as typeof got;
+        };
+        await open("100.cmp1", api);
+        return api;
+      };
+      const upload = async () => {
+        fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!);
+        await screen.findByRole("heading", { name: w.form.heading });
+        fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+        fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+        fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      };
+
+      it("a finished draft nobody approved: the upload says it is replaced", async () => {
+        await withRecap({ approved: false, status: "draft" });
+        await upload();
+        expect(await screen.findByText(w.askReplaceDraft)).toBeTruthy();
+        expect(screen.queryByText(w.askReplaceExisting)).toBeNull();
+      });
+
+      it("an approved recap: the upload says the old one is kept", async () => {
+        await withRecap({ approved: true });
+        await upload();
+        expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
+      });
+
+      it("a posted recap: the upload says the old one is kept", async () => {
+        await withRecap({ approved: false, status: "posted" });
+        await upload();
+        expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
+      });
+
+      it("making it again promises the old one only for an approved or a posted recap", async () => {
+        await withRecap({ approved: false, status: "draft" });
+        fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+        expect(await screen.findByText(w.askAgain(false))).toBeTruthy();
+        cleanup();
+        await withRecap({ approved: false, status: "posted" });
+        fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+        expect(await screen.findByText(w.askAgain(true))).toBeTruthy();
+      });
+
+      it("a finished recap waiting for its check is not called unfinished", async () => {
+        await withRecap({ state: "waiting_for_check", approved: false, status: "draft" });
+        fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+        expect(await screen.findByText(w.askAgain(false))).toBeTruthy();
+        expect(screen.queryByText(w.askAgainUnfinished)).toBeNull();
+      });
+
+      it("only a failed recap gets the unfinished words", async () => {
+        await withRecap({ state: "failed", approved: false });
+        fireEvent.click(screen.getAllByRole("button", { name: w.again })[0]!);
+        expect(await screen.findByText(w.askAgainUnfinished)).toBeTruthy();
+      });
+
+      it("a yes does not outlive its form: yes, then the rights box, then Cancel, then Add again asks again", async () => {
+        const api = await withRecap({ approved: true });
+        await upload();
+        fireEvent.click(await screen.findByRole("button", { name: w.yesReplace }));
+        await screen.findByLabelText(rx(w.form.right)); // the form is back with the rights box
+        fireEvent.click(screen.getByRole("button", { name: w.form.cancel }));
+        fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!);
+        await screen.findByRole("heading", { name: w.form.heading });
+        fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+        fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+        fireEvent.click(screen.getByLabelText(rx(w.form.right))); // the rights box is still asked for
+        fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+        expect(await screen.findByText(w.askReplaceExisting)).toBeTruthy();
+        expect(screen.getByText(w.askAgainLists)).toBeTruthy();
+        // Only the one send after the first yes: the second Add went to the question, not to the API.
+        expect(api.calls.filter((c) => c.startsWith("addRecap"))).toHaveLength(1);
+      });
+    });
+
+    describe("a recap that failed (#2764)", () => {
+      const failedSession = async (beats: { n: number; present: string[]; saved?: boolean }[] | "unreadable") => {
+        present.on = true;
+        const api = mockApi("table");
+        const base = await api.recap!("200000000000000001.cmp1.1791000000");
+        api.recap = async () => {
+          if (beats === "unreadable") throw new ApiError("server");
+          return { ...base, beats };
+        };
+        await open("100.cmp1", api);
+        return api;
+      };
+      const failedAgain = () => screen.getAllByRole("button", { name: w.again })[1]!; // session 2: failed
+
+      it("asks before making it again when scenes have saved lists, and promises no old recap", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(failedAgain());
+        expect(await screen.findByText(w.askAgainUnfinished)).toBeTruthy();
+        expect(screen.getByText(w.askAgainLists)).toBeTruthy();
+        expect(screen.queryByText(w.askAgain(true))).toBeNull();
+        expect(screen.queryByText(w.askAgain(false))).toBeNull();
+        expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
+      });
+
+      it("changes nothing on No", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(failedAgain());
+        fireEvent.click(await screen.findByRole("button", { name: w.keep }));
+        expect(screen.queryByText(w.askAgainLists)).toBeNull();
+        expect(api.calls.some((c) => c.startsWith("makeRecap"))).toBe(false);
+      });
+
+      it("makes it, once, on Yes", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(failedAgain());
+        fireEvent.click(await screen.findByRole("button", { name: w.yesAgain }));
+        await waitFor(() => expect(api.calls.filter((c) => c.startsWith("makeRecap"))).toEqual(["makeRecap:100.cmp1.1789000000:replace"]));
+      });
+
+      it("starts at once when no list was saved", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"] }]);
+        fireEvent.click(failedAgain());
+        await waitFor(() => expect(api.calls).toContain("makeRecap:100.cmp1.1789000000"));
+        expect(screen.queryByText(w.askAgainUnfinished)).toBeNull();
+      });
+
+      it("warns anyway when the recap could not be read", async () => {
+        await failedSession("unreadable");
+        fireEvent.click(failedAgain());
+        expect(await screen.findByText(w.askAgainMaybeLists)).toBeTruthy();
+      });
+
+      it("asks before an upload replaces it", async () => {
+        const api = await failedSession([{ n: 1, present: ["Mira"], saved: true }]);
+        fireEvent.click(screen.getAllByRole("button", { name: w.add })[2]!);
+        await screen.findByRole("heading", { name: w.form.heading });
+        fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+        fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+        fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+        expect(await screen.findByText(w.askReplaceUnfinished)).toBeTruthy();
+        expect(screen.getByText(w.askAgainLists)).toBeTruthy();
+        expect(api.calls.some((c) => c.startsWith("addRecap"))).toBe(false);
+      });
+    });
+
+    it("asks once, then the rights box, then sends with the yes kept (#2764)", async () => {
+      present.on = true;
+      const api = mockApi("table");
+      const base = await api.recap!("200000000000000001.cmp1.1791000000");
+      api.recap = async () => ({ ...base, beats: [{ n: 1, present: ["Mira"], saved: true }] });
+      await open("100.cmp1", api);
+      fireEvent.click(screen.getAllByRole("button", { name: w.add })[0]!);
+      await screen.findByRole("heading", { name: w.form.heading });
+      fireEvent.input(screen.getByLabelText(rx(w.form.text)), { target: { value: "Their version." } });
+      fireEvent.input(screen.getByLabelText(rx(w.form.who)), { target: { value: "Maren" } });
+      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      fireEvent.click(await screen.findByRole("button", { name: w.yesReplace }));
+      fireEvent.click(await screen.findByLabelText(rx(w.form.right)));
+      fireEvent.click(screen.getByRole("button", { name: w.form.submit }));
+      await waitFor(() => expect(api.calls.filter((c) => c.startsWith("addRecap"))).toEqual([expect.stringMatching(/:replace$/), expect.stringMatching(/:replace:rights$/)]));
+      expect(screen.queryByText(w.askReplaceExisting)).toBeNull();
     });
 
     it("does not look while the feature is off", async () => {

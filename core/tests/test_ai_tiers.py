@@ -161,6 +161,7 @@ class Tiers(unittest.TestCase):
                 Feature.RECAP: AIModelTier.FAST,  # the cinematic recap (#1382), off by default
                 Feature.RECAP_RETRY: AIModelTier.CAREFUL,
                 Feature.NAME_PASS: AIModelTier.CAREFUL,  # the name pass (#2628)
+                Feature.WHO_IS_IT: AIModelTier.FAST,  # who "he" is, scored (#2790)
                 Feature.RECAP_FEEDBACK: AIModelTier.FAST,  # the DM's feedback on a recap (#2076)
                 Feature.PLAN_READER: AIModelTier.CAREFUL,
                 Feature.TIME_SUGGEST: AIModelTier.FAST,  # a time jump suggested (#1758)

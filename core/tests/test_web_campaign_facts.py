@@ -194,6 +194,7 @@ class TheDoor(Base):
                 "SELECT proconfig::text AS cfg, prosecdef,"
                 " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
                 " FROM pg_proc WHERE proname = 'dmbot_web_campaign_facts'"
+                " AND pronamespace = current_schema()::regnamespace"
             )
             rows = await cur.fetchall()
         self.assertGreaterEqual(len(rows), 1)

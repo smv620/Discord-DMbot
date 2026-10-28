@@ -18,6 +18,14 @@ import WorkProgress from "./WorkProgress";
 const POLL_MS = 2000;
 const POLL_LIMIT = 60_000; // about a minute, in milliseconds: the check is one careful AI call
 
+/** Why a message could not be answered. The bot's short codes get the page's words; a plain sentence the API sends
+ * (a message nobody answered in time, #2774) is shown as it is, never mapped as a code. The contract is core's migration
+ * 0256: codes are single tokens, the sentences hold spaces. */
+function failedWords(error: string): string {
+  if (Object.hasOwn(words.chatFailed, error)) return words.chatFailed[error] as string;
+  return /\s/.test(error) ? error : (words.chatFailed["failed"] as string);
+}
+
 export default function RecapPlotCheck({
   api,
   refId,
@@ -482,7 +490,7 @@ function Issue({
               <li key={m.id}>
                 <strong>{m.role === "dm" ? words.chatYou : words.chatBot}:</strong> {m.text}
                 {m.state === "failed" && (
-                  <span class="small warn"> {words.chatFailed[m.error] ?? words.chatFailed["failed"]}</span>
+                  <span class="small warn"> {failedWords(m.error)}</span>
                 )}
                 {m.proposals.map((p) => (
                   <div key={p.id} class="stack small">
