@@ -78,19 +78,19 @@ class CardWords(unittest.TestCase):
         states = {d.id: reading(d) for d in docs}
         running = frozenset(d.id for d in docs[:3])
         ages = {d.id: ui.ReadAges(0, 7200, ui.STALL_AFTER_S + 1) for d in docs[:3]}
-        text = ui.card_text(docs, states, {}, running, frozenset(), ages)  # type: ignore[arg-type]
+        text = ui.card_text(docs, states, {}, running, frozenset(), ages)
         self.assertLess(len(text), 2000)
         self.assertIn("reading 50% (no change for 16 min)", text)
         calm = {d.id: ui.ReadAges(0, 240, 10) for d in docs[:3]}
         self.assertIn(
             "reading 50% (running 4 min)",
-            ui.card_text(docs, states, {}, running, frozenset(), calm),  # type: ignore[arg-type]
+            ui.card_text(docs, states, {}, running, frozenset(), calm),
         )
         both = frozenset(d.id for d in docs[:2])
         queued = {d.id: ui.ReadAges(600, 0, 0) for d in docs[:2]}
         self.assertIn(
             "waiting (asked 10 min ago)",
-            ui.card_text(docs, states, {}, both, both, queued),  # type: ignore[arg-type]
+            ui.card_text(docs, states, {}, both, both, queued),
         )
 
     def test_the_card_gets_ages_from_the_bots_clocks_for_this_server_only(self) -> None:
@@ -252,7 +252,7 @@ class KeepingTheCardCurrent(unittest.IsolatedAsyncioTestCase):
         import discord
 
         async def gone(text: str, view: Any) -> None:
-            raise discord.NotFound(SimpleNamespace(status=404, reason="x"), "gone")
+            raise discord.NotFound(cast(Any, SimpleNamespace(status=404, reason="x")), "gone")
 
         await keep_card_current(
             self.render, gone, lambda: True, every=10.0, clock=self.clock, sleep=self.sleep
