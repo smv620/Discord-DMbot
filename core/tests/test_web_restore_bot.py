@@ -826,4 +826,5 @@ class WhileClosing(unittest.IsolatedAsyncioTestCase):
         guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
         with patch.object(DMBot, "guilds", guilds):
             await b.run_web_restores()
+        b.web_restores.beat.assert_called_once()  # the round still began: the worker is alive
         b.web_restores.claim_next.assert_not_awaited()

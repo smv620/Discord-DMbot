@@ -476,7 +476,6 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         b.web_rule_actions = SimpleNamespace(claim_next=AsyncMock(return_value=None))
         b._rule_tasks = {}
         b._closing = True
-        b._asking = set()
         b.rule_sets = object()
         guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
         with patch.object(DMBot, "guilds", guilds):
