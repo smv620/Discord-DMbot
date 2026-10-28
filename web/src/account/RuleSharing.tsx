@@ -35,6 +35,7 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
   const [code, setCode] = useState("");
   const [found, setFound] = useState<{ code: string; note: string } | null>(null);
   const [asking, setAsking] = useState<string | null>(null); // the set in the list the person is about to follow
+  const [confirming, setConfirming] = useState<"share" | "stop" | "unfollow" | null>(null); // the choice being confirmed
   const inFlight = useRef(false);
   const live = useRef(true);
   useEffect(() => {
@@ -66,6 +67,7 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
     inFlight.current = true;
     setReport(null);
     setAsking(null);
+    setConfirming(null);
     setWork({ answer: null, gaveUp: false });
     const fail = (text: string): null => {
       if (live.current) {
@@ -175,11 +177,15 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
           <p>{w.sharedAs(mine.name, mine.version)}</p>
           <p class="small muted">{w.stopNote}</p>
           <p class="small muted">{w.codesInDiscord}</p>
-          <p>
-            <button type="button" class="button secondary" aria-disabled={busy} onClick={() => !busy && void choose({ action: "stop_sharing" })}>
-              {w.stop}
-            </button>
-          </p>
+          {confirming === "stop" ? (
+            <Confirm text={w.confirmStop(mine.name)} yes={w.confirmStopYes} busy={busy} onNo={() => setConfirming(null)} onYes={() => void choose({ action: "stop_sharing" })} />
+          ) : (
+            <p>
+              <button type="button" class="button secondary" aria-disabled={busy} onClick={() => !busy && setConfirming("stop")}>
+                {w.stop}
+              </button>
+            </p>
+          )}
         </div>
       ) : !info.canShare ? (
         <p class="small muted">{w.plan}</p>
@@ -190,7 +196,7 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
           class="stack"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!busy && name.trim() !== "") void choose({ action: "publish", arg: name.trim() });
+            if (!busy && name.trim() !== "") setConfirming("share");
           }}
         >
           {mine && <p class="small muted">{w.notShared(mine.name)}</p>}
@@ -198,11 +204,22 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
             <span>{w.nameLabel}</span>
             <input type="text" value={name} maxLength={60} onInput={(e) => setName((e.target as HTMLInputElement).value)} />
           </label>
-          <p>
-            <button type="submit" class="button" aria-disabled={busy || name.trim() === ""}>
-              {w.share}
-            </button>
-          </p>
+          {name.trim() === "" && <p class="small muted">{w.nameFirst}</p>}
+          {confirming === "share" ? (
+            <Confirm
+              text={w.confirmShare(name.trim(), info.ruleCount)}
+              yes={w.confirmShareYes}
+              busy={busy}
+              onNo={() => setConfirming(null)}
+              onYes={() => void choose({ action: "publish", arg: name.trim() })}
+            />
+          ) : (
+            <p>
+              <button type="submit" class="button" aria-disabled={busy || name.trim() === ""}>
+                {w.share}
+              </button>
+            </p>
+          )}
         </form>
       )}
 
@@ -219,11 +236,14 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
                     class="button secondary"
                     aria-label={w.stopFollowingLabel(f.name)}
                     aria-disabled={busy}
-                    onClick={() => !busy && void choose({ action: "unfollow" })}
+                    onClick={() => !busy && setConfirming("unfollow")}
                   >
                     {w.stopFollowing}
                   </button>
                 </span>
+                {confirming === "unfollow" && (
+                  <Confirm text={w.confirmUnfollow(f.name)} yes={w.confirmUnfollowYes} busy={busy} onNo={() => setConfirming(null)} onYes={() => void choose({ action: "unfollow" })} />
+                )}
               </li>
             ))}
           </ul>
@@ -298,15 +318,35 @@ export default function RuleSharingSection({ api, campaignRef }: { api: AccountA
           {found && found.code === cleaned && (
             <div class="stack" role="group" aria-label={w.codeHeading}>
               <p>{found.note}</p>
-              <p>
+              <span class="row">
+                <button type="button" class="button secondary" onClick={() => setFound(null)}>
+                  {w.foundCancel}
+                </button>
                 <button type="button" class="button" aria-disabled={busy} onClick={() => !busy && void choose({ action: "follow_code", arg: found.code })}>
                   {w.foundFollow}
                 </button>
-              </p>
+              </span>
             </div>
           )}
         </div>
       )}
     </section>
+  );
+}
+
+/** One question with a yes and a no, for a choice that changes what other tables or this campaign see. */
+function Confirm({ text, yes, busy, onYes, onNo }: { text: string; yes: string; busy: boolean; onYes: () => void; onNo: () => void }) {
+  return (
+    <div class="stack" role="group" aria-label={text}>
+      <p>{text}</p>
+      <span class="row">
+        <button type="button" class="button secondary" onClick={onNo}>
+          {w.cancel}
+        </button>
+        <button type="button" class="button" aria-disabled={busy} onClick={() => !busy && onYes()}>
+          {yes}
+        </button>
+      </span>
+    </div>
   );
 }

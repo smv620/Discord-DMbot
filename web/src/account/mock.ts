@@ -854,7 +854,7 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
     }
   } else if (choice.action === "unfollow") {
     now.following = [];
-    note = "Stopped following. Your campaign keeps the rules it copied.";
+    note = "Stopped following.";
   }
   sharingState.set(ref, now);
   return note;

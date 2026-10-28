@@ -440,3 +440,51 @@ class TheRoutes(SharingBase):
         self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         sent = await self.client.post(self.url, json={"action": "unfollow"}, headers=HEADERS)
         self.assertEqual((sent.status_code, sent.json()), (403, {"error": "not_allowed"}))
+
+
+class TheQueueKeeping(TheQueue):
+    """The rows' upkeep, done by the door that adds one: a choice the bot dropped goes back to
+    waiting, old rows go, and nothing is read once it is a day old."""
+
+    async def test_a_choice_the_bot_took_and_went_quiet_on_goes_back_to_waiting(self) -> None:
+        first = await self.ask("unfollow")
+        await self.sql(
+            "UPDATE web_rule_actions SET state = 'working', stage = 'sharing', claimed_at = 5,"
+            " updated_at = extract(epoch FROM now())::BIGINT - 700"
+        )
+        await self.ask("look_code", CODE)  # the next press tidies the queue
+        rows = {r["action"]: r for r in await self.rows()}
+        self.assertEqual((rows["unfollow"]["state"], rows["unfollow"]["stage"]), ("waiting",) * 2)
+        self.assertEqual(await self.ask("unfollow"), first)  # and it is the open one again
+
+    async def test_a_recently_working_choice_is_left_alone(self) -> None:
+        await self.ask("unfollow")
+        await self.sql("UPDATE web_rule_actions SET state = 'working', stage = 'sharing'")
+        await self.ask("look_code", CODE)
+        self.assertEqual((await self.rows())[0]["state"], "working")
+
+    async def test_rows_over_a_day_old_are_swept_and_not_read(self) -> None:
+        old = await self.ask("unfollow")
+        await self.sql("UPDATE web_rule_actions SET created_at = created_at - 90000")
+        with self.assertRaises(RecapError):
+            await rule_sharing.read_action(self.web, self.session, self.cref(), old, now=NOW)
+        await self.ask("stop_sharing")
+        self.assertEqual([r["action"] for r in await self.rows()], ["stop_sharing"])
+
+    async def test_a_name_is_stored_trimmed_even_when_the_door_is_called_directly(self) -> None:
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_rule_action_add(%s, %s, 'publish', %s) AS r",
+                (THURSDAY.id, self.one.id, "  " + "n" * 60 + "  "),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["r"]["status"], "ok")
+        self.assertEqual((await self.rows())[0]["arg"], "n" * 60)
+
+    async def test_a_code_with_letters_from_another_alphabet_is_not_a_code(self) -> None:
+        self.assertEqual(await self.refused_ask("look_code", "ÀBCDEFGHJK"), "bad_arg")
+        self.assertEqual(
+            await self.refused_ask("look_code", "ABCDEFGHJ0"), "bad_arg"
+        )  # 0 is not used

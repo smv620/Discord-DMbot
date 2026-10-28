@@ -36,6 +36,12 @@ async function section(ending = "") {
   return { api, ref };
 }
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
+/** Type a name, press Share, and answer the question with yes. */
+function share(name: string) {
+  fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: name } });
+  fireEvent.click(button(w.share));
+  fireEvent.click(button(w.confirmShareYes));
+}
 
 describe("while it is switched off", () => {
   it("shows no section and asks for nothing", async () => {
@@ -77,6 +83,9 @@ describe("sharing your rules", () => {
     const { api } = await section();
     fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: "  House Rules of the North " } });
     fireEvent.click(button(w.share));
+    expect(screen.getByText(w.confirmShare("House Rules of the North", 3))).toBeTruthy();
+    expect(calls(api, "chooseRuleSharing")).toHaveLength(0); // nothing is sent until the yes
+    fireEvent.click(button(w.confirmShareYes));
     expect(await screen.findByText(w.stage["waiting"] as string)).toBeTruthy();
     expect(await screen.findByText("Shared as House Rules of the North.", {}, slow)).toBeTruthy();
     expect(calls(api, "chooseRuleSharing")).toEqual([expect.stringMatching(/:publish:House Rules of the North$/)]);
@@ -84,9 +93,20 @@ describe("sharing your rules", () => {
     expect(screen.queryByLabelText(w.nameLabel)).toBeNull();
   });
 
-  it("does not send an empty name", async () => {
+  it("does not ask, or send, with an empty name, and says a name is needed", async () => {
     const { api } = await section();
+    expect(screen.getByText(w.nameFirst)).toBeTruthy();
     fireEvent.click(button(w.share));
+    expect(screen.queryByRole("button", { name: w.confirmShareYes })).toBeNull();
+    expect(calls(api, "chooseRuleSharing")).toHaveLength(0);
+  });
+
+  it("sends nothing when the question is answered no", async () => {
+    const { api } = await section();
+    fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: "Rules" } });
+    fireEvent.click(button(w.share));
+    fireEvent.click(button(w.cancel));
+    expect(screen.queryByRole("button", { name: w.confirmShareYes })).toBeNull();
     expect(calls(api, "chooseRuleSharing")).toHaveLength(0);
   });
 
@@ -94,7 +114,9 @@ describe("sharing your rules", () => {
     const { api } = await section();
     fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: "Rules" } });
     fireEvent.click(button(w.share));
-    fireEvent.click(button(w.share));
+    const yes = button(w.confirmShareYes);
+    fireEvent.click(yes);
+    fireEvent.click(yes);
     await screen.findByText(w.sharedAs("Rules", 1), {}, slow);
     expect(calls(api, "chooseRuleSharing")).toHaveLength(1);
   });
@@ -113,11 +135,13 @@ describe("sharing your rules", () => {
 
   it("stops sharing, and says followers keep their copy", async () => {
     const { api } = await section();
-    fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: "Rules" } });
-    fireEvent.click(button(w.share));
+    share("Rules");
     await screen.findByText(w.sharedAs("Rules", 1), {}, slow);
     expect(screen.getByText(w.stopNote)).toBeTruthy();
     fireEvent.click(button(w.stop));
+    expect(screen.getByText(w.confirmStop("Rules"))).toBeTruthy();
+    expect(calls(api, "chooseRuleSharing")).toHaveLength(1); // only the publish so far
+    fireEvent.click(button(w.confirmStopYes));
     expect(await screen.findByText(/Stopped sharing/, {}, slow)).toBeTruthy();
     expect(calls(api, "chooseRuleSharing")).toEqual([expect.stringMatching(/:publish:Rules$/), expect.stringMatching(/:stop_sharing$/)]);
     expect(await screen.findByText(w.notShared("Rules"))).toBeTruthy();
@@ -125,8 +149,7 @@ describe("sharing your rules", () => {
 
   it("never shows a share code and points to Discord for one", async () => {
     const { api } = await section();
-    fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: "Rules" } });
-    fireEvent.click(button(w.share));
+    share("Rules");
     await screen.findByText(w.sharedAs("Rules", 1), {}, slow);
     expect(screen.getByText(w.codesInDiscord)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/ABCDEFGHJK/);
@@ -168,6 +191,16 @@ describe("following", () => {
     expect(calls(api, "chooseRuleSharing")[1]).toMatch(/:follow_code:ABCDEFGHJK$/);
   });
 
+  it("lets go of a found set with Not these, sending nothing more", async () => {
+    const { api } = await section();
+    fireEvent.input(screen.getByLabelText(w.codeLabel), { target: { value: "ABCDEFGHJK" } });
+    fireEvent.click(button(w.look));
+    await screen.findByText(/Found Frostfell Table Rules/, {}, slow);
+    fireEvent.click(button(w.foundCancel));
+    expect(screen.queryByRole("button", { name: w.foundFollow })).toBeNull();
+    expect(calls(api, "chooseRuleSharing")).toHaveLength(1);
+  });
+
   it("does not look up a code that is not ten letters and numbers", async () => {
     const { api } = await section();
     fireEvent.input(screen.getByLabelText(w.codeLabel), { target: { value: "SHORT" } });
@@ -190,6 +223,9 @@ describe("following", () => {
     fireEvent.click(button(w.confirmYes));
     await screen.findByText(/Now following Quick Combat/, {}, slow);
     fireEvent.click(button(w.stopFollowingLabel("Quick Combat")));
+    expect(screen.getByText(w.confirmUnfollow("Quick Combat"))).toBeTruthy();
+    expect(calls(api, "chooseRuleSharing")).toHaveLength(1); // only the follow so far
+    fireEvent.click(button(w.confirmUnfollowYes));
     expect(await screen.findByText(/Stopped following/, {}, slow)).toBeTruthy();
     expect(calls(api, "chooseRuleSharing")[1]).toMatch(/:unfollow$/);
     expect(await screen.findByText(w.hereHeading)).toBeTruthy();
@@ -208,8 +244,7 @@ describe("when the bot cannot", () => {
 
   it("keeps showing the wait, with what to do, when the bot is slow", async () => {
     await section(".rs-offline");
-    fireEvent.input(screen.getByLabelText(w.nameLabel), { target: { value: "Rules" } });
-    fireEvent.click(button(w.share));
+    share("Rules");
     expect(await screen.findByText(w.stage["waiting"] as string)).toBeTruthy();
     expect(screen.queryByText(w.sharedAs("Rules", 1))).toBeNull();
   });

@@ -30,8 +30,6 @@ ACTIONS = frozenset(
     {"publish", "stop_sharing", "look_code", "follow_here", "follow_code", "unfollow"}
 )
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-# What a failed choice says, as the code the page turns into words; anything else is "failed".
-REASONS = {"failed"}
 NAME_MAX = 60
 
 
@@ -180,6 +178,6 @@ async def read_action(
         started_at=int(got["createdAt"]),
         updated_at=int(got["updatedAt"]),
         now=int(time.time()) if now is None else now,
-        reason=reason if reason in REASONS else ("failed" if reason else None),
+        reason="failed" if reason else None,
     )
     return {**shaped, "action": got["action"], "error": got["error"], "note": got["note"]}

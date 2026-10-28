@@ -16168,11 +16168,17 @@ WEB_RULE_ACTIONS = (
            OR (act = 'follow_here' AND want !~ '^[0-9a-f]{32}$') THEN
             RETURN jsonb_build_object('status', 'bad_arg');
         END IF;
+        IF act = 'publish' THEN
+            want := btrim(want);  -- the name is stored as it was checked, and as the store keeps it
+        END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('rule_action:' || g::TEXT || c, 0));
         DELETE FROM web_rule_actions r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 86400;
         -- A choice the bot took and then went quiet on for ten minutes goes back to waiting, so
-        -- it is not stuck behind itself for a day; the bot's own retake does the same.
+        -- it is not stuck behind itself for a day; the bot's own retake does the same. (The page
+        -- calls it stalled from five minutes, `progress.STALL_AFTER_S`, so the DM hears of it
+        -- before it is put back.) The share codes in `arg` are blanked by the bot as it finishes
+        -- a row (#2793); the row itself stays a day.
         UPDATE web_rule_actions r SET state = 'waiting', stage = 'waiting', claimed_at = 0,
             updated_at = now_s
             WHERE r.guild_id = g AND r.campaign_id = c AND r.state = 'working'
