@@ -6,9 +6,11 @@ reading ONE campaign (`memory/embedding.py` runs them).
   not pictures, not table talk or off-topic talk. The speaker is carried so the run can check, right
   before and right after the call, that the person still agrees to be recorded. A person's words:
   their numbers go with the line (migration 0248).
-- **Entries** (`EntitySource`): a confirmed entry's name and the description kept for it, the DM's
-  and DMbot's own words about the story. Never a guess still waiting for the DM, and never an entry
-  merged into another.
+- **Entries** (`EntitySource`): a confirmed entry's name and the description kept for it, the other
+  names it is called and its connections in plain words, the DM's and DMbot's own words about the
+  story (`memory/entity_text.py`, the one place the text is put together, so the Names
+  page's reranker reads what the numbers were made from; #2733). Never a guess still waiting for the
+  DM, and never an entry merged into another.
 
 **Secret and DM-only entries are embedded too** (the numbers serve the DM's own search as well), so
 every reader of the numbers must filter before anything reaches a player: `meaning.entry_texts(...,
@@ -23,6 +25,7 @@ from __future__ import annotations
 from dmbot.db import Database
 from dmbot.memory import vectors as vs
 from dmbot.memory.embedding import Piece, pieces_of
+from dmbot.memory.entity_text import compose
 
 
 class LineSource:
@@ -59,7 +62,8 @@ class EntitySource:
     async def pieces(self, guild_id: int, campaign_id: str) -> list[Piece]:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, name, description FROM memory_entities"
+                "SELECT id, dmbot_entity_parts(guild_id, campaign_id, id) AS parts"
+                " FROM memory_entities"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 " AND merged_into IS NULL AND char_length(btrim(description)) > 0"
                 " ORDER BY id",
@@ -68,5 +72,5 @@ class EntitySource:
             rows = await cur.fetchall()
         pieces: list[Piece] = []
         for r in rows:
-            pieces += pieces_of(vs.ASSERTION, str(r["id"]), f"{r['name']}: {r['description']}")
+            pieces += pieces_of(vs.ASSERTION, str(r["id"]), compose(r["parts"]))
         return pieces

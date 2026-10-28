@@ -85,13 +85,37 @@ export interface CampaignPage {
 /** One of the three choices a game master can change on the Settings tab (#2484). */
 export type CampaignSettingName = "visibility" | "level" | "retention";
 
+/** A choice the queue carries: the three above, or an optional rule switched on or off (#2753). */
+export type QueuedSetting = CampaignSettingName | "optional_rule";
+
+/** One optional rule from another book, as the Settings tab lists it (#2753; core web/optional_rules.py).
+ * `changed` is true when the game master chose it, false when it follows the campaign's default. */
+export interface OptionalRule {
+  id: string;
+  book: string;
+  name: string;
+  summary: string;
+  on: boolean;
+  changed: boolean;
+}
+
+/** The optional rules that apply to the campaign's main rules (#2753). */
+export interface OptionalRules {
+  /** The main rules in words, e.g. "2024 rules". */
+  main: string;
+  rules: OptionalRule[];
+  /** A sentence about rules left out because the main rules have their own version, or "". */
+  note: string;
+  default: boolean;
+}
+
 /** Where a choice sent to the bot stands. `error` is the bot's word when it failed (`needs_confirm`,
  * `refused` with Discord's words in `note`, `not_allowed`, `not_found`, `bad_value`, `failed`); `note`
  * is what Discord would say about it. */
 export interface CampaignSettingAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error: string;
-  setting: CampaignSettingName;
+  setting: QueuedSetting;
   value: string;
   note: string;
 }
@@ -1357,6 +1381,8 @@ export interface NamesPage {
  * without it the API refuses with `not-available` and the page says so. */
 export interface SmartNamesAnswer {
   names: NameRow[];
+  /** True when only the newest notes were searched (the search looks at the newest 10,000 at most; core #2756). */
+  capped?: boolean;
 }
 
 export interface NamesQuery {
@@ -1862,8 +1888,12 @@ export interface AccountApi {
    * deletes old sessions, so it goes with `confirm: true` once the game master has said yes. */
   setCampaignSetting?(
     campaignRef: string,
-    choice: { setting: CampaignSettingName; value: string; confirm?: boolean },
+    choice: { setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean },
   ): Promise<string>;
+  /** The optional rules that apply to the campaign and which are on (#2753), for its game masters. Missing
+   * from an API older than that. A rule is switched with `setCampaignSetting({setting: "optional_rule",
+   * value: <id>, on})`. */
+  campaignOptionalRules?(campaignRef: string): Promise<OptionalRules>;
   /** Where a choice sent with `setCampaignSetting` stands. */
   campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
@@ -2461,8 +2491,11 @@ export function httpApi(
           setting: choice.setting,
           value: choice.value,
           ...(choice.confirm ? { confirm: true } : {}),
+          ...(choice.on === undefined ? {} : { on: choice.on }),
         })) as { answer: string }
       ).answer,
+    campaignOptionalRules: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
     campaignSettingAnswer: async (campaignRef, answer) =>
       (await call(
         "GET",
