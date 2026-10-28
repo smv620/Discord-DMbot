@@ -15,7 +15,7 @@ from dmbot.campaigns import Campaign, CampaignError
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
-from dmbot.rules.optional import covered_note, main_rules
+from dmbot.rules.optional import NO_SCREEN_NOTE, covered_note, main_rules, screen_line
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -33,10 +33,6 @@ log = logging.getLogger(__name__)
 
 TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 GONE = "That campaign isn't here any more. Use `/dmbot optionalrules` to see the list again."
-NO_SCREEN_NOTE = (
-    "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that "
-    "channel; `/dmbot start` sets it up again next session."
-)
 DISCLAIMER = (
     "DMbot doesn't check rules yet; when it does, it only reminds you of the rules you keep "
     "on. You make every call."
@@ -152,8 +148,7 @@ class OptionalRulesMenu(_Menu):
         if campaign.dm_screen_channel_id is not None:
             noted = await _bot(interaction).post(
                 campaign.dm_screen_channel_id,
-                f"{'✅' if turn_on else '⬜'} Optional rule turned {'on' if turn_on else 'off'}: "
-                f"**{chosen.name}** (by {interaction.user.mention})",
+                screen_line(chosen, turn_on, interaction.user.mention),
             )
         news = f"{'✅' if turn_on else '⬜'} **{chosen.name}** is now {'on' if turn_on else 'off'}."
         if not noted:
