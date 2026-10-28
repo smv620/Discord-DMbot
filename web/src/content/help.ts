@@ -418,6 +418,10 @@ export const deedSteps: Step[] = [
 
 export const WHERE_ARE_WE_LIVE = false;
 
+// The players' game clock moves from its own channel into a small 🕰️ line in dmb-chat (owner, 2026-10-28; core
+// #2877). The new sentences are true only once that is deployed, so they wait behind this switch (#2875).
+export const GAMETIME_IN_CHAT_LIVE = false;
+
 export const whereAreWeSteps: Step[] = [
   {
     text: "While DMbot is listening, if you have set the game clock and nobody has shown or moved it for half an hour, DMbot posts one short line on your DM screen saying where the game is. Chatty DM screens get it after 15 minutes, and Quiet ones never. It stays silent during a fight, and with a split party it names each group. Players never see it.",
@@ -1062,8 +1066,9 @@ export const emailSteps: Step[] = [
 export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbox.";
 
 /** Not a step to do: what players may notice at the table. */
-export const playerNote =
-  'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
+export const playerNote = GAMETIME_IN_CHAT_LIVE
+  ? "The game time shows in the dmb-chat channel as a small 🕰️ line whenever it changes. You do not need to do anything."
+  : 'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
 
 /** The one support address (docs/EMAIL.md, owner's setup, #1341). Every other place on the site
  * that names a way to write to us uses this constant, and a test fails if a different

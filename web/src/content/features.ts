@@ -1,7 +1,7 @@
 // What DMbot does at a table (#1141): only things that are built and merged. Add a card when
 // a feature ships, never before. Plain words, one sentence and one example each; no game or
 // publisher trademarks (CLAUDE.md), so character sheets are named without the brand.
-import { INITIATIVE_STYLE_LIVE } from "./help";
+import { GAMETIME_IN_CHAT_LIVE, INITIATIVE_STYLE_LIVE } from "./help";
 import { RECAPS_LIVE } from "./recap-words";
 
 export interface Feature {
@@ -35,7 +35,9 @@ const cards: (Feature & { live?: boolean })[] = [
   },
   {
     title: "The game clock",
-    what: "Players see the story's day and time in their own channel. The game master sees the exact time.",
+    what: GAMETIME_IN_CHAT_LIVE
+      ? "The game time shows in the dmb-chat channel as a small 🕰️ line whenever it changes. The game master sees the exact time."
+      : "Players see the story's day and time in their own channel. The game master sees the exact time.",
     example: 'Players see "Day 5, morning". The game master can time a spell like Bless.',
   },
   {
