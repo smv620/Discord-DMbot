@@ -24,14 +24,16 @@ from dmbot.db import Database
 
 log = logging.getLogger(__name__)
 
-PER_ROUND = 1  # a report is many AI calls; the loop comes round again in seconds
+
 RETAKE_AFTER_S = 600  # a taken request quiet this long belongs to a bot that stopped
+NOT_TAKEN_AFTER_S = 1800  # a request nobody took in this long ends as failed: the page shows it so
 TOUCH_EVERY_S = 60.0  # while it runs, the row is touched so it is not taken again
 
 # The short words a failed row carries (the page words them).
 UNAVAILABLE = "unavailable"  # the report step is switched off or has no AI
 LIMIT = "limit"  # the extractor's call limit is used
 PLAN = "plan"  # the campaign's plan does not allow it (or cannot be checked)
+NOT_TAKEN = "not_taken"  # nobody took it in time (the bot was off); closed by the next claim
 NOT_A_DM = "not_a_dm"  # the asker stopped being a DM of the campaign
 BUSY = "busy"  # a report for the session was already being made (the page has words for it)
 FAILED = "failed"  # the campaign or session is gone, or anything unexpected
@@ -67,6 +69,13 @@ class RequestStore:
         being worked on."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
+            # A request nobody took in half an hour is not made now: the page already shows it
+            # as failed, so it is closed the same way here, not run behind the DM's back.
+            await conn.execute(
+                "UPDATE web_report_requests SET state = 'failed', error = %s, updated_at = %s"
+                " WHERE guild_id = %s AND state = 'waiting' AND created_at < %s",
+                (NOT_TAKEN, now, guild_id, now - NOT_TAKEN_AFTER_S),
+            )
             cur = await conn.execute(
                 "UPDATE web_report_requests SET state = 'working', claimed_at = %s,"
                 " updated_at = %s, error = ''"

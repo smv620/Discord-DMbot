@@ -10524,19 +10524,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
         the campaign, and the report is made the way it is after a session, inside the same plan
-        check and call limits. A few a round (a report is many AI calls); only the outcome word is
-        logged."""
+        check and call limits. Each runs as a tracked background task, at most one a server, so
+        this returns at once; only the outcome word is logged."""
         store = self.report_requests
         if store is None:
             return
+        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_report_tasks", {})
         for guild in list(self.guilds):
-            for _ in range(web_report_requests.PER_ROUND):
-                req = await store.claim_next(guild.id)
-                if req is None:
-                    break
-                with log_context(guild_id=guild.id, campaign_id=req.campaign_id):
-                    if not await web_report_requests.run_one(self, store, guild.id, req):
-                        break
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one report at a time for a server; the loop does not wait for it
+            req = await store.claim_next(guild.id)
+            if req is None:
+                continue
+            gid = guild.id
+            task = asyncio.create_task(self._run_report_request(store, gid, req))
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_report_request(
+        self,
+        store: web_report_requests.RequestStore,
+        guild_id: int,
+        req: web_report_requests.Request,
+    ) -> None:
+        """One website report request, as a background task so the poll loop (and every other
+        website action in it) does not wait for the many AI calls of a report."""
+        with log_context(guild_id=guild_id, campaign_id=req.campaign_id):
+            await web_report_requests.run_one(self, store, guild_id, req)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a

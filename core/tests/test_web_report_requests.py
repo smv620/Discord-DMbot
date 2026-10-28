@@ -193,6 +193,19 @@ class Requests(MemoryTest):
         assert row is not None
         self.assertEqual(int(row["updated_at"]), START + 500)
 
+    async def test_a_request_nobody_took_in_half_an_hour_is_closed_as_not_taken(self) -> None:
+        old = await self.ask()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE web_report_requests SET created_at = %s WHERE id = %s",
+                (START - wrr.NOT_TAKEN_AFTER_S - 5, old),
+            )
+        fresh = await self.ask(at=START + 9)
+        req = await self.store.claim_next(GUILD_A)
+        assert req is not None
+        self.assertEqual(req.id, fresh)  # the old one is not run behind the DM's back
+        self.assertEqual(await self.row(old), {"state": "failed", "error": "not_taken"})
+
     async def test_another_servers_request_is_never_taken(self) -> None:
         await self.ask()
         self.assertIsNone(await self.store.claim_next(GUILD_A + 1))

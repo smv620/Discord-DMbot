@@ -173,6 +173,54 @@ class FromTheWebsite(unittest.IsolatedAsyncioTestCase):
         make.assert_not_awaited()
 
 
+class TheSweep(unittest.IsolatedAsyncioTestCase):
+    """The poll loop does not wait for a report (#2805): it is a background task, one at a time
+    for a server."""
+
+    def bare(self, requests: list[Any]) -> Any:
+        b: Any = DMBot.__new__(DMBot)
+        self.queue: dict[int, list[Any]] = {1: list(requests), 2: []}
+
+        async def claim(guild_id: int) -> Any:
+            return self.queue[guild_id].pop(0) if self.queue[guild_id] else None
+
+        b.report_requests = SimpleNamespace(claim_next=claim)
+        return b
+
+    async def test_the_sweep_returns_while_a_report_is_still_being_made(self) -> None:
+        import asyncio
+        from unittest.mock import PropertyMock
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        req = SimpleNamespace(campaign_id="c")
+
+        async def slow(self: Any, store: Any, guild_id: int, r: Any) -> None:
+            started.set()
+            await release.wait()
+
+        b = self.bare([req, req])
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        with (
+            patch.object(DMBot, "guilds", guilds),
+            patch.object(DMBot, "_run_report_request", slow),
+        ):
+            await asyncio.wait_for(b.run_web_report_requests(), timeout=1)  # returns at once
+            await started.wait()
+            await asyncio.wait_for(b.run_web_report_requests(), timeout=1)  # and again
+            self.assertEqual(len(b._report_tasks), 1)  # one at a time for the server
+            self.assertEqual(len(self.queue[1]), 1)  # the second request was not even claimed
+            release.set()
+            await asyncio.gather(*b._report_tasks.values())
+        await asyncio.sleep(0)
+        self.assertEqual(b._report_tasks, {})  # forgotten when done
+
+    async def test_without_a_store_nothing_happens(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.report_requests = None
+        await b.run_web_report_requests()
+
+
 class Setting(unittest.TestCase):
     def test_the_switch_is_off_by_default_and_must_be_a_switch(self) -> None:
         from dmbot.config import ConfigError
