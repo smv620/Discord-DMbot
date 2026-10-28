@@ -217,7 +217,7 @@ class ReportStore:
                 " ON CONFLICT (guild_id, campaign_id, item_key) DO UPDATE SET"
                 " item_kind = EXCLUDED.item_kind, answer = EXCLUDED.answer,"
                 " answered_by = EXCLUDED.answered_by, answered_at = EXCLUDED.answered_at,"
-                " remind_from = EXCLUDED.remind_from",
+                " remind_from = EXCLUDED.remind_from, remind_was = NULL",
                 (
                     guild_id, campaign_id, item_key, item_kind, answer, user_id,
                     int(self._now()), remind_from,

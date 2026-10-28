@@ -9,6 +9,7 @@ from typing import Any
 
 from dmbot.memory import report_fixed as rf
 from dmbot.memory import report_store as rs
+from dmbot.memory._changes import BELIEFS
 from dmbot.memory.contradiction_grades import Graded, GradeStore
 from dmbot.memory.contradictions import Candidate
 from dmbot.memory.differences import CLASHES, DENIED, Difference
@@ -125,6 +126,18 @@ class Fixing(ConfirmedMemoryTest):
         (a,) = (await self.answers()).values()
         self.assertEqual((a.answer, a.remind_from), ("remind", 400))
 
+    async def test_a_discord_answer_on_an_item_fixed_over_a_reminder_goes_through(self) -> None:
+        await self.store.answer(
+            GUILD_A, self.c, self.key, rs.DIFFERENCE, rs.REMIND, 7, remind_from=400
+        )
+        await self.memory.update_relation(GUILD_A, self.c, self.truth, source="dm", status=REJECTED)
+        await self.store.answer(GUILD_A, self.c, self.key, rs.DIFFERENCE, rs.INTENDED, 7)
+        (a,) = (await self.answers()).values()
+        self.assertEqual((a.answer, a.remind_from), ("intended", None))
+        async with self.db.guild(GUILD_A) as conn:  # and nothing of the old reminder is left
+            cur = await conn.execute("SELECT remind_was FROM report_answers")
+            self.assertEqual([r["remind_was"] for r in await cur.fetchall()], [None])
+
     async def test_undoing_a_pin_or_a_secret_flag_keeps_the_fix(self) -> None:
         await self.memory.update_relation(GUILD_A, self.c, self.truth, source="dm", status=REJECTED)
         secret = await self.memory.update_relation(
@@ -132,6 +145,25 @@ class Fixing(ConfirmedMemoryTest):
         )
         assert secret.batch is not None
         await self.memory.undo(GUILD_A, self.c, secret.batch, source="dm")
+        self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
+
+    async def test_undoing_a_partys_belief_does_not_un_fix_anything(self) -> None:
+        denied = Difference(self.party, "party", self.held, None, DENIED, False, False)
+        await self.store.save_differences(GUILD_A, self.c, [rs.SortedDifference(denied, rs.FALSE)])
+        perspectives = await self.memory.perspectives(GUILD_A, self.c)
+        truth = next(p.id for p in perspectives if p.kind == "truth")
+        await self.memory.believe(
+            GUILD_A, self.c, truth, self.held, 1.0, "revealed_fact", source="dm"
+        )
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:  # the truth's belief goes aside
+            for belief in await w.select(BELIEFS, " AND perspective_id = %s", [truth]):
+                await w.delete(BELIEFS, belief["id"])
+        self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
+        party = await self.memory.believe(
+            GUILD_A, self.c, self.party, self.held, 1.0, "revealed_fact", source="dm"
+        )
+        assert party.batch is not None
+        await self.memory.undo(GUILD_A, self.c, party.batch, source="dm")
         self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
 
     async def test_undoing_a_later_belief_keeps_a_fix_the_truth_still_holds(self) -> None:

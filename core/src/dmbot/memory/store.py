@@ -467,13 +467,22 @@ class MemoryStore:
         keys = await report_fixed.names(conn, guild_id, campaign_id, changes.restored)
         if changes.unbelieved:
             cur = await conn.execute(
-                "SELECT r FROM unnest(%s::text[]) AS r"
+                "SELECT DISTINCT u.r FROM unnest(%s::text[], %s::text[]) AS u(p, r)"
+                " JOIN memory_perspectives t ON t.guild_id = %s AND t.campaign_id = %s"
+                " AND t.id = u.p AND t.kind = 'truth'"  # only The truth's beliefs fix an item
                 " WHERE NOT EXISTS (SELECT 1 FROM memory_beliefs b"
                 " JOIN memory_perspectives p ON p.guild_id = b.guild_id"
                 " AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
                 " AND p.kind = 'truth'"
-                " WHERE b.guild_id = %s AND b.campaign_id = %s AND b.relation_id = r)",
-                (list(changes.unbelieved), guild_id, campaign_id),
+                " WHERE b.guild_id = %s AND b.campaign_id = %s AND b.relation_id = u.r)",
+                (
+                    [p for p, _ in changes.unbelieved],
+                    [r for _, r in changes.unbelieved],
+                    guild_id,
+                    campaign_id,
+                    guild_id,
+                    campaign_id,
+                ),
             )  # (a belief of The truth's that is still there keeps the fix)
             bare = [row["r"] for row in await cur.fetchall()]
             keys |= await report_fixed.denied_names(conn, guild_id, campaign_id, bare)

@@ -338,7 +338,8 @@ class Changes(Scope):
         # (the database cascades them away), and connections an Undo brought back (#2661).
         self.deleted_items: set[tuple[str, str]] = set()
         self.restored: set[str] = set()  # connections an Undo gave back their old meaning
-        self.unbelieved: set[str] = set()  # connections an Undo took a belief away from
+        # (point of view, connection) beliefs an Undo took away
+        self.unbelieved: set[tuple[str, str]] = set()
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
@@ -629,7 +630,7 @@ class Changes(Scope):
             elif report_fixed.changed_meaning("update", after, before) and before is not None:
                 self.restored.add(str(before["id"]))
         elif table.name == "memory_beliefs" and op == "delete" and before is not None:
-            self.unbelieved.add(str(before["relation_id"]))
+            self.unbelieved.add((str(before["perspective_id"]), str(before["relation_id"])))
 
     async def _log(
         self,
