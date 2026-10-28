@@ -139,7 +139,7 @@ class BackstoryLinks:
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                    " ON CONFLICT DO NOTHING",
+                    " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX]),

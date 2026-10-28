@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 from dmbot.ai import Reply
 from dmbot.memory import background as bg
 from dmbot.memory import who_ask, who_resolve
-from dmbot.memory.backstory_links import BackstoryLinks
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink
 from dmbot.memory.models import CONFIRMED, NewName
 from dmbot.memory.who_is_it import NOT_LISTED, Candidate
 from dmbot.ui import name_background as ui_bg
@@ -290,7 +290,7 @@ class ThePath(NamesTest):
         self.assertRegex(w.decided, r"^who-is-it: accepted \d+%$")
         view = ui_bg.ConnectionOffer(self.campaign.id)
         self.assertTrue(await view.load(self.it()))
-        self.assertIn("DMbot's check of who it means: accepted", view.text())
+        self.assertIn("DMbot was sure (", view.text())
 
     async def test_how_it_was_decided_goes_with_a_question_through_its_answer(self) -> None:
         await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
@@ -298,18 +298,60 @@ class ThePath(NamesTest):
         self.assertEqual(q.decided, "who-is-it: asked 90%")
         view = ui_bg.WhichOffer(self.campaign.id)
         await view.load(self.it())
-        self.assertIn("DMbot's check of who it means: asked 90%.", view.text())
+        self.assertIn("DMbot wasn't sure (90%), so it asks you.", view.text())
         with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
             await view.children[0].callback(self.it())  # Mara
         (w,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertEqual(w.decided, "who-is-it: asked 90%")
+
+    def test_every_stored_check_has_plain_words(self) -> None:
+        for stored, want in (
+            ("who-is-it: accepted 95%", "DMbot was sure (95%)."),
+            ("who-is-it: asked 55%", "DMbot wasn't sure (55%), so it asks you."),
+            ("who-is-it: nobody listed 20%", "couldn't tell who it is (20%)"),
+            ("who-is-it: not checked", "didn't check this one"),
+            ("who-is-it: not checked, over the limit", "hit its limit"),
+            ("who-is-it: not checked, out of time", "ran out of time"),
+        ):
+            self.assertIn(want, ui_bg._checked_line(stored))
+        self.assertEqual((ui_bg._checked_line(""), ui_bg._checked_line("other")), ("", ""))
+
+    async def test_a_merge_while_it_waits_keeps_how_it_was_decided(self) -> None:
+        await self.run_links(Scripted([("Mara", 95), ("Bram", 5)], "Mara"))
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Mara Vell", "npc", CONFIRMED)], source="dm"
+        )
+        (vell,) = made.value
+        assert vell and self.mara
+        await self.memory.merge(
+            GUILD, self.campaign.id, vell, self.mara, source="dm", dm_said_same=True
+        )
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertRegex(w.decided, r"^who-is-it: accepted \d+%$")
+
+    async def test_a_long_check_is_cut_to_the_column_and_a_full_queue_keeps_the_question(
+        self,
+    ) -> None:
+        assert self.mara and self.ken
+        long = NewLink(self.mara, "knows", self.ken, "q", decided="x" * 200)
+        self.assertEqual(await self.store.add(GUILD, self.campaign.id, [long]), 1)
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(len(w.decided), 60)
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        with patch("dmbot.memory.backstory_links.MAX_WAITING", 0):
+            self.assertEqual(
+                await self.store.pick_which(GUILD, self.campaign.id, q.id, self.mara), "full"
+            )
+        (still,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual(still.decided, q.decided)
 
     async def test_an_ordinary_connection_has_no_check_line(self) -> None:
         plain = [[bg.Connection("Mara", "knows", "Ken", "q")]]
         await ui_bg.queue_links(self.bot, self.memory, self.campaign, [], plain, set())
         view = ui_bg.ConnectionOffer(self.campaign.id)
         await view.load(self.it())
-        self.assertNotIn("DMbot's check", view.text())
+        self.assertNotIn("🔎 DMbot", view.text())
 
     async def test_off_the_line_is_left_out_and_counted_as_before(self) -> None:
         queued, lost = await self.run_links(None)
