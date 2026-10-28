@@ -123,6 +123,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
+    from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
     from dmbot.recaps.pipeline import RecapWorker
     from dmbot.recaps.plot import PlotRunner
@@ -246,6 +247,7 @@ class RecapFeatures:
         web_backups: web_backup.WebBackups | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
+        web_sheets: SheetActionStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -298,6 +300,7 @@ class RecapFeatures:
         async def run_name_actions(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
+        async def run_web_sheets(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -1866,6 +1869,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website settings failed: %s", type(exc).__name__)
             try:
+                await self.run_web_sheets()
+            except Exception as exc:
+                log.warning("The website sheet choices failed: %s", type(exc).__name__)
+            try:
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
@@ -1888,6 +1895,8 @@ class RecapFeatures:
                             await self.name_actions.sweep(guild.id)
                         if self.web_settings is not None:
                             await self.web_settings.sweep(guild.id)
+                        if self.web_sheets is not None:
+                            await self.web_sheets.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
