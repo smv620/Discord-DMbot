@@ -157,7 +157,10 @@ class GivingTheName(MemoryTest):
         _it, replied = await self.run_give(campaign, sis, "mira")
         ask = (replied.await_args or MagicMock()).args[2]
         self.assertIsInstance(ask, name_unnamed.JoinConfirm)
-        self.assertIn("already known as **Mira**", (replied.await_args or MagicMock()).args[1])
+        self.assertIn(
+            "DMbot already knows someone called **Mira**",
+            (replied.await_args or MagicMock()).args[1],
+        )
         self.assertEqual(ask.other_id, mira)
         entity = await self.memory.entity(GUILD_A, self.c, sis)
         assert entity is not None
@@ -184,6 +187,74 @@ class GivingTheName(MemoryTest):
         self.assertEqual((shown.await_args or MagicMock()).args[2], mira)
         self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
         pressed.followup.send.assert_awaited_once()
+
+    async def test_no_different_changes_nothing(self) -> None:
+        _ken, sis, campaign = await self.setUp2()
+        await self.add("Mira", status=CONFIRMED)
+        _it, replied = await self.run_give(campaign, sis, "Mira")
+        ask = (replied.await_args or MagicMock()).args[2]
+        said = AsyncMock()
+        with patch.object(name_unnamed, "_replace", said):
+            await ask._no(self.interaction())
+        self.assertEqual((said.await_args or MagicMock()).args[1], "OK, nothing was changed.")
+        [(entity, _)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual(entity.id, sis)
+
+    async def test_the_joins_undo_splits_them_again(self) -> None:
+        from dmbot.ui import name_card
+
+        _ken, sis, campaign = await self.setUp2()
+        mira = await self.add("Mira", status=CONFIRMED)
+        _it, replied = await self.run_give(campaign, sis, "Mira")
+        ask = (replied.await_args or MagicMock()).args[2]
+        pressed = self.interaction()
+        with (
+            patch.object(name_unnamed, "_answer_first", AsyncMock()),
+            patch.object(name_unnamed, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(name_unnamed, "_memory", lambda _it: self.memory),
+            patch.object(name_unnamed, "sees_secrets", lambda c, u: True),
+            patch.object(name_unnamed, "changed", lambda *a: None),
+            patch.object(name_unnamed, "_replace", AsyncMock()),
+            patch("dmbot.ui.name_card.show_card", AsyncMock()),
+        ):
+            await ask._yes(pressed)
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
+        [undo] = pressed.followup.send.await_args.kwargs["view"].children
+        self.assertIsInstance(undo, name_card.UndoButton)
+        wording = pressed.followup.send.await_args.args[0]
+        self.assertIn("split", wording)
+        with (
+            patch.object(name_card, "_answer_first", AsyncMock()),
+            patch.object(name_card, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(name_card, "_memory", lambda _it: self.memory),
+            patch.object(name_card, "changed", lambda *a: None),
+            patch.object(name_card, "_replace", AsyncMock()),
+            patch.object(name_card, "show_card", AsyncMock()),
+        ):
+            await undo.callback(self.interaction())
+        [(entity, _)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual(entity.id, sis)
+        kept = await self.memory.entity(GUILD_A, self.c, mira)
+        assert kept is not None
+        self.assertFalse(kept.unnamed)
+
+    async def test_a_non_dm_pressing_yes_changes_nothing(self) -> None:
+        _ken, sis, campaign = await self.setUp2()
+        await self.add("Mira", status=CONFIRMED)
+        _it, replied = await self.run_give(campaign, sis, "Mira")
+        ask = (replied.await_args or MagicMock()).args[2]
+        told = AsyncMock()
+        with (
+            patch.object(name_unnamed, "_answer_first", AsyncMock()),
+            patch.object(name_unnamed, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(name_unnamed, "_memory", lambda _it: self.memory),
+            patch.object(name_unnamed, "sees_secrets", lambda c, u: False),
+            patch.object(name_unnamed, "_tell", told),
+        ):
+            await ask._yes(self.interaction())
+        self.assertIn("Only a DM", (told.await_args or MagicMock()).args[1])
+        [(entity, _)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual(entity.id, sis)
 
     async def test_two_entries_with_that_name_are_not_guessed(self) -> None:
         _ken, sis, campaign = await self.setUp2()

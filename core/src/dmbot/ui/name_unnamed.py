@@ -119,7 +119,7 @@ async def give_name(
         ask = JoinConfirm(campaign.id, entity_id, other_id, label, other_name)
         await _replace(
             interaction,
-            f"**{_md(name)}** is already known as **{_md(other_name)}**. Is **{_md(label)}** "
+            f"DMbot already knows someone called **{_md(other_name)}**. Is **{_md(label)}** "
             "the same person?",
             ask,
         )
@@ -178,6 +178,9 @@ class JoinConfirm(_Menu):
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
             return
         await _replace(
             interaction, f"🔗 Joining **{_md(self.label)}** into **{_md(self.other_name)}**…", None

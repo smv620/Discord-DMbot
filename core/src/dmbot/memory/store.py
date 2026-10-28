@@ -1533,7 +1533,7 @@ class MemoryStore:
                 " AND NOT r.secret AND (SELECT count(*) FROM memory_entities e"
                 "  WHERE e.guild_id = r.guild_id AND e.campaign_id = r.campaign_id"
                 "  AND e.id IN (r.subject_id, r.object_id) AND e.status = 'confirmed'"
-                "  AND NOT e.hidden_from_players AND NOT e.audience_limited) = 2",
+                "  AND NOT e.hidden_from_players AND NOT e.audience_limited AND NOT e.unnamed) = 2",
                 (*scope.ids, list(touching), list(touching)),
             )
             row = await cur.fetchone()
@@ -3661,7 +3661,8 @@ class MemoryStore:
                 if not unrevealed:
                     ends = await w.select(
                         ENTITIES,
-                        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited",
+                        " AND id = ANY(%s) AND NOT hidden_from_players AND NOT audience_limited"
+                        " AND NOT unnamed",
                         [[current["subject_id"], current["object_id"]]],
                     )
                     if len(ends) < 2:

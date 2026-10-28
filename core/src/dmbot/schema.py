@@ -14580,6 +14580,44 @@ UNNAMED_PEOPLE = """
         ON memory_entities (guild_id, campaign_id) WHERE unnamed;
 """
 
+# Every function that hides the DM's entries from players by `hidden_from_players` also hides an
+# unnamed person (#2790): a confirmed one must never show on the website, in the search text or in
+# a recap. Each is read back from the database as it is now, three spellings of the same guard are
+# widened, and the function is made again with every setting it had (its pinned search path, its
+# rights). The spellings, x being the table's alias: `NOT x.hidden_from_players`,
+# `OR x.hidden_from_players)` and `(x.hidden_from_players OR`. A function where none changes has a
+# guard this migration missed, and stops the migration instead of passing silently.
+UNNAMED_HIDDEN_FROM_PLAYERS = r"""
+    DO $$
+    DECLARE
+        r record;
+        def text;
+        fresh text;
+    BEGIN
+        FOR r IN
+            SELECT p.oid, p.proname FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname IN (
+                  'dmbot_entity_parts', 'dmbot_recap_check_names', 'dmbot_recap_shared',
+                  'dmbot_web_all_names', 'dmbot_web_campaign_facts', 'dmbot_web_graph_overview',
+                  'dmbot_web_relationships', 'dmbot_web_story_timeline')
+            ORDER BY p.proname
+        LOOP
+            def := pg_get_functiondef(r.oid);
+            fresh := regexp_replace(def, 'NOT (\w+)\.hidden_from_players',
+                                    'NOT \1.hidden_from_players AND NOT \1.unnamed', 'g');
+            fresh := regexp_replace(fresh, 'OR (\w+)\.hidden_from_players\)',
+                                    'OR \1.hidden_from_players OR \1.unnamed)', 'g');
+            fresh := regexp_replace(fresh, '\((\w+)\.hidden_from_players OR ',
+                                    '(\1.hidden_from_players OR \1.unnamed OR ', 'g');
+            IF fresh = def THEN
+                RAISE EXCEPTION 'no hidden_from_players guard changed in %', r.proname;
+            END IF;
+            EXECUTE fresh;
+        END LOOP;
+    END $$;
+"""
+
 WEB_WAITING_ACTIONS_LIST = ", ".join(
     f"'{a}'" for a in (*WAITING_ACTIONS, "backstory-which-pick", "backstory-which-neither")
 )
@@ -16411,6 +16449,8 @@ MIGRATIONS: tuple[Migration, ...] = (
     ),  # a rule switched on the website is queued for the bot (#2753)
     ("0256_plot_chat_followups", PLOT_CHAT_FOLLOWUPS),  # hour_full, Save stamped, timed out (#2545)
     ("0263_unnamed_people", UNNAMED_PEOPLE),  # a person described but never named (#2790)
+    # the doors and search text that keep the DM's entries from players keep these too (#2790)
+    ("0264_unnamed_hidden_from_players", UNNAMED_HIDDEN_FROM_PLAYERS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
