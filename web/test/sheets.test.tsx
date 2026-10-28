@@ -230,3 +230,17 @@ describe("Type in my character", () => {
     expect(await screen.findByText(w.typedSaved + w.typedReplacedLink, {}, { timeout: 8000 })).toBeTruthy();
   });
 });
+
+describe("a link typed for one campaign", () => {
+  it("does not show under another campaign's character, and comes back for its own", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    const linkBox = () => screen.getAllByRole("textbox")[0] as HTMLInputElement;
+    fireEvent.input(linkBox(), { target: { value: "https://www.dndbeyond.com/characters/777" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(linkBox().value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(linkBox().value).toBe("https://www.dndbeyond.com/characters/777"));
+  });
+});
