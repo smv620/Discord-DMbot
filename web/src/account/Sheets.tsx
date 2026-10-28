@@ -1,8 +1,8 @@
 /** @jsxImportSource preact */
 // "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554). A player sees their own
-// characters' D&D Beyond sheets, links one, or forgets it; a DM sees every sheet, read only, and can ask for them to
+// characters' sheets, links one, or forgets it; a DM sees every sheet, read only, and can ask for them to
 // be read again. Each choice is queued for the bot and this waits for its answer, showing what DMbot is doing, how
-// long it has run and when it last moved (#2564). The page never fetches a D&D Beyond link: the bot does. Loaded
+// long it has run and when it last moved (#2564). The page never fetches a character's link: the bot does. Loaded
 // lazily from the campaign page, and only while SHEETS_LIVE is on.
 import { useEffect, useRef, useState } from "preact/hooks";
 

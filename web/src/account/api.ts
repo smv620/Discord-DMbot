@@ -1498,7 +1498,7 @@ export interface SheetCharacter {
   name: string;
   /** True for the character the person plays. */
   mine: boolean;
-  /** Where the sheet came from: a D&D Beyond link, or typed in; null when there is none. */
+  /** Where the sheet came from: a link from dndbeyond.com, or typed in; null when there is none. */
   source: "dndbeyond" | "typed" | null;
   /** The link, for the player and the campaign's DMs only; null when there isn't one. */
   url: string | null;

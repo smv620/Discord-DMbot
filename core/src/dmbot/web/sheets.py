@@ -19,6 +19,7 @@ from typing import Any
 
 from dmbot import progress
 from dmbot.db import Database
+from dmbot.memory.sheets import character_id, sheet_url
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -79,7 +80,12 @@ def _choice(body: object) -> tuple[str, str]:
     if not isinstance(link, str) or len(link) > LINK_MAX:
         raise RecapError("bad_link")
     if action == "link":
-        return action, link.strip()
+        # Any link Discord accepts (no www, a share path, a query) becomes the one address the
+        # door and the bot keep, so the door's own shape check and the bot's agree.
+        number = character_id(link.strip())
+        if number is None:
+            raise RecapError("bad_link")
+        return action, sheet_url(number)
     return action, ""
 
 

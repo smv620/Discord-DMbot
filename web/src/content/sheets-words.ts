@@ -1,20 +1,20 @@
 // The words of "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554): a player links or
-// forgets their own character's D&D Beyond sheet, and a DM reads every sheet (read only) and asks for them to be read
+// forgets their own character's sheet, and a DM reads every sheet (read only) and asks for them to be read
 // again. Plain words. The bot fetches the link; the page never does. The link is shown to the player and the campaign's
 // DMs only, as in Discord.
 export const sheetWords = {
   heading: "Character sheets",
-  lead: "Your character's D&D Beyond sheet lets DMbot listen for its spells and items. Only you and your DM see the link.",
+  lead: "Your character's sheet lets DMbot listen for its spells and items. Only you and your DM see the link.",
   loading: "Loading…",
   failedToLoad:
     "We couldn't load the character sheets. Reload the page, or try again in a minute.",
   none: "No character sheets yet. Players link theirs here or in DMbot's private message.",
   mine: (name: string): string => `${name} (yours)`,
-  linkLabel: (name: string): string => `D&D Beyond link for ${name}`,
+  linkLabel: (name: string): string => `Link for ${name}'s character sheet`,
   linkPlaceholder: "https://www.dndbeyond.com/characters/…",
   linkHelp:
-    "Paste the link to your character on D&D Beyond. It must look like https://www.dndbeyond.com/characters/12345.",
-  link: "Link my D&D Beyond sheet",
+    "Paste your character's link from dndbeyond.com. It must look like https://www.dndbeyond.com/characters/12345.",
+  link: "Link my character sheet",
   linkSaved: "Linked. DMbot reads the sheet in a moment.",
   forget: "Forget my sheet",
   forgetDone: "Done. DMbot forgot the sheet: the link and what it read.",
@@ -30,7 +30,7 @@ export const sheetWords = {
   notYet: "Not read yet.",
   problems: {
     "bad-link":
-      "That isn't a D&D Beyond character link. It looks like https://www.dndbeyond.com/characters/12345.",
+      "That isn't a character link from dndbeyond.com. It looks like https://www.dndbeyond.com/characters/12345.",
     "not-allowed": "Only the player of this character can change its sheet.",
     "not-found": "That character or sheet is gone. The list is up to date now.",
     "too-soon":
