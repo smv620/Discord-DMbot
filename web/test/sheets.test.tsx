@@ -337,6 +337,14 @@ describe("Use a document link", () => {
     expect(documentCalls(api)).toHaveLength(0);
   });
 
+  it("an upper-case https link is sent, and the mock reads it as a web address", async () => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "HTTPS://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(1);
+  });
+
   it("the mock refuses a link it can't read with bad-document-link, in the document's own words", async () => {
     const api = await open();
     // Passes the page's check (a literal prefix and a host), but the mock reads no host after the slashes.

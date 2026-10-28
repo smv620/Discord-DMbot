@@ -9,7 +9,7 @@ export const DOCUMENT_LINK_MAX = 400;
 // other control codes). Refused outright, so what is sent is exactly what the player typed.
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-/** Trims the link first. It must be an http or https address with a host and no spaces. */
+/** Trims the link first. It must be an https address with a host and no spaces. */
 export function checkDocumentLink(text: string): DocumentLinkCheck {
   const url = text.trim();
   if (url === "") return { ok: false, problem: "empty" };
@@ -23,7 +23,8 @@ export function checkDocumentLink(text: string): DocumentLinkCheck {
   } catch {
     return { ok: false, problem: "not-web" };
   }
-  const web = parsed.protocol === "https:" || parsed.protocol === "http:";
-  if (!web || parsed.host === "" || /\s/.test(url) || CONTROL.test(url)) return { ok: false, problem: "not-web" };
+  if (parsed.protocol !== "https:" || parsed.host === "" || /\s/.test(url) || CONTROL.test(url)) {
+    return { ok: false, problem: "not-web" };
+  }
   return { ok: true, url };
 }
