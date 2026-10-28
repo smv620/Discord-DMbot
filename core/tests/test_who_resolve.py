@@ -290,7 +290,7 @@ class ThePath(NamesTest):
         self.assertRegex(w.decided, r"^who-is-it: accepted \d+%$")
         view = ui_bg.ConnectionOffer(self.campaign.id)
         self.assertTrue(await view.load(self.it()))
-        self.assertIn("DMbot was sure (", view.text())
+        self.assertIn("DMbot matched this name from your text.", view.text())
 
     async def test_how_it_was_decided_goes_with_a_question_through_its_answer(self) -> None:
         await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
@@ -298,22 +298,27 @@ class ThePath(NamesTest):
         self.assertEqual(q.decided, "who-is-it: asked 90%")
         view = ui_bg.WhichOffer(self.campaign.id)
         await view.load(self.it())
-        self.assertIn("DMbot wasn't sure (90%), so it asks you.", view.text())
+        self.assertIn("DMbot wasn't sure who the text means. Please check.", view.text())
         with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
             await view.children[0].callback(self.it())  # Mara
         (w,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertEqual(w.decided, "who-is-it: asked 90%")
 
-    def test_every_stored_check_has_plain_words(self) -> None:
+    def test_every_stored_check_has_plain_words_and_no_score(self) -> None:
         for stored, want in (
-            ("who-is-it: accepted 95%", "DMbot was sure (95%)."),
-            ("who-is-it: asked 55%", "DMbot wasn't sure (55%), so it asks you."),
-            ("who-is-it: nobody listed 20%", "couldn't tell who it is (20%)"),
-            ("who-is-it: not checked", "didn't check this one"),
-            ("who-is-it: not checked, over the limit", "hit its limit"),
-            ("who-is-it: not checked, out of time", "ran out of time"),
+            ("who-is-it: accepted 95%", "DMbot matched this name from your text.\n"),
+            ("who-is-it: asked 55%", "DMbot wasn't sure who the text means. Please check.\n"),
+            (
+                "who-is-it: nobody listed 20%",
+                "DMbot couldn't tell who the text means. No name picked.\n",
+            ),
+            ("who-is-it: not checked", "DMbot didn't check this one. Please check it yourself.\n"),
+            ("who-is-it: not checked, over the limit", "Please check it yourself.\n"),
+            ("who-is-it: not checked, out of time", "Please check it yourself.\n"),
         ):
-            self.assertIn(want, ui_bg._checked_line(stored))
+            got = ui_bg._checked_line(stored)
+            self.assertTrue(got.endswith(want), got)
+            self.assertNotIn("%", got)
         self.assertEqual((ui_bg._checked_line(""), ui_bg._checked_line("other")), ("", ""))
 
     async def test_a_merge_while_it_waits_keeps_how_it_was_decided(self) -> None:
@@ -351,7 +356,7 @@ class ThePath(NamesTest):
         await ui_bg.queue_links(self.bot, self.memory, self.campaign, [], plain, set())
         view = ui_bg.ConnectionOffer(self.campaign.id)
         await view.load(self.it())
-        self.assertNotIn("🔎 DMbot", view.text())
+        self.assertNotIn("DMbot matched", view.text())
 
     async def test_off_the_line_is_left_out_and_counted_as_before(self) -> None:
         queued, lost = await self.run_links(None)

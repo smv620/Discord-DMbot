@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -949,29 +948,20 @@ async def queue_links(
 
 def _checked_line(decided: str) -> str:
     """DMbot's check of a pronoun, in plain words, for a card ("" when there was none, #2790). The
-    stored words are fixed (`who_resolve.decided_words`), so this maps them one by one."""
+    stored words are fixed (`who_resolve.decided_words`), so this maps them one by one. No score is
+    shown: a DM at the table cannot act on a percentage, and "sure" would invite a rubber stamp."""
     how = decided.removeprefix("who-is-it: ").strip()
     if not how or how == decided:
         return ""
-    percent = re.search(r"(\d+)%", how)
-    score = f" ({percent.group(1)}%)" if percent else ""
     if how.startswith("accepted"):
-        said = f"DMbot was sure{score}."
-    elif how.startswith("asked"):
-        said = f"DMbot wasn't sure{score}, so it asks you."
-    elif how.startswith(("nobody listed", "unsure")):
-        said = f"DMbot couldn't tell who it is{score}, so no name was picked."
-    elif how.startswith("not checked"):
-        said = "DMbot didn't check this one" + (
-            " (it hit its limit)."
-            if "limit" in how
-            else " (it ran out of time)."
-            if "time" in how
-            else " (its helper didn't answer)."
-        )
-    else:
-        return ""
-    return f"🔎 {said}\n"
+        return "DMbot matched this name from your text.\n"
+    if how.startswith("asked"):
+        return "DMbot wasn't sure who the text means. Please check.\n"
+    if how.startswith(("nobody listed", "unsure")):
+        return "DMbot couldn't tell who the text means. No name picked.\n"
+    if how.startswith("not checked"):
+        return "DMbot didn't check this one. Please check it yourself.\n"
+    return ""
 
 
 async def _unnamed_rows(
