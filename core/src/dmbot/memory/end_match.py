@@ -9,7 +9,8 @@ or last name that fits exactly one name. A word that fits two names ("Mara") is 
 
 Pure. Only names DMbot will already have are candidates (this reading's public names and their
 other spellings, and the campaign's confirmed public names), so a secret name is never matched by
-its first word: a secret spelling matches only exactly, as before.
+its first word: a secret spelling matches only exactly, as before. A public other spelling does
+match by its words, as the name it belongs to (#2841).
 """
 
 from __future__ import annotations
@@ -141,9 +142,19 @@ class Ends:
     their other public spellings, the campaign's confirmed names); `names` are the names whose
     words a shorter end may fit."""
 
-    def __init__(self, exact: Mapping[str, str], names: Iterable[str]) -> None:
+    def __init__(
+        self,
+        exact: Mapping[str, str],
+        names: Iterable[str],
+        spellings: Mapping[str, str] | None = None,
+    ) -> None:
         self._exact = dict(exact)
-        self._words = {n: set(_words(n)) for n in dict.fromkeys(names)}
+        self._words = {n: [set(_words(n))] for n in dict.fromkeys(names)}
+        # A public other spelling ("Brannoc" for "Ken") fits an end by its words too, standing for
+        # its own name (#2841); a name two spellings of one entry both fit is still one name.
+        for spelling, owner in (spellings or {}).items():
+            if owner in self._words:
+                self._words[owner].append(set(_words(spelling)))
 
     def match(self, end: str) -> Matched:
         exact = self._exact.get(name_key(end))
@@ -163,7 +174,7 @@ class Ends:
         # of some length (not just "of" or "the")
         if not any(len(w) >= SHORTEST and w not in FILLER for w in words):
             return Matched()
-        fits = [n for n, have in self._words.items() if set(words) <= have]
+        fits = [n for n, haves in self._words.items() if any(set(words) <= have for have in haves)]
         if len(fits) == 1:
             return Matched(fits[0])
         if len(fits) > 1:

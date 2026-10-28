@@ -325,6 +325,9 @@ class LoreRead:
     links: list[bg.Connection]
     cut: bool  # the list is missing its end, even after the retry and the continuations
     stats: Stats
+    # New public spellings the text gives names the campaign already has (name as the campaign
+    # writes it -> its spellings), so a link written with one still finds its name (#2841).
+    known_spellings: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 async def _call(
@@ -474,9 +477,14 @@ async def _shape(
     stats: Stats,
     depth: int = 0,
     aliases: Mapping[str, Sequence[str]] | None = None,
+    defer: list[str] | None = None,
 ) -> tuple[list[bg.Found], list[bg.Connection], bool]:
     """Pass 2 for one slice of the list. An answer cut off is no JSON at all, so the slice is
-    halved and shaped again (a few times); a one-line slice still cut is reported as cut."""
+    halved and shaped again (a few times); a one-line slice still cut is reported as cut.
+
+    `defer` (a list): the answer's connections are not checked here but kept there as the answer's
+    text, to be checked once every slice's names are known (#2841): a name line and the link lines
+    that use its other spelling are in different slices, and the quote check needs both."""
     model = str(getattr(ai, "model", ""))
     room = min(SHAPE_ROOM, max_output(model) if model else SHAPE_ROOM)
     lines = len(names) + len(links)
@@ -493,9 +501,12 @@ async def _shape(
             # (no credit is no reason to ask again in halves: that only fans the failure out)
             stats.dropped["cut_before_check"] += len(links)
             return [], [], True
-        return await _halves(ai, text, names, links, own, gate, stats, depth, aliases)
+        return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
     stats.shape_calls += 1
     if not reply.cut:
+        if defer is not None:
+            defer.append(reply.text)
+            return bg.read_answer(reply.text, text), [], False
         return (
             bg.read_answer(reply.text, text),
             bg.read_connections(
@@ -507,7 +518,7 @@ async def _shape(
     if lines <= 1 or depth >= SPLIT_DEPTH:
         stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
         return [], [], True
-    return await _halves(ai, text, names, links, own, gate, stats, depth, aliases)
+    return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
 
 
 async def _halves(
@@ -520,6 +531,7 @@ async def _halves(
     stats: Stats,
     depth: int,
     aliases: Mapping[str, Sequence[str]] | None = None,
+    defer: list[str] | None = None,
 ) -> tuple[list[bg.Found], list[bg.Connection], bool]:
     """A slice the model could not shape whole, shaped again in two halves."""
     if len(names) >= len(links):
@@ -534,11 +546,17 @@ async def _halves(
     for n, link_lines in slices:
         if not n and not link_lines:
             continue
-        a, b, c = await _shape(ai, text, n, link_lines, own, gate, stats, depth + 1, aliases)
+        a, b, c = await _shape(ai, text, n, link_lines, own, gate, stats, depth + 1, aliases, defer)
         found += a
         joined += b
         cut = cut or c
     return found, joined, cut
+
+
+def _gives_spellings(line: str) -> bool:
+    """Whether a pass-1 name line lists other names or a disguise for the name."""
+    low = line.casefold()
+    return "other names:" in low or "secret:" in low
 
 
 def line_name(line: str) -> str:
@@ -593,7 +611,12 @@ async def read_lore(
 
     listed, cut = await read_list(read_ai, text, own, gate, stats, tick)
     if skip_name is not None:
-        listed.names = [n for n in listed.names if not skip_name(line_name(n))]
+        # A name the campaign already has is not offered again, but a line that gives it new
+        # spellings stays for shaping: a relationship may be written with one (#2841). Those
+        # spellings come back in `known_spellings`; the name itself is still not offered.
+        listed.names = [
+            n for n in listed.names if not skip_name(line_name(n)) or _gives_spellings(n)
+        ]
     if skip_pair is not None:
         before = len(listed.links)
         listed.links = [
@@ -610,8 +633,9 @@ async def read_lore(
     # Whatever pass 2 has shaped when the whole read's time is up is kept and the read is marked
     # cut (the DM is never shown "nothing" for a long read): the deadline lives here, not around
     # the caller, so what is done is not thrown away with what is not.
+    replies: list[str] = []  # the connections are checked below, once every name is known
     tasks = [
-        asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats, 0, aliases))
+        asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats, 0, aliases, replies))
         for a, b in slices
     ]
     if progress is not None:
@@ -644,6 +668,23 @@ async def read_lore(
         names += found
         links += joined
         cut = cut or shape_cut
+    # Every name this read listed, with its other spellings (secret ones too: the quote only has
+    # to hold the same person under one of them, and a connection is shown to the DM alone), is
+    # known now, so a quote written with a spelling backs an end written with the name (#2841).
+    spelled: dict[str, list[str]] = {}
+    for f in names:
+        spelled.setdefault(f.name, []).extend((*f.also, *f.secret))
+    here = {**{k: list(v) for k, v in (aliases or {}).items()}}
+    for main, others in spelled.items():
+        here.setdefault(main, []).extend(others)
+    for reply_text in replies:
+        links += bg.read_connections(
+            reply_text, text, set(own), stats.dropped, here, stats.unsettled
+        )
+    known: dict[str, tuple[str, ...]] = {}
+    if skip_name is not None:
+        known = {f.name: f.also for f in names if skip_name(f.name) and f.also}
+        names = [f for f in names if not skip_name(f.name)]
     stats.names_kept, stats.links_kept = len(names), len(links)
     log.info(
         "Lore read: pass 1 %d call(s), %d cut, %d continued, %d name line(s), %d relationship "
@@ -654,4 +695,4 @@ async def read_lore(
         stats.extra_links, stats.shape_calls,
         stats.shape_cut, stats.names_kept, stats.links_kept, ", still cut off" if cut else "",
     )  # fmt: skip
-    return LoreRead(names, links, cut, stats)
+    return LoreRead(names, links, cut, stats, known)

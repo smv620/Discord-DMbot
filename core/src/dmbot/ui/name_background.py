@@ -536,6 +536,7 @@ class BackgroundOffer(_Menu):
                     who_ai=who_ai,
                     on_who=on_who,
                     until=clicked + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+                    known_spellings=read.known_spellings,
                 )
             ready = await count_ready(bot, campaign, keys)
             cut = read.cut
@@ -829,6 +830,7 @@ async def queue_links(
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
     until: float | None = None,
+    known_spellings: Mapping[str, Sequence[str]] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -839,7 +841,11 @@ async def queue_links(
     `unsettled` (#2790): the open pronouns of a lore read, settled here with `who_ai` once the
     campaign's names are known: a settled one joins the connections, a doubt becomes a "Which
     one?" question, and one nobody can name becomes a relationship with an unnamed person. Every
-    one is counted in `dropped` or kept; none is lost without a count."""
+    one is counted in `dropped` or kept; none is lost without a count.
+
+    `known_spellings` (#2841): new public spellings the text gives names the campaign already has
+    (name -> spellings); an end written with one finds that name. A spelling two names both claim
+    is no end."""
     store = getattr(bot, "backstory_links", None)
     if store is None or not (any(answers) or unsettled):
         return 0
@@ -849,6 +855,15 @@ async def queue_links(
         for e in entries:
             if e.confirmed and not e.secret and not e.person:
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
+    owners: dict[str, set[str]] = {}
+    for main, spellings in (known_spellings or {}).items():
+        for sp in spellings:
+            owners.setdefault(name_key(sp), set()).add(name_key(main))
+    for main, spellings in (known_spellings or {}).items():
+        have_name = ends.get(name_key(main))
+        for sp in spellings:
+            if have_name is not None and len(owners[name_key(sp)]) == 1:
+                ends.setdefault(name_key(sp), have_name)
 
     def entry(name: str) -> str | None:
         ids = {e.entity_id for e in lookup.by_key.get(name_key(name), ()) if not e.person}

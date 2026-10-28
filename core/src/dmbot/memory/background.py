@@ -254,6 +254,24 @@ def _has(haystack: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(_squash(text))}(?!\w)", haystack) is not None
 
 
+SPLIT_GAP = 6  # words that may stand between a first name and a surname it is shared with
+
+
+def _in_text(haystack: str, name: str) -> bool:
+    """Whether the (squashed) text holds this name: whole, or (a surname written once for two
+    people, "Brannoc (father) & Mira (mother) Ashgrove", #2841) with its words in order a few
+    words apart, so "Brannoc Ashgrove" is there. Only for a name of two or more words, each of
+    some length; a short word is not a name's claim (the whole-words rule still holds for each)."""
+    if _has(haystack, name):
+        return True
+    words = _squash(name).split()
+    if len(words) < 2 or any(len(re.sub(r"\W", "", w)) < SHORTEST for w in words):
+        return False
+    gap = rf"(?:\W+\w+){{0,{SPLIT_GAP}}}?\W+"
+    pattern = gap.join(rf"(?<!\w){re.escape(w)}(?!\w)" for w in words)
+    return re.search(pattern, haystack) is not None
+
+
 def names_in(text: str, names: Iterable[str]) -> list[str]:
     """Which of these names the text holds as whole words, in the order given."""
     haystack = _squash(text)
@@ -315,25 +333,50 @@ def _variant(haystack: str, name: str, cache: dict[str, str | None]) -> str | No
     return cache[key]
 
 
+# The forms of one pronoun, as one person each (he/him/his/himself): a quote with two forms of one
+# pronoun still holds one person to settle, not two (#2841).
+_PERSON = {
+    **dict.fromkeys(("he", "him", "his", "himself"), "he"),
+    **dict.fromkeys(("she", "her", "hers", "herself"), "she"),
+    **dict.fromkeys(("they", "them", "their", "theirs", "themselves"), "they"),
+    **dict.fromkeys(("who", "whose", "whom"), "who"),
+}
+
 _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]]*\s+")
 # Every way a document ends a paragraph or a line, not only "\n" (a pasted text may use the
 # Unicode separators).
 _BREAK = re.compile(r"[\n\r\u2028\u2029\x85]")
 
 
-def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
+LONG_QUOTE_WORDS = 2 * QUOTE_WORDS  # a widened quote's most, when 20 cannot hold both ends
+
+
+def _widen(
+    piece: str,
+    words: list[str],
+    a: str,
+    b: str,
+    holds: Callable[[str, str], bool] | None = None,
+    lost: Dropped | None = None,
+) -> list[str] | None:
     """A quote that holds only one of the two names (the sentence says "his sister", #2757) made
-    the sentence before it too: the text from the start of the previous sentence, in the same
-    paragraph, to the end of the quote, word for word as written. Only for a quote with a pronoun
-    in it ("his", "she", "who"). The AI's whole quote is always in the result (only the earlier
-    sentence's front is ever cut, to `QUOTE_WORDS` words), and it is kept only when the window
-    holds BOTH names, so "both names are in the quoted words" stays true without trusting the AI's
-    reading of a pronoun. (A trade-off: a window with both names does not prove which one the
-    pronoun means; the DM confirms every suggestion before it is kept.) A quote that runs across
-    a line break is not looked at: the sentence before it would be another paragraph's. None when
-    no place in the text gives such a window."""
+    the sentence before it too: the text from the start of the previous sentence to the end of the
+    quote, word for word as written. Only for a quote with a pronoun in it ("his", "she", "who").
+    The AI's whole quote is always in the result, and it is kept only when the window holds BOTH
+    names, so "both names are in the quoted words" stays true without trusting the AI's reading of
+    a pronoun. (A trade-off: a window with both names does not prove which one the pronoun means;
+    the DM confirms every suggestion before it is kept.) A quote that runs across a line break is
+    not looked at.
+
+    The window keeps the FRONT of the earlier sentence, where its name is, and runs to the quote's
+    end: up to `QUOTE_WORDS` words, and up to `LONG_QUOTE_WORDS` when 20 cannot hold both names
+    (a list sentence "A mentored two apprentices: B... as well as C", #2841). A quote that opens
+    its paragraph borrows the last sentence of the paragraph before it. `lost` counts how often
+    each of these was needed (`quote_long`, `quote_prev_paragraph`), never a word. None when no
+    place in the text gives such a window."""
     if not any(w.strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS for w in words):
         return None  # (no pronoun: the quote names what it names, and nothing is borrowed)
+    holds = holds or _in_quote
     pattern = r"\s+".join(re.escape(w) for w in words)
     for hit in re.finditer(pattern, piece, re.I):  # (a quote may stand in the text more than once)
         start, end = hit.start(), hit.end()
@@ -344,10 +387,27 @@ def _widen(piece: str, words: list[str], a: str, b: str) -> list[str] | None:
         before = piece[paragraph:start]
         starts = [0] + [m.end() for m in _SENTENCE_END.finditer(before)]
         cut = starts[-2] if len(starts) >= 2 else 0
-        window = piece[paragraph + cut : end].split()[-QUOTE_WORDS:]
-        said = _squash(" ".join(window))
-        if _in_quote(said, a) and _in_quote(said, b):
-            return window
+        origin = paragraph + cut
+        borrowed = False
+        if not before.strip() and breaks:  # the quote opens its paragraph: the one before ends here
+            upto = len(piece[:paragraph].rstrip("\n\r\u2028\u2029\x85 "))  # (blank lines skipped)
+            earlier = list(_BREAK.finditer(piece, 0, upto))
+            before_par = earlier[-1].end() if earlier else 0
+            tail = piece[before_par:upto]
+            ends = [m.end() for m in _SENTENCE_END.finditer(tail)]
+            origin = before_par + (ends[-1] if ends else 0)
+            borrowed = bool(tail.strip())
+        tokens = piece[origin:end].split()
+        for limit in (QUOTE_WORDS, LONG_QUOTE_WORDS):
+            window = tokens[-limit:]  # (the quote's end is always in it; the front is cut last)
+            said = _squash(" ".join(window))
+            if holds(said, a) and holds(said, b):
+                if lost is not None:
+                    if len(window) > QUOTE_WORDS:
+                        lost["quote_long"] += 1
+                    if borrowed:
+                        lost["quote_prev_paragraph"] += 1
+                return window
     return None
 
 
@@ -410,7 +470,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or len(name) > NAME_CHARS
             or len(name.split()) > NAME_WORDS
             or "|" in name
-            or not _has(haystack, name)
+            or not _in_text(haystack, name)
             or not not_names.allowed(name, cued)
         ):
             continue
@@ -589,17 +649,40 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
 Dropped = Counter[str]
 
 
-def _quote_window(words: list[str], a: str, b: str) -> list[str]:
+def _quote_window(
+    words: list[str], a: str, b: str, holds: Callable[[str, str], bool] | None = None
+) -> list[str]:
     """A quote of more than `QUOTE_WORDS` words cut to that many (#2601): the front, or the back
     when the front loses one of the two names. Words of a verbatim quote stay verbatim; the check
-    that the text holds the quote and both names still follows, so this only shortens."""
+    that the text holds the quote and both names still follows, so this only shortens. `holds`
+    says whether a squashed quote holds an end (by any of its spellings, #2841)."""
     if len(words) <= QUOTE_WORDS:
         return words
+    holds = holds or _has
     for window in (words[:QUOTE_WORDS], words[-QUOTE_WORDS:]):
         said = _squash(" ".join(window))
-        if _has(said, a) and _has(said, b):
+        if holds(said, a) and holds(said, b):
             return window
     return words[:QUOTE_WORDS]
+
+
+def _groups(aliases: Mapping[str, Sequence[str]]) -> dict[str, set[str]]:
+    """For each name key of an entry (its main name and every spelling), the other keys of the same
+    entry (#2841): the campaign's confirmed aliases and the spellings this read listed. A spelling
+    two entries both claim belongs to neither (it would be a guess which one is meant)."""
+    claimed: dict[str, set[str]] = {}
+    for main, spellings in aliases.items():
+        for sp in spellings:
+            claimed.setdefault(name_key(sp), set()).add(name_key(main))
+    out: dict[str, set[str]] = {}
+    for main, spellings in aliases.items():
+        mk = name_key(main)
+        members = {mk} | {
+            name_key(sp) for sp in spellings if len(claimed.get(name_key(sp), ())) == 1
+        }
+        for m in members:
+            out.setdefault(m, set()).update(members - {m})
+    return out
 
 
 def read_connections(
@@ -626,6 +709,15 @@ def read_connections(
         return []
     haystack = _squash(piece)
     variants: dict[str, str | None] = {}  # (one text's search for a name's other spelling, once)
+    groups = _groups(aliases or {})  # (an entry's name and spellings, #2841)
+
+    def forms(end: str) -> list[str]:
+        return [end, *sorted(groups.get(name_key(end), ()))]
+
+    def holds(quote: str, end: str) -> bool:
+        """Whether a squashed quote holds this end or any other spelling of the same entry."""
+        return any(_in_quote(quote, f) for f in forms(end))
+
     out: list[Connection] = []
     for item in items:
         if not isinstance(item, dict):
@@ -684,14 +776,15 @@ def read_connections(
         # the name it stands for.
         seen = [a, b]
         for index, end in enumerate((a, b)):
-            if not _has(haystack, end):
-                spelled = _alias(haystack, end, aliases or {}) or _variant(haystack, end, variants)
+            if not _in_text(haystack, end):
+                spelled = next((f for f in forms(end)[1:] if _in_text(haystack, f)), None)
+                spelled = spelled or _variant(haystack, end, variants)
                 if spelled is not None:
                     seen[index] = spelled
         if name_key(seen[0]) == name_key(seen[1]):  # two ends that came to one spelling
             lost["bad_names"] += 1
             continue
-        words = _quote_window(spoken, seen[0], seen[1])
+        words = _quote_window(spoken, seen[0], seen[1], holds)
         said = " ".join(words)
         said_squashed = _squash(said)
         made = Connection(
@@ -703,16 +796,18 @@ def read_connections(
             variant_a=seen[0] if seen[0] != a else "",
             variant_b=seen[1] if seen[1] != b else "",
         )
-        if not (_has(haystack, seen[0]) and _has(haystack, seen[1]) and _has(haystack, said)):
+        if not (
+            _in_text(haystack, seen[0]) and _in_text(haystack, seen[1]) and _has(haystack, said)
+        ):
             lost["not_in_text"] += 1
-        elif _in_quote(said_squashed, seen[0]) and _in_quote(said_squashed, seen[1]):
+        elif holds(said_squashed, seen[0]) and holds(said_squashed, seen[1]):
             out.append(made)
-        elif (wide := _widen(piece, words, seen[0], seen[1])) is not None:
+        elif (wide := _widen(piece, words, seen[0], seen[1], holds, lost)) is not None:
             # The quote named one end ("his sister…"): the sentence before it joins, word for word.
             lost["quote_widened"] += 1
             out.append(replace(made, quote=" ".join(wide)))
         elif unsettled is not None and (
-            open_ := _unsettled(piece, words, said_squashed, made, seen)
+            open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
         ):
             unsettled.append(open_)
         else:
@@ -721,17 +816,23 @@ def read_connections(
 
 
 def _unsettled(
-    piece: str, words: list[str], said: str, made: Connection, seen: list[str]
+    piece: str,
+    words: list[str],
+    said: str,
+    made: Connection,
+    seen: list[str],
+    holds: Callable[[str, str], bool] = lambda q, e: _in_quote(q, e),
 ) -> Unsettled | None:
     """The question a quote leaves open, or None when it is not one the AI should be asked: the
     quote must hold exactly one of the two names and exactly one distinct pronoun (two pronouns
     could each mean another person, and which one stands for the missing end is a guess)."""
-    in_a, in_b = _in_quote(said, seen[0]), _in_quote(said, seen[1])
+    in_a, in_b = holds(said, seen[0]), holds(said, seen[1])
     if in_a == in_b:
         return None
     written = [w.strip(".,;:!?\"'“”‘’()") for w in words]
     pronouns = [w for w in written if w.casefold() in PRONOUNS]
-    if len({w.casefold() for w in pronouns}) != 1:
+    # "his father cared for him and his sister": his and him are one person, so one pronoun (#2841)
+    if len({_PERSON.get(w.casefold(), w.casefold()) for w in pronouns}) != 1:
         return None
     pattern = r"\s+".join(re.escape(w) for w in words)
     for hit in re.finditer(pattern, piece, re.I):
@@ -794,7 +895,12 @@ def keep_connections(
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
     both_ways = {"kin_of", "ally_of", "enemy_of"}
-    reader = Ends(ends, {*ends.values()})
+    # (a public other spelling fits an end by its words too, for the name it belongs to; a secret
+    # one never does)
+    spellings = {
+        sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
+    }
+    reader = Ends(ends, {*ends.values()}, spellings)
     seen: set[tuple[str, str, str]] = set()
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
