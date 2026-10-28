@@ -187,6 +187,8 @@ services:
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
       # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
       DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
+      # Game masters added and removed on the website (#2768): off, those routes answer 404.
+      DMBOT_WEB_CO_DMS: ${DMBOT_WEB_CO_DMS:-0}
       DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

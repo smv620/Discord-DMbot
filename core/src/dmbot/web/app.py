@@ -46,6 +46,7 @@ from dmbot.web import (
     email_signin,
     entitlements_writer,
     feedback,
+    game_masters,
     handover_accept,
     handover_offer,
     imports,
@@ -1778,6 +1779,10 @@ def create_app(
         "bad_setting": (400, "bad_setting"),
         "bad_value": (400, "bad_value"),
         "too_soon": (429, "too_soon"),
+        # A game master change the website can turn away at once (#2768); the bot checks again.
+        "plan_holder": (409, "plan_holder"),
+        "too_many": (409, "too_many"),
+        "unknown_person": (400, "unknown_person"),
     }
 
     delete_refusals = {
@@ -1882,7 +1887,11 @@ def create_app(
         except ValueError:
             body = None
         try:
-            return {"answer": await campaign_settings.queue_setting(db, session, ref, body)}
+            return {
+                "answer": await campaign_settings.queue_setting(
+                    db, session, ref, body, co_dms_on=settings.co_dms_on
+                )
+            }
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1906,6 +1915,36 @@ def create_app(
         session, _token = signed
         try:
             return await campaign_settings.read_setting(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/game-masters")
+    async def me_campaign_game_masters(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's game masters (#2768), for its DMs only: `{max, gameMasters: [{userId,
+        name, plan, you}]}`. A player or another campaign's DM gets 403 `not_allowed`; a bad
+        address 404."""
+        session, _token = signed
+        if not settings.co_dms_on:  # off until the bot can apply a change (#2768)
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await game_masters.read_game_masters(db, session, ref)
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/game-masters/candidates")
+    async def me_campaign_game_master_candidates(
+        ref: str, signed: Signed, q: str = ""
+    ) -> dict[str, Any]:
+        """Who a DM can offer as one more game master, searched by name (#2768): `{people:
+        [{userId, name}]}`, at most 25, the campaign's own people and the server's members who
+        agreed to be recorded. DM only, as the list."""
+        session, _token = signed
+        if not settings.co_dms_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await game_masters.read_candidates(db, session, ref, q)
         except RecapError as err:
             status, detail = setting_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
