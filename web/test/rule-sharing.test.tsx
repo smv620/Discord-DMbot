@@ -262,6 +262,6 @@ describe("accessibility and words", () => {
     await screen.findByRole("heading", { name: w.heading });
     const text = (container.textContent ?? "") + JSON.stringify(w);
     expect(text).not.toMatch(/\b(queue|API|database|endpoint|JSON|ruleset)\b/i);
-    expect(within(container).getAllByRole("button").length).toBeGreaterThan(0);
+    expect(within(container as HTMLElement).getAllByRole("button").length).toBeGreaterThan(0);
   });
 });
