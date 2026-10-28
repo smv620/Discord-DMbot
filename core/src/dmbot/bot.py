@@ -1660,6 +1660,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
+            owner_mail=self.email_hand_over_owner,  # the owner also hears by email (#2532)
+            site_url=self.settings.site_url,
             # a hand-over to another server: its audio files go with it, and the caches that are
             # kept by campaign id alone are dropped
             mover=HandoverMover(
@@ -10374,6 +10376,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """A campaign's complete copy, as Discord's Download makes it (#2554): the main file's
         data and the transcripts files (#2552, #2772), both from one moment."""
         return await self.campaigns.export_set(guild_id, campaign_id)
+
+    async def email_hand_over_owner(
+        self, owner_id: int, kind: str, subject: str, body: str
+    ) -> None:
+        """An owner's email about their hand-over offer (#2532, slice D): to the address DMbot has
+        for their account, if any. Once for each `kind` (the mail log keeps a row, so a repeat is
+        refused); an email that could not go (the day's cap, the mail server) is not retried, as for
+        other account emails. Never logs the address or the text. Raises only if the account
+        lookup does; the caller (`SiteOffers._email_owner`) catches that."""
+        if self.mailer is None or self.meter is None:
+            return
+        to = await accounts.account_email(self.meter.db, owner_id)
+        if not to:
+            return
+        result = await self.mailer.send(
+            user_id=owner_id, kind=kind, to=to, subject=subject, body=body
+        )
+        log.info("Hand-over email to an owner: %s", result)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a
