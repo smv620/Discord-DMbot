@@ -63,6 +63,11 @@ class FromSpeechSounds(unittest.TestCase):
         self.assertEqual(respell("kɑpˈtɛn"), "kahp-TEN")
         self.assertEqual(respell("ɑˈstɑ"), "ah-STAH")
 
+    def test_nasal_vowels_a_tie_bar_and_a_lone_ng_between_vowels(self) -> None:
+        self.assertEqual(respell("ˈbãto"), "BAH-toh")
+        self.assertEqual(respell("ˈkat͡ʃa"), "KAH-chah")
+        self.assertEqual(respell("ˈmæŋoʊ"), "MANG-oh")
+
     def test_an_unknown_symbol_inside_a_word_is_skipped_not_fatal(self) -> None:
         self.assertEqual(respell("ˈkɑ☃zɛθ"), "KAH-zeth")
 
@@ -84,7 +89,16 @@ class TheCheck(unittest.TestCase):
         self.assertEqual(clean("Ka’zeth"), "Ka'zeth")
 
     def test_a_sentence_a_symbol_a_number_or_nothing_is_refused(self) -> None:
-        for text in ("", "   ", "say it: KAH-zeth", "kah/zeth", "zeth2", "'-'", "kah\nzeth!"):
+        for text in (
+            "",
+            "   ",
+            "say it: KAH-zeth",
+            "kah/zeth",
+            "zeth2",
+            "'-'",
+            "kah\nzeth!",
+            "it is said like kah zeth",
+        ):
             with self.subTest(text=text):
                 self.assertIsNone(clean(text))
 

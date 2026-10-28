@@ -14,6 +14,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+# A name, not a sentence: "it is said like kah zeth" is an AI talking, not a respelling.
+MAX_WORDS = 4
 MAX_CHARS = 80  # the same limit as the database's said-as check (#1451)
 _ALLOWED = re.compile(r"[A-Za-z' -]+")
 
@@ -67,7 +69,11 @@ class _Sound:
 def _sounds(word: str) -> list[_Sound | str]:
     """The word as sounds, with STRESS / SECONDARY marks kept in place. Anything unknown is
     skipped (a recogniser's rare symbol is not worth failing the whole name)."""
-    text = unicodedata.normalize("NFC", word)
+    # Decomposed, then every combining mark (nasal tilde, tie bar, devoicing ring...) dropped: a
+    # composed "ã" would match no vowel, and a tie bar would split "t͡ʃ". The one letter that
+    # decomposes and is also a sound, "ç", is put back first.
+    text = unicodedata.normalize("NFD", word).replace("c\u0327", "ç")
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     out: list[_Sound | str] = []
     i = 0
     while i < len(text):
@@ -139,7 +145,9 @@ def _onset_start(cluster: list[_Sound]) -> int:
             continue  # "ng" never starts a syllable: "FING-ger", not "FIN-nger"
         if len(tail) == 1 or tail in _ONSETS:
             return start
-    return len(cluster) - 1
+    # Nothing English-like to start the next syllable with: one consonant does, except "ng",
+    # which closes the syllable before ("MANG-oh").
+    return len(cluster) if cluster[-1].ipa == "ŋ" else len(cluster) - 1
 
 
 def _letters(syllable: list[_Sound]) -> str:
@@ -185,6 +193,8 @@ def clean(text: str) -> str | None:
     answer with a sentence or a symbol in it is dropped, never trimmed into something odd)."""
     tidy = " ".join(text.replace("’", "'").split())  # (a pasted line break becomes a space)
     if not tidy or len(tidy) > MAX_CHARS or not _ALLOWED.fullmatch(tidy):
+        return None
+    if len(tidy.split()) > MAX_WORDS:
         return None
     if tidy[0] == "-" or tidy[-1] == "-" or "--" in tidy:
         return None  # plain ASCII letters only, so "Zoë" is typed as "zoh-ee"
