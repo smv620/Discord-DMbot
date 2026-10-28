@@ -136,6 +136,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.transcript.import_job import ImportJob
     from dmbot.transcript.store import TranscriptStore
     from dmbot.transcript.waiting_questions import WaitingQuestionStore
+    from dmbot.transcript.web_line_fixes import ActionStore as LineFixStore
     from dmbot.transcription.pipeline import TranscriptionPipeline
     from dmbot.ui.decision_lines import DecisionLines
     from dmbot.usage import Meter
@@ -254,6 +255,7 @@ class RecapFeatures:
         web_settings: SettingStore | None
         web_rule_actions: RuleActionStore | None
         web_sheets: SheetActionStore | None
+        web_line_fixes: LineFixStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -310,6 +312,7 @@ class RecapFeatures:
         async def read_put_back_lines(self, guild_id: int) -> None: ...
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
+        async def run_web_line_fixes(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -1929,6 +1932,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website sheet choices failed: %s", type(exc).__name__)
             try:
+                await self.run_web_line_fixes()
+            except Exception as exc:
+                log.warning("The website line fixes failed: %s", type(exc).__name__)
+            try:
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
@@ -1959,6 +1966,8 @@ class RecapFeatures:
                             await self.web_rule_actions.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
+                        if self.web_line_fixes is not None:  # a fix keeps no words past a day
+                            await self.web_line_fixes.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
                         await self.read_put_back_lines(guild.id)
                         if self.peek_notices is not None:

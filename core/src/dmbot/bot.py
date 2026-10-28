@@ -392,6 +392,7 @@ from dmbot.transcript import (
     rank_options,
     refix,
     speaker_ai,
+    web_line_fixes,
 )
 from dmbot.transcript import name_pass as name_pass_logic
 from dmbot.transcript import pronounced as pronounced_aloud
@@ -410,6 +411,7 @@ from dmbot.transcript.cleaner import (
     matcher_names,
     own_name,
     safe_answer,
+    text_names_a_secret,
     with_ending,
 )
 from dmbot.transcript.close_calls import CloseCalls
@@ -911,6 +913,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # What players and DMs chose on the website's character sheets page (#2817).
         self.web_sheets = web_sheets.ActionStore(recaps.db) if recaps is not None else None
+        # A line fixed from the website's Transcripts page (#2883).
+        self.web_line_fixes = web_line_fixes.ActionStore(recaps.db) if recaps is not None else None
+        self._fix_tasks: dict[int, asyncio.Task[None]] = {}  # one running fix a server
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -10782,6 +10787,74 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_sheets.run_one(self, store, guild_id, item)
+
+    # ---- a line fixed from the website (#2883): the Host of transcript.web_line_fixes ----
+
+    def fix_has_consent(self, guild_id: int, user_id: int) -> bool:
+        return self.consent.has_consent(guild_id, user_id)
+
+    async def fix_names_a_secret(self, guild_id: int, campaign_id: str, text: str) -> bool:
+        lookup = await self.lookup.get(guild_id, campaign_id) if self.lookup else None
+        return lookup is None or text_names_a_secret(lookup, text)
+
+    def fix_session_running(self, guild_id: int, session_id: str) -> bool:
+        table = self.tables.get(guild_id)
+        return table is not None and table.transcript_session_id == session_id
+
+    async def fix_post_suggestion(
+        self,
+        guild_id: int,
+        channel_id: int,
+        made: line_suggestions.Suggestion,
+        line: line_suggestions.Own,
+        text: str,
+    ) -> bool:
+        """The DM-screen question, worded and buttoned exactly as `/dmbot fix` posts it."""
+        try:
+            member = await self.find_member(guild_id, made.user_id)
+        except Exception:  # the name is only for the DM's line: don't lose the question for it
+            member = None
+        who = member.name if member is not None else "Someone"
+        posted = await self.post_message(
+            channel_id,
+            dm_text(who, line.heard, line.text, text),
+            suggestion_view(made.id),
+            remember=("fix", made.id),
+        )
+        return posted is not None
+
+    async def run_web_line_fixes(self) -> None:
+        """Fixes asked for on the Transcripts page. Each runs as a tracked background task, at
+        most one a server, so the poll loop's other website actions do not wait for it (a
+        suggestion posts to Discord, a rewrite touches the helpers' copies). Only outcome words
+        are logged, never the person's words."""
+        store = self.web_line_fixes
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            task = self._fix_tasks.get(guild.id)
+            if task is not None and not task.done():
+                continue
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            started = self._track(self._run_line_fix(store, gid, item), f"line-fix-{gid}")
+            if started is None:  # shutting down: the row is taken again after a restart
+                return
+            self._fix_tasks[gid] = started
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if self._fix_tasks.get(gid) is done:
+                    del self._fix_tasks[gid]
+
+            started.add_done_callback(forget)
+
+    async def _run_line_fix(
+        self, store: web_line_fixes.ActionStore, guild_id: int, item: web_line_fixes.Fix
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_line_fixes.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
