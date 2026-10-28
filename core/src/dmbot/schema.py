@@ -8634,6 +8634,9 @@ HOUSE_RULE_SOURCE = """
             CHECK (source_name IS NULL OR char_length(source_name) BETWEEN 1 AND 200);
 """
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 HIDDEN_FROM_PLAYERS = """
     -- A name the players don't know yet (#2321): the DM's switch on any entry ("Players don't
     -- know this one yet"), apart from a clue's audience (`audience_limited`, who knows a clue),
@@ -9955,6 +9958,9 @@ INSTALLS_LEFT_EXCEPT = r"""
     REVOKE ALL ON FUNCTION dmbot_installs_left_except(BIGINT[]) FROM PUBLIC;
 """
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 ALL_NAMES_PAGE = r"""
     -- The website's All names page (#2294): one page of a campaign's confirmed names, searched and
     -- filtered, with the count of each kind. Answers a DM of the campaign (everything) and a server
@@ -10411,6 +10417,9 @@ SETTING_ACTIONS = (
 """
 )
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 WEB_RELATIONSHIPS = r"""
     -- The relationship web on the website (#2323): the names within N steps of one name, and the
     -- confirmed connections between them, for the page that draws them. Read only; the words for a
@@ -10816,11 +10825,17 @@ ALL_NAMES_KINDS = ALL_NAMES_MENTIONS.replace(
 # so a comma never belongs to one): the page asks for the rows of the names the search found, in
 # the rows' usual shape, with one call instead of one for each name.
 assert ALL_NAMES_KINDS.count("(only_id IS NULL OR v.id = only_id)") == 1
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 ALL_NAMES_LIST = ALL_NAMES_KINDS.replace(
     "(only_id IS NULL OR v.id = only_id)",
     "(only_id IS NULL OR v.id = ANY (string_to_array(only_id, ',')))",
     1,
 )
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 NAMES_SMART = (
     r"""
     -- What an entry is searched by (#2733), as parts: the name and the description, the other
@@ -11482,6 +11497,9 @@ _PARTY_KNOWS_R = (
     " AND x.relation_id = pb.relation_id))"
 )
 assert WEB_RELATIONSHIPS.count("(is_dm OR (NOT r.secret AND r.to_session_at IS NULL") == 1
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 WEB_GRAPH_PARTY = WEB_RELATIONSHIPS.replace(
     "CREATE FUNCTION dmbot_web_relationships(",
     "CREATE OR REPLACE FUNCTION dmbot_web_relationships(",
@@ -12086,6 +12104,9 @@ LINK_DECIDE_ACTIONS = (
         (BIGINT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 """
 )
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 CAMPAIGN_FACTS = """
     -- The facts on each campaign's card on My Account (docs/PLAN.md, "Where everything is on the
     -- website"; #2460): for one server, every campaign the signed-in person runs (a DM of it) or
@@ -12218,6 +12239,9 @@ SHARED_RULES_PAGE = """
     REVOKE ALL ON FUNCTION dmbot_web_shared_rules(BIGINT) FROM PUBLIC;
 """
 
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 STORY_TIMELINE = """
     -- What the Story timeline page needs besides the sessions themselves (#2462): the campaign's
     -- recaps and the names shown to the players at the table, each with the time it belongs to. The
@@ -13921,6 +13945,9 @@ _overview_checks = _overview_door[
     )
 ]
 assert "vis := ARRAY(" in _overview_checks and "rel_ids := ARRAY(" in _overview_checks
+# (#2790) Written before unnamed people existed: migration 0264 adds their guard to the function as
+# it is in the database. A migration that builds it again from this text must add the guard too;
+# tests/test_hidden_guards.py fails when a function is left without it.
 GRAPH_OVERVIEW = (
     """
     CREATE OR REPLACE FUNCTION dmbot_web_graph_overview(
@@ -14656,6 +14683,104 @@ def _plot_chat_followups() -> str:
 
 
 PLOT_CHAT_FOLLOWUPS = _plot_chat_followups()
+
+# A person the story describes but never names (#2790): "Ken's sister", "a hooded figure". The row
+# is a proposed character with no alias, so no name match can find it; `unnamed_what` is what the
+# story calls them ("sister"), `unnamed_anchor` the entry they hang off (Ken; none for a hooded
+# figure) and `unnamed_role` the relationship (sibling). The label is built from these when it is
+# shown, so a rename or a merge of the anchor never leaves it stale. The key declares ON UPDATE
+# CASCADE itself, because it carries guild_id (CLAUDE.md, #2550).
+UNNAMED_PEOPLE = """
+    ALTER TABLE memory_entities
+        ADD COLUMN unnamed BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN unnamed_anchor TEXT,
+        ADD COLUMN unnamed_role TEXT,
+        ADD COLUMN unnamed_what TEXT;
+    ALTER TABLE memory_entities ADD CONSTRAINT memory_entities_unnamed_shape CHECK (
+        unnamed = (unnamed_what IS NOT NULL)
+        AND (unnamed OR (unnamed_anchor IS NULL AND unnamed_role IS NULL))
+        AND (unnamed_what IS NULL OR length(unnamed_what) BETWEEN 1 AND 100)
+        AND (unnamed_role IS NULL OR length(unnamed_role) BETWEEN 1 AND 40)
+        AND (unnamed_anchor IS NULL OR unnamed_anchor <> id));
+    ALTER TABLE memory_entities ADD CONSTRAINT memory_entities_unnamed_anchor_link
+        FOREIGN KEY (guild_id, campaign_id, unnamed_anchor)
+        REFERENCES memory_entities (guild_id, campaign_id, id)
+        ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    CREATE INDEX memory_entities_by_unnamed_anchor
+        ON memory_entities (guild_id, campaign_id, unnamed_anchor)
+        WHERE unnamed_anchor IS NOT NULL;
+    CREATE INDEX memory_entities_unnamed
+        ON memory_entities (guild_id, campaign_id) WHERE unnamed;
+"""
+
+# Every function that hides the DM's entries from players by `hidden_from_players` also hides an
+# unnamed person (#2790): a confirmed one must never show on the website, in the search text or in
+# a recap. Each is read back from the database as it is now, three spellings of the same guard are
+# widened, and the function is made again with every setting it had (its pinned search path, its
+# rights). The spellings, x being the table's alias: `NOT x.hidden_from_players`,
+# `OR x.hidden_from_players)` and `(x.hidden_from_players OR`. A function where none changes has a
+# guard this migration missed, and stops the migration instead of passing silently.
+UNNAMED_HIDDEN_FROM_PLAYERS = r"""
+    DO $$
+    DECLARE
+        r record;
+        def text;
+        fresh text;
+        have int;
+        paired int;
+    BEGIN
+        FOR r IN
+            SELECT p.oid, p.proname FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname IN (
+                  'dmbot_entity_parts', 'dmbot_recap_check_names', 'dmbot_recap_shared',
+                  'dmbot_web_all_names', 'dmbot_web_campaign_facts', 'dmbot_web_graph_overview',
+                  'dmbot_web_relationships', 'dmbot_web_story_timeline')
+            ORDER BY p.proname
+        LOOP
+            def := pg_get_functiondef(r.oid);
+            fresh := regexp_replace(def, 'NOT (\w+)\.hidden_from_players',
+                                    'NOT \1.hidden_from_players AND NOT \1.unnamed', 'g');
+            fresh := regexp_replace(fresh, 'OR (\w+)\.hidden_from_players\)',
+                                    'OR \1.hidden_from_players OR \1.unnamed)', 'g');
+            fresh := regexp_replace(fresh, '\((\w+)\.hidden_from_players OR ',
+                                    '(\1.hidden_from_players OR \1.unnamed OR ', 'g');
+            IF fresh = def THEN
+                RAISE EXCEPTION 'no hidden_from_players guard changed in %', r.proname;
+            END IF;
+            -- Guard by guard, not function by function: every way of saying "not hidden from
+            -- players" left in the new text must have its unnamed partner next to it (a positive
+            -- use, such as the one that lists the held names, is no guard and is left alone).
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, 'NOT \w+\.hidden_from_players', 'g');
+            SELECT count(*) INTO paired FROM regexp_matches(
+                fresh, 'NOT (\w+)\.hidden_from_players AND NOT \1\.unnamed', 'g');
+            IF have <> paired THEN
+                RAISE EXCEPTION 'NOT x.hidden_from_players has no unnamed guard: %', r.proname;
+            END IF;
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, 'OR \w+\.hidden_from_players\)', 'g');
+            IF have <> 0 THEN
+                RAISE EXCEPTION 'OR x.hidden_from_players) has no unnamed guard: %', r.proname;
+            END IF;
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, '\(\w+\.hidden_from_players OR ', 'g');
+            SELECT count(*) INTO paired FROM regexp_matches(
+                fresh, '\((\w+)\.hidden_from_players OR \1\.unnamed OR ', 'g');
+            IF have <> paired THEN
+                RAISE EXCEPTION '(x.hidden_from_players OR has no unnamed guard: %', r.proname;
+            END IF;
+            SELECT count(*) INTO have FROM regexp_matches(
+                fresh, 'OR \w+\.hidden_from_players OR ', 'g');
+            SELECT count(*) INTO paired FROM regexp_matches(
+                fresh, 'OR (\w+)\.hidden_from_players OR \1\.unnamed', 'g');
+            IF have <> paired THEN
+                RAISE EXCEPTION 'OR x.hidden_from_players OR has no unnamed guard: %', r.proname;
+            END IF;
+            EXECUTE fresh;
+        END LOOP;
+    END $$;
+"""
 
 WEB_WAITING_ACTIONS_LIST = ", ".join(
     f"'{a}'" for a in (*WAITING_ACTIONS, "backstory-which-pick", "backstory-which-neither")
@@ -16717,6 +16842,9 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0258_web_backup_parts", WEB_BACKUP_PARTS),  # a website copy carries its transcripts (#2772)
     ("0261_rule_sharing_read", RULE_SHARING_READ),  # a campaign's shared and followed rules (#2783)
     ("0262_web_rule_actions", WEB_RULE_ACTIONS),  # sharing asked for on the website (#2783)
+    ("0263_unnamed_people", UNNAMED_PEOPLE),  # a person described but never named (#2790)
+    # the doors and search text that keep the DM's entries from players keep these too (#2790)
+    ("0264_unnamed_hidden_from_players", UNNAMED_HIDDEN_FROM_PLAYERS),
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
