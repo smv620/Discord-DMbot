@@ -274,6 +274,7 @@ database.
     `RecapFeatures` under `if TYPE_CHECKING:`, so it is type-checked as before, until the Cog pass gives it a real bot to hold.
 - **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
 - **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
+  - *Built, first piece (CloudDev, 2026-10-28, #2130):* `lint-imports` runs in the core job (config in `core/pyproject.toml`). Three contracts: features never import `bot.py`; domain packages never import the Discord screens in `ui`; and lower packages (memory, rules, transcript, campaigns, names, timebot, audio) never import `recaps` or `web`. The 13 imports that break them today are listed as ignored, each citing #2827, which removes them. A new forbidden import fails CI (`tests/test_import_boundaries.py` shows it on a throwaway package). Features reaching into each other's other internals is not yet checked: that needs each feature's public module named first.
 - **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.
 
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
