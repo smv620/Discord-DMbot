@@ -12,12 +12,22 @@ from tests.pg import DatabaseTest
 
 # (pattern of one way of writing "not hidden from players", the same with its unnamed partner)
 GUARDS = (
-    (r"NOT \w+\.hidden_from_players", r"NOT (\w+)\.hidden_from_players AND NOT \1\.unnamed"),
-    (r"\(\w+\.hidden_from_players OR ", r"\((\w+)\.hidden_from_players OR \1\.unnamed OR "),
-    (r"OR \w+\.hidden_from_players OR ", r"OR (\w+)\.hidden_from_players OR \1\.unnamed"),
+    (
+        r"NOT\s+\w+\.hidden_from_players",
+        r"NOT\s+(\w+)\.hidden_from_players\s+AND\s+NOT\s+\1\.unnamed",
+    ),
+    (
+        r"\(\s*\w+\.hidden_from_players\s+OR\s+",
+        r"\(\s*(\w+)\.hidden_from_players\s+OR\s+\1\.unnamed\s+OR\s+",
+    ),
+    (
+        r"OR\s+\w+\.hidden_from_players\s+OR\s+",
+        r"OR\s+(\w+)\.hidden_from_players\s+OR\s+\1\.unnamed",
+    ),
 )
 # `OR x.hidden_from_players)` closes a list: the partner comes before it, so none may remain.
-LIST_END = r"OR \w+\.hidden_from_players\)"
+# (Every space is `\s+`: a guard written across a line break or with two spaces is still seen.)
+LIST_END = r"OR\s+\w+\.hidden_from_players\s*\)"
 
 
 def unguarded(source: str) -> list[str]:
@@ -53,3 +63,12 @@ class EveryPlayerGuard(DatabaseTest):
             unguarded("NOT e.hidden_from_players AND NOT e.unnamed AND e.hidden_from_players"), []
         )
         self.assertEqual(unguarded("WHERE e.hidden_from_players AND NOT e.audience_limited"), [])
+
+    def test_a_guard_across_a_line_break_or_with_two_spaces_is_seen_too(self) -> None:
+        self.assertEqual(unguarded("WHERE NOT\n   e.hidden_from_players\n AND e.x"), [GUARDS[0][0]])
+        self.assertEqual(unguarded("WHERE NOT   e.hidden_from_players AND e.x"), [GUARDS[0][0]])
+        self.assertEqual(unguarded("AND (a.secret OR\n  e.hidden_from_players\n)"), [LIST_END])
+        self.assertEqual(
+            unguarded("(e.hidden_from_players\n   OR e.audience_limited)"), [GUARDS[1][0]]
+        )
+        self.assertEqual(unguarded("NOT e.hidden_from_players\n  AND NOT\n e.unnamed AND e.y"), [])
