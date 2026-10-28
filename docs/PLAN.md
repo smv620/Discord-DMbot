@@ -1347,7 +1347,7 @@ so the docs always show names the way Discord does. For the campaign
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
 | ~~Rules archive~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-rules-rmfthfrstmdn`~~ | Was #1752; see "Two channels removed" below |
-| Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
+| ~~Game time~~ (removed, owner 2026-10-28, #2877: the clock is a small 🕰️ line in `dmb-chat`) | ~~`dmb-gametime-rmfthfrstmdn`~~ | Was #1116 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
 | ~~NPCs~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-npcs-rmfthfrstmdn`~~ | Was #1761; see "Two channels removed" below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
@@ -1387,7 +1387,7 @@ so the docs always show names the way Discord does. For the campaign
 | Kind | Channels | Players see it |
 |---|---|---|
 | **Controlled** | DM screen, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
-| **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
+| **Unrestricted** | Live transcript, DMbot chat | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
 - Players can **read but never post** in any DMbot channel (no threads or reactions
   either), the same read-only access as a DM-screen peek. **Slash commands are never
@@ -3204,6 +3204,11 @@ is wrong for half the table, so the DM can split it.
   Undo needs); `game_effects.group_position` says which group a timer counts on. Backups carry the groups
   (`ClockSection`, validated) and each timer's group. Deleting the campaign deletes them.
 *The game-time channel (owner, 2026-10-13, after Test F):*
+- **Replaced (owner, 2026-10-28, #2877):** there is no game-time channel any more. Whenever the players' view of the
+  clock changes (the day and its approximate word, never the exact time), DMbot posts one small line in the campaign's
+  `dmb-chat` channel, `-# 🕰️ Day 5, morning`, and the rest and new-day lines go there the same way. If its last 🕰️ line
+  is still the newest message there, it is edited instead, so quick changes stay one line. DMbot deletes its own old
+  game-time channel once, as for #2874. What follows is the history of the channel.
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
   `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
   can read it and only the bot posts in it. `/dmbot start` creates or repairs it, and a failure
