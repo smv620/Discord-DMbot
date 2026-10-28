@@ -68,8 +68,16 @@ class TheLink(base.NamesTest):
         longest = "a" * all_names.SAID_MAX
         self.assertEqual(len(self.links(await self.card(longest))), 1)  # exactly the limit
         self.assertEqual(self.links(await self.card("a" * (all_names.SAID_MAX + 1))), [])
-        accents = "é" * 20  # each letter is six characters once encoded: 120 > 80
-        self.assertEqual(self.links(await self.card(accents)), [])
+
+    async def test_the_limit_counts_the_name_as_the_page_does_not_the_address(self) -> None:
+        spaced = "The Sunken Bells of Old Ashmere and the Tower of the Seven Winds Rising"[:60]
+        self.assertEqual(len(spaced), 60)  # spaces make the encoded address far longer than 80
+        accented = "é" * 70  # an accent is one unit however it is encoded
+        self.assertEqual(len(self.links(await self.card(spaced))), 1)
+        self.assertEqual(len(self.links(await self.card(accented))), 1)
+        # an emoji is two UTF-16 units, as JavaScript counts it
+        self.assertEqual(len(self.links(await self.card("😀" * 40))), 1)  # 80 units
+        self.assertEqual(self.links(await self.card("😀" * 40 + "a")), [])  # 81 units
 
     async def test_nothing_else_on_the_card_changes(self) -> None:
         with_link = await self.card("Brother Aldric")
