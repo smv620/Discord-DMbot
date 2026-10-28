@@ -17444,7 +17444,7 @@ MIGRATIONS: tuple[Migration, ...] = (
         WEB_REPORT_REQUESTS,
     ),  # make the report again, on the website (#2661)
     (
-        "0267_web_sheet_actions",
+        "0268_web_sheet_actions",
         WEB_SHEET_ACTIONS,
     ),  # a character sheet asked for on the website (#2816)
 )
