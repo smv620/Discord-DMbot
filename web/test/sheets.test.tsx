@@ -12,6 +12,7 @@ import {
 } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import CharacterSheetsSection from "../src/account/Sheets";
 import { sheetWords as w } from "../src/content/sheets-words";
@@ -242,5 +243,58 @@ describe("a link typed for one campaign", () => {
     await waitFor(() => expect(linkBox().value).toBe(""));
     rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await waitFor(() => expect(linkBox().value).toBe("https://www.dndbeyond.com/characters/777"));
+  });
+});
+
+describe("a campaign the page has left", () => {
+  it("an old campaign's slow read is not drawn after a switch", async () => {
+    const api = mockApi("table");
+    const fetch = api.campaignSheets!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.campaignSheets = async (ref) => {
+      const got = await fetch(ref);
+      if (ref !== "100.sh") return got;
+      await held;
+      return { ...got, sheets: got.sheets.map((c) => ({ ...c, name: "Stale Oren" })) };
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Stale Oren", { exact: false })).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("an old campaign's failed read does not show the failure on the new one", async () => {
+    const api = mockApi("table");
+    const fetch = api.campaignSheets!.bind(api);
+    let fail!: () => void;
+    const held = new Promise<void>((r) => (fail = r));
+    api.campaignSheets = async (ref) => {
+      if (ref !== "100.sh") return fetch(ref);
+      await held;
+      throw new ApiError("server");
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    fail();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.failedToLoad)).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("an answer for a choice made in the old campaign shows no report in the new one", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("sheetAnswer:100.sh"))).toBe(true), { timeout: 8000 });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.forgetDone)).toBeNull();
   });
 });

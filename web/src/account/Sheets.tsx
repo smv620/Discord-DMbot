@@ -59,6 +59,9 @@ export default function CharacterSheetsSection({
   const [moved, setMoved] = useState("");
   const flight = useRef(false);
   const live = useRef(true);
+  // The campaign on screen now. An answer for a campaign the page has left is not drawn (#2845).
+  const current = useRef(campaignRef);
+  current.current = campaignRef;
   const seen = useObservedWait(busy, moved);
   useEffect(() => {
     live.current = true;
@@ -69,11 +72,12 @@ export default function CharacterSheetsSection({
 
   const read = async (): Promise<void> => {
     if (!api.campaignSheets) return setData("failed");
+    const asked = campaignRef;
     try {
       const got = await api.campaignSheets(campaignRef);
-      if (live.current) setData(got);
+      if (live.current && current.current === asked) setData(got);
     } catch (error) {
-      if (live.current) setData("failed");
+      if (live.current && current.current === asked) setData("failed");
       if (error instanceof ApiError && ENDS.includes(error.kind)) return;
     }
   };
@@ -95,6 +99,9 @@ export default function CharacterSheetsSection({
     done: string,
   ): Promise<void> => {
     if (flight.current || !api.chooseSheet || !api.sheetAnswer) return;
+    // What this choice was made for: its answer is drawn only while the page still shows that campaign (#2845).
+    const asked = campaignRef;
+    const here = () => live.current && current.current === asked;
     flight.current = true;
     setBusy(true);
     setReport(null);
@@ -119,27 +126,31 @@ export default function CharacterSheetsSection({
         > | null = null;
         try {
           got = await api.sheetAnswer(campaignRef, id);
-          if (got) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
+          if (got && here()) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
         } catch (error) {
           if (error instanceof ApiError && ENDS.includes(error.kind))
             throw error;
         }
         if (got?.state === "done") {
-          setStage(null);
-          setReport({ ok: true, text: done });
-          await read();
+          if (here()) {
+            setStage(null);
+            setReport({ ok: true, text: done });
+            await read();
+          }
           return;
         }
         if (got?.state === "failed") throw new ApiError("server");
-        if (got) setStage(stageWords(w.stage, got.stage));
+        if (got && here()) setStage(stageWords(w.stage, got.stage));
         if (final) {
-          setReport({ ok: false, text: w.quiet });
-          await read();
+          if (here()) {
+            setReport({ ok: false, text: w.quiet });
+            await read();
+          }
           return;
         }
       }
     } catch (error) {
-      if (live.current)
+      if (here())
         setReport({
           ok: false,
           text: problem(error instanceof ApiError ? error.kind : "server"),
@@ -148,7 +159,7 @@ export default function CharacterSheetsSection({
       flight.current = false;
       if (live.current) {
         setBusy(false);
-        setStage(null);
+        if (here()) setStage(null);
       }
     }
   };
