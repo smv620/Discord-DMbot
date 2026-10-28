@@ -267,6 +267,21 @@ describe("Who is she?", () => {
     await expect(api.webWaiting!(PRONOUN_REF).then((l) => l.which.some((q) => q.id === "w2"))).resolves.toBe(true);
   });
 
+  it("a Someone else the API answers as gone shows the gone words, and the other pronoun card still works", async () => {
+    const api = mockApi("table");
+    api.answerWaiting = async () => {
+      throw new ApiError("gone");
+    };
+    render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
+    press(`${w.someoneElse} for he`, card);
+    expect(await screen.findByText(w.errors.gone!)).toBeTruthy();
+    await settled();
+    const other = screen.getByText(w.pronounQuestion("she")).closest(".panel") as HTMLElement;
+    expect((within(other).getByRole("button", { name: "Mara Ashgrove" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("a list with both kinds draws both groups, each under its own heading", async () => {
     const pronounList = mockApi("table");
     const nameList = mockApi("table");
