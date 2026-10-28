@@ -80,6 +80,10 @@ ENTITIES = Table(
         "hidden_from_players",
         "made_before_name_gate",
         "manipulated_by",
+        "unnamed",
+        "unnamed_anchor",
+        "unnamed_role",
+        "unnamed_what",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -89,6 +93,11 @@ ENTITIES = Table(
         "hidden_from_players": False,
         "made_before_name_gate": False,
         "manipulated_by": None,  # the evidence this one faked (#2409)
+        # a person the story describes but never names (#2790); a row written now is a named one
+        "unnamed": False,
+        "unnamed_anchor": None,
+        "unnamed_role": None,
+        "unnamed_what": None,
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -243,6 +252,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("plan_same_as", "entity_id", False),
         ("memory_perspectives", "entity_id", False),
         ("memory_entities", "manipulated_by", False),
+        ("memory_entities", "unnamed_anchor", False),
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
@@ -631,6 +641,10 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "hidden_from_players": False,
         "made_before_name_gate": True,
         "manipulated_by": None,  # nothing was faked before beliefs (#2409)
+        "unnamed": False,  # everyone was named before #2790
+        "unnamed_anchor": None,
+        "unnamed_role": None,
+        "unnamed_what": None,
     },
     "memory_beliefs": {"pinned": False},  # nothing was pinned before the pin (#2447)
     "memory_predicates": {

@@ -25,7 +25,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import lore_context, lore_read, pronouns
+from dmbot.memory import kin, lore_context, lore_read, pronouns
 from dmbot.memory.backstory_links import (
     DONE,
     FULL,
@@ -35,7 +35,7 @@ from dmbot.memory.backstory_links import (
     Waiting,
     WhichWaiting,
 )
-from dmbot.memory.end_match import bare
+from dmbot.memory.end_match import FILLER, bare
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -461,6 +461,7 @@ class BackgroundOffer(_Menu):
             known = await memory.known_keys(guild, campaign.id)
 
             own = await own_kinds(memory, campaign)
+            aliases = await confirmed_aliases(memory, campaign)
             # Two passes (#2454): the careful model reads the whole text into a plain list, the
             # fast model shapes it, and the code checks every name and quote against the text.
             read_ai = getattr(bot, "background_read_ai", None)
@@ -499,6 +500,7 @@ class BackgroundOffer(_Menu):
                     skip_name=lambda name: name_key(name) in known,
                     skip_pair=skip_pair,
                     progress=on_step,
+                    aliases=aliases,
                 )
             found = bg.merge(
                 [read.names],
@@ -533,7 +535,12 @@ class BackgroundOffer(_Menu):
                 queued,
                 ", an answer cut off" if cut else "",
                 read.stats.links_listed,
-                ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
+                ", ".join(
+                    f"{k}={n}"
+                    for k, n in sorted(read.stats.dropped.items())
+                    if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
+                )
+                or "nothing",
             )  # (counts only: the questions are the DM's own words, shown only to them)
             await summary(
                 interaction,
@@ -624,6 +631,41 @@ def _plural(kind: str, count: int) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
+def usable_alias(key: str) -> bool:
+    """Whether a spelling is distinctive enough to stand for a name on its own (#2762): after the
+    titles and articles are taken off ("the King" is nothing, "the Ashen King" is "ashen"), it
+    needs two words, or one of five letters or more. A bare title or a short word is shared by
+    too many people to be a name."""
+    core = [w for w in key.split() if w not in FILLER]
+    return bool(core) and (len(core) >= 2 or len(core[0]) >= 5)
+
+
+async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str, tuple[str, ...]]:
+    """Each confirmed public name of the campaign (its key) to the other confirmed public spellings
+    that mean only it (#2762), so a document that says "the Ashen King" can back a link the AI
+    wrote with the name. Every owner of a spelling is counted first (secret ones, ones not yet
+    confirmed, kinds the players don't know and the table's own people included) and a spelling
+    with more than one owner, or a secret one, is refused: nothing here may ever match the wrong
+    name or touch a secret. A spelling too plain to name anyone (a bare title) is left out too."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    owners: dict[str, set[str]] = {}
+    for key, entries in lookup.by_key.items():
+        owners.setdefault(key, set()).update(e.entity_id for e in entries)
+    for key, people in lookup.people_by_key.items():  # (a person at the table owns it too)
+        owners.setdefault(key, set()).update(f"person:{e.entity_id}" for e in people)
+    out: dict[str, list[str]] = {}
+    for key, entries in lookup.by_key.items():
+        if len(owners[key]) != 1 or not usable_alias(key):
+            continue
+        if not all(e.confirmed and not e.secret and not e.person for e in entries):
+            continue
+        (entity,) = owners[key]
+        canonical = name_key(lookup.entities[entity].name)
+        if key != canonical:
+            out.setdefault(canonical, []).append(key)
+    return {k: tuple(v) for k, v in out.items()}
+
+
 def _waiting_note(queued: int) -> str:
     if not queued:
         return ""
@@ -637,6 +679,7 @@ def _waiting_note(queued: int) -> str:
 KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
 LEFT_OUT = (
     "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
+    "spelling_clash", "which_way",
 )  # fmt: skip
 NOT_READ = ("cut_before_check", "over_cap")
 
@@ -1001,7 +1044,7 @@ class WhichOffer(_Menu):
                 f"🔎 Done. You picked {self.picked}, left out {self.dropped}. Picks are ready to "
                 "check once their names are confirmed (press 📜 Check the connections)."
             )
-        how = link_words(c.predicate, c.detail)
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         asked = _md(bare(c.word))  # (the end as written stays in the quote line)
@@ -1184,7 +1227,7 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail)
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -1266,6 +1309,7 @@ class ConnectionOffer(_Menu):
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
                     detail=c.detail,
+                    directional=kin.directional(c.detail),  # "a is the parent of b" keeps its order
                     unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
                 )  # fmt: skip
             except MemoryRuleError:
