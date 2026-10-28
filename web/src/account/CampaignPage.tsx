@@ -9,10 +9,12 @@ import { useEffect, useState } from "preact/hooks";
 import { campaignPage as words } from "../content/campaign-page";
 import { IMPORT_LIVE } from "../content/import-words";
 import { RECAPS_LIVE } from "../content/recap-words";
+import { SHEETS_LIVE } from "../content/sheets-switch";
 import { type AccountApi, ApiError, type Campaign, type CampaignPage } from "./api";
 import CampaignFacts from "./CampaignFacts";
 import CampaignNav from "./CampaignNav";
 import CampaignSettings from "./CampaignSettings";
+import LazyPanel from "./LazyPanel";
 
 /** The campaign in the address: `/account/campaigns/<server>.<campaign>`. */
 export function campaignRefFromPath(path: string): string | null {
@@ -127,6 +129,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
       <LinkList heading={words.groups.story} id="story" links={story} />
       <LinkList heading={words.groups.table} id="table" links={table} />
       <LinkList heading={words.groups.rules} id="rules" links={rules} />
+      {SHEETS_LIVE && api.campaignSheets && (
+        <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
+      )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
     </div>
   );
