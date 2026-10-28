@@ -118,6 +118,8 @@ export default function WebWaiting({
   const busy = sending !== null;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
+  // The DMbot's-check lines below are DM-only by the callers: Web.tsx draws this part for a DM alone, and the API
+  // answers only a DM of the campaign. Keep that true before drawing a check anywhere else.
   // A pronoun question can have one name or none, and its "Someone else" keeps the connection with a person
   // who isn't named yet, so it gets its own group and words; a name question keeps the "Neither" words.
   const names = list.which.filter((q) => !q.pronoun);
@@ -167,6 +169,7 @@ export default function WebWaiting({
                 <strong>{w.whichQuestion(q.word)}</strong>
               </p>
               <p id={`wq-${q.id}`}>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
+              {q.check && <p class="small muted">{w.checkLine(q.check)}</p>}
               {q.quote && <p class="muted small">“{q.quote}”</p>}
               {q.secret && <p class="small">{w.secretNote}</p>}
               {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
@@ -216,6 +219,7 @@ export default function WebWaiting({
                 <strong>{w.pronounQuestion(q.word)}</strong>
               </p>
               <p id={`wq-${q.id}`}>{startCap(w.whichLine(q.other, q.how, q.word, q.otherIsSubject))}</p>
+              {q.check && <p class="small muted">{w.checkLine(q.check)}</p>}
               {q.quote && <p class="muted small">“{q.quote}”</p>}
               {q.secret && <p class="small">{w.secretNote}</p>}
               {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
@@ -338,6 +342,7 @@ export default function WebWaiting({
                 {u.items.map((b) => (
                   <div key={b.id} class="panel">
                     <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
+                    {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
                     {b.ready ? (

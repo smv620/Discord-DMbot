@@ -20,10 +20,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dmbot.recaps.store import RecapRespelled
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +136,17 @@ def undone_note(old: str, lines: int, sessions: int) -> str:
         f"{_count(lines, 'line', 'lines')} of {_count(sessions, 'past session', 'past sessions')}"
     )
     return f"Put {old} back in {where}."
+
+
+@dataclass(frozen=True, slots=True)
+class RecapRespelled:
+    """What a fixed spelling did to a campaign's recaps (#2170): counts only."""
+
+    waiting: int = 0  # drafts and approved ones not yet posted
+    posted: int = 0
+    approvals_kept: int = 0
+    audio_old: int = 0  # recaps whose finished audio still says the old spelling
+    skipped: int = 0  # recaps the new spelling would make too long: left as they were
 
 
 def recaps_note(

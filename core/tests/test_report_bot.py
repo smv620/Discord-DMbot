@@ -234,8 +234,13 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
             patch.object(DMBot, "_run_report_request", never),
         ):
             await b.run_web_report_requests()
-        self.assertEqual(b._report_tasks, {})  # nothing kept; the door puts the row back later
+        import asyncio
+
+        await asyncio.sleep(0)  # a started task would run now, so `ran` below means something
+        self.assertEqual(b._report_tasks, {})
         self.assertEqual(ran, [])
+        # claim_next was never awaited: the row is untouched.
+        self.assertEqual(len(self.queue[1]), 1)
 
     async def test_without_a_store_nothing_happens(self) -> None:
         b: Any = DMBot.__new__(DMBot)

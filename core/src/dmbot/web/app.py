@@ -51,6 +51,7 @@ from dmbot.web import (
     handover_offer,
     imports,
     line_fixes,
+    my_lines,
     names_smart,
     npc_pages,
     offers,
@@ -1802,6 +1803,11 @@ def create_app(
         "unknown_person": (400, "unknown_person"),
     }
 
+    line_delete_refusals = {
+        "nothing_to_delete": (409, "nothing_to_delete"),  # no lines of theirs in that server
+        "too_soon": (429, "too_soon"),
+    }
+
     delete_refusals = {
         "not_found": (404, "not_found"),
         "not_the_owner": (403, "not_the_owner"),
@@ -2815,6 +2821,45 @@ def create_app(
                 )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/mine")
+    async def my_lines_counts(server_id: str, signed: Signed) -> dict[str, Any]:
+        """How many lines the signed-in person has in one of their servers, in how many sessions,
+        and their "Delete my transcripts" that is open, if any (#2769). Their own lines only;
+        counts, never words. 404 while DMBOT_WEB_LINE_DELETE is off."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.counts(db, session, server_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/transcripts/{server_id}/delete", status_code=202)
+    async def my_lines_delete(server_id: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to delete the signed-in person's own lines in one of their servers, as
+        Discord's 🗑 button does (#2769): `{id}`, the same one again while a request is open.
+        409 `nothing` when they have no lines there, 429 `too_soon` past ten requests an hour."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"id": await my_lines.request(db, session, server_id)}
+        except RecapError as err:
+            status, detail = line_delete_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/delete/{deletion_id}")
+    async def my_lines_status(server_id: str, deletion_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own deletion stands, in the shared progress shape, with the counts it
+        removed once done (#2769)."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.status(db, session, server_id, deletion_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:

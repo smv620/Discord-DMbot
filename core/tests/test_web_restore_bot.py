@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+import unittest
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignError, web_restore
 from dmbot.campaigns import parts as campaign_parts
 from dmbot.campaigns import store as campaign_store
@@ -740,6 +743,7 @@ class TheBotsOwnSteps(Restoring):
         me = self.host()
         me.guilds = [SimpleNamespace(id=GUILD), SimpleNamespace(id=999)]
         me.web_restores = self.restores
+        me._closing = False  # the loop checks it before each claim (#2896)
         await DMBot.run_web_restores(me)
         self.assertEqual((await self.row())["state"], "done")
 
@@ -813,3 +817,15 @@ class TheBotsOwnSteps(Restoring):
         await self.stage(await self.copy_of(self.one))
         got = await self.run_marked(host)
         self.assertEqual((got["state"], got["error"]), ("failed", "failed"))
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_restores_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_restores = SimpleNamespace(beat=MagicMock(), claim_next=AsyncMock(return_value=None))
+        b._closing = True
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with patch.object(DMBot, "guilds", guilds):
+            await b.run_web_restores()
+        b.web_restores.beat.assert_called_once()  # the round still began: the worker is alive
+        b.web_restores.claim_next.assert_not_awaited()

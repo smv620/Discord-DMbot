@@ -329,6 +329,19 @@ export interface Character {
 
 /** A server where this person said yes to recording (#1151). `on` is false when their yes was
  * given under older wording: DMbot records nobody until they say yes again in Discord. */
+/** How many lines of theirs DMbot holds in a server and in how many sessions, and their "Delete my transcripts" that
+ * is still open (#2769; core web/my_lines.py). Counts only. */
+export interface MyLines {
+  lines: number;
+  sessions: number;
+  open: { id: string; state: "waiting" | "working" } | null;
+}
+/** Where such a deletion stands: the shared progress shape, plus what it removed once done. */
+export interface MyLinesStatus extends JobProgress {
+  lines: number | null;
+  sessions: number | null;
+}
+
 export interface RecordingEntry {
   serverId: string;
   serverName: string;
@@ -1297,6 +1310,8 @@ export interface WebLink {
   /** How it reads from the second name when that differs ("has as a member"); null or missing
    * when it reads the same either way or has no fixed reading back (#2666). */
   back?: string | null;
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
   /** False: not revealed to the players yet (#2405). */
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
@@ -1620,6 +1635,8 @@ export interface WaitingBackstory {
   /** False while a name in it is not confirmed yet; `waitingOn` says which. */
   ready: boolean;
   waitingOn: string[];
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
 }
 export interface WaitingWhich {
   id: string;
@@ -1634,6 +1651,8 @@ export interface WaitingWhich {
   secret: boolean;
   upload: string;
   candidates: { id: string; name: string; limited: boolean }[];
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
 }
 export interface Waiting {
   claims: WaitingClaim[];
@@ -1805,6 +1824,7 @@ export type ApiErrorKind =
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
   | "backup-failed" // the copy could not be made, or was not ready in time (#2751)
+  | "nothing-to-delete" // the person has no lines of theirs in that server to delete (#2769)
   | "backup-too-many-files" // more transcripts files than one backup carries (#2772)
   | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
   | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
@@ -2238,6 +2258,14 @@ export interface AccountApi {
   characters?(): Promise<Character[]>;
   /** Stop recording me in one server (#1151). Starting again stays in Discord. */
   stopRecording(serverId: string): Promise<void>;
+  /** The person's own line counts in a server, and a deletion of theirs that is open (#2769). Missing from an older
+   * API, and answering `not-found` while the server has it switched off. */
+  myLines?(serverId: string): Promise<MyLines>;
+  /** Ask the bot to delete the person's own lines in the server, as Discord's 🗑 button does; the id of the request
+   * (the same one again while it is open). Refusals: `nothing-to-delete`, `too-soon`, `not-found`. */
+  deleteMyLines?(serverId: string): Promise<string>;
+  /** Where that deletion stands. */
+  myLinesStatus?(serverId: string, id: string): Promise<MyLinesStatus>;
   /** Where "Add DMbot" goes: the API, which sends the browser on to Discord. */
   installUrl(serverId: string): string;
   /** Say you added DMbot to a server it joined through a plain link. */
@@ -2383,6 +2411,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_action: "bad-action",
   bad_setting: "bad-setting",
   bad_value: "bad-value",
+  nothing_to_delete: "nothing-to-delete",
   plan_holder: "plan-holder",
   too_many: "too-many-masters",
   unknown_person: "unknown-person",
@@ -3316,6 +3345,11 @@ export function httpApi(
     stopRecording: async (serverId) => {
       await call("POST", `/me/recording/${encodeURIComponent(serverId)}/stop`);
     },
+    myLines: async (serverId) => (await call("GET", `/me/transcripts/${encodeURIComponent(serverId)}/mine`)) as MyLines,
+    deleteMyLines: async (serverId) =>
+      ((await call("POST", `/me/transcripts/${encodeURIComponent(serverId)}/delete`)) as { id: string }).id,
+    myLinesStatus: async (serverId, id) =>
+      (await call("GET", `/me/transcripts/${encodeURIComponent(serverId)}/delete/${encodeURIComponent(id)}`)) as MyLinesStatus,
     requestDelete: async () =>
       (
         (await call("POST", "/account/delete/request")) as {

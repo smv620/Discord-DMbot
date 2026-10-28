@@ -10,7 +10,7 @@ import dataclasses
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import PropertyMock, patch
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignStore
@@ -470,3 +470,14 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         b.web_rule_actions = None
         b.rule_sets = None
         await b.run_web_rule_sharing()
+
+    async def test_while_closing_rule_sharing_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_rule_actions = SimpleNamespace(claim_next=AsyncMock(return_value=None))
+        b._rule_tasks = {}
+        b._closing = True
+        b.rule_sets = object()
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with patch.object(DMBot, "guilds", guilds):
+            await b.run_web_rule_sharing()
+        b.web_rule_actions.claim_next.assert_not_awaited()
