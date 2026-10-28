@@ -46,8 +46,8 @@ from dmbot.dm_screen.handover import (
     TOLD_EXPIRED_UNSENT,
     TOLD_WITHDRAWN,
     deliver_offer,
+    email_owner,
     md,
-    owner_email,
 )
 from dmbot.logs import log_context
 from dmbot.mentions import NO_PINGS
@@ -129,6 +129,7 @@ class SiteOffers:
         post: Callable[[int, str], Awaitable[object]] | None = None,
         mover: HandoverMover | None = None,
         owner_mail: OwnerMail | None = None,
+        site_url: str = "",
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], int] = lambda: int(time.time()),
         clock: Callable[[], float] = time.monotonic,
@@ -140,6 +141,7 @@ class SiteOffers:
         self._spawn = spawn
         self._deliver = deliver
         self._post = post  # a message in a channel: the #dm-screen note on an accept
+        self._site_url = site_url
         self._owner_mail = owner_mail  # the owner is also told by email, when there is an address
         self._mover = mover  # moves a campaign to the new owner's other server (#2532, slice C)
         if mover is not None:
@@ -324,10 +326,10 @@ class SiteOffers:
                 if offer is None or campaign is None:
                     return
                 await _tell_decision(guild, offer, campaign)
-                if offer.status in ("accepted", "declined"):
-                    await self._email_owner(offer, campaign.name, offer.status)
                 if offer.status == "accepted":  # as the Discord Accept button does
                     await self._screen_note(campaign, offer)
+                if offer.status in ("accepted", "declined"):  # last: a slow mail server waits
+                    await self._email_owner(offer, campaign.name, offer.status)
             except Exception as exc:
                 # Only the error's kind: a database error's text can quote the row (names).
                 log.error(
@@ -339,26 +341,10 @@ class SiteOffers:
     async def _email_owner(
         self, offer: HandoverOffer, campaign_name: str, kind: str, *, server: str = ""
     ) -> None:
-        """The owner's email about the offer, once for each kind of ending (the mail log keeps one
-        row for the kind), if DMbot has an address for them. Best effort; the private message is
-        the main word, and a failure here is only logged by its type."""
-        if self._owner_mail is None:
-            return
-        try:
-            subject, body = owner_email(
-                kind,
-                name=offer.to_name or "The person you emailed",
-                campaign=campaign_name,
-                server=server,
-            )
-            await self._owner_mail(
-                offer.from_user_id,
-                f"handover-{kind}:{offer.guild_id}-{offer.id}",
-                subject,
-                body,
-            )
-        except Exception as exc:
-            log.warning("Couldn't email an owner about offer %s: %s", offer.id, type(exc).__name__)
+        """The owner's email about the offer (see `handover.email_owner`)."""
+        await email_owner(
+            self._owner_mail, offer, campaign_name, kind, server=server, site=self._site_url
+        )
 
     async def _screen_note(self, campaign: Campaign, offer: HandoverOffer) -> None:
         """The accept noted in the campaign's #dm-screen, as for the Discord button (it
@@ -442,7 +428,6 @@ class SiteOffers:
         try:
             if campaign is not None:  # deleted since: its offers go with it
                 await _tell_expired(guild, offer, campaign)
-                await self._email_owner(offer, campaign.name, "expired")
         except BaseException as exc:
             # Not told: let it go, so the next sweep tries again.
             with contextlib.suppress(Exception):
@@ -453,6 +438,11 @@ class SiteOffers:
                 log.warning("Discord failed announcing offer %s's end (%s)", offer.id, exc)
             else:
                 log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
+            return
+        # Only once the notice is kept: a cancel during the email must not release it, or the
+        # next sweep would send the Discord message again.
+        if campaign is not None:
+            await self._email_owner(offer, campaign.name, "expired")
 
     async def send(self, guild_id: int, offer_id: int) -> None:
         """Send one offer's private message, if this process serves its server and nobody

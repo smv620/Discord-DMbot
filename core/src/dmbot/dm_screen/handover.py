@@ -29,7 +29,7 @@ import logging
 import re
 import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -220,13 +220,21 @@ def _plain(text: str) -> str:
 
 
 def owner_email(
-    kind: str, *, name: str, campaign: str, server: str = "", days: int = HANDOVER_DAYS
+    kind: str,
+    *,
+    name: str,
+    campaign: str,
+    server: str = "",
+    days: int = HANDOVER_DAYS,
+    site: str = "",
+    unsent: bool = False,
 ) -> tuple[str, str]:
     """(subject, body) of the email to the owner about their offer (#2532, slice D; PLAN: "The
     owner is told ... by email when DMbot has one"). Plain text, the same facts as the private
     message. `kind` is accepted, declined, expired or moved. The address the offer went to is never
     in it (the owner typed it, and never learns more about it than that), and an offer made by
-    email has no name, so `name` is then "The person you emailed"."""
+    email has no name, so `name` is then "The person you emailed". `site` is the website's address
+    (the expired email links its account page); `unsent`: Discord never delivered the offer."""
     name, campaign, server = _plain(name), _plain(campaign), _plain(server)
     if kind == "accepted":
         return (
@@ -240,11 +248,16 @@ def owner_email(
             f'{name} said no thanks to your offer of "{campaign}". It stays yours.',
         )
     if kind == "expired":
+        page = f"{site.rstrip('/')}/account" if site else "your account page on the DMbot website"
+        why = (
+            f"DMbot couldn't get the offer to {name} within {days} days, so it ended."
+            if unsent
+            else f"They didn't answer within {days} days, so the offer ended."
+        )
         return (
             f'Your offer of "{campaign}" ended',
-            f"They didn't answer within {days} days, so the offer ended. The campaign is still "
-            "yours. You can offer it again from Settings > Campaign management > Hand over in "
-            "Discord, or from your account page on the DMbot website.",
+            f"{why} The campaign is still yours. You can offer it again from Settings > "
+            f"Campaign management > Hand over in Discord, or from {page}.",
         )
     if kind == "moved":
         where = f'the Discord server "{server}"' if server else "another Discord server"
@@ -254,6 +267,50 @@ def owner_email(
             "the old server. You are still one of its DMs.",
         )
     raise ValueError(f"no email for {kind!r}")
+
+
+async def email_owner(
+    mail: Callable[[int, str, str, str], Awaitable[object]] | None,
+    offer: HandoverOffer,
+    campaign_name: str,
+    kind: str,
+    *,
+    server: str = "",
+    site: str = "",
+) -> None:
+    """The owner's email about how their offer ended, from the Discord buttons and the website
+    alike. The kind key is the same on both paths, so the mail log lets only one email through
+    when both fire. Best effort; a failure is logged by its type only."""
+    if mail is None:
+        return
+    try:
+        subject, body = owner_email(
+            kind,
+            name=offer.to_name or "The person you emailed",
+            campaign=campaign_name,
+            server=server,
+            site=site,
+            unsent=kind == "expired" and not offer.via_email and offer.delivered_at is None,
+        )
+        await mail(
+            offer.from_user_id, f"handover-{kind}:{offer.guild_id}-{offer.id}", subject, body
+        )
+    except Exception as exc:
+        log.warning("Couldn't email an owner about offer %s: %s", offer.id, type(exc).__name__)
+
+
+async def _email_from_button(
+    interaction: discord.Interaction, offer: HandoverOffer, campaign: Campaign, kind: str
+) -> None:
+    client = interaction.client
+    site = getattr(getattr(client, "settings", None), "site_url", "")
+    await email_owner(
+        getattr(client, "email_hand_over_owner", None),
+        offer,
+        campaign.name,
+        kind,
+        site=site if isinstance(site, str) else "",
+    )
 
 
 def use_settings_card(card: Card) -> None:
@@ -704,6 +761,7 @@ class AcceptOfferButton(
             names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
             await _tell_person(guild, offer.from_user_id, TOLD_ACCEPTED.format(**names))
             await _tell_screen(interaction, campaign, SCREEN_ACCEPTED.format(**names))
+            await _email_from_button(interaction, offer, campaign, "accepted")
 
 
 class DeclineOfferButton(
@@ -762,6 +820,7 @@ class DeclineOfferButton(
         if campaign is not None:
             names = {"name": md(offer.to_name), "campaign": md(campaign.name)}
             await _tell_person(guild, offer.from_user_id, TOLD_DECLINED.format(**names))
+            await _email_from_button(interaction, offer, campaign, "declined")
 
 
 class WithdrawOfferButton(

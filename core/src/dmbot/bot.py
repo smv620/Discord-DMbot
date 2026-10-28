@@ -1639,7 +1639,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
-            owner_mail=self._email_hand_over_owner,  # the owner also hears by email (#2532)
+            owner_mail=self.email_hand_over_owner,  # the owner also hears by email (#2532)
+            site_url=self.settings.site_url,
             # a hand-over to another server: its audio files go with it, and the caches that are
             # kept by campaign id alone are dropped
             mover=HandoverMover(
@@ -10303,7 +10304,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """A campaign's complete copy, as Discord's Download makes it (#2554)."""
         return await self.campaigns.export(guild_id, campaign_id)
 
-    async def _email_hand_over_owner(
+    async def email_hand_over_owner(
         self, owner_id: int, kind: str, subject: str, body: str
     ) -> None:
         """An owner's email about their hand-over offer (#2532, slice D): to the address DMbot has

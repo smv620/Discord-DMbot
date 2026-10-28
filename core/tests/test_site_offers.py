@@ -994,6 +994,50 @@ class OwnerEmail(Harness):
         self.assertIn("didn't answer within 7 days", body)
         self.assertIn("still yours", body)
 
+    async def test_the_expired_email_gives_the_full_account_address(self) -> None:
+        self.offers._site_url = "https://dmbot.example.com/"
+        self.store.to_end = [replace(offer(), status="expired", delivered_at=NOW)]
+        await self.offers.sweep_server(GUILD)
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("https://dmbot.example.com/account", body)
+
+    async def test_an_offer_that_never_reached_them_is_emailed_as_not_delivered(self) -> None:
+        self.store.to_end = [replace(offer(), status="expired", delivered_at=None)]
+        await self.offers.sweep_server(GUILD)
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("couldn't get the offer to Bea", body)
+        self.assertNotIn("didn't answer", body)
+
+    async def test_a_cancel_during_the_email_does_not_send_the_notice_twice(self) -> None:
+        self.store.to_end = [replace(offer(), status="expired", delivered_at=NOW)]
+
+        async def stuck(*_: Any) -> None:
+            raise asyncio.CancelledError
+
+        self.offers._owner_mail = stuck
+        with contextlib.suppress(asyncio.CancelledError):
+            await self.offers.sweep_server(GUILD)
+        self.offers._owner_mail = None
+        await self.offers.sweep_server(GUILD)
+        self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)  # the notice was kept
+
+    async def test_the_accept_email_comes_after_the_screen_note(self) -> None:
+        order: list[str] = []
+        self.answered("accepted")
+        self.store.campaign.dm_screen_channel_id = 55
+
+        async def post(channel_id: int, text: str) -> bool:
+            order.append("screen")
+            return True
+
+        async def mail(*_: Any) -> None:
+            order.append("email")
+
+        self.offers._post = post
+        self.offers._owner_mail = mail
+        await self.decide_quietly(GUILD, 1)
+        self.assertEqual(order, ["screen", "email"])
+
     async def test_a_move_to_another_server_is_emailed_with_the_servers_name(self) -> None:
         from dmbot.campaigns.moves import Moved
 
@@ -1013,7 +1057,7 @@ class OwnerEmail(Harness):
     ) -> None:
         self.email_error = RuntimeError("smtp said to ann@example.com")
         self.answered("accepted")
-        with self.assertLogs("dmbot.dm_screen.site_offers", "WARNING") as logged:
+        with self.assertLogs("dmbot.dm_screen.handover", "WARNING") as logged:
             await self.offers.decided(GUILD, 1)
         self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)  # still told in Discord
         text = "\n".join(logged.output)
@@ -1114,7 +1158,7 @@ class TheEmailText(unittest.TestCase):
 
 
 class TheBotsEmailToTheOwner(unittest.IsolatedAsyncioTestCase):
-    """`DMBot._email_hand_over_owner`: the address comes from the owner's account, the mail log
+    """`DMBot.email_hand_over_owner`: the address comes from the owner's account, the mail log
     keeps one row for each kind, and without an address or a mailer nothing happens."""
 
     def bot(self, *, mailer: Any = "mailer", meter: Any = "meter") -> Any:
@@ -1133,7 +1177,7 @@ class TheBotsEmailToTheOwner(unittest.IsolatedAsyncioTestCase):
         with mock.patch(
             "dmbot.bot.accounts.account_email", mock.AsyncMock(return_value="owner@example.com")
         ):
-            await DMBot._email_hand_over_owner(bot, OWNER, "handover-accepted:1-1", "S", "B")
+            await DMBot.email_hand_over_owner(bot, OWNER, "handover-accepted:1-1", "S", "B")
         bot.mailer.send.assert_awaited_once_with(
             user_id=OWNER,
             kind="handover-accepted:1-1",
@@ -1147,14 +1191,14 @@ class TheBotsEmailToTheOwner(unittest.IsolatedAsyncioTestCase):
 
         bot = self.bot()
         with mock.patch("dmbot.bot.accounts.account_email", mock.AsyncMock(return_value=None)):
-            await DMBot._email_hand_over_owner(bot, OWNER, "handover-accepted:1-1", "S", "B")
+            await DMBot.email_hand_over_owner(bot, OWNER, "handover-accepted:1-1", "S", "B")
         bot.mailer.send.assert_not_awaited()
 
     async def test_no_mailer_or_no_database_means_no_email(self) -> None:
         from dmbot.bot import DMBot
 
-        await DMBot._email_hand_over_owner(self.bot(mailer=None), OWNER, "k", "S", "B")
-        await DMBot._email_hand_over_owner(self.bot(meter=None), OWNER, "k", "S", "B")
+        await DMBot.email_hand_over_owner(self.bot(mailer=None), OWNER, "k", "S", "B")
+        await DMBot.email_hand_over_owner(self.bot(meter=None), OWNER, "k", "S", "B")
 
 
 if __name__ == "__main__":
