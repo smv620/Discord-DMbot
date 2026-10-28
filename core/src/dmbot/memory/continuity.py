@@ -200,10 +200,14 @@ def _is_ended(world: World, entity_id: str) -> State | None:
     return state if state is not None and state.condition in ENDED else None
 
 
-def conflicts_in(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
-    """The possible conflicts between these claims and the confirmed story. Pure. A claim that
-    names nothing DMbot knows, or fits no rule, makes none. At most one conflict for each claim
-    and rule; the surest first."""
+def claim_conflicts(claims: Sequence[Claim], world: World, levels: Levels) -> list[Conflict]:
+    """The possible conflicts between claims waiting for a yes (what someone said at the table) and
+    the confirmed story. Pure. A claim that names nothing DMbot knows, or fits no rule, makes
+    none. At most one conflict for each claim and rule; the surest first.
+
+    This is the claims check only. Whether two assertions the story already holds clash, by point
+    of view and with story and belief times, is `contradictions.py`: that is the one answer to
+    "do these clash?" for held beliefs, graded by PlotBot (#2660)."""
     found: list[Conflict | None] = []
     ended = {
         eid: Ended(state.from_session_at, state.created_at)
@@ -434,7 +438,7 @@ class ContinuityStore:
         if not ready and not pinned:
             return Report((), facts, sessions, ready, len(waiting))
         world = await self._world(guild_id, campaign_id, opted_in, pinned)
-        found = conflicts_in(waiting, world, levels)
+        found = claim_conflicts(waiting, world, levels)
         if not ready:
             found = [c for c in found if c.pinned]
         return Report(tuple(found), facts, sessions, ready, len(waiting))
@@ -561,7 +565,7 @@ class ContinuityStore:
             raise MemoryRuleError("DMbot doesn't know that button any more.")
         pinned = await self._memory.pinned_connections(guild_id, campaign_id)
         world = await self._world(guild_id, campaign_id, opted_in, pinned)
-        mine = [c for c in conflicts_in([claim], world, levels) if c.claim.id == claim_id]
+        mine = [c for c in claim_conflicts([claim], world, levels) if c.claim.id == claim_id]
         clash_ids = tuple(dict.fromkeys(i for c in mine for i in c.clash_ids))
         revive = {c.revive_id: c.ended_condition for c in mine if c.revive_id is not None}
         # "They learned it" (#1649): the character joins the clue's list, dated to the session.

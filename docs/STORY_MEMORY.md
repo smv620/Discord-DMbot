@@ -756,9 +756,9 @@ time travel or alternate realities, and that decision is recorded in docs/PLAN.m
   screen it is posted there (and pulled back if the screen opens up); with peek or open it goes to each DM by
   private message and the screen never carries it. If the private messages are closed the screen says only how
   many wait, and they stay untold for the next session. A clash is marked told only once a message reached
-  a DM. No AI call. The minor ones are not told here; they wait for the after-session report. Still to
-  build: that report, and the point-of-view reading in `continuity.conflicts_in` (not wired until Supervisor
-  says).
+  a DM. No AI call. The minor ones are not told here; they wait for the after-session report. The
+  point-of-view reading is `contradictions.py` (the one answer to "do these held beliefs clash?"); what
+  `continuity.claim_conflicts` answers is only whether a claim waiting for a yes clashes with the confirmed story.
 
 **Built (#2661 slice 2, migration 0244): the report's storage.** `memory_differences` keeps what the
 party (or a player's character) believes that differs from The truth, with PlotBot's sort (disguised,
