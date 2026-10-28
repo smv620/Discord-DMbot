@@ -1887,14 +1887,14 @@ class RecapFeatures:
                 await self.run_web_backups()
             except Exception as exc:
                 log.warning("The website backups failed: %s", type(exc).__name__)
-            try:
-                await self.run_web_line_deletions()
-            except Exception as exc:
-                log.warning("The website line deletions failed: %s", type(exc).__name__)
             try:  # last: a report is many AI calls, and the quick ones above must not wait for it
                 await self.run_web_report_requests()
             except Exception as exc:
                 log.warning("The website report requests failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_line_deletions()
+            except Exception as exc:
+                log.warning("The website line deletions failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
@@ -1906,10 +1906,10 @@ class RecapFeatures:
                             await self.name_actions.sweep(guild.id)
                         if self.web_settings is not None:
                             await self.web_settings.sweep(guild.id)
-                        if self.web_line_deletions is not None:
-                            await self.web_line_deletions.sweep(guild.id)
                         if self.web_rule_actions is not None:
                             await self.web_rule_actions.sweep(guild.id)
+                        if self.web_line_deletions is not None:
+                            await self.web_line_deletions.sweep(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
