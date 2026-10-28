@@ -298,6 +298,7 @@ class RecapFeatures:
         async def run_name_actions(self) -> None: ...
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
+        async def run_web_report_requests(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -1877,6 +1878,10 @@ class RecapFeatures:
                 await self.run_web_backups()
             except Exception as exc:
                 log.warning("The website backups failed: %s", type(exc).__name__)
+            try:  # last: a report is many AI calls, and the quick ones above must not wait for it
+                await self.run_web_report_requests()
+            except Exception as exc:
+                log.warning("The website report requests failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):

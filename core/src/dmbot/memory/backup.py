@@ -129,6 +129,9 @@ _TEXT_LIMITS = {
     "details": DETAIL_MAX,
     "prompt_version": 40,
     "model": 80,
+    "unnamed_role": 40,  # a person the story never names (#2790)
+    "unnamed_what": NAME_MAX,
+    "decided": 60,  # how a pronoun was settled (#2790): fixed words and a number
 }
 _CHOICES: dict[str, Sequence[str]] = {
     "status": (
@@ -150,7 +153,7 @@ _CHOICES: dict[str, Sequence[str]] = {
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
-        "perspective_id", "manipulated_by"}  # fmt: skip
+        "perspective_id", "manipulated_by", "unnamed_anchor"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
@@ -162,6 +165,7 @@ _NULLABLE = {
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
+    "unnamed_anchor", "unnamed_role", "unnamed_what", "decided",
 }  # fmt: skip
 
 
@@ -205,6 +209,7 @@ def _valid(column: str, value: object) -> bool:
         "party",
         "hidden_from_players",
         "made_before_name_gate",
+        "unnamed",
         "unrevealed",
         "directional",
         "pinned",
@@ -437,6 +442,10 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "hidden_from_players": False,  # from before #2321
                 "made_before_name_gate": True,  # a file from before the gate holds old rows (#2358)
                 "manipulated_by": None,  # from before beliefs (#2409)
+                "unnamed": False,  # everyone was named before #2790
+                "unnamed_anchor": None,
+                "unnamed_role": None,
+                "unnamed_what": None,
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "belief":
@@ -461,7 +470,14 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 version = 1
             # from before #2404: every connection a file holds had been shown to the players;
             # from before #2457: no family role had a direction
-            raw = {"unrevealed": False, "directional": False, **raw, "definition_version": version}
+            # from before #2790: no connection had a pronoun DMbot settled
+            raw = {
+                "unrevealed": False,
+                "directional": False,
+                "decided": None,
+                **raw,
+                "definition_version": version,
+            }
         out.append(raw)
     return out
 

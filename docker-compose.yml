@@ -155,6 +155,10 @@ services:
       MAIL_REPLY_DOMAIN: ${MAIL_REPLY_DOMAIN:-}
       SUPPORT_AI_MODEL: ${SUPPORT_AI_MODEL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Sharing house rules from the website (#2783): off, the routes that queue a choice are 404.
+      DMBOT_WEB_RULE_SHARING: ${DMBOT_WEB_RULE_SHARING:-0}
+      # "Make it again" on a session's report (#2661): off, the route that queues the request is 404.
+      DMBOT_WEB_REPORT_MAKE: ${DMBOT_WEB_REPORT_MAKE:-0}
       # Search by meaning on the Names page (#2733): the same switch, key and models as the bot.
       DMBOT_MEANING_SEARCH: ${DMBOT_MEANING_SEARCH:-0}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
@@ -183,6 +187,8 @@ services:
       DMBOT_RECAPS: ${DMBOT_RECAPS:-0}
       # The same switch as the bot's (#2532): off, the email hand-over routes answer 404.
       DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
+      # Game masters added and removed on the website (#2768): off, those routes answer 404.
+      DMBOT_WEB_CO_DMS: ${DMBOT_WEB_CO_DMS:-0}
       DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

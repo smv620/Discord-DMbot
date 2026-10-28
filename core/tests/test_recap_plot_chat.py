@@ -177,6 +177,7 @@ class Talking(PlotBase):
                 " has_function_privilege('public', oid, 'EXECUTE') AS public_may"
                 " FROM pg_proc WHERE proname IN ('dmbot_plot_chat_send', 'dmbot_plot_chat_read',"
                 " 'dmbot_plot_proposal')"
+                " AND pronamespace = current_schema()::regnamespace"
             )
             rows = await cur.fetchall()
         self.assertGreaterEqual(len(rows), 3)
