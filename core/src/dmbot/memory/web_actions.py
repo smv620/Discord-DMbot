@@ -45,6 +45,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.store import PERSON, MemoryStore
+from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
@@ -611,8 +612,19 @@ async def _answer_waiting(
     if a.action in ("backstory-which-pick", "backstory-which-neither"):
         # "Which Mara?" (#2652): the call the Discord card makes. `text` is the entry picked (one
         # of the question's candidates, which `pick_which` checks again); Neither drops it.
-        picked = a.text if a.action == "backstory-which-pick" else None
-        result = await w.backstory.pick_which(guild_id, cid, a.target_id, picked)
+        if a.action == "backstory-which-neither":
+            # (the same call as Discord's: a pronoun's question keeps its connection, #2790)
+            question = next(
+                (q for q in await w.backstory.which_waiting(guild_id, cid) if q.id == a.target_id),
+                None,
+            )
+            if question is None:
+                return _failed(GONE)
+            result = await none_of_these(memory, w.backstory, guild_id, cid, question)
+            if result == COULD_NOT_KEEP:
+                return _failed(CANNOT_WRITE)
+        else:
+            result = await w.backstory.pick_which(guild_id, cid, a.target_id, a.text)
         if result == FULL:
             return _failed(QUEUE_FULL)
         return Outcome() if result == DONE else _failed(GONE)
