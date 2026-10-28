@@ -708,8 +708,8 @@ class TheRoute(Reading):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.app = create_app(
-            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://s.example"),
-            clock=lambda: NOW,
+            settings(report_make_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
         )  # fmt: skip
         self.client = await self.client_for(ALICE)
 
@@ -759,3 +759,249 @@ class TheRoute(Reading):
         self.assertEqual((got.status_code, got.json()), (403, {"error": "not_allowed"}))
         other = await self.client.get(f"/me/campaigns/{GUILD}.{'0' * 32}/sessions/{S1}/report")
         self.assertEqual(other.status_code, 403)
+
+
+class TheRequest(Reading):
+    """ "Make it again" (#2661): queued for the bot by a DM; the page sees the report being made, at
+    the stage `waiting`, until the bot starts its run (which then speaks for itself)."""
+
+    async def ask(self, at: int = S1, who: Any = None, ref: str | None = None) -> dict[str, Any]:
+        return await report.make_again(self.web, who or self.session, ref or self.cref, at)
+
+    async def refused_ask(self, at: int = S1, who: Any = None, ref: str | None = None) -> str:
+        with self.assertRaises(RecapError) as err:
+            await self.ask(at, who, ref)
+        return err.exception.code
+
+    async def rows(self) -> list[Any]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT session_at, state, user_id, error FROM web_report_requests ORDER BY seq"
+            )
+            return list(await cur.fetchall())
+
+    async def test_a_request_is_queued_and_the_report_reads_as_being_made_at_waiting(self) -> None:
+        got = await self.ask()
+        self.assertEqual(got["state"], "making")
+        p = got["progress"]
+        self.assertEqual(
+            (p["stage"], p["state"], p["reason"], p["done"]), ("waiting", "running", None, None)
+        )
+        rows = await self.rows()
+        self.assertEqual(
+            [(r["session_at"], r["state"], r["user_id"]) for r in rows], [(S1, "waiting", ALICE.id)]
+        )
+        self.assertEqual((await self.read())["state"], "making")  # and a later look agrees
+
+    async def test_a_second_press_queues_nothing_more(self) -> None:
+        await self.ask()
+        await self.ask()
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_the_bots_own_run_speaks_for_itself_once_it_starts(self) -> None:
+        await self.ask()
+        now = int((await self.one_row("SELECT extract(epoch FROM now())::BIGINT AS n"))["n"])
+        await self.sql(
+            "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage,"
+            " done, total, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'making', 'grading', 3, 10, %s, %s)",
+            GUILD, self.one.id, S1, now - 20, now - 2,
+        )  # fmt: skip
+        p = (await self.read())["progress"]
+        self.assertEqual((p["stage"], p["done"], p["total"]), ("grading", 3, 10))
+
+    async def test_a_report_being_made_right_now_is_not_queued_again(self) -> None:
+        now = int((await self.one_row("SELECT extract(epoch FROM now())::BIGINT AS n"))["n"])
+        await self.sql(
+            "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage,"
+            " done, total, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'making', 'reading', 0, 0, %s, %s)",
+            GUILD, self.one.id, S1, now - 20, now - 2,
+        )  # fmt: skip
+        got = await self.ask()
+        self.assertEqual(got["state"], "making")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_stalled_run_can_be_asked_for_again(self) -> None:
+        now = int((await self.one_row("SELECT extract(epoch FROM now())::BIGINT AS n"))["n"])
+        await self.sql(
+            "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage,"
+            " done, total, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'making', 'grading', 1, 10, %s, %s)",
+            GUILD, self.one.id, S1, now - 5000, now - 4000,
+        )  # fmt: skip
+        await self.ask()
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_a_failed_request_with_no_report_reads_as_failed(self) -> None:
+        await self.ask()
+        await self.sql("UPDATE web_report_requests SET state = 'failed', error = 'unavailable'")
+        got = await self.read()
+        self.assertEqual(
+            (got["state"], got["progress"]["state"], got["progress"]["reason"]),
+            ("failed", "failed", "failed"),
+        )
+
+    async def test_a_failed_request_leaves_an_existing_report_as_it_was(self) -> None:
+        await self.difference("disguised")
+        await self.ask()
+        await self.sql("UPDATE web_report_requests SET state = 'failed', error = 'unavailable'")
+        got = await self.read()
+        self.assertEqual(got["state"], "ready")
+        # ...and says that this try did not work, so the DM is not left looking at an old report
+        self.assertEqual(got["lastRequest"]["state"], "failed")
+
+    async def test_a_report_that_was_never_asked_again_has_no_failed_request(self) -> None:
+        await self.difference("disguised")
+        self.assertNotIn("lastRequest", await self.read())
+
+    async def test_a_done_request_is_not_shown_as_making(self) -> None:
+        await self.ask()
+        await self.sql("UPDATE web_report_requests SET state = 'done'")
+        self.assertEqual((await self.read())["state"], "none")
+
+    async def test_a_request_the_bot_took_and_went_quiet_on_goes_back_to_waiting(self) -> None:
+        await self.ask()
+        await self.sql(
+            "UPDATE web_report_requests SET state = 'working', claimed_at = 5,"
+            " updated_at = extract(epoch FROM now())::BIGINT - 700"
+        )
+        await self.ask(S2)  # the next press tidies the queue
+        rows = {r["session_at"]: r for r in await self.rows()}
+        self.assertEqual(rows[S1]["state"], "waiting")
+
+    async def test_five_requests_an_hour_for_a_campaign_and_no_more(self) -> None:
+        await self.sql(
+            "INSERT INTO web_report_requests (guild_id, campaign_id, id, user_id, session_at,"
+            " state, created_at, updated_at) SELECT %s, %s, md5(g::text), %s, 9000 + g, 'done',"
+            " extract(epoch FROM now())::BIGINT, extract(epoch FROM now())::BIGINT"
+            " FROM generate_series(1, 5) g",
+            GUILD, self.one.id, ALICE.id,
+        )  # fmt: skip
+        self.assertEqual(await self.refused_ask(S1), "too_soon")
+        self.assertEqual(len(await self.rows()), 5)
+
+    async def test_a_session_that_is_not_the_campaigns_is_not_found(self) -> None:
+        self.assertEqual(await self.refused_ask(S1 + 7), "not_found")
+        for bad in (0, -1, 10**12, True):
+            self.assertEqual(await self.refused_ask(bad), "not_found")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_a_player_and_another_campaigns_dm_are_refused(self) -> None:
+        bob = await self.signed(BOB)
+        self.assertEqual(await self.refused_ask(who=bob), "not_allowed")
+        self.assertEqual(await self.refused_ask(ref=f"{GUILD}.{'0' * 32}"), "not_allowed")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_the_doors_answer_nothing_to_anyone_who_is_not_a_dm_even_by_sql(self) -> None:
+        await self.ask()
+        bob = await self.signed(BOB)
+        async with self.db.user(bob.user_id, session=bob.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(GUILD),))
+            for door in ("dmbot_web_report_make", "dmbot_web_report_request"):
+                cur = await conn.execute(
+                    f"SELECT {door}(%s, %s, %s) AS r", (GUILD, self.one.id, S1)
+                )
+                self.assertIsNone((await cur.fetchone() or {}).get("r"), door)
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_the_website_role_cannot_touch_the_table_itself(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            for right in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                cur = await conn.execute(
+                    "SELECT has_table_privilege('dmbot_web', 'web_report_requests', %s) AS can",
+                    (right,),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                self.assertFalse(row["can"], right)
+
+    async def signed(self, user: Any) -> Any:
+        token = await sessions.sign_in(self.web, user, [THURSDAY], now=NOW, days=30)
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
+
+
+class TheMakeRoute(TheRoute):
+    async def test_make_again_over_http(self) -> None:
+        url = f"/me/campaigns/{self.cref}/sessions/{S1}/report/make"
+        got = await self.client.post(url)
+        self.assertEqual(got.status_code, 202)
+        body = got.json()
+        self.assertEqual((body["state"], body["progress"]["stage"]), ("making", "waiting"))
+        again = await self.client.post(url)
+        self.assertEqual((again.status_code, again.json()["state"]), (202, "making"))
+
+    async def test_make_again_is_404_while_the_server_switch_is_off(self) -> None:
+        off = create_app(
+            settings(), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+        )  # fmt: skip
+        self.app = off
+        client = await self.client_for(ALICE)
+        got = await client.post(f"/me/campaigns/{self.cref}/sessions/{S1}/report/make")
+        self.assertEqual((got.status_code, got.json()), (404, {"error": "not_found"}))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM web_report_requests")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)  # (nothing was queued)
+
+    async def test_refusals_over_http_for_make_again(self) -> None:
+        base = f"/me/campaigns/{self.cref}/sessions"
+        for bad in ("abc", "0", "-5", "9" * 40, str(S1 + 7)):
+            got = await self.client.post(f"{base}/{bad}/report/make")
+            self.assertEqual((got.status_code, got.json()), (404, {"error": "not_found"}), bad)
+        bob = await self.client_for(BOB)
+        got = await bob.post(f"{base}/{S1}/report/make")
+        self.assertEqual((got.status_code, got.json()), (403, {"error": "not_allowed"}))
+        anonymous = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )
+        self.addAsyncCleanup(anonymous.aclose)
+        self.assertEqual((await anonymous.post(f"{base}/{S1}/report/make")).status_code, 401)
+
+
+class TheRequestEdges(TheRequest):
+    async def test_a_request_nobody_took_in_half_an_hour_reads_as_failed(self) -> None:
+        await self.ask()
+        await self.sql(
+            "UPDATE web_report_requests SET created_at = created_at - 2000,"
+            " updated_at = updated_at - 2000"
+        )
+        got = await self.read()
+        self.assertEqual((got["state"], got["progress"]["reason"]), ("failed", "failed"))
+
+    async def test_the_next_press_ends_such_a_request_and_queues_a_new_one(self) -> None:
+        await self.ask()
+        await self.sql("UPDATE web_report_requests SET created_at = created_at - 2000")
+        got = await self.ask()
+        self.assertEqual(got["state"], "making")
+        states = sorted((r["state"], r["error"]) for r in await self.rows())
+        self.assertEqual(states, [("failed", "not_taken"), ("waiting", "")])
+
+    async def test_a_report_made_after_the_request_is_not_hidden_by_a_row_left_open(self) -> None:
+        await self.difference("disguised")
+        await self.ask()
+        now = int((await self.one_row("SELECT extract(epoch FROM now())::BIGINT AS n"))["n"])
+        await self.sql(
+            "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage,"
+            " done, total, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'ready', 'sorting', 4, 4, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, session_at) DO UPDATE SET state = 'ready',"
+            " updated_at = EXCLUDED.updated_at",
+            GUILD, self.one.id, S1, now, now + 5,
+        )  # fmt: skip
+        self.assertEqual((await self.read())["state"], "ready")
+
+    async def test_the_door_itself_refuses_a_time_that_is_not_the_campaigns_session(self) -> None:
+        async with self.db.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(GUILD),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_report_make(%s, %s, %s) AS r", (GUILD, self.one.id, S1 + 7)
+            )
+            self.assertEqual(((await cur.fetchone()) or {})["r"]["status"], "no_session")
+        self.assertEqual(await self.rows(), [])

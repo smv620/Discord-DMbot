@@ -580,6 +580,9 @@ export interface ReportDifference {
 export interface SessionReport {
   session: { at: number; number?: number | null };
   state: "none" | "making" | "ready" | "failed";
+  /** A "make it again" on a session that already has a report that did not work (#2661): the report below
+   * is the old one, still good. Missing when the last try worked or there was none. */
+  lastRequest?: { state: "failed"; updatedAt: number } | null;
   /** While `making` or `failed`: the shared wait shape (counts and codes only). */
   progress?: JobProgress | null;
   counts: { contradictions: number; disguised: number; misunderstood: number; false: number; open: number; answered: number };

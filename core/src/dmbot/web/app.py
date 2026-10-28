@@ -1201,6 +1201,26 @@ def create_app(
                 raise HTTPException(status_code=400, detail="bad_action") from None
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    @app.post("/me/campaigns/{ref}/sessions/{at}/report/make", status_code=202)
+    async def me_session_report_make(ref: str, at: str, signed: Signed) -> dict[str, Any]:
+        """Make the session's report, or make it again (#2661): queued for the bot, answered with
+        the report as it now stands (`making`, with its progress). DM only: 403 `not_allowed`; 404
+        for a session that is not the campaign's; 429 `too_soon` past five a campaign an hour. A
+        report being made right now is not queued again: the same report comes back. 404 while
+        DMBOT_WEB_REPORT_MAKE is off (the bot step that takes the request is #2805)."""
+        session, _token = signed
+        if not settings.report_make_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        when = int(at) if re.fullmatch(r"[0-9]{1,11}", at) else 0  # (0 is refused)
+        try:
+            return await report.make_again(db, session, ref, when)
+        except RecapError as err:
+            if err.code == "not_allowed":
+                raise HTTPException(status_code=403, detail="not_allowed") from None
+            if err.code == "too_soon":
+                raise HTTPException(status_code=429, detail="too_soon") from None
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.post("/me/recaps/{ref}/again")
     async def me_recap_again(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
         """Make the recap of a session, or make it again (#2608): `{"replace": true}` once the DM
