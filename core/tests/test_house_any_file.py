@@ -810,7 +810,7 @@ class WaitingOnAFileRead(SyncTest):
         )
         form.file.component._values = [attachment]  # type: ignore[attr-defined]
         await form.on_submit(it)
-        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.UNREADABLE)
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.STOPPED_READING)
         self.assertIn(house_reader.SCANNED, it.followup.send.await_args.args[0])
 
     async def test_a_download_that_fails_ends_the_wait_and_frees_the_campaign(self) -> None:
@@ -852,10 +852,100 @@ class WaitingOnAFileRead(SyncTest):
         with (
             patch.object(file_ui, "_bot", return_value=self.bot),
             patch.object(file_ui, "_dm_campaign", AsyncMock(return_value=campaign())),
-            patch.object(hs, "check_linked", AsyncMock()) as check,
+            patch.object(hs, "check_linked", AsyncMock(return_value=None)) as check,
         ):
             await file_ui.check_now(it, campaign())
         self.assertIn(file_ui.READING, it.followup.send.await_args_list[0].args[0])
         self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
         self.assertIn("progress", check.await_args.kwargs)
         file_ui._done(campaign())
+
+    async def test_a_link_that_cannot_be_fetched_ends_the_wait_as_stopped(self) -> None:
+        it, message = self.message_interaction()
+        with (
+            patch.object(file_ui, "_bot", return_value=self.bot),
+            patch.object(file_ui, "_dm_campaign", AsyncMock(return_value=campaign())),
+            patch.object(hs, "read_link", AsyncMock(return_value=(None, hs.couldnt_read("no")))),
+        ):
+            await file_ui.check_now(it, campaign())
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.STOPPED_READING)
+        self.assertIn("couldn't read your house-rules file", it.followup.send.await_args.args[0])
+        file_ui._done(campaign())
+
+    async def test_every_failure_the_comparison_can_name_counts_as_stopped(self) -> None:
+        for words in (
+            hs.TOO_BIG, hs.TOO_MANY_RULES, hs.TOO_MANY_RULES_LINKED, hs.NOT_READ, hs.NO_AI_PLAN,
+            hs.BUSY, hs.TOO_MANY_READS, hs.FAILED, hs.couldnt_read("x"),
+        ):  # fmt: skip
+            self.assertTrue(hs.stopped(words), words)
+        for words in (None, hs.SAME, hs.BOOK, hs.NOTHING_FOUND):
+            self.assertFalse(hs.stopped(words), words)
+
+    async def test_a_comparison_that_breaks_says_so_and_ends_stopped(self) -> None:
+        sent: list[str] = []
+
+        async def send(text: str, view: Any) -> bool:
+            sent.append(text)
+            return True
+
+        with patch.object(hs, "read_link", AsyncMock(side_effect=RuntimeError("x"))):
+            words = await hs.check_linked(self.bot, campaign(), send, quiet_if_same=False)
+        self.assertEqual(words, hs.FAILED)
+        self.assertEqual(sent, [hs.FAILED])
+        self.assertTrue(hs.stopped(words))
+
+    async def test_the_retry_of_a_cut_answer_is_shown_as_movement_and_the_limit_is_real(
+        self,
+    ) -> None:
+        steps: list[str] = []
+        self.bot.house_file_ai = FakeAI(
+            Reply("", True, 10, 10, "m"),
+            answer([one("Roll once.", "roll initiative once at the start of a fight")]),
+        )
+        await hs.compare_text(
+            self.bot,
+            campaign(),
+            "We roll initiative once at the start of a fight and keep the order.",
+            self.send,
+            from_link=False,
+            progress=steps.append,
+        )
+        self.assertEqual(steps, [hs.STEP_FINDING, hs.STEP_RETRY])
+        it, _message = self.message_interaction()
+        async with file_ui._waiting(it) as reading:
+            reading.waiting._moved -= file_ui.STALL_AFTER_S + 1
+            self.assertIn("14 min", reading.waiting.text())  # both calls fit inside it
+        self.assertLessEqual(file_ui.READ_LIMIT_S, 14 * 60)
+
+    async def test_a_read_with_little_time_left_does_not_ask_again(self) -> None:
+        self.bot.house_file_ai = FakeAI(Reply("", True, 10, 10, "m"))
+        with patch.object(house_ai, "TOTAL_S", 10.0):
+            found = await house_ai.read(self.bot.house_file_ai.complete, "text", [])
+        self.assertTrue(found.unread)
+        self.assertEqual(len(self.bot.house_file_ai.calls), 1)
+
+    async def test_a_cancelled_read_ends_the_wait_as_failed_and_frees_the_campaign(self) -> None:
+        import asyncio
+
+        it, message = self.message_interaction()
+        started = asyncio.Event()
+
+        async def slow(*args: Any, **kw: Any) -> str | None:
+            started.set()
+            await asyncio.sleep(60)
+            return None
+
+        form = file_ui.UploadForm(campaign())
+        raw = docx("We roll initiative once at the start of a fight.")
+        attachment = SimpleNamespace(
+            size=len(raw), filename="a.docx", read=AsyncMock(return_value=raw)
+        )
+        form.file.component._values = [attachment]  # type: ignore[attr-defined]
+        with patch.object(hs, "compare_text", slow):
+            task = asyncio.create_task(form.on_submit(it))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.FAILED_READING)
+        self.assertNotIn((campaign().guild_id, campaign().id), file_ui._busy)

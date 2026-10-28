@@ -18,6 +18,7 @@ restart an old button says so. Register with `bot.add_dynamic_items(HouseSyncBut
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import logging
 import re
@@ -110,11 +111,33 @@ LABELS = {
 Send = Callable[[str, discord.ui.View], Awaitable[bool]]
 Progress = Callable[[str], None]  # told the words of the step that is starting (#2564)
 STEP_FINDING = "Step 2 of 2: finding the rules in it"
+STEP_RETRY = "Step 2 of 2: the answer was cut off, asking again (second try)"
+
+
+def stopped(words: str | None) -> bool:
+    """Whether words from a comparison say it did not get done (so the DM's waiting message ends as
+    stopped, not finished): the file could not be fetched or read, the AI could not read it, a limit
+    was hit, or something broke. Matches, found no rules, and offers are results, not failures."""
+    if words is None:
+        return False
+    return words.startswith(COULDNT_READ_START) or words in (
+        TOO_BIG,
+        TOO_MANY_RULES,
+        TOO_MANY_RULES_LINKED,
+        NOT_READ,
+        NO_AI_PLAN,
+        BUSY,
+        TOO_MANY_READS,
+        FAILED,
+    )
+
+
+COULDNT_READ_START = "I couldn't read your house-rules file"
 
 
 def couldnt_read(why: str) -> str:
     return fit_message(
-        f"I couldn't read your house-rules file: {why}{SHARING} The session goes on with "
+        f"{COULDNT_READ_START}: {why}{SHARING} The session goes on with "
         "DMbot's copy. Nothing was changed.",
         limit=TEXT_MAX,
     )
@@ -577,15 +600,16 @@ async def _compare_found(
         return TOO_MANY_READS
     _ai_busy.add(gid)
     found = house_ai.Found(unread=True)
-    if progress is not None:
-        progress(STEP_FINDING)
     try:
+        if progress is not None:
+            progress(STEP_FINDING)
         mine = await store.list(gid, campaign.id)
         found = await house_ai.read(
             bot.house_file_ai.complete,
             text,
             [(r.rule, r.supersedes) for r in mine],
             budget=left,  # the retry of a cut answer is a call of the day's too
+            on_retry=(lambda: progress(STEP_RETRY)) if progress is not None else None,
         )
     finally:
         _ai_busy.discard(gid)
@@ -671,10 +695,12 @@ async def check_linked(
     *,
     quiet_if_same: bool,
     progress: Progress | None = None,
-) -> None:
+) -> str | None:
     """Read the campaign's linked file and offer what differs. Says one short line when it
     can't be read; says nothing when there is no link or (at a session start) nothing to
-    change. `progress` is for a DM waiting on a button (#2564). Never raises."""
+    change. `progress` is for a DM waiting on a button (#2564). Returns the words it sent, so that
+    DM's waiting message can end as stopped when they were a failure (see `stopped`). Never
+    raises."""
     try:
         text, problem = await read_link(bot, campaign)
         words = problem
@@ -692,5 +718,10 @@ async def check_linked(
                 words = None
         if words:
             await send(words, discord.ui.View())
+        return words or None
     except Exception:
         log.exception("Couldn't compare the house-rules file")
+        if not quiet_if_same:  # a DM pressed a button: told, not left with a silent stop
+            with contextlib.suppress(Exception):
+                await send(FAILED, discord.ui.View())
+        return FAILED

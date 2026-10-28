@@ -135,10 +135,13 @@ async def _dm_campaign(interaction: discord.Interaction, campaign: Campaign) -> 
 
 READING = "📄 Reading your house-rules file…"
 STEP_READING = "Step 1 of 2: getting the file and reading its words"
+# The whole read, the file first and then the AI (both calls at most), ends by itself within this.
+# It is under the 15 minutes Discord lets the message be edited, so the last word always lands.
+READ_LIMIT_S = house_ai.TOTAL_S + 60.0
 STALL_AFTER_S = 90.0  # one AI call; nothing changing for this long is worth saying
 DONE_READING = "Finished. What it found, if anything, is below."
+STOPPED_READING = "Stopped: the reason is below. Nothing was changed."
 FAILED_READING = "Stopped: DMbot couldn't finish reading the file. Nothing was changed. Try again."
-UNREADABLE = "Stopped: that file couldn't be read. Nothing was changed. The reason is below."
 
 
 class Reading:
@@ -154,12 +157,14 @@ class Reading:
 
 
 @contextlib.asynccontextmanager
-async def _waiting(interaction: discord.Interaction) -> AsyncIterator[Reading]:
+async def _waiting(
+    interaction: discord.Interaction, clicked: float | None = None
+) -> AsyncIterator[Reading]:
     """The DM's wait for a file read (#2564): one private message edited in place with the step,
     how long it has been, and a stall line (that says when DMbot stops by itself), ended with a
     plain result. Fixed words only: nothing of the file can reach it. If the message can't be sent
     the read goes on without one."""
-    clicked = time.monotonic()
+    clicked = time.monotonic() if clicked is None else clicked  # when the DM pressed
     message: discord.WebhookMessage | None = None
 
     async def show(text: str) -> None:
@@ -170,11 +175,11 @@ async def _waiting(interaction: discord.Interaction) -> AsyncIterator[Reading]:
         show,
         READING,
         stall_after_s=STALL_AFTER_S,
-        stops_at_s=house_ai.TIMEOUT_S + 30,  # the one AI call's own limit, and the reading before
+        stops_at_s=READ_LIMIT_S,
         gone=message_is_gone,
         started=clicked,
     )
-    waiting.step(STEP_READING)
+    waiting.step(STEP_READING, keeps=False)  # nothing is kept while the file is still being read
     try:
         message = await interaction.followup.send(
             waiting.text(), ephemeral=True, wait=True, allowed_mentions=NO_PINGS
@@ -262,6 +267,7 @@ async def check_now(interaction: discord.Interaction, campaign: Campaign) -> Non
     """Read the linked file now and offer what differs, privately."""
     from dmbot.dm_screen import house_sync
 
+    pressed = time.monotonic()
     await _answer_first(interaction)
     current = await _dm_campaign(interaction, campaign)
     if current is None:
@@ -272,14 +278,16 @@ async def check_now(interaction: discord.Interaction, campaign: Campaign) -> Non
         return
     try:
         bot = _bot(interaction)
-        async with _waiting(interaction) as waiting:
-            await house_sync.check_linked(
+        async with _waiting(interaction, pressed) as waiting:
+            words = await house_sync.check_linked(
                 bot,
                 current,
                 _private_send(interaction),
                 quiet_if_same=False,
-                progress=lambda words: waiting.step(words, keeps=False),
+                progress=lambda step: waiting.step(step, keeps=False),
             )
+            if house_sync.stopped(words):
+                waiting.closing = STOPPED_READING
     finally:
         _done(current)
 
@@ -337,6 +345,7 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         from dmbot.dm_screen import house_sync
 
+        pressed = time.monotonic()
         await _answer_first(interaction)
         current = await _dm_campaign(interaction, self.campaign)  # before reading anything
         if current is None:
@@ -355,17 +364,19 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
             return
         words: str | None = None
         try:
-            async with _waiting(interaction) as waiting:  # the download is part of the wait
+            async with _waiting(
+                interaction, pressed
+            ) as waiting:  # the download is part of the wait
                 try:
                     data = await attachment.read()
                 except discord.HTTPException:
                     waiting.closing = FAILED_READING
-                    words = "DMbot couldn't download that file. Try again."
+                    words = "DMbot couldn't download that file."
                 else:
                     try:
                         text = await house_reader.read_file(attachment.filename, data)
                     except DocumentError as exc:  # a scanned PDF, an empty or damaged file
-                        waiting.closing = UNREADABLE
+                        waiting.closing = STOPPED_READING
                         words = str(exc)
                     else:
                         words = await house_sync.compare_text(
@@ -377,6 +388,8 @@ class UploadForm(discord.ui.Modal, title="Read a house-rules file"):
                             file_name=attachment.filename,
                             progress=lambda step: waiting.step(step, keeps=False),
                         )
+                        if house_sync.stopped(words):
+                            waiting.closing = STOPPED_READING
         finally:
             _done(current)  # whatever went wrong, the next try is not "already comparing"
         if words:
