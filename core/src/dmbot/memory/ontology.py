@@ -93,6 +93,11 @@ class PredicateTerm:
     # At any one time, for one object that is one of a kind (`carries`: one holder for a unique
     # item). Core terms only; a campaign's own relationships have no such limit.
     max_per_object: int | None = None
+    # Carries a character's own attitude, loyalty or vow, so only the character's own voice may
+    # state it (#2562, `memory.voice`; #2619). A flag on the term rather than a list in code, so a
+    # relationship can carry it. Not part of the stored definition or its meaning: setting it
+    # changes who may speak for the character, not what the relationship says, so no new version.
+    inner_state: bool = False
 
 
 NOT_THIS_SEP = " -> "
@@ -448,6 +453,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is an ally of Belleros.", "The Harpers are an ally of the Order."),
         inverse_label="is an ally of",
         synonyms=("friend_of", "friends_with", "allied_with", "allies_with"),
+        inner_state=True,
     ),
     PredicateTerm(
         "enemy_of",
@@ -468,6 +474,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Strahd is an enemy of Cerric.", "The Zhentarim are an enemy of the Harpers."),
         inverse_label="is an enemy of",
         synonyms=("rival_of", "enemies_with", "hates", "opposes"),
+        inner_state=True,
     ),
     PredicateTerm(
         "kin_of",
@@ -566,6 +573,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Mira serves Lord Neverember.", "The cultist serves Tiamat."),
         inverse_label="is served by",
         synonyms=("worships", "works_for", "obeys"),
+        inner_state=True,
     ),
     PredicateTerm(
         "sworn_to",
@@ -586,6 +594,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         examples=("Cerric is sworn to the Oath of Vengeance.", "Mira is sworn to Lord Aldric."),
         inverse_label="has sworn",
         synonyms=("pledged_to", "oath_to", "pact_with", "bound_to"),
+        inner_state=True,
     ),
     PredicateTerm(
         "plays",
