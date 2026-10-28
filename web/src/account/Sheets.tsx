@@ -55,6 +55,8 @@ export default function CharacterSheetsSection({
   // The document link's draft is kept per campaign too, as the typed drafts are (#2843).
   const documentKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [documents, setDocuments] = useState<Record<string, string>>({});
+  // The link box's draft is kept per campaign too, as the typed drafts are (#2842).
+  const linkKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
@@ -62,6 +64,10 @@ export default function CharacterSheetsSection({
   const [moved, setMoved] = useState("");
   const flight = useRef(false);
   const live = useRef(true);
+  // The campaign on screen now. An answer for a campaign the page has left is not drawn (#2845).
+  const current = useRef(campaignRef);
+  current.current = campaignRef;
+  const drawnFor = (asked: string) => live.current && current.current === asked;
   const seen = useObservedWait(busy, moved);
   useEffect(() => {
     live.current = true;
@@ -72,11 +78,12 @@ export default function CharacterSheetsSection({
 
   const read = async (): Promise<void> => {
     if (!api.campaignSheets) return setData("failed");
+    const asked = campaignRef;
     try {
       const got = await api.campaignSheets(campaignRef);
-      if (live.current) setData(got);
+      if (drawnFor(asked)) setData(got);
     } catch (error) {
-      if (live.current) setData("failed");
+      if (drawnFor(asked)) setData("failed");
       if (error instanceof ApiError && ENDS.includes(error.kind)) return;
     }
   };
@@ -99,6 +106,8 @@ export default function CharacterSheetsSection({
     onDone?: () => void,
   ): Promise<void> => {
     if (flight.current || !api.chooseSheet || !api.sheetAnswer) return;
+    // What this choice was made for: its answer is drawn only while the page still shows that campaign (#2845).
+    const asked = campaignRef;
     flight.current = true;
     setBusy(true);
     setReport(null);
@@ -123,37 +132,44 @@ export default function CharacterSheetsSection({
         > | null = null;
         try {
           got = await api.sheetAnswer(campaignRef, id);
-          if (got) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
+          if (got && drawnFor(asked)) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
         } catch (error) {
           if (error instanceof ApiError && ENDS.includes(error.kind))
             throw error;
         }
         if (got?.state === "done") {
-          setStage(null);
-          setReport({ ok: true, text: done });
+          // The choice went through, so its draft is cleared even if the page has since left the campaign.
           onDone?.();
-          await read();
+          if (drawnFor(asked)) {
+            setStage(null);
+            setReport({ ok: true, text: done });
+            await read();
+          }
           return;
         }
         if (got?.state === "failed") throw new ApiError("server");
-        if (got) setStage(stageWords(w.stage, got.stage));
+        if (got && drawnFor(asked)) setStage(stageWords(w.stage, got.stage));
         if (final) {
-          setReport({ ok: false, text: w.quiet });
-          await read();
+          if (drawnFor(asked)) {
+            setReport({ ok: false, text: w.quiet });
+            await read();
+          }
           return;
         }
       }
     } catch (error) {
-      if (live.current)
+      if (drawnFor(asked))
         setReport({
           ok: false,
           text: problem(error instanceof ApiError ? error.kind : "server"),
         });
     } finally {
       flight.current = false;
+      // Not checked against the campaign on purpose: a new choice cannot start while flight is set, so this cannot
+      // re-enable a button over a choice that is still going (#2845).
       if (live.current) {
         setBusy(false);
-        setStage(null);
+        if (drawnFor(asked)) setStage(null);
       }
     }
   };
@@ -200,14 +216,17 @@ export default function CharacterSheetsSection({
                 sheet={s}
                 shown={true}
                 busy={busy}
-                linkValue={link[s.entityId] ?? ""}
+                linkValue={link[linkKey(s.entityId)] ?? ""}
                 onLinkValue={(v) =>
-                  setLink((now) => ({ ...now, [s.entityId]: v }))
+                  setLink((now) => ({ ...now, [linkKey(s.entityId)]: v }))
                 }
                 onLink={() =>
                   void send(
                     s.entityId,
-                    { action: "link", url: (link[s.entityId] ?? "").trim() },
+                    {
+                      action: "link",
+                      url: (link[linkKey(s.entityId)] ?? "").trim(),
+                    },
                     w.linkSaved,
                   )
                 }

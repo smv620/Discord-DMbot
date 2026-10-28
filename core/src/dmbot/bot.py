@@ -17,7 +17,6 @@ import re
 import shutil
 import signal
 import time
-from collections import Counter
 from collections.abc import (
     Awaitable,
     Callable,
@@ -27,7 +26,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -59,17 +58,16 @@ from dmbot.account_move import AccountMoves
 from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, GeminiClient
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.audio_check import AudioChecker, Verdict
+from dmbot.audio_check import Verdict
 from dmbot.campaigns import Campaign, CampaignStore, web_backup
 from dmbot.campaigns.models import (
-    DEFAULT_DM_SCREEN_LEVEL,
     SHARED_STORY,
     STORY_GUIDE,
     CampaignError,
 )
 from dmbot.campaigns.moves import HandoverMover
 from dmbot.campaigns.web_delete import Notice, WebDeleteNotices
-from dmbot.capture_log import FRAMES_PER_S, CaptureLog, Due, SessionTotals
+from dmbot.capture_log import FRAMES_PER_S, Due
 from dmbot.channel_access import (
     SAME_CHANNEL,
     STARTING_UP,
@@ -252,7 +250,6 @@ from dmbot.ears.protocol import (
 )
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
-from dmbot.idle_stop import IdleWatch
 from dmbot.image_desk import ImageDesk, ImageUseStore
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
@@ -273,9 +270,13 @@ from dmbot.memory import (
     voyage,
     web_actions,
     web_report_requests,
+    web_sheets,
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
+from dmbot.memory import (
+    sheets as sheets_memory,
+)
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
@@ -291,7 +292,6 @@ from dmbot.memory.exposures import (
 )
 from dmbot.memory.heard_backup import HeardSection
 from dmbot.memory.importance import ImportanceCache
-from dmbot.memory.live_heads_up import LiveSession
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
 from dmbot.memory.models import (
@@ -312,15 +312,13 @@ from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
-from dmbot.memory.scene import Found, HintParts, SceneTracker, find_mentions, mentions, scene_hints
+from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
-from dmbot.memory.secret_reveal import RevealSession, revealed_in
-from dmbot.memory.sheet_questions import Questions as SheetQuestions
+from dmbot.memory.secret_reveal import revealed_in
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
-from dmbot.memory.sheet_store import CharacterSheet, SheetStore
-from dmbot.memory.sheet_watch import SheetWatch
+from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.story_plan import PlanStore, SpendSection
@@ -372,9 +370,10 @@ from dmbot.sessions import SavedSession, SessionStore
 from dmbot.sidebar import knowledge
 from dmbot.sidebar.answer import PROMPT_VERSION as SIDEBAR_PROMPT_VERSION
 from dmbot.sidebar.answer import Sidebar
-from dmbot.sidebar.ask import AskLimiter, asks_off_record, request_in
+from dmbot.sidebar.ask import asks_off_record, request_in
 from dmbot.sidebar.people import lines as people_lines
-from dmbot.sidebar.service import Recent, SidebarService
+from dmbot.sidebar.service import SidebarService
+from dmbot.table import HintPeople, Table
 from dmbot.test_recording import files as test_files
 from dmbot.test_recording import library as test_library
 from dmbot.test_recording.session import TestSession
@@ -407,7 +406,6 @@ from dmbot.transcript.cleaner import (
     SOUND,
     Cleaned,
     Fix,
-    Vocabulary,
     clean,
     matcher_names,
     own_name,
@@ -425,17 +423,15 @@ from dmbot.transcript.models import (
     OFF_RECORD,
     OFF_RECORD_WORDS,
     Line,
-    TranscriptBuffer,
     TranscriptSession,
     line_ref,
 )
 from dmbot.transcript.name_pass_log import NamePassLog
 from dmbot.transcript.name_pass_log import undo_for_web as name_pass_undo_for_web
 from dmbot.transcript.store import TranscriptStore
-from dmbot.transcript.stream import TranscriptStream
 from dmbot.transcript.suggestions import SuggestionStore
 from dmbot.transcript.topic_ai import classify
-from dmbot.transcript.topics import GAME, OFF_TOPIC, TopicWindow, Waiting, obviously_game
+from dmbot.transcript.topics import GAME, OFF_TOPIC, Waiting, obviously_game
 from dmbot.transcript.topics import marker as topic_marker
 from dmbot.transcript.waiting_questions import (
     ANSWER_NOT_SAVED,
@@ -469,6 +465,7 @@ from dmbot.ui import (
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import sheets as sheets_ui
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
@@ -597,7 +594,6 @@ SPEAKER_WAIT_S = 1.0  # the longest the names are waited for, before a label is 
 EDIT_TIMEOUT_S = 5.0  # a transcript message edit, at most (it holds the post lock)
 PUT_BACK_TIMEOUT_S = 5.0  # saving a Put it back, at most (it holds the save lock; #677)
 HINT_PEOPLE_S = 5.0  # who's in the voice channel, for name hints: looked at this often
-HintPeople = tuple[tuple[str, ...], tuple[str, ...]]  # (at the table, agreed but not there)
 TRANSCRIPT_POST_TIMEOUT_S = 10.0  # one stuck post can't hold the others up for long
 TRANSCRIPT_PARALLEL = 10  # campaigns posting at once (one rate-limited channel can't stall all)
 STOP_DRAIN_TIMEOUT_S = 120.0  # at stop, wait this long for the last words to be written
@@ -722,253 +718,6 @@ def silence_voice_warnings() -> None:
     for flag in ("warn_nacl", "warn_dave"):
         if hasattr(discord.VoiceClient, flag):
             setattr(discord.VoiceClient, flag, False)
-
-
-@dataclass(slots=True)
-class Table:
-    guild_id: int
-    voice_channel_id: int
-    screen_channel_id: int
-    dm_user_id: int
-    segmenter: Segmenter
-    capture_log: CaptureLog = field(default_factory=CaptureLog)
-    audio_checker: AudioChecker = field(default_factory=AudioChecker)  # #699
-    # Names said lately, for hints that follow the scene (#126, #127), and the campaign's
-    # names as last loaded (matching a line needs them without waiting).
-    scene: SceneTracker = field(default_factory=SceneTracker)
-    name_lookup: CampaignLookup | None = None
-    hint_parts: HintParts | None = None
-    # What the ontology steward decided this session (#1303), for one line in the server log.
-    steward_tally: Tally = field(default_factory=Tally)
-    # Spell, feature and item names from the players' D&D Beyond sheets (#723).
-    sheet_hints: tuple[str, ...] = ()
-    # Names someone spelled out at the table this session (#2168): watched for in every cleaned
-    # line, kept as (spelling, whom it was said by, a word nearby that sounds like it) for the
-    # after-session suggestions, and as speech hints at once. Words only, never a line.
-    spelling: spelled_out.SpellingWatcher = field(default_factory=spelled_out.SpellingWatcher)
-    spelled: list[tuple[str, int, str]] = field(default_factory=list)
-    spelled_hints: tuple[str, ...] = ()
-    held_spelled: dict[tuple[int, int], list[spelled_out.SpelledOut]] = field(
-        default_factory=dict
-    )  # spellings found in lines the off-topic filter holds, until they are labelled
-    # A name said with how it is pronounced (#2171): watched for in every game-talk line, kept as
-    # the counts below for the after-session offers. Words only.
-    pronouncing: pronounced_aloud.PronunciationWatcher = field(
-        default_factory=pronounced_aloud.PronunciationWatcher
-    )
-    # (name ID, the sound's key, whom it was said by) → how it was written → how often, so the
-    # sound said most is offered ("Kay el" and "Kay-el" count together).
-    pronounced: dict[tuple[str, str, int], dict[str, int]] = field(default_factory=dict)
-    # What a line the off-topic filter holds said about a name, until it is labelled: each sound
-    # with the name it was heard to belong to (settled when it was heard), words only.
-    held_pronounced: dict[tuple[int, int], list[tuple[pronounced_aloud.Sound, str]]] = field(
-        default_factory=dict
-    )
-    sheet_task: asyncio.Task[None] | None = None  # reading them; cancelled at the end
-    # Reading linked D&D Beyond sheets again during the session (#1128): the linked sheets as
-    # last read, the schedule, and the loop that runs it (cancelled at the end).
-    sheet_links: dict[str, CharacterSheet] = field(default_factory=dict)
-    sheet_watch: SheetWatch = field(default_factory=SheetWatch)
-    sheet_questions: SheetQuestions = field(default_factory=SheetQuestions)
-    watch_task: asyncio.Task[None] | None = None
-    # FightBot's memory for this session and its loop (#1129).
-    fight: FightState = field(default_factory=FightState)
-    fight_task: asyncio.Task[None] | None = None
-    where_task: asyncio.Task[None] | None = None  # the quiet "where are we" note (#1738)
-    # When the game clock was last shown or moved (monotonic seconds), starting at the session's
-    # start; kept in memory only (a restart just starts the wait again).
-    clock_shown_at: float = field(default_factory=time.monotonic)
-    sheet_loads: int = 0  # each load of the names counts up; only the newest one is used
-    # For the Transcript Cleaner (#127): what this session's lines say about words, and
-    # the display names of people who agreed (never "fixed" into a name).
-    vocabulary: Vocabulary = field(default_factory=Vocabulary)
-    # "Did they mean…?" for the DM (#296): one open at a time, each word once a session.
-    questions: name_questions.QuestionBook = field(default_factory=name_questions.QuestionBook)
-    question_message: discord.Message | None = None
-    # How often a line landed near one of the Cleaner's likeness thresholds (#1577): counts only.
-    close_calls: CloseCalls = field(default_factory=CloseCalls)
-    # Questions that closed with no answer (expired, or the session ended), for the after-session
-    # check (#1572): kept in memory, at most MAX_PER_SESSION, oldest dropped first.
-    unanswered: list[name_questions.Asked] = field(default_factory=list)
-    # The words each piece has in the helpers' copies (heard, recent, held, counts), by
-    # (speaker, started_ms), so a later change can bring those copies up to date (#127). Bounded.
-    piece_words: dict[tuple[int, int], tuple[str, float]] = field(default_factory=dict)
-    # Each person's last piece of speech as the Cleaner read it, for the look-back pass (#127).
-    last_piece: dict[int, lookback.Piece] = field(default_factory=dict)
-    # Fixes from names DMbot only suggested, each with Undo, in one DM-screen message.
-    fix_notes: fix_notes.FixNotes = field(default_factory=fix_notes.FixNotes)
-    fix_message: discord.Message | None = None
-    fix_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    fix_queued: bool = False  # a redraw is waiting: more changes just ride along
-    fix_ended: bool = False  # the session is over: the lists stay, their buttons go
-    # What the Cleaner did this session, for the one line of counts in the end-of-session message
-    # (#1510): name fixes made, "Did they mean…?" questions asked. Counts only; no words.
-    names_fixed: int = 0
-    # How often the cleaner fixed a name from the same other spelling, per person (#2171): the
-    # words only, kept for the session. Dropped for anyone who stops being recorded.
-    heard_forms: dict[tuple[str, str, str, int], int] = field(default_factory=dict)
-    names_asked: int = 0
-    # The AI ranking of "Did they mean…?" options (#2048), counts only, for the session's end log:
-    # calls, "likely" chosen, "none", errors; and of the questions answered with a likely first
-    # option, how many the DM picked it for.
-    rank_calls: int = 0
-    rank_likely: int = 0
-    rank_none: int = 0
-    rank_errors: int = 0
-    rank_answered: int = 0
-    rank_picked: int = 0
-    # Lines the off-topic filter left out, each run with Put it back (#677), likewise.
-    left_out: left_out.LeftOut = field(default_factory=left_out.LeftOut)
-    left_out_message: discord.Message | None = None
-    left_out_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    left_out_queued: bool = False
-    people: tuple[str, ...] = ()
-    # The whole session's numbers, for the summary when it ends (#109).
-    totals: SessionTotals = field(default_factory=SessionTotals)
-    listening: bool = False
-    notice_posted: bool = False
-    peek_offered: bool = False  # players have been shown the Peek button this session
-    voice_lost_told: dict[int, float] = field(default_factory=dict)  # user → when (#631)
-    campaign_id: str | None = None
-    campaign_name: str = ""
-    dm_user_ids: frozenset[int] = frozenset()
-    screen_level: str = DEFAULT_DM_SCREEN_LEVEL  # how much DMbot says in the DM screen
-    # Rules cards when a spell or creature is named (#931): on or off, the rulesets to look
-    # for names in, and what was shown, ignored and when (so, at most, one a minute).
-    rules_on: bool = False
-    rules_rulesets: tuple[str, str] = ("2024", "2014")
-    # The campaign's own homebrew names, for the rules cards (#1524); None until read.
-    homebrew_spotter: HomebrewSpotter | None = None
-    homebrew_read: int = 0  # which read of the names is the newest (an older one is dropped)
-    rules: rules_cards.RulesCards = field(default_factory=rules_cards.RulesCards)
-    # A house rule the DM said at the table, offered with Save / Edit / Cancel (#953).
-    house_voice: house_voice.HouseVoice = field(default_factory=house_voice.HouseVoice)
-    # When a rest said at the table last moved the game clock, by kind (monotonic seconds):
-    # the same phrase twice in a few minutes is one rest (#965).
-    clock_said: dict[str, float] = field(default_factory=dict)
-    # When a player's "let's take a rest" last became a question for the DM (monotonic
-    # seconds): at most one every few minutes (#1117).
-    clock_suggested_at: float | None = None
-    # The last clock change if it was a rest said at the table: (kind, minutes it moved the
-    # clock, the clock minute after it, monotonic seconds). A later "you finish your long
-    # rest" or "an hour later" that it already covers adds nothing (#1117). Dropped when the
-    # clock is no longer where the rest left it (a button, an Undo, another phrase).
-    clock_spoken_rest: tuple[str, int, int, float] | None = None
-    # Typed chat at the table (#1118): whether it is read this session, and the DM's one
-    # extra text channel (the voice channel's own chat is always read when it is on).
-    chat_on: bool = True
-    chat_channel_id: int | None = None
-    chat_notice_posted: bool = False  # the one line in the extra channel, once a session
-    # The campaign's DMbot chat channel (#1187): where the table asks DMbot and reads the answers.
-    dmbchat_channel_id: int | None = None
-    # People who typed there without having agreed, already shown the agree button this session.
-    dmbchat_nudged: set[int] = field(default_factory=set)
-    # Questions per person (at most ASK_PER_PERSON_PER_MINUTE a minute), so one player can't use
-    # up the table's questions.
-    person_limits: dict[int, AskLimiter] = field(default_factory=dict)
-    typed_rate: table_chat.TypedRate = field(default_factory=table_chat.TypedRate)
-    clock_waiting: int = 0  # clock-phrase checks running now (capped; #1154)
-    # The campaign's D&D Beyond invite link, for the Join button on the messages players see
-    # this session (#1119); None when the DM set none.
-    dndbeyond_invite: str | None = None
-    resumed: bool = False  # picked up again after a restart
-    announce_resume: bool = True  # post "listening again" when voice is back
-    # Asked privately about recording (or reminded) this session: at most once each.
-    asked: set[int] = field(default_factory=set)
-    # The live transcript channel (#124); None if it couldn't be set up this session.
-    transcript_channel_id: int | None = None
-    transcript: TranscriptStream = field(default_factory=TranscriptStream)
-    transcript_lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # keeps order
-    # What was heard this session (speaker, text as heard), for the after-session scan
-    # that suggests new names to the DM (#126). Kept in memory only, capped.
-    heard: list[tuple[int, str]] = field(default_factory=list)
-    # The new names the after-session scan found (#2410): they ride in the secrets summary when
-    # there is one, and are posted on their own by the "new names" step when nothing carried them.
-    new_names: list[str] = field(default_factory=list)
-    # How many things said at the table wait for the DM's check (#2410): counted by the "what was
-    # said" step, told by the summary when it goes to the DM screen, else posted on its own.
-    claims_waiting: int = 0
-    # The first few of them in words ("**Bram** carries **Heartseeker**? (a player said)"), for the
-    # DM-only summary. Never posted where a player can read: the screen post says the count only.
-    claim_preview: list[str] = field(default_factory=list)
-    # Who answered to which name this session ("a name, then an answer", #1188); in memory
-    # only, and nothing a speaker said stays once they stop being recorded.
-    name_answers: NameThenAnswer = field(default_factory=NameThenAnswer)
-    # How many lines of each speaker named each known name, kept at the end of the
-    # session so hints can rank names by how often and when they come up. Bounded by
-    # names times speakers.
-    heard_counts: Counter[tuple[str, int]] = field(default_factory=Counter)
-    # The stored transcript (#41, #125): this session's row, and lines not saved yet.
-    started_at: int = 0  # Unix seconds; the same after a restart
-    live_heads_up: LiveSession = field(default_factory=LiveSession)  # #2068, for this session
-    reveal: RevealSession = field(default_factory=RevealSession)  # #2088, for this session
-    # Listening minutes already written to the hours meter (#437). None until first read:
-    # the stored number, so a restart counts none twice. `meter_base` is that number and
-    # `meter_since` when this process began listening, so time while DMbot was down is
-    # never billed. `ended_at` is the stop, past which no tick bills.
-    metered_minutes: int | None = None
-    meter_base: int = 0
-    meter_since: int = 0
-    ended_at: int | None = None
-    meter_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    metering_closed: bool = False  # the session ended: nothing more is billed
-    listening_from: int = 0  # Unix seconds; since this process took the session on
-    after_restart: bool = False  # listening_from is a restart (`resumed` resets on join)
-    transcript_session_id: str | None = None  # set at the first save
-    unsaved: TranscriptBuffer = field(default_factory=TranscriptBuffer)
-    # Speakers whose display names are kept with this session's transcript (#2337), so a name is
-    # looked up once for each person, not on every save.
-    named_speakers: set[int] = field(default_factory=set)
-    transcript_warned: bool = False  # told the DM saving isn't working
-    listening_message: discord.Message | None = None  # carries the Stop button (#108)
-    # Is anyone here? (#2034) The watch for the automatic stop, and the warning's message. A
-    # new table (a start or a resume) starts a new watch: a restart is not silence.
-    idle: IdleWatch = field(default_factory=lambda: IdleWatch(time.monotonic()))
-    idle_message: discord.Message | None = None
-    dropped_logged: bool = False
-    save_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # One capture check at a time (#699: its audio check awaits the AI).
-    check_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    # The off-topic filter (#52): lines waiting to be labelled, and the names-scan text
-    # each holds back until then (hidden lines never reach the helpers); calls and
-    # tokens, for the session's stats line.
-    topics: TopicWindow = field(default_factory=TopicWindow)
-    held: dict[tuple[int, int], str] = field(default_factory=dict)
-    topic_calls: int = 0
-    topic_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
-    topic_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
-    topic_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
-    topic_failures: int = 0  # in a row: after a few, the filter rests a while
-    topic_paused_until: float = 0.0  # monotonic seconds
-    # A time jump suggested from vague narration (#1758): what this session remembers about it.
-    time_suggest: time_suggest.State = field(default_factory=time_suggest.State)
-    hidden: set[tuple[int, int]] = field(default_factory=set)  # lines shown as a marker
-    # Who the DM was speaking as (#53): the DM's lines waiting for the AI, a window at a
-    # time, and the same bookkeeping as the off-topic filter.
-    speakers: TopicWindow = field(default_factory=TopicWindow)
-    speaker_questions: speaker_q.SpeakerBook = field(default_factory=speaker_q.SpeakerBook)
-    speaker_message: discord.Message | None = None
-    speaker_book: speaker_ai.NameBook = field(default_factory=speaker_ai.NameBook)
-    speaker_calls: int = 0
-    speaker_tokens: list[int] = field(default_factory=lambda: [0, 0])  # in, out
-    speaker_tasks: set[asyncio.Task[None]] = field(default_factory=set)  # awaited at the end
-    speaker_timers: set[asyncio.Task[None]] = field(default_factory=set)  # cancelled then
-    speaker_failures: int = 0
-    speaker_paused_until: float = 0.0  # monotonic seconds
-    # A DM's spoken look-up waits here for its line's speaker label (#1624): (speaker, started_ms)
-    # -> the label (the NPC's name, or "" for none). Set when the label is saved or the labelling
-    # call ends, so a line already flushed to the database still answers.
-    label_waits: dict[tuple[int, int], asyncio.Future[str]] = field(default_factory=dict)
-    early_close_at: float = -1e9  # monotonic seconds of the last early close of the window
-    # The DM sidebar (#935): what was said lately (the scene for an answer), and the
-    # safety limit on questions (6 a minute, 120 a session; #1040), spoken and typed.
-    recent: Recent = field(default_factory=Recent.new)
-    # Test recordings (#1019): the saved session, only in a test server.
-    test_session: TestSession | None = None
-    sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
-
-    def is_dm(self, user_id: int) -> bool:
-        return user_id == self.dm_user_id or user_id in self.dm_user_ids
 
 
 def _ms(seconds: float) -> int:
@@ -1154,11 +903,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
         self.web_rule_actions = web_sharing.ActionStore(recaps.db) if recaps is not None else None
         self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
+        self._report_tasks: dict[int, asyncio.Task[None]] = {}  # one running report a server
         self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
         )
+        # What players and DMs chose on the website's character sheets page (#2817).
+        self.web_sheets = web_sheets.ActionStore(recaps.db) if recaps is not None else None
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -10812,7 +10564,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.report_requests
         if store is None:
             return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_report_tasks", {})
+        running = self._report_tasks
         for guild in list(self.guilds):
             task = running.get(guild.id)
             if task is not None and not task.done():
@@ -10821,7 +10573,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if req is None:
                 continue
             gid = guild.id
-            task = asyncio.create_task(self._run_report_request(store, gid, req))
+            task = self._track(self._run_report_request(store, gid, req), "web-report-request")
+            if task is None:
+                continue  # shutting down: the row is retaken after the door's ten minutes
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
@@ -10902,6 +10656,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_sharing.run_one(self, store, guild_id, item)
+
+    # ---- the website's character sheets page (#2817): the Host of memory.web_sheets ----
+
+    async def in_server(self, guild_id: int, user_id: int) -> bool:
+        return await self.find_member(guild_id, user_id) is not None
+
+    async def fetch_sheet(self, character: int) -> dict[str, Any]:
+        return await sheets_memory.fetch(character)
+
+    async def read_all(
+        self, guild_id: int, campaign_id: str, progress: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Refresh sheets, as the names panel does it: every linked sheet read again."""
+        store = self.sheets
+        if store is None:
+            return
+        now = int(time.time())
+        await refresh_sheets(store, guild_id, campaign_id, now, progress=progress)
+        self.sheets_changed(guild_id, campaign_id)
+
+    def link_too_soon(self, guild_id: int, user_id: int) -> bool:
+        return sheets_ui.too_soon(
+            sheets_ui.last_link, (guild_id, user_id), sheets_ui.LINK_COOLDOWN_S
+        )
+
+    def read_too_soon(self, guild_id: int, campaign_id: str) -> bool:
+        return sheets_ui.too_soon(
+            sheets_ui.last_refresh, (guild_id, campaign_id), sheets_ui.REFRESH_COOLDOWN_S
+        )
+
+    async def run_web_sheets(self) -> None:
+        """What players and DMs chose on the website's character sheets page (#2817), applied the
+        way Discord's 📜 buttons apply it. Each asker must still play the character (or be a DM).
+        A link is a 10-second read of D&D Beyond and a read-again is one per sheet, so each runs as
+        a tracked background task, at most one a server: this returns at once and the poll loop's
+        other website actions do not wait. Only outcome words are logged, never a link."""
+        store = self.web_sheets
+        if store is None or self.sheets is None:
+            return
+        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_sheet_tasks", {})
+        for guild in list(self.guilds):
+            task = running.get(guild.id)
+            if task is not None and not task.done():
+                continue  # one at a time for a server; the loop does not wait for it
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            task = asyncio.create_task(self._run_sheet_choice(store, gid, item))
+            running[gid] = task
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if running.get(gid) is done:
+                    del running[gid]
+
+            task.add_done_callback(forget)
+
+    async def _run_sheet_choice(
+        self, store: web_sheets.ActionStore, guild_id: int, item: web_sheets.Action
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_sheets.run_one(self, store, guild_id, item)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
