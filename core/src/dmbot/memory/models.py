@@ -276,6 +276,14 @@ class Entity:
     made_before_name_gate: bool = False
     # For an event, clue or item entry: the evidence it faked (the planted ledger), by id (#2409).
     manipulated_by: str | None = None
+    # A person the story describes but never names (#2790): "Ken's sister", "a hooded figure". It
+    # has no alias, so no name match finds it; `unnamed_what` is what the story calls them,
+    # `unnamed_anchor` the entry they hang off (none for a hooded figure) and `unnamed_role` the
+    # relationship. The label is built from these when shown (`unnamed.label`), never stored.
+    unnamed: bool = False
+    unnamed_anchor: str | None = None
+    unnamed_role: str | None = None
+    unnamed_what: str | None = None
 
     @property
     def unseen_by_players(self) -> bool:
