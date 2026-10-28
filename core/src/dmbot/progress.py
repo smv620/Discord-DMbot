@@ -34,6 +34,7 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "waiting": 2 * 60,  # a copy asked for on the website: the bot takes it within seconds
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
+    "sharing": 5 * 60,  # a sharing choice the bot is applying (#2783)
     # The steps of a recap being made on the website's page (#2636; `recaps.progress`). The name
     # pass wait is touched every half minute; a part of a long session can take a while.
     "recap_names": 10 * 60,
