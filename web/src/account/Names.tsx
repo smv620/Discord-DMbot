@@ -271,6 +271,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       if (kind === "signed-out") return void setView("signed-out");
+      // It may still be applied: a second press would queue a second undo of the same step.
+      if (kind === "still-waiting") setUndo(null);
       setNews({ ok: false, text: notNamed.undoProblems[kind] ?? notNamed.undoProblems["server"]!, n: ++sayings.current });
     } finally {
       undoFlight.current = false;

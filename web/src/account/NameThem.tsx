@@ -57,6 +57,7 @@ export default function NameThem({
     setDeclined(false);
     setReport(null);
     setLooks(0);
+    let done: NamedInfo | null = null;
     try {
       const got: NameThemResult = await api.nameThem(refId, row.id, step, () => setLooks((n) => n + 1));
       if (got.state === "question") {
@@ -65,7 +66,7 @@ export default function NameThem({
         return;
       }
       setQuestion(null);
-      await onDone({ text: text(asked.current), undo: got.undo, join: step.action === "name-join" });
+      done = { text: text(asked.current), undo: got.undo, join: step.action === "name-join" };
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       if (kind === "signed-out") return onSignedOut();
@@ -74,6 +75,8 @@ export default function NameThem({
       flight.current = false;
       setWorking(false);
     }
+    // After the try: the name is already applied, so a list that fails to reload must not read as a failed change.
+    if (done) await onDone(done).catch(() => undefined);
   }
 
   const submit = (e: Event): void => {

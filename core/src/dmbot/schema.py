@@ -16622,7 +16622,14 @@ _NAME_DOOR_SWAPS = (
     (
         "                 AND t.status = 'confirmed' AND t.type <> 'person')) THEN",
         "                 AND t.status = 'confirmed' AND t.type <> 'person'\n"
-        "                 AND (act <> 'name-join' OR NOT t.unnamed))) THEN",
+        "                 AND NOT t.unnamed)) THEN",
+    ),
+    (
+        "                     AND t.status = 'confirmed' AND t.type <> 'person')\n"
+        "                  <> cardinality(",
+        "                     AND t.status = 'confirmed' AND t.type <> 'person'\n"
+        "                     AND NOT t.unnamed)\n"
+        "                  <> cardinality(",
     ),
 )
 

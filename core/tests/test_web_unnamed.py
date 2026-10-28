@@ -145,6 +145,17 @@ class Naming(Unnamed):
         ):
             self.assertEqual(await self.refused_queue(self.sister, **body), "not_found", body)
 
+    async def test_a_confirmed_unnamed_person_is_not_a_target_of_a_merge_either(self) -> None:
+        # Merging a named entry into a placeholder would skip "give them a name first".
+        await self.sql("UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", self.sister)
+        self.assertEqual(
+            await self.refused_queue(self.keep, action="merge", into=self.sister), "bad_target"
+        )
+        self.assertEqual(
+            await self.refused_queue(self.keep, action="merge-many", others=[self.sister]),
+            "bad_target",
+        )
+
     async def test_a_player_and_another_campaigns_dm_cannot_queue_a_name(self) -> None:
         bob = await self.signed(BOB, THURSDAY)
         self.assertEqual(
