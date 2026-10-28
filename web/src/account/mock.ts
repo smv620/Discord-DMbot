@@ -836,7 +836,6 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const lateLooks = new Map<string, number>();
   const lineDeletions: { id: string; serverId: string; looks: number }[] = [];
   const deletedLines = new Set<string>();
-  const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend rule sharing's memory, per campaign ref (#2783).
 const sharingState = new Map<string, RuleSharing>();
 const sharingChoices = new Map<string, { ref: string; choice: RuleSharingChoice; looks: number }>();
