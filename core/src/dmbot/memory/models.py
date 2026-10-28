@@ -287,9 +287,12 @@ class Entity:
 
     @property
     def unseen_by_players(self) -> bool:
-        """The DM alone sees this entry: a clue only some know, or one the players don't know
-        yet. What lists, cards, answers and recaps hide from everyone but a DM."""
-        return self.audience_limited or self.hidden_from_players
+        """The DM alone sees this entry: a clue only some know, one the players don't know yet, or
+        a person the story never named (#2790). What lists, cards, answers and recaps hide from
+        everyone but a DM."""
+        # (an unnamed person is also kept out of the names a spelling fix may complete: safe, and
+        # at worst it fixes one line fewer)
+        return self.audience_limited or self.hidden_from_players or self.unnamed
 
     @property
     def is_unique(self) -> bool:
