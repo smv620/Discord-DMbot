@@ -16,6 +16,8 @@ from dmbot.memory.extractor import Report
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
+from tests.test_memory_names import GUILD as NAMES_GUILD
+from tests.test_memory_names import PLAYER, NamesTest
 
 GUILD = 4141
 DM, ALICE, BOB = 7, 11, 22
@@ -125,18 +127,81 @@ class Reading(Base):
         self.assertEqual(seen["after_ms"], 0)
         self.assertEqual(await self.waiting(), [])
 
-    async def test_an_extractor_that_stopped_early_is_not_tried_again(self) -> None:
+    def with_extractor(self) -> None:
         self.dm.settings.story_extractor_on = True
         self.dm.extractor_ai = SimpleNamespace(model="m")
         self.dm.plan_allows = AsyncMock(return_value=True)
         self.dm.name_of = lambda gid, uid: f"<@{uid}>"
+
+    async def test_an_extractor_that_stopped_early_after_a_call_is_not_tried_again(self) -> None:
+        self.with_extractor()
 
         async def run(*_: Any, **__: Any) -> Report:
             return Report(calls=1, stopped="call limit")
 
         with patch("dmbot.bot.extractor.run", new=run), patch("dmbot.bot.ClaimStore"):
             self.assertEqual(await self.dm._read_put_back_all(GUILD), 2)
-        self.assertEqual(await self.waiting(), [])  # one try: a retry would send batches twice
+        self.assertEqual(await self.waiting(), [])  # a retry would send batches twice
+
+    async def test_an_extractor_that_raises_marks_the_lines_read(self) -> None:
+        self.with_extractor()
+
+        async def run(*_: Any, **__: Any) -> Report:
+            raise RuntimeError("a database error quoting a line")
+
+        with patch("dmbot.bot.extractor.run", new=run), patch("dmbot.bot.ClaimStore"):
+            self.assertEqual(await self.dm._read_put_back_all(GUILD), 2)
+        self.assertEqual(await self.waiting(), [])  # a batch may be stored: never run twice
+
+    async def test_nothing_sent_leaves_the_story_waiting_and_names_are_not_proposed_twice(
+        self,
+    ) -> None:
+        self.with_extractor()
+        called: list[int] = []
+
+        async def run(*_: Any, **__: Any) -> Report:
+            called.append(1)
+            return Report()
+
+        async def used_up(*_: Any) -> tuple[int, int]:
+            return 0, 10**6  # the session's call limit is used
+
+        self.store.extraction = used_up  # type: ignore[method-assign,assignment]
+        with patch("dmbot.bot.extractor.run", new=run), patch("dmbot.bot.ClaimStore"):
+            self.assertEqual(await self.dm._read_put_back_all(GUILD), 0)
+            self.assertEqual(await self.dm._read_put_back_all(GUILD), 0)
+        self.assertEqual(called, [])  # nothing was sent
+        self.assertEqual(len(await self.waiting()), 2)  # the story waits for a later sweep
+        self.assertEqual(
+            len(self.scanned), 2
+        )  # the names were scanned again (harmless: see the next test)
+
+    async def test_a_run_that_makes_no_call_leaves_the_lines_waiting(self) -> None:
+        self.with_extractor()
+
+        async def run(*_: Any, **__: Any) -> Report:
+            return Report(stopped="time limit")  # stopped before the first batch
+
+        with patch("dmbot.bot.extractor.run", new=run), patch("dmbot.bot.ClaimStore"):
+            self.assertEqual(await self.dm._read_put_back_all(GUILD), 0)
+        self.assertEqual(len(await self.waiting()), 2)
+
+    async def test_a_names_scan_that_raises_leaves_the_lines_and_sends_nothing(self) -> None:
+        self.with_extractor()
+        called: list[int] = []
+
+        async def boom(*_: Any, **__: Any) -> list[str]:
+            raise RuntimeError("a database error quoting a line")
+
+        async def run(*_: Any, **__: Any) -> Report:
+            called.append(1)
+            return Report(calls=1)
+
+        self.dm._propose_new_names = boom
+        with patch("dmbot.bot.extractor.run", new=run), patch("dmbot.bot.ClaimStore"):
+            self.assertEqual(await self.dm._read_put_back_all(GUILD), 0)
+        self.assertEqual(called, [])
+        self.assertEqual(len(await self.waiting()), 2)
 
     async def test_a_plan_without_the_extractor_still_reads_the_names(self) -> None:
         self.dm.settings.story_extractor_on = True
@@ -227,3 +292,15 @@ class TheNameScanAtTheEnd(Base):
         self.dm.lookup = None
         await self.dm._suggest_names(table)
         self.assertEqual(self.scanned, [["the held words", "Kesh Varn waits"]])  # not Bob's
+
+
+class TheSecondScan(NamesTest):
+    async def test_scanning_the_same_lines_again_proposes_nothing_twice(self) -> None:
+        texts = ["We ride to Bryn Shander at dawn.", "I like Bryn Shander."]
+        users = {PLAYER, DM}
+        first = await self.bot._propose_new_names(NAMES_GUILD, self.campaign.id, texts, users)
+        self.assertEqual(first, ["Bryn Shander"])
+        second = await self.bot._propose_new_names(NAMES_GUILD, self.campaign.id, texts, users)
+        self.assertEqual(second, [])  # what it proposed is a known name by now
+        names = await self.memory.entities(NAMES_GUILD, self.campaign.id)
+        self.assertEqual([n.name for n in names if n.name == "Bryn Shander"], ["Bryn Shander"])

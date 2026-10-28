@@ -8774,12 +8774,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def _read_put_back_all(self, guild_id: int) -> int:
         """Lines a DM put back after their session (#2587): the names scan and the story extractor
-        read just those lines, once. Only the lines of people who
-        agree now are read (a speaker who stopped being recorded is skipped, and their line is
-        marked done so it is not asked about again); the words go through the same checks as at
-        the end of a session. The extractor, when it is on, runs inside its plan check and call
-        limits; when it stops early the lines wait for the next try. The log gets counts only.
-        Returns how many lines were read."""
+        read just those lines. Only the lines of people who agree now are read (a speaker who
+        stopped being recorded is skipped, and their line is marked done so it is not asked about
+        again); the words go through the same checks as at the end of a session.
+
+        A line is marked read once the story extractor has had its one try (a batch may have been
+        sent, so a retry would duplicate claims), or the extractor is not on here. When nothing
+        could be sent yet (its call limit is used, or no session row), the line waits for a later
+        sweep: the name scan then runs again, which proposes nothing twice, because a name it
+        proposed is a known name by the next scan. The log gets counts only. Returns how many
+        lines were read."""
         if self.transcripts is None or self.memory is None:
             return 0
         waiting = await self.transcripts.sessions_with_put_back(guild_id)
@@ -8814,10 +8818,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 gid, cid, [x.text for x in chosen], users, sid, agreed=agreed
             )
             log.info("Put-back lines: %d line(s) scanned, %d new name(s)", len(chosen), len(added))
-            # One try, and the lines are done either way: a retry would send the batches that did
-            # work again (duplicate claims) and count the names again. A run that stops early says
-            # so in the log; the DM can ask for the story to be read again.
-            await self._extract_put_back(gid, cid, sid, campaign, every, mine, users)
+            # One try once a batch may have been sent: a retry would send the batches that worked
+            # again (duplicate claims). Nothing sent yet: the lines wait for the next sweep.
+            if not await self._extract_put_back(gid, cid, sid, campaign, every, mine, users):
+                return 0
         by_person: dict[int, list[int]] = {}
         for uid, at in marks:  # the skipped speakers' lines too: not asked about again
             by_person.setdefault(uid, []).append(at)
@@ -8836,8 +8840,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         users: Collection[int],
     ) -> bool:
         """The story extractor on just the put-back lines (numbered by their place in the whole
-        session, the others marked off-topic so `readable` skips them), once. True when it ran to
-        the end or is not on; False when it stopped early or failed (counts in the log)."""
+        session, the others marked off-topic so `readable` skips them), once. True when the lines
+        are done: it had its try (it ran, stopped early or failed after a batch may have been
+        sent) or it is not on here. False when nothing could be sent yet, so the lines wait."""
         assert self.transcripts is not None and self.memory is not None
         if (
             not self.settings.story_extractor_on
@@ -8848,7 +8853,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         transcripts = self.transcripts
         session = await transcripts.session(gid, sid)
         if session is None:
-            return True
+            return False
         _, used = await transcripts.extraction(gid, sid)
         now = int(time.time())
         day_used = await transcripts.extractor_calls_since(gid, cid, now - 86400)
@@ -8859,7 +8864,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             day_used,
         )
         if allowed == 0:
-            log.info("Put-back lines: the extractor's call limit is used")
+            log.info("Put-back lines: the extractor's call limit is used; the lines wait")
             return False
         only = [
             x if (x.user_id, x.started_ms) in mine else replace(x, topic=OFF_TOPIC) for x in every
@@ -8870,26 +8875,30 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if not name.startswith("<@"):
                 skip.add(name_key(name))
                 skip.update(name_key(word) for word in name.split())
-        report = await extractor.run(
-            self.extractor_ai,
-            ClaimStore(self.memory),
-            only,
-            guild_id=gid,
-            campaign_id=cid,
-            dm_ids={*campaign.dm_user_ids},
-            consenting=lambda: self.consent.consenting(gid),
-            model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-            session_started_at=session.started_at,
-            max_calls=allowed,
-            skip=skip,
-            after_ms=0,
-            readings=self.settings.story_readings_on,
-            count_call=lambda: transcripts.record_extraction(
-                gid, sid, through_ms=0, calls=1, now=int(time.time())
-            ),
-        )
+        try:
+            report = await extractor.run(
+                self.extractor_ai,
+                ClaimStore(self.memory),
+                only,
+                guild_id=gid,
+                campaign_id=cid,
+                dm_ids={*campaign.dm_user_ids},
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                session_started_at=session.started_at,
+                max_calls=allowed,
+                skip=skip,
+                after_ms=0,
+                readings=self.settings.story_readings_on,
+                count_call=lambda: transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
+            )
+        except Exception as exc:  # a batch may already be stored: done, never run twice
+            log.warning("Put-back lines: the extractor failed (%s)", type(exc).__name__)
+            return True
         log.info(report.line())
-        return not report.stopped and not report.failed
+        return report.calls > 0  # no call made: nothing was sent, so the lines wait
 
     async def grade_contradictions(self, table: Table) -> None:
         """After a session, only with DMBOT_STORY_CONTRADICTIONS on (and the extractor): PlotBot
