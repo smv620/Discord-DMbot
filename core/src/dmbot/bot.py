@@ -10413,6 +10413,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ),
         )
 
+    def _named_batch_for(
+        self, guild_id: int
+    ) -> Callable[[str, int, str], Awaitable[int | None]] | None:
+        """For the website's Undo of a name it gave (#2808): the change batch of the DM's own done
+        action, read when the Undo is applied."""
+        actions = self.name_actions
+        if actions is None:
+            return None
+
+        async def batch_of(campaign_id: str, user_id: int, action_id: str) -> int | None:
+            return await actions.named_batch(guild_id, campaign_id, user_id, action_id)
+
+        return batch_of
+
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -10438,6 +10452,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 campaign.dm_user_ids,
                                 action,
                                 self._waiting_answers(guild.id),
+                                named_batch=self._named_batch_for(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
