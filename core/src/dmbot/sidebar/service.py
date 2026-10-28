@@ -53,8 +53,8 @@ from dmbot.transcript.models import (
 from dmbot.transcription.base import TranscriptionProblem
 
 if TYPE_CHECKING:
-    from dmbot.bot import Table
     from dmbot.campaigns import Campaign
+    from dmbot.table import Table
 
 log = logging.getLogger(__name__)
 

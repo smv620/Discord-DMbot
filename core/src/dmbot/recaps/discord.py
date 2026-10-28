@@ -109,7 +109,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
 
     from dmbot import plan_rules
     from dmbot.ai import TierClient
-    from dmbot.bot import DMBot, HintPeople, Table
+    from dmbot.bot import DMBot
     from dmbot.campaigns import web_backup
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
@@ -130,6 +130,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.recaps.store import RecapStore
     from dmbot.recaps.style import NoteStore, StyleStore
     from dmbot.rules.web_sharing import ActionStore as RuleActionStore
+    from dmbot.table import HintPeople, Table
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.import_job import ImportJob
     from dmbot.transcript.store import TranscriptStore
