@@ -25,6 +25,7 @@ NOT_A_MESSAGE = {
     "devtools/recheck.py": "characters of scene text fed to a test prompt",
     "memory/adventure.py": "characters per chunk of a book",
     "memory/story_plan.py": "the most nodes read from one document",
+    "memory/who_ask.py": "characters of story text shown to the who-is-it check",
     "recaps/draft.py": "characters of the last recap given to the next draft's prompt",
     "recaps/critics.py": "characters of the earlier recap shown to the critics",
     "recaps/motives.py": "characters of the earlier recap shown to the motive check",

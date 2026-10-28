@@ -30,10 +30,11 @@ GONE = "I can't find this campaign any more. Nothing was changed."
 NO_SESSIONS = "This campaign has no sessions with a transcript yet, so there's no recap to make."
 PICK_CAMPAIGN = "Which campaign?"
 PICK = "Which session's recap? Newest first."
-ASK = (
-    "This session already has a recap. Make a new one?\n"
-    "The old one stays until you approve the new one."
-)
+ASK = "This session already has a recap. Make a new one?"
+ASK_KEPT = ASK + "\n" + "The old one stays until you approve the new one."
+# A recap nobody approved or posted is not kept when a new one is made (the door wipes it), so the
+# question says so plainly instead of promising it stays.
+ASK_DRAFT = ASK + "\n" + "The old one isn't approved yet, so the new one replaces it."
 KEPT_OLD = "👍 Nothing was changed. The recap stays as it is."
 NOTHING_CHANGED = "👍 Nothing was changed."
 LISTS_ONE = "You saved who was in 1 scene of this recap. {action} deletes that list."
@@ -139,6 +140,7 @@ async def start(
     comes before anything is started, and "no" changes nothing. `keeps_old`: whether a finished
     recap stays until the new one is approved (None: say what `replace_ok` says)."""
     bot = _bot(interaction)
+    found = None
     if not lists_ok:
         found = await bot.recap_saved_lists(campaign, session_at, interaction.user.id)
         if found is not None and (found.count is None or found.count > 0):
@@ -162,7 +164,10 @@ async def start(
         await _tell(interaction, FAILED)
         return
     if outcome == "needs_confirm":
-        await _tell(interaction, ASK, view=ConfirmView(campaign.id, session_at))
+        kept = found.kept if found is not None else None
+        # Not known (the read failed): the plain question, and nothing is promised either way.
+        ask = ASK if kept is None else ASK_KEPT if kept else ASK_DRAFT
+        await _tell(interaction, ask, view=ConfirmView(campaign.id, session_at, kept=kept))
     elif outcome == "queued":
         keeping = replace_ok if keeps_old is None else keeps_old
         await _tell(interaction, QUEUED_KEEPING if keeping else QUEUED)
@@ -279,7 +284,7 @@ class ConfirmView(discord.ui.View):
                 # promised about an old one.
                 replace_ok=True if self.finished is None or not self.lists else self.finished,
                 lists_ok=self.lists,
-                keeps_old=bool(self.kept) if self.lists else None,
+                keeps_old=bool(self.kept),
             )
 
     @discord.ui.button(label="Keep the old one", style=discord.ButtonStyle.secondary)

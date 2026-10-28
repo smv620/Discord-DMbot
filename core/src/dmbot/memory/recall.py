@@ -568,7 +568,8 @@ class RecallService:
         # needs both ends, anyone's fact to it.
         # Story threads (#1662) are the DM's plot notes, and so are deeds (#1732): the same.
         hide_clue = (
-            " AND NOT audience_limited AND NOT hidden_from_players AND NOT type = ANY(%s)"
+            " AND NOT audience_limited AND NOT hidden_from_players AND NOT unnamed"
+            " AND NOT type = ANY(%s)"
             if audience == PLAYERS
             else ""
         )

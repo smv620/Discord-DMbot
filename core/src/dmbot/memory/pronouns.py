@@ -14,6 +14,18 @@ import re
 from dmbot.memory.models import name_key
 
 FIRST = frozenset({"i", "me", "my", "mine", "myself"})
+# The words that stand for a name already said (#2757): a quote is widened to the sentence before
+# only when it has one, and a "Which one?" about one of them can never lose its connection (#2790).
+PRONOUNS = frozenset(
+    {"he", "she", "his", "her", "hers", "him", "himself", "herself", "they", "their", "theirs",
+     "them", "its", "who", "whose", "whom"}
+)  # fmt: skip
+
+
+def is_pronoun(word: str) -> bool:
+    return " ".join(word.split()).strip(".,;:!?\"'“”‘’()").casefold() in PRONOUNS
+
+
 # "I" and "my" in the text: a capital I on its own, or my/me/mine/myself, or I'm, I've, I'd, I'll
 _SAYS_I = re.compile(r"\b(?:I|[Mm]y|[Mm]e|[Mm]ine|[Mm]yself)\b|\bI['’](?:m|ve|d|ll)\b")
 MAX_CHOICES = 24  # one select holds 25 choices; one is "Not one character's"

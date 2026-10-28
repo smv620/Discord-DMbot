@@ -63,9 +63,10 @@ class Hidden(ConfirmedMemoryTest):
             cur = await conn.execute(
                 "SELECT proname, proconfig::text AS cfg, prosecdef FROM pg_proc"
                 " WHERE proname IN ('dmbot_recap_check_names', 'dmbot_recap_shared')"
+                " AND pronamespace = current_schema()::regnamespace"
             )
             rows = await cur.fetchall()
-        self.assertGreaterEqual(len(rows), 2)  # (one pair for each test schema)
+        self.assertEqual(len(rows), 2)  # (the pair in this test's schema)
         for row in rows:
             self.assertIn("search_path", row["cfg"] or "", row["proname"])
             self.assertTrue(row["prosecdef"], row["proname"])
