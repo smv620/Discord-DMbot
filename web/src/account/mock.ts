@@ -51,6 +51,9 @@ import type {
   Waiting,
   MyNpcNote,
   NpcPage,
+  RuleSharing,
+  RuleSharingAnswer,
+  RuleSharingChoice,
 } from "./api";
 import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
@@ -810,7 +813,54 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   const lateLooks = new Map<string, number>();
-  const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
+  // The pretend rule sharing's memory, per campaign ref (#2783).
+const sharingState = new Map<string, RuleSharing>();
+const sharingChoices = new Map<string, { ref: string; choice: RuleSharingChoice; looks: number }>();
+let sharingCount = 0;
+const SHARING_HERE = [
+  { setId: "b".repeat(32), name: "Frostfell Table Rules", publisher: "The Winter Court", version: 3, rules: 4 },
+  { setId: "c".repeat(32), name: "Quick Combat", publisher: "Harbor Nights", version: 1, rules: 2 },
+];
+const SHARING_CODE = "ABCDEFGHJK";
+function sharingOf(ref: string): RuleSharing {
+  const known = sharingState.get(ref);
+  if (known) return structuredClone(known);
+  const start: RuleSharing = {
+    published: null,
+    following: [],
+    here: structuredClone(SHARING_HERE),
+    ruleCount: /\.rs-norules$/.test(ref) ? 0 : 3,
+    canShare: !/\.rs-free$/.test(ref),
+  };
+  sharingState.set(ref, start);
+  return structuredClone(start);
+}
+/** What the bot would do with a choice, and the words it would say (Discord's own, in the real thing). */
+function applySharing(ref: string, choice: RuleSharingChoice): string {
+  const now = sharingOf(ref);
+  let note = "";
+  if (choice.action === "publish") {
+    now.published = { name: choice.arg, shared: true, version: 1, hasCode: false };
+    note = `Shared as ${choice.arg}.`;
+  } else if (choice.action === "stop_sharing") {
+    if (now.published) now.published.shared = false;
+    note = "Stopped sharing. Campaigns that follow it keep their copy.";
+  } else if (choice.action === "look_code") {
+    note = choice.arg === SHARING_CODE ? "Found Frostfell Table Rules from The Winter Court: 4 rules would be copied." : "That code doesn't match a set.";
+  } else if (choice.action === "follow_code" || choice.action === "follow_here") {
+    const set = choice.action === "follow_here" ? now.here.find((h) => h.setId === choice.arg) : SHARING_HERE[0];
+    if (set) {
+      now.following = [{ name: set.name, publisher: set.publisher, version: set.version, updating: true }];
+      note = `Now following ${set.name}.`;
+    }
+  } else if (choice.action === "unfollow") {
+    now.following = [];
+    note = "Stopped following.";
+  }
+  sharingState.set(ref, now);
+  return note;
+}
+const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
   // The pretend optional rules (#2753): the catalog's ids with a few invented rules, and the game master's choices by campaign.
   const ruleChoices = new Map<string, Map<string, boolean>>();
   const reachable = async (): Promise<void> => {
@@ -1945,6 +1995,42 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           sets: 1,
         },
       ];
+    },
+    // The pretend rule sharing (#2783). Ref endings pick a case: `.rs-player` is a player (refused), `.rs-free` a
+    // campaign whose plan does not allow sharing, `.rs-norules` one with no rules of its own, `.rs-offline` a bot
+    // that never answers, `.rs-failed` one that refuses. The share code that finds a set is "ABCDEFGHJK".
+    async ruleSharing(ref): Promise<RuleSharing> {
+      calls.push(`ruleSharing:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.rs-player$/.test(ref)) throw new ApiError("not-allowed");
+      return sharingOf(ref);
+    },
+    async chooseRuleSharing(ref, choice): Promise<string> {
+      calls.push(`chooseRuleSharing:${ref}:${choice.action}${"arg" in choice ? `:${choice.arg}` : ""}`);
+      await reachable();
+      signedIn();
+      if (/\.rs-player$/.test(ref)) throw new ApiError("not-allowed");
+      const mine = sharingOf(ref);
+      if (choice.action === "publish" && !mine.canShare) throw new ApiError("plan-needed");
+      if (choice.action === "publish" && mine.ruleCount === 0) throw new ApiError("no-rules");
+      const id = String(++sharingCount).padStart(32, "0");
+      sharingChoices.set(id, { ref, choice, looks: 0 });
+      return id;
+    },
+    async ruleSharingAnswer(ref, answer): Promise<RuleSharingAnswer> {
+      calls.push(`ruleSharingAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const asked = sharingChoices.get(answer);
+      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
+      const base = { action: asked.choice.action, startedAt: 1_800_000_000, updatedAt: 1_800_000_000, serverNow: 1_800_000_005, reason: null, error: "", note: "" };
+      if (/\.rs-offline$/.test(ref)) return { ...base, state: "running", stage: "waiting" };
+      asked.looks += 1;
+      if (asked.looks < 2) return { ...base, state: "running", stage: "sharing" };
+      if (/\.rs-failed$/.test(ref))
+        return { ...base, state: "failed", stage: "failed", reason: "failed", error: "failed", note: "That code doesn't match a set. Check it and try again." };
+      return { ...base, state: "done", stage: "done", note: applySharing(ref, asked.choice) };
     },
     async houseRules(campaignRef) {
       calls.push(`houseRules:${campaignRef}`);
