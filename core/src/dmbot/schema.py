@@ -14036,6 +14036,17 @@ BACKSTORY_LINK_UPLOAD = """
         ADD COLUMN told BOOLEAN NOT NULL DEFAULT false;
 """
 
+BACKSTORY_DECIDED = """
+    -- How a pronoun in a lore read was settled (#2790): fixed words and a rounded score only
+    -- ("who-is-it: accepted 95%", "who-is-it: not checked"), never a name or any text. Kept with a
+    -- waiting connection or question so the DM sees DMbot's check beside the quote. No existing row
+    -- changes (the default is empty).
+    ALTER TABLE backstory_links
+        ADD COLUMN decided TEXT NOT NULL DEFAULT '' CHECK (char_length(decided) <= 60);
+    ALTER TABLE backstory_which
+        ADD COLUMN decided TEXT NOT NULL DEFAULT '' CHECK (char_length(decided) <= 60);
+"""
+
 BACKSTORY_WHICH = """
     -- A backstory connection whose one end fits two names equally ("Mara" when the campaign has
     -- Mara Ashgrove and Mara Voss) waits here for the DM to pick (#2650), instead of being left
