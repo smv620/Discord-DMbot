@@ -49,6 +49,8 @@ import type {
   GameMaster,
   GameMasterCandidate,
   GameMasters,
+  CharacterSheets,
+  SheetAnswer,
   QueuedSetting,
   Timeline,
   WebRevealTarget,
@@ -1685,6 +1687,45 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return { main: "2024 rules", rules, note: "", default: true };
     },
     // A ref ending `.gm-failed` fails to save; `.gm-full` already has five; `.gm-nobody` has nobody to offer.
+    async campaignSheets(ref): Promise<CharacterSheets> {
+      calls.push(`campaignSheets:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.sheets-none(\.|$)/.test(ref)) throw new ApiError("not-found");
+      // `.sheets-dm`: the DM's view (every sheet, read only); otherwise the player's own, with a sheet and one without.
+      const dm = /\.sheets-dm(\.|$)/.test(ref);
+      const sheet = {
+        entityId: "sh-sorrel",
+        name: "Sorrel",
+        mine: !dm,
+        source: "dndbeyond" as const,
+        url: "https://www.dndbeyond.com/characters/12345",
+        fetchedAt: 1791000000,
+        summary: { species: "Elf", level: 3, classes: [{ name: "Wizard", level: 3, subclass: null }], maxHp: 18, ac: 12 },
+      };
+      const bare = { entityId: "sh-ivy", name: "Ivy", mine: !dm, source: null, url: null, fetchedAt: null, summary: null };
+      return { isDm: dm, sheets: dm ? [sheet] : [sheet, bare] };
+    },
+    async chooseSheet(ref, entity, choice): Promise<string> {
+      calls.push(`chooseSheet:${ref}:${entity}:${JSON.stringify(choice)}`);
+      await reachable();
+      signedIn();
+      if (/\.sheets-dm(\.|$)/.test(ref) && choice.action !== "read_again") throw new ApiError("not-allowed");
+      if (choice.action === "link" && !/^https:\/\/www\.dndbeyond\.com\/characters\/[0-9]{1,12}$/.test(choice.url)) {
+        throw new ApiError("bad-link");
+      }
+      if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
+      return "sheet-answer";
+    },
+    async sheetAnswer(ref, answer): Promise<SheetAnswer> {
+      calls.push(`sheetAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      if (/\.sheets-stuck(\.|$)/.test(ref)) {
+        return { state: "running", stage: "waiting", action: "link", entityId: "sh-ivy", error: null, startedAt: 1, updatedAt: 1 };
+      }
+      return { state: "done", stage: "done", action: "link", entityId: "sh-ivy", error: null };
+    },
     async campaignGameMasters(ref): Promise<GameMasters> {
       calls.push(`campaignGameMasters:${ref}`);
       await reachable();
