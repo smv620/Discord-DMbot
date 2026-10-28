@@ -224,6 +224,83 @@ class MoreRules(MemoryTest):
         self.assertEqual(done.value.id, ken)  # the named one is kept
 
 
+class WhenTheAnchorLeavesTheStory(MemoryTest):
+    async def test_a_person_with_only_that_connection_goes_with_it_and_undo_brings_it_back(
+        self,
+    ) -> None:
+        ken = await self.add("Ken", status=CONFIRMED)
+        sis = (await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken)).entity
+        await self.relate(ken, "kin_of", sis.id, status=PROPOSED)
+        rejected = await self.memory.set_entity_status(
+            GUILD_A, self.c, ken, "rejected", source="dm"
+        )
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
+        assert rejected.batch is not None
+        await self.memory.undo(GUILD_A, self.c, rejected.batch, source="dm")
+        [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual((e.id, e.status, e.unnamed_anchor), (sis.id, PROPOSED, ken))
+        self.assertEqual(shown, "Ken's sister (name unknown)")
+
+    async def test_one_with_other_connections_stays_with_no_anchor_and_undo_restores_it(
+        self,
+    ) -> None:
+        ken = await self.add("Ken", status=CONFIRMED)
+        mira = await self.add("Mira", status=CONFIRMED)
+        sis = (await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken)).entity
+        await self.relate(ken, "kin_of", sis.id, status=PROPOSED)
+        await self.relate(mira, "ally_of", sis.id, status=PROPOSED)
+        rejected = await self.memory.set_entity_status(
+            GUILD_A, self.c, ken, "rejected", source="dm"
+        )
+        [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual((e.id, e.unnamed_anchor, e.status), (sis.id, None, PROPOSED))
+        self.assertEqual(shown, "sister (name unknown)")
+        self.assertEqual(e.name, "sister (name unknown)")
+        assert rejected.batch is not None
+        await self.memory.undo(GUILD_A, self.c, rejected.batch, source="dm")
+        [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual((e.unnamed_anchor, e.name), (ken, "Ken's sister (name unknown)"))
+
+    async def test_a_person_with_no_connection_at_all_goes_with_it(self) -> None:
+        ken = await self.add("Ken", status=CONFIRMED)
+        await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken)
+        await self.memory.set_entity_status(GUILD_A, self.c, ken, "rejected", source="dm")
+        self.assertEqual(await self.memory.unnamed(GUILD_A, self.c), [])
+
+
+class NoLookupMatchesThem(MemoryTest):
+    async def test_lookup_exact_sound_end_match_and_the_scan_never_find_one(self) -> None:
+        from dmbot.memory.end_match import Ends
+        from dmbot.memory.lookup import CampaignLookup
+
+        ken = await self.add("Ken", status=CONFIRMED)
+        made = (await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken)).entity
+        async with self.db.guild(GUILD_A) as conn:  # even confirmed, it is no name
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (made.id,)
+            )
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        for heard in ("sister", "Ken's sister", "Ken's sister (name unknown)", "name unknown"):
+            with self.subTest(heard=heard):
+                self.assertEqual(lookup.exact(heard), ())
+                self.assertEqual(lookup.sounds_like(heard), ())
+        # the end-matching table the backstory reader builds (ui/name_background.py)
+        ends: dict[str, str] = {}
+        for key, entries in lookup.by_key.items():
+            for e in entries:
+                if e.confirmed and not e.secret and not e.person:
+                    ends.setdefault(key, lookup.entities[e.entity_id].name)
+        reader = Ends(ends, {*ends.values()})
+        for end in ("my sister", "his sister", "Ken's sister", "the sister", "sister"):
+            with self.subTest(end=end):
+                got = reader.match(end)
+                self.assertNotEqual(got.name, made.name)
+                self.assertNotIn(made.name, got.ambiguous)
+        # the after-session scan's "already answered" keys hold nothing of the label either
+        keys = await self.memory.known_keys(GUILD_A, self.c)
+        self.assertFalse({name_key(made.name), name_key("sister")} & keys)
+
+
 class EveryMatchingPathSkipsThem(MemoryTest):
     async def make(self) -> str:
         ken = await self.add("Ken", status=CONFIRMED)

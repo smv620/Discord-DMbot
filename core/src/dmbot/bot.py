@@ -9490,7 +9490,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             agreed = await self.consent.consenting(gid)
             known = set(await self.memory.known_keys(gid, cid))
             added = 0
-            waiting = await self.memory.entities(gid, cid, statuses=[PROPOSED])
+            # (a person the story never named has no name to be spelled: #2790)
+            waiting = [
+                e
+                for e in await self.memory.entities(gid, cid, statuses=[PROPOSED])
+                if not e.unnamed
+            ]
             given: set[str] = set()  # suggestions that already got a spelling in this run
             for word, user_id, near in spelled:
                 key = name_key(word)

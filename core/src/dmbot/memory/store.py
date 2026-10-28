@@ -2340,6 +2340,8 @@ class MemoryStore:
                     await w.delete(PLAN_SAME_AS, link["id"])
             if current["role"] == PLAYER_CHARACTER:
                 await _sync_plays(w, entity_id)  # a rejected character has no player
+            if status == REJECTED:
+                await _let_go_of_anchored(w, entity_id)
             return Written(_entity(row), w.batch)
 
     async def add_alias(
@@ -4693,6 +4695,43 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
     before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
     changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
     return bool(changed_keys) and changed_keys <= {"secret", "unrevealed"}
+
+
+async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:
+    """The people who hang off an entry that was rejected (#2790). One whose only connections are
+    to that entry is rejected with it: nothing else says they exist. One with other connections is
+    kept, with no anchor, and its label built from its word alone ("a sister (name unknown)"). All
+    in the rejection's own change, so one Undo brings every one of them back."""
+    hanging = await w.select(
+        ENTITIES, " AND unnamed_anchor = %s AND status IN ('proposed', 'confirmed')", [anchor_id]
+    )
+    if not hanging:
+        return
+    ids = [str(r["id"]) for r in hanging]
+    others: set[str] = set()
+    for rel in await w.select(
+        RELATIONS,
+        " AND status IN ('proposed', 'confirmed')"
+        " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+        [ids, ids],
+    ):
+        for mine, other in (
+            (rel["subject_id"], rel["object_id"]),
+            (rel["object_id"], rel["subject_id"]),
+        ):
+            if mine in ids and other != anchor_id:
+                others.add(str(mine))
+    await w.update_rows(
+        ENTITIES,
+        {
+            str(r["id"]): (
+                {"unnamed_anchor": None, "name": unnamed_mod.stored(r["unnamed_what"], None)}
+                if str(r["id"]) in others
+                else {"status": REJECTED}
+            )
+            for r in hanging
+        },
+    )
 
 
 async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str, Any]]) -> None:
