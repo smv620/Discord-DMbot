@@ -16,6 +16,8 @@ export interface NamedInfo {
   text: string;
   /** The id that takes the step back, or null when it can't be taken back. */
   undo: string | null;
+  /** True after a join: the Undo then says so. */
+  join: boolean;
 }
 
 const problem = (kind: string): string => (Object.hasOwn(w.problems, kind) ? (w.problems[kind] as string) : (w.problems["server"] as string));
@@ -40,6 +42,9 @@ export default function NameThem({
   const [looks, setLooks] = useState(0);
   const [question, setQuestion] = useState<{ id: string; name: string } | null>(null);
   const [report, setReport] = useState<string | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [declined, setDeclined] = useState(false);
+  const questionBox = useRef<HTMLParagraphElement>(null);
   const asked = useRef("");
   const flight = useRef(false);
   const seen = useObservedWait(working, String(looks));
@@ -48,16 +53,19 @@ export default function NameThem({
     if (flight.current || !api.nameThem) return;
     flight.current = true;
     setWorking(true);
+    setJoining(step.action === "name-join");
+    setDeclined(false);
     setReport(null);
     setLooks(0);
     try {
       const got: NameThemResult = await api.nameThem(refId, row.id, step, () => setLooks((n) => n + 1));
       if (got.state === "question") {
         setQuestion(got.other);
+        setTimeout(() => questionBox.current?.focus(), 0);
         return;
       }
       setQuestion(null);
-      await onDone({ text: text(asked.current), undo: got.undo });
+      await onDone({ text: text(asked.current), undo: got.undo, join: step.action === "name-join" });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       if (kind === "signed-out") return onSignedOut();
@@ -83,7 +91,9 @@ export default function NameThem({
       <p class="small muted">{w.hint}</p>
       {question ? (
         <div class="stack" role="group" aria-label={w.known(row.name, question.name)}>
-          <p>{w.known(row.name, question.name)}</p>
+          <p role="status" tabIndex={-1} ref={questionBox}>
+            {w.known(row.name, question.name)}
+          </p>
           <div class="row">
             <button
               type="button"
@@ -93,13 +103,19 @@ export default function NameThem({
             >
               {w.sameYes}
             </button>
-            <button type="button" class="button secondary" aria-disabled={working} onClick={() => !working && setQuestion(null)}>
+            <button type="button" class="button secondary" aria-disabled={working} onClick={() => {
+                if (working) return;
+                setQuestion(null);
+                setDeclined(true);
+                setName("");
+              }}>
               {w.sameNo}
             </button>
           </div>
         </div>
       ) : (
         <form class="stack" onSubmit={submit}>
+          {declined && <p class="small">{w.sameNoNote(row.name)}</p>}
           <label>
             {w.nameLabel}
             <input
@@ -122,7 +138,7 @@ export default function NameThem({
       </p>
       {working && (
         <WorkProgress
-          stage={looks === 0 ? (w.stage["waiting"] as string) : (w.stage["working"] as string)}
+          stage={looks === 0 ? (w.stage["waiting"] as string) : (w.stage[joining ? "joining" : "working"] as string)}
           startedAt={seen.startedAt}
           updatedAt={seen.movedAt}
           state={seen.quiet ? "stalled" : "running"}

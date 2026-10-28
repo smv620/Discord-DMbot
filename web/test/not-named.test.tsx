@@ -179,7 +179,7 @@ describe("Undo", () => {
     openEditor("Ken's sister");
     give("Mira Voss");
     fireEvent.click(await screen.findByRole("button", { name: w.sameYes }, slow));
-    fireEvent.click(await screen.findByRole("button", { name: w.undo }, slow));
+    fireEvent.click(await screen.findByRole("button", { name: w.undoJoin }, slow));
     expect(await screen.findByText(w.undone, {}, slow)).toBeTruthy();
     await waitFor(() => expect(rowOf("Ken's sister")).toBeTruthy());
   });
