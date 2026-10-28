@@ -593,6 +593,7 @@ interface WebState {
     revealed?: boolean;
     belief?: WebLink["belief"];
     pinned?: boolean;
+    check?: string;
   }[];
   nextLink: number;
 }
@@ -625,6 +626,9 @@ function startWeb(big: boolean, lonely = false): WebState {
   // One connection the DM pinned as 100% truth (#2448).
   const l2 = byId("l2");
   if (l2) l2.pinned = true;
+  // DMbot's check on one connection (#2859): the DM's full view only.
+  const l3 = byId("l3");
+  if (l3) l3.check = "DMbot matched this name from your text.";
   const l4 = byId("l4");
   if (l4) l4.revealed = false;
   // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
@@ -688,7 +692,7 @@ function pretendWaiting(): Waiting {
     ],
     backstory: [
       { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
-      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [] },
+      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [], check: "DMbot wasn't sure who the text means. Please check." },
       { id: "b3", subject: "Rook", object: "Newcomer", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: false, waitingOn: ["Newcomer"] },
       { id: "b4", subject: "Mira Voss", object: "Harrow's Keep", how: "grew up in", secret: false, upload: "", ready: true, waitingOn: [] },
     ],
@@ -715,6 +719,7 @@ function pronounWaiting(): Waiting {
         id: "w2", word: "she", pronoun: true, other: "Rook", otherIsSubject: false, how: "grew up with", secret: false, upload: "Lore, 24 Oct",
         candidates: [{ id: "e3", name: "Mara Ashgrove", limited: false }],
         quote: "She grew up with Rook",
+        check: "You chose someone else for this one.",
       },
       { id: "w3", word: "he", pronoun: true, other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct", candidates: [] },
     ],
@@ -803,6 +808,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ...(full ? { revealed: l.revealed !== false } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
+          ...(full && l.check ? { check: l.check } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };

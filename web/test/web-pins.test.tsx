@@ -56,6 +56,33 @@ async function openPanel(api: AccountApi, suffix = "") {
   return (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
 }
 
+describe("DMbot's check on a connection's card (#2859)", () => {
+  const CHECK = "DMbot matched this name from your text.";
+  const withCheck = (canEdit: boolean): WebGraph =>
+    graph({
+      canEdit,
+      edges: [
+        {
+          a: "n1",
+          b: "n2",
+          label: "owes a debt to",
+          more: 0,
+          links: [{ id: "l1", words: "owes a debt to", secret: false, direction: "a-b", check: CHECK }],
+        },
+      ],
+    });
+
+  it("a connection's card shows DMbot's check to a DM", async () => {
+    await openPanel(pageWith(withCheck(true)));
+    expect(screen.getByText(w.checkLine(CHECK))).toBeTruthy();
+  });
+
+  it("the check is not kept for a player's view", async () => {
+    await openPanel(pageWith(withCheck(false)));
+    expect(screen.queryByText(w.checkLine(CHECK))).toBeNull();
+  });
+});
+
 describe("a DM's pins", () => {
   it("shows which connection is pinned, and the legend says what 📌 means", async () => {
     const panel = await openPanel(pageWith(graph()));
