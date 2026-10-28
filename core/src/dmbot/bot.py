@@ -10324,6 +10324,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild_id in await self.campaigns.guilds_with_campaigns():
             for _ in range(web_backup.PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild_id)
                 if item is None:
                     break
@@ -10341,6 +10344,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store.beat()  # a round began: the worker is alive
         for guild in list(self.guilds):
             for _ in range(web_restore.PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
@@ -10473,6 +10479,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(NAME_ANSWERS_PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 action = await store.claim_next(guild.id)
                 if action is None:
                     break
@@ -10615,6 +10624,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(web_settings.SETTINGS_PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
@@ -10704,6 +10716,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             item = await store.claim_next(guild.id)
             if item is None:
                 continue

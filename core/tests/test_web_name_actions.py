@@ -5,10 +5,14 @@ names throughout."""
 
 from __future__ import annotations
 
+import unittest
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, PropertyMock, patch
 
 import httpx
 
+from dmbot.bot import DMBot
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.web import all_names, sessions
@@ -470,3 +474,15 @@ class TheDoors(Acting):
             self.assertEqual(
                 callers(door), {"schema.py", "web/all_names.py", "web/relationships.py"}
             )
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_name_actions_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.name_actions = SimpleNamespace(claim_next=AsyncMock(return_value=None))
+        b.memory = object()
+        b._closing = True
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with patch.object(DMBot, "guilds", guilds):
+            await b.run_name_actions()
+        b.name_actions.claim_next.assert_not_awaited()

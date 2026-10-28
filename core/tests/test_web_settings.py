@@ -5,6 +5,7 @@ DM who made them. Invented names throughout."""
 
 from __future__ import annotations
 
+import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -528,3 +529,14 @@ class TheDoors(Settings):
     async def test_the_doors_have_one_caller(self) -> None:
         for door in ("dmbot_web_setting_add(", "dmbot_web_setting_read("):
             self.assertEqual(callers(door), {"schema.py", "web/campaign_settings.py"})
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_settings_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_settings = SimpleNamespace(claim_next=AsyncMock(return_value=None))
+        b._closing = True
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with patch.object(DMBot, "guilds", guilds):
+            await b.run_web_settings()
+        b.web_settings.claim_next.assert_not_awaited()
