@@ -213,7 +213,10 @@ class BackstoryLinks:
     async def which_waiting(self, guild_id: int, campaign_id: str) -> list[WhichWaiting]:
         """The questions still worth asking, oldest first. A candidate that was refused or merged
         away is dropped (or follows the merge); a question left with fewer than two candidates,
-        or about a name that is gone or refused, is not asked and is deleted."""
+        or about a name that is gone or refused, is not asked and is deleted. A question about a
+        pronoun ("she", #2790) is the exception for its candidates: it is kept with one name or
+        none, because "Someone else" keeps its connection; only its own end going away deletes it.
+        (Its stored second candidate, the question's own end, is never in the list returned.)"""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(

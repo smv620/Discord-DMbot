@@ -54,5 +54,5 @@ async def none_of_these(
         if result != DONE and batch is not None:
             try:
                 await memory.undo(guild_id, campaign_id, batch)
-            except MemoryRuleError:
+            except Exception:  # (the pick's own result or exception is what the caller sees)
                 log.warning("Who-is-it: 1 unnamed person could not be taken back")

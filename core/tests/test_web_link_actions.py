@@ -868,17 +868,18 @@ class TheEdits(Editing):
             await none_of_these(self.memory, self.backstory, self.g, self.one.id, q)
         self.assertEqual(await self.memory.unnamed(self.g, self.one.id), [])
 
-    async def test_a_failed_undo_is_logged_as_a_count(self) -> None:
+    async def test_a_failed_undo_of_any_kind_is_logged_and_keeps_the_original_result(self) -> None:
         await self.pronoun_question()
         (q,) = await self.backstory.which_waiting(self.g, self.one.id)
-        with (
-            patch.object(self.backstory, "pick_which", return_value="full"),
-            patch.object(self.memory, "undo", side_effect=MemoryRuleError("late")),
-            self.assertLogs("dmbot.memory.which_else", "WARNING") as logs,
-        ):
-            result = await none_of_these(self.memory, self.backstory, self.g, self.one.id, q)
-        self.assertEqual(result, "full")
-        self.assertIn("could not be taken back", logs.output[0])
+        for failure in (MemoryRuleError("late"), RuntimeError("down")):
+            with (
+                patch.object(self.backstory, "pick_which", return_value="full"),
+                patch.object(self.memory, "undo", side_effect=failure),
+                self.assertLogs("dmbot.memory.which_else", "WARNING") as logs,
+            ):
+                result = await none_of_these(self.memory, self.backstory, self.g, self.one.id, q)
+            self.assertEqual(result, "full")
+            self.assertIn("could not be taken back", logs.output[0])
 
     async def test_a_pick_that_is_not_a_candidate_or_not_an_id_is_refused(self) -> None:
         which = await self.which_question()
