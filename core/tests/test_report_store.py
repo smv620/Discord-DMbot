@@ -287,6 +287,20 @@ class TheBackup(ConfirmedMemoryTest):
         self.assertEqual((got["a" * 32].answer, got["a" * 32].answered_by), ("intended", 77))
 
 
+class TheBackupOfAFixedReminder(ConfirmedMemoryTest):
+    async def test_a_fixed_answer_keeps_the_reminder_it_replaced_through_a_backup(self) -> None:
+        section = ReportAnswersSection()
+        row = {**GOOD, "answer": "fixed", "remind_was": 5}
+        async with self.db.guild(GUILD_A) as conn:
+            await section.load(conn, GUILD_A, self.c, [row])
+            (dumped,) = await section.dump(conn, GUILD_A, self.c)
+            await section.clear(conn, GUILD_A, self.c)
+            await section.load(conn, GUILD_A, self.c, [dumped])
+            (again,) = await section.dump(conn, GUILD_A, self.c)
+        self.assertEqual((dumped["answer"], dumped["remind_was"]), ("fixed", 5))
+        self.assertEqual(again, dumped)
+
+
 class CheckingTheBackup(unittest.TestCase):
     def check(self, *rows: dict[str, Any]) -> Any:
         return ReportAnswersSection().check(list(rows))
@@ -294,6 +308,22 @@ class CheckingTheBackup(unittest.TestCase):
     def test_a_good_row_passes_and_none_is_fine(self) -> None:
         self.assertEqual(len(self.check(GOOD)), 1)
         self.assertEqual(self.check(), [])
+
+    def test_a_file_from_before_remind_was_reads_as_none(self) -> None:
+        (row,) = self.check(dict(GOOD))
+        self.assertIsNone(row["remind_was"])
+
+    def test_a_damaged_remind_was_is_refused(self) -> None:
+        for bad in (
+            {**GOOD, "remind_was": 5},  # only a fixed answer has one
+            {**GOOD, "answer": "fixed", "remind_was": 0},
+            {**GOOD, "answer": "fixed", "remind_was": -3},
+            {**GOOD, "answer": "fixed", "remind_was": True},
+            {**GOOD, "answer": "fixed", "remind_was": "5"},
+        ):
+            with self.assertRaises(CampaignError, msg=str(bad)):
+                self.check(bad)
+        self.assertEqual(len(self.check({**GOOD, "answer": "fixed", "remind_was": 5})), 1)
 
     def test_a_damaged_row_is_refused(self) -> None:
         for bad in (
