@@ -1737,6 +1737,8 @@ class RequireCurrent(Base):
         await self.draft(self.one.id, 100, "The vault", "Tessaly opens it.")
         await self.approve(self.one.id, 100, "The vault", "Tessaly opens it.")
         await self.draft(self.two.id, 100, "The vault", "Tessaly opens it.")
+        # Approved too, so the text check alone would not stop it: only the campaign filter does.
+        await self.approve(self.two.id, 100, "The vault", "Tessaly opens it.")
         self.assertTrue(await self.store.decide(1, self.one.id, 100, "post", require_current=True))
         job = await self.store.get(1, self.two.id, 100)
         assert job is not None
