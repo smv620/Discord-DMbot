@@ -120,6 +120,36 @@ export interface CampaignSettingAnswer {
   note: string;
 }
 
+/** A campaign's shared and followed house rules, for the DM (#2783). Never a share code (they are read in Discord,
+ * #2460) and never a rule's words: names, versions and counts. */
+export interface RuleSharing {
+  published: null | { name: string; shared: boolean; version: number; hasCode: boolean };
+  following: { name: string; publisher: string; version: number; updating: boolean }[];
+  /** The sets other campaigns share in the same server, to follow from a list. */
+  here: { setId: string; name: string; publisher: string; version: number; rules: number }[];
+  /** How many house rules of its own the campaign could share. */
+  ruleCount: number;
+  /** Whether the owner's plan lets the campaign share. */
+  canShare: boolean;
+}
+export type RuleSharingChoice =
+  | { action: "publish"; arg: string }
+  | { action: "stop_sharing" | "unfollow" }
+  | { action: "look_code" | "follow_code"; arg: string }
+  | { action: "follow_here"; arg: string };
+/** Where one sharing choice stands: the shared progress shape and Discord's own words (`note`). */
+export interface RuleSharingAnswer {
+  state: "running" | "stalled" | "done" | "failed";
+  stage: "waiting" | "sharing" | "done" | "failed";
+  action: RuleSharingChoice["action"];
+  startedAt: number;
+  updatedAt: number;
+  serverNow: number;
+  reason: string | null;
+  error: string;
+  note: string;
+}
+
 /** What ⚙️ Settings holds for a campaign today. */
 export interface CampaignSettings {
   visibility: "private" | "peek" | "open";
@@ -1558,6 +1588,9 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
+  | "no-rules" // there is no house rule of the campaign's own to share (#2783)
+  | "bad-choice" // a sharing choice the API cannot read (#2783)
   | "busy" // a recap that is being written or sent now can't be made again (#2608, #2609)
   | "no-lines" // the session's transcript is gone, so there is nothing to write from (#2608)
   | "needs-rights" // the campaign's first added recap: say you may use it (#2609)
@@ -1909,6 +1942,12 @@ export interface AccountApi {
   houseRules?(campaignRef: string): Promise<HouseRules>;
   /** The same rules as the file the bot's Download button sends. */
   houseRulesFile?(campaignRef: string): Promise<Blob>;
+  /** What the campaign shares and follows (DMs only, #2783); "not allowed" for anyone else. */
+  ruleSharing?(campaignRef: string): Promise<RuleSharing>;
+  /** Queue one sharing choice for the bot; resolves with the id to look at. */
+  chooseRuleSharing?(campaignRef: string, choice: RuleSharingChoice): Promise<string>;
+  /** Where a choice sent with `chooseRuleSharing` stands. */
+  ruleSharingAnswer?(campaignRef: string, answer: string): Promise<RuleSharingAnswer>;
   /** Whether DMbot may use this person's words to improve itself (#1610); on by default. Missing
    * from an older API, which shows no switch. */
   improvement?(): Promise<boolean>;
@@ -2027,6 +2066,9 @@ export interface AccountApi {
 }
 
 const errorKinds: Record<string, ApiErrorKind> = {
+  plan: "plan-needed",
+  no_rules: "no-rules",
+  bad_arg: "bad-choice",
   gone: "gone",
   cannot_write: "cannot-write",
   queue_full: "queue-full",
@@ -2520,6 +2562,24 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/house-rules`,
       )) as HouseRules,
+    ruleSharing: async (campaignRef) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing`,
+      )) as RuleSharing,
+    chooseRuleSharing: async (campaignRef, choice) =>
+      (
+        (await call(
+          "POST",
+          `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing`,
+          choice,
+        )) as { answer: string }
+      ).answer,
+    ruleSharingAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-sharing/answers/${encodeURIComponent(answer)}`,
+      )) as RuleSharingAnswer,
     houseRulesFile: async (campaignRef) =>
       (await call(
         "GET",

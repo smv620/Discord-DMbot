@@ -13,7 +13,9 @@ import {
   type HouseRules,
 } from "./api";
 import { sharingCard } from "../content/sharing";
+import { RULE_SHARING_LIVE } from "../content/rule-sharing-switch";
 import CampaignNav from "./CampaignNav";
+import LazyPanel from "./LazyPanel";
 
 /** The campaign in the address: `/account/house-rules/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -164,6 +166,13 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
               </ul>
               <Download api={api} campaignRef={campaignRef} fileName={found.fileName} />
             </>
+          )}
+          {RULE_SHARING_LIVE && api.ruleSharing && (
+            <LazyPanel
+              load={() => import("./RuleSharing")}
+              what="sharing"
+              props={{ api, campaignRef }}
+            />
           )}
           {found.sets.length > 0 && (
             <section aria-labelledby="following-heading">
