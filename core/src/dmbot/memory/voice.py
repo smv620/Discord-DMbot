@@ -19,12 +19,13 @@ from __future__ import annotations
 from collections.abc import Collection
 
 from dmbot.memory.models import NPC, PLAYER_CHARACTER
+from dmbot.memory.ontology import CORE_PREDICATES
 
 OWN, EFFECT, PARTY = "own", "effect", "party"
 
-# The relationships that carry a character's own attitude, loyalty or vow (posted on #2562): a
-# list in code until the ontology's definitions grow a flag for it (they are versioned and hashed).
-INNER_STATE = frozenset({"sworn_to", "ally_of", "enemy_of", "serves"})
+# The relationships that carry a character's own attitude, loyalty or vow (#2562): the ones whose
+# definition has the `inner_state` flag (#2619), so the list lives with the definitions.
+INNER_STATE = frozenset(t.key for t in CORE_PREDICATES if t.inner_state)
 
 PARTY_REASON = "A player said that about someone else's character, so it isn't kept as true"
 EFFECT_NOTE = "Told by the DM as something that happened to {name}, not as {name}'s own choice."
