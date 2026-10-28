@@ -1469,8 +1469,10 @@ def create_app(
         sort: str = "name",
         page: str = "1",
         size: str = str(all_names.PAGE_SIZE),
+        unnamed: str = "",
     ) -> dict[str, Any]:
-        """A page of the campaign's names for the All names page (#2294). A DM gets everything; a
+        """A page of the campaign's names for the All names page (#2294). `unnamed=1` asks for the
+        people the story never named too (#2803; a DM's list only). A DM gets everything; a
         server manager who is not a DM gets no secret names; anyone else gets "not found". A page
         that is not a number is the same plain refusal as one past the end (400 "bad_page"), not
         FastAPI's own 422 (#2376)."""
@@ -1481,7 +1483,15 @@ def create_app(
             number = int(page) if re.fullmatch(r"[0-9]{1,9}", page) else 0  # (0 is refused)
             wanted = int(size) if re.fullmatch(r"[0-9]{1,4}", size) else 0  # (0 is refused)
             return await all_names.read_page(
-                db, session, ref, q=q, kind=kind, sort=sort, page=number, size=wanted
+                db,
+                session,
+                ref,
+                q=q,
+                kind=kind,
+                sort=sort,
+                page=number,
+                size=wanted,
+                unnamed=unnamed == "1",
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))

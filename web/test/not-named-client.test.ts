@@ -19,6 +19,17 @@ function fake(answers: { status?: number; body: unknown }[]) {
   return { api, seen };
 }
 
+describe("the list", () => {
+  it("asks for the people the story never named only when told to", async () => {
+    const page = { campaign: "C", canEdit: true, names: [], kinds: [], total: 0, page: 1, pages: 1, pageSize: 50 };
+    const { api, seen } = fake([{ body: page }, { body: page }]);
+    await api.allNames!("100.cmp1", { q: "", kind: "", sort: "name", page: 1 });
+    await api.allNames!("100.cmp1", { q: "", kind: "", sort: "name", page: 1, unnamed: true });
+    expect(seen[0]?.url).not.toContain("unnamed");
+    expect(seen[1]?.url).toContain("unnamed=1");
+  });
+});
+
 describe("the name steps", () => {
   it("sends the name to the person's address and returns the answer once it is done", async () => {
     const row = { id: "n1", name: "Mara", kind: "npc", others: [], secret: false, npcId: null };

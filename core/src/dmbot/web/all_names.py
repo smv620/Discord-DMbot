@@ -83,6 +83,7 @@ async def read_page(
     page: int = 1,
     size: int = PAGE_SIZE,
     only: str | None = None,
+    unnamed: bool = False,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -100,6 +101,12 @@ async def read_page(
         raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
+        # "Not named yet" (#2803) is in the list, the counts and the totals only when the page asks
+        # for it, so a DM's numbers are right whatever the page's switch says; the door still lets
+        # only a DM of the campaign see them. Local to this transaction, like the guild.
+        await conn.execute(
+            "SELECT set_config('dmbot.names_unnamed', %s, true)", ("1" if unnamed else "",)
+        )
         cur = await conn.execute(
             "SELECT dmbot_web_all_names(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (

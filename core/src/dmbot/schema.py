@@ -16645,7 +16645,9 @@ _NAMES_PAGE_SWAPS = (
     (
         "              AND e.status = 'confirmed' AND e.type <> 'person'\n",
         "              AND ((e.status = 'confirmed' AND e.type <> 'person')\n"
-        "                   OR (is_dm AND e.unnamed AND e.status IN ('proposed', 'confirmed')))\n",
+        "                   OR (is_dm AND e.unnamed AND e.status IN ('proposed', 'confirmed')\n"
+        "                       AND COALESCE(current_setting('dmbot.names_unnamed', true), '')\n"
+        "                           = '1'))\n",
     ),
     (
         "'hidden', p.hidden,",

@@ -1738,7 +1738,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       const view = namesView(ref);
       if (view === "none") throw new ApiError("not-found");
-      const withUnnamed = view === "dm" && /\.not-named$/.test(ref);
+      const withUnnamed = view === "dm" && query.unnamed === true && /\.not-named$/.test(ref);
       const visible = [...(withUnnamed ? unnamedPeople : []), ...memory].filter((n) => view === "dm" || !n.secret);
       const kinds: NameKind[] = [{ key: "not_named", label: "Not named yet" }, ...NAME_KINDS].map((k) => ({ ...k, count: visible.filter((n) => n.kind === k.key).length })).filter((k) => k.count > 0);
       const needle = query.q.trim().toLowerCase();

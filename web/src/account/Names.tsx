@@ -125,7 +125,7 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
     setBusy(true);
     const asked = queryNow.current;
     try {
-      const read = await api.allNames(ref, { ...asked, page });
+      const read = await api.allNames(ref, { ...asked, page, unnamed: NOT_NAMED_LIVE && api.nameThem !== undefined });
       if (mine !== latest.current) return pageNow.current;
       setData(read);
       setView("ok");

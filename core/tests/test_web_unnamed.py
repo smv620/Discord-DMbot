@@ -28,6 +28,10 @@ class Unnamed(Acting):
         figure = await self.memory.add_unnamed(self.g, self.one.id, what="a hooded figure")
         self.figure = figure.entity.id
 
+    async def page(self, who: Any = None, ref: str | None = None, **kw: Any) -> dict[str, Any]:
+        kw.setdefault("unnamed", True)  # (these tests are about the list that asks for them)
+        return await super().page(who, ref, **kw)
+
     async def not_named(self, who: Any = None) -> dict[str, Any]:
         return await self.page(who, kind="not_named")
 
@@ -56,6 +60,15 @@ class Reading(Unnamed):
         self.assertEqual(
             (first["key"], first["label"], first["count"]), ("not_named", "Not named yet", 2)
         )
+
+    async def test_they_are_in_no_count_unless_the_page_asks_for_them(self) -> None:
+        asked = await self.page()
+        plain = await self.page(unnamed=False)
+        self.assertEqual(asked["total"] - plain["total"], 2)
+        self.assertNotIn("not_named", [k["key"] for k in plain["kinds"]])
+        self.assertNotIn(self.sister, [n["id"] for n in plain["names"]])
+        only = await self.page(unnamed=False, kind="not_named")
+        self.assertEqual((only["total"], only["names"]), (0, []))
 
     async def test_the_label_follows_the_anchor_when_the_anchor_is_renamed(self) -> None:
         await self.memory.rename_entity(self.g, self.one.id, self.ken, "Kenneth", source=DM_SOURCE)
