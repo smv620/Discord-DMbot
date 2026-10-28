@@ -31,10 +31,8 @@ The owner's checks for the rows marked **owner check** are in `docs/OWNER_CHECKS
 
 | Switch | Shows | Bot PRs, merged? | Server setting | Live today? | Goes live with |
 |---|---|---|---|---|---|
-| `NPCS_CHANNEL_LIVE` (help.ts) | Help steps for the people-and-groups channel; home card; privacy line "people list"; What's new "A channel listing the people and groups" | #1761, #1779, #1793 merged after `174c35ec`; migration 0128 | none | Deployed 2026-10-18 01:40 UTC (`86976110`); the live check is not recorded yet | **the draft flip (#1864)**, once dev1 records the check in `docs/testing-history.log` |
 | `INITIATIVE_STYLE_LIVE` (help.ts) | Help steps (player and game master); home card sentence; privacy line; `/players` "What you might see"; What's new "FightBot follows your turn order" | #1771/#1783, #1784/#1790, #1791/#1795 merged after `174c35ec`; migrations 0129, 0130 | none | Deployed 2026-10-18 01:40 UTC (`86976110`); the live check is not recorded yet | **the draft flip (#1864)**, once dev1 records the check in `docs/testing-history.log` |
 | `TIME_SUGGESTIONS_LIVE` (help.ts) | Help steps; What's new "A time suggestion from your narration" | #1758, #1760 deployed in `174c35ec` | **`DMBOT_TIME_SUGGESTIONS=1`** (default off) | No: deployed but the setting is off | **server setting**, set by the owner, then dev1's live check |
-| `RULES_CHANNEL_LIVE` (help.ts) | Help steps; the sentence that a peek opens this channel too; What's new "A channel for your house rules" | #1752, #1759 deployed (migration 0127, `3b75a693`) | none | Deployed, not seen: the entry says the owner has not checked it | **owner check** |
 | `WHERE_ARE_WE_LIVE` (help.ts) | Help line about the quiet "where we are" note; What's new "A quiet reminder of the game time" | #1738 deployed | none found | Deployed, not seen | **owner check** |
 | `DEEDS_LIVE` (help.ts) | Help steps for Record a deed; What's new "Record what your players did" | #1732, #1754 deployed | none found | Deployed, not seen | **owner check** |
 | `STANDING_LIVE` (help.ts) | Help steps for Standing; What's new "How NPCs feel about the party" | #1655, #1661 deployed (0117, `68a8949f`) | none | Deployed, not seen (listed under NEW LIVE CHECKS) | **owner check** |
@@ -88,9 +86,9 @@ The owner's checks for the rows marked **owner check** are in `docs/OWNER_CHECKS
 
 ## What the 86976110 deploy flips
 
-Two switches, the ones that deploy brought: `NPCS_CHANNEL_LIVE` and `INITIATIVE_STYLE_LIVE`.
-Neither needs a server setting. The draft PR that flips them also moves their two held What's new
-entries into `entries` and changes no words. It waits for dev1's line in `docs/testing-history.log`
+One switch, the one that deploy brought: `INITIATIVE_STYLE_LIVE` (the people-channel switch was
+removed with that channel, #2875). It needs no server setting. The draft PR that flips it also moves
+its held What's new entry into `entries` and changes no words. It waits for dev1's line in `docs/testing-history.log`
 that records the deploy and the live check.
 
 Everything marked **owner check** can flip as soon as the owner's check is recorded in

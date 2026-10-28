@@ -424,34 +424,6 @@ export const whereAreWeSteps: Step[] = [
   },
 ];
 
-// The rules channel (#1752, #1759) is built, but its What's new entry ("A channel for your house
-// rules") is held until it has been seen working on the test server. Set this to true in the same
-// change that moves that entry out of `held`; a test ties the two. It also carries the sentence that
-// a peek now opens this channel too, which is only true once the channel exists.
-export const RULES_CHANNEL_LIVE = false;
-
-// The NPC list channel (#1781; #1761, merged in #1779). Off until the owner has seen the channel on the
-// test server; flip it in the same change that moves "A channel listing the people and groups" out of
-// `held` in whats-new.ts, a test ties the two. It also carries the sentence that a peek opens this channel.
-export const NPCS_CHANNEL_LIVE = false;
-
-export const rulesChannelSteps: Step[] = [
-  {
-    text: "Each campaign also gets a channel called dmb-rules, with a short name after it. It shows the house rules you have saved, one message for each rule, and a note for each house-rule set your campaign follows. DMbot keeps it up to date when you add, change or remove a rule.",
-    names: [
-      { name: "dmb-rules", file: "dm_screen/rules_channel.py" },
-    ],
-  },
-  {
-    text: "Only DMbot posts in dmb-rules. Players can't, and neither can you. It never shows rules that are only proposed, your private notes, secret names, or text from a rulebook. Each rule is shown in your own words. If dmb-rules is deleted, or someone changes its name or who can see it, the next /dmbot start puts it right.",
-  },
-  {
-    text: `Who can read dmb-rules follows your DM screen setting. Private: only DMs. Peek (the usual setting): only players who press Peek behind the DM screen. Open: everyone in the server. ${NPCS_CHANNEL_LIVE ? "When a player peeks, they get dmb-rules and dmb-npcs too, and the warning lists both. Hiding the DM screen again closes all three." : "When a player peeks, they get dmb-rules too, and the warning names it. Hiding the DM screen again closes both."}`,
-    names: [{ name: "Peek behind the DM screen", file: "dm_screen/messages.py" }],
-  },
-];
-
-
 // Time suggestions (#1758, #1765) are built but off on the server until dev1's live check
 // (DMBOT_TIME_SUGGESTIONS), so their What's new entry ("A time suggestion from your narration") is
 // held and Help follows. Set this to true in the same change that moves that entry out of `held`; a
@@ -468,19 +440,6 @@ export const timeSuggestionSteps: Step[] = [
   },
 ];
 
-
-export const npcsChannelSteps: Step[] = [
-  {
-    text: "Each campaign also gets a channel called dmb-npcs, with a short name after it. It lists the people and groups you confirmed, with their other names, groups and who they are connected to. Only DMbot posts there.",
-    names: [{ name: "dmb-npcs", file: "dm_screen/npcs_channel.py" }],
-  },
-  {
-    text: "It never shows anything unconfirmed, secret names, your notes, story threads, or whether someone is dead or missing. Only DMbot can post there, not you or the players.",
-  },
-  {
-    text: "Who can read dmb-npcs follows your DM screen setting: private is DMs only, peek is players who press Peek behind the DM screen, open is everyone. If it is deleted or renamed, the next /dmbot start fixes it.",
-  },
-];
 
 // How the table runs initiative, heard by FightBot (#1788; #1771, merged in #1783). Off until dev1 has
 // live-checked it; flip it in the same change that moves "FightBot follows your turn order" out of
@@ -835,8 +794,11 @@ export const dmSteps: Step[] = [
   ...(SHARED_STORY_LIVE ? sharedStorySteps : []),
   ...(STANDING_LIVE ? standingSteps : []),
   ...(DEEDS_LIVE ? deedSteps : []),
-  ...(RULES_CHANNEL_LIVE ? rulesChannelSteps : []),
-  ...(NPCS_CHANNEL_LIVE ? npcsChannelSteps : []),
+  // Where the rules are now that the rules channel is gone (#2875).
+  {
+    text: "Your house rules are on the House rules page here, and anyone can ask DMbot about a rule in the dmb-chat channel.",
+    link: { text: "Read your table's house rules", href: "/account/house-rules" },
+  },
   ...(HOMEBREW_KINDS_LIVE ? homebrewKindSteps : []),
   ...(SECRET_CLUES_LIVE ? secretClueSteps : []),
   ...(PRESESSION_NOTE_LIVE ? presessionNoteSteps : []),

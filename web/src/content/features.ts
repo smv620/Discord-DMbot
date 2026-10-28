@@ -1,7 +1,7 @@
 // What DMbot does at a table (#1141): only things that are built and merged. Add a card when
 // a feature ships, never before. Plain words, one sentence and one example each; no game or
 // publisher trademarks (CLAUDE.md), so character sheets are named without the brand.
-import { INITIATIVE_STYLE_LIVE, NPCS_CHANNEL_LIVE } from "./help";
+import { INITIATIVE_STYLE_LIVE } from "./help";
 import { RECAPS_LIVE } from "./recap-words";
 
 export interface Feature {
@@ -58,12 +58,6 @@ const cards: (Feature & { live?: boolean })[] = [
     what: "After a session, DMbot can write a short story-style recap. You read it first, change it if you like, and press Post to the table. Nothing goes to your players until you do.",
     example: "After Friday's game, fix a misspelled name, then press Post to the table.",
     live: RECAPS_LIVE,
-  },
-  {
-    title: "A who's who list",
-    what: "DMbot keeps a list of the people and groups your game master confirmed, which players see only as far as the DM screen allows, and never with secrets.",
-    example: "A player forgets the innkeeper's name and checks the list.",
-    live: NPCS_CHANNEL_LIVE,
   },
   {
     title: "Your own homebrew",

@@ -5,7 +5,7 @@ import QabotPrivacy from "../../components/QabotPrivacy.astro";
 import RecapsPrivacy from "../../components/RecapsPrivacy.astro";
 import { RECAP_AUDIO_LIVE, RECAP_SHARE_LIVE, RECAPS_LIVE } from "../../content/recap-words";
 import { QABOT_LIVE } from "../../content/qabot";
-import { initiativeLine, peopleListLine, storyStatesLine } from "../../content/privacy-channels";
+import { initiativeLine, storyStatesLine } from "../../content/privacy-channels";
 import {
   deletionWarnings,
   geminiPrivacy,
@@ -148,13 +148,13 @@ import {
 
   <h3>When you write notes on a name</h3>
   <p>
-    Each name in the NPC list has its own page on this website (the 📖 Open button in Discord opens
-    it). It shows only what the table already sees in the NPC list, never the DM's secrets; the DM's
+    Each person or group on the story graph can have its own page on this website (open it with the
+    📖 link on its card). It shows only what the table already sees, never the DM's secrets; the DM's
     own note on a name is shown to the DM only. The page also has a box called My notes. What you
     write there is for you alone: no other player and no DM can see it on DMbot. DMbot never uses
     it, and it is never put in a transcript, a backup or the campaign's story memory. You can
-    download all your notes in a campaign, or delete them, from the NPC page. If a name is taken
-    off the NPC list, your note on it is kept for 30 days, then deleted. Your notes are deleted when
+    download all your notes in a campaign, or delete them, from the NPC page. If a name is
+    no longer listed, your note on it is kept for 30 days, then deleted. Your notes are deleted when
     the campaign is.
   </p>
 
@@ -202,13 +202,6 @@ import {
       game masters; players who choose to peek (the usual setting, with a spoiler warning first);
       or everyone in the server. When a player peeks, the game masters can see who peeked.
     </li>
-    {
-      peopleListLine.live && (
-        <li>
-          <strong>{peopleListLine.lead}</strong> {peopleListLine.text}
-        </li>
-      )
-    }
     <li>
       <strong>Backups</strong> of a paid campaign hold the campaign, including the game master's
       secrets, but not what was said, and anyone in the server may download one. This keeps a
