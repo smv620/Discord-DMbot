@@ -27,7 +27,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -1155,6 +1155,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.web_rule_actions = web_sharing.ActionStore(recaps.db) if recaps is not None else None
         self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         self._report_tasks: dict[int, asyncio.Task[None]] = {}  # one running report a server
+        self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
@@ -1661,6 +1662,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
+            owner_mail=self.email_hand_over_owner,  # the owner also hears by email (#2532)
+            site_url=self.settings.site_url,
             # a hand-over to another server: its audio files go with it, and the caches that are
             # kept by campaign id alone are dropped
             mover=HandoverMover(
@@ -8756,6 +8759,154 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     view=review_view(cid),
                 )
 
+    async def read_put_back_lines(self, guild_id: int) -> None:
+        """Start the read of the lines DMs put back (#2587) as a tracked background task, at most
+        one a server: the extractor's AI calls take minutes, and the poll loop that asks for this
+        (about every ten minutes) must not wait for them."""
+        task = self._put_back_tasks.get(guild_id)
+        if task is not None and not task.done():
+            return
+        if self.transcripts is None or self.memory is None:
+            return
+        started = self._track(self._read_put_back_all(guild_id), "put-back-read")
+        if started is None:  # shutting down
+            return
+        self._put_back_tasks[guild_id] = started
+
+        def forget(done: asyncio.Task[None], gid: int = guild_id) -> None:
+            if self._put_back_tasks.get(gid) is done:
+                del self._put_back_tasks[gid]
+
+        started.add_done_callback(forget)
+
+    async def _read_put_back_all(self, guild_id: int) -> int:
+        """Lines a DM put back after their session (#2587): the names scan and the story extractor
+        read just those lines. Only the lines of people who agree now are read (a speaker who
+        stopped being recorded is skipped, and their line is marked done so it is not asked about
+        again); the words go through the same checks as at the end of a session.
+
+        A line is marked read once the story extractor has had its one try (a batch may have been
+        sent, so a retry would duplicate claims), or the extractor is not on here. When nothing
+        could be sent yet (its call limit is used, or no session row), the line waits for a later
+        sweep: the name scan then runs again, which proposes nothing twice, because a name it
+        proposed is a known name by the next scan. The log gets counts only. Returns how many
+        lines were read."""
+        if self.transcripts is None or self.memory is None:
+            return 0
+        waiting = await self.transcripts.sessions_with_put_back(guild_id)
+        total = 0
+        for cid, sid in waiting:
+            with log_context(guild_id=guild_id, campaign_id=cid):
+                try:
+                    total += await self._read_put_back_session(guild_id, cid, sid)
+                except Exception as exc:  # the type only: a database error can quote a row
+                    log.warning("Put-back lines: a session's read failed (%s)", type(exc).__name__)
+        return total
+
+    async def _read_put_back_session(self, guild_id: int, cid: str, sid: str) -> int:
+        assert self.transcripts is not None and self.memory is not None
+        gid = guild_id
+        marks = await self.transcripts.put_back_in(gid, sid)
+        if not marks:
+            return 0
+        if any(
+            t.campaign_id == cid for t in (self.tables.get(gid), *self._ending.get(gid, [])) if t
+        ):
+            return 0  # the session's own end-of-session reads are still to run: later, not twice
+        campaign = await self.campaigns.get(gid, cid)
+        agreed = await self.consent.consenting(gid)
+        mine = {(uid, at) for uid, at in marks if uid in agreed}
+        every = await self.transcripts.lines(gid, sid)
+        chosen = [x for x in every if (x.user_id, x.started_ms) in mine and x.text.strip()]
+        if chosen and campaign is not None:
+            dms = {*campaign.dm_user_ids}
+            users = {x.user_id for x in every} | agreed | dms
+            added = await self._propose_new_names(
+                gid, cid, [x.text for x in chosen], users, sid, agreed=agreed
+            )
+            log.info("Put-back lines: %d line(s) scanned, %d new name(s)", len(chosen), len(added))
+            # One try once a batch may have been sent: a retry would send the batches that worked
+            # again (duplicate claims). Nothing sent yet: the lines wait for the next sweep.
+            if not await self._extract_put_back(gid, cid, sid, campaign, every, mine, users):
+                return 0
+        by_person: dict[int, list[int]] = {}
+        for uid, at in marks:  # the skipped speakers' lines too: not asked about again
+            by_person.setdefault(uid, []).append(at)
+        for uid, started in by_person.items():
+            await self.transcripts.mark_read(gid, cid, uid, started)
+        return len(chosen)
+
+    async def _extract_put_back(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        campaign: Campaign,
+        every: list[Line],
+        mine: set[tuple[int, int]],
+        users: Collection[int],
+    ) -> bool:
+        """The story extractor on just the put-back lines (numbered by their place in the whole
+        session, the others marked off-topic so `readable` skips them), once. True when the lines
+        are done: it had its try (it ran, stopped early or failed after a batch may have been
+        sent) or it is not on here. False when nothing could be sent yet, so the lines wait."""
+        assert self.transcripts is not None and self.memory is not None
+        if (
+            not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or not await self.plan_allows("story", gid, campaign, fail_open=False)
+        ):
+            return True  # nothing to wait for: the extractor is off here
+        transcripts = self.transcripts
+        session = await transcripts.session(gid, sid)
+        if session is None:
+            return False
+        _, used = await transcripts.extraction(gid, sid)
+        now = int(time.time())
+        day_used = await transcripts.extractor_calls_since(gid, cid, now - 86400)
+        allowed = extractor.calls_left(
+            self.settings.story_extractor_max_calls,
+            used,
+            self.settings.story_extractor_max_calls_day,
+            day_used,
+        )
+        if allowed == 0:
+            log.info("Put-back lines: the extractor's call limit is used; the lines wait")
+            return False
+        only = [
+            x if (x.user_id, x.started_ms) in mine else replace(x, topic=OFF_TOPIC) for x in every
+        ]
+        skip: set[str] = set()
+        for uid in users:
+            name = self.name_of(gid, uid)
+            if not name.startswith("<@"):
+                skip.add(name_key(name))
+                skip.update(name_key(word) for word in name.split())
+        try:
+            report = await extractor.run(
+                self.extractor_ai,
+                ClaimStore(self.memory),
+                only,
+                guild_id=gid,
+                campaign_id=cid,
+                dm_ids={*campaign.dm_user_ids},
+                consenting=lambda: self.consent.consenting(gid),
+                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                session_started_at=session.started_at,
+                max_calls=allowed,
+                skip=skip,
+                after_ms=0,
+                readings=self.settings.story_readings_on,
+                count_call=lambda: transcripts.record_extraction(
+                    gid, sid, through_ms=0, calls=1, now=int(time.time())
+                ),
+            )
+        except Exception as exc:  # a batch may already be stored: done, never run twice
+            log.warning("Put-back lines: the extractor failed (%s)", type(exc).__name__)
+            return True
+        log.info(report.line())
+        return report.calls > 0  # no call made: nothing was sent, so the lines wait
+
     async def grade_contradictions(self, table: Table) -> None:
         """After a session, only with DMBOT_STORY_CONTRADICTIONS on (and the extractor): PlotBot
         grades the clashes one point of view holds, major or minor (#2660), and the grades are kept
@@ -10046,6 +10197,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
+            repaired = False
             if table.transcript_session_id is not None:
                 await self.save_transcript(table)  # so every line is stored to point at
                 # PlotBot's name pass (#2628), before the scan and the recap, so the names they
@@ -10060,8 +10212,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                             for x in await self.transcripts.lines(gid, table.transcript_session_id)
                             if x.user_id in agreed and not x.sidebar and not x.typed
                         ] or lines
+                        repaired = True  # (every stored line is in it, the turned-back ones too)
                     except Exception:
                         log.exception("Name pass: couldn't read the repaired lines")
+                if not repaired and self.transcripts is not None:
+                    # The lines the end-of-session pass turned back into game talk were labelled
+                    # off-topic while the session ran, so the held words left them out (#2587).
+                    try:
+                        lines += [
+                            x.text
+                            for x in await self.transcripts.leaned_lines(
+                                gid, table.transcript_session_id
+                            )
+                            if x.user_id in agreed and x.text.strip()
+                        ]
+                    except Exception:
+                        log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
                 gid, cid, lines, users, table.transcript_session_id, agreed=agreed
             )
@@ -10375,6 +10541,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """A campaign's complete copy, as Discord's Download makes it (#2554): the main file's
         data and the transcripts files (#2552, #2772), both from one moment."""
         return await self.campaigns.export_set(guild_id, campaign_id)
+
+    async def email_hand_over_owner(
+        self, owner_id: int, kind: str, subject: str, body: str
+    ) -> None:
+        """An owner's email about their hand-over offer (#2532, slice D): to the address DMbot has
+        for their account, if any. Once for each `kind` (the mail log keeps a row, so a repeat is
+        refused); an email that could not go (the day's cap, the mail server) is not retried, as for
+        other account emails. Never logs the address or the text. Raises only if the account
+        lookup does; the caller (`SiteOffers._email_owner`) catches that."""
+        if self.mailer is None or self.meter is None:
+            return
+        to = await accounts.account_email(self.meter.db, owner_id)
+        if not to:
+            return
+        result = await self.mailer.send(
+            user_id=owner_id, kind=kind, to=to, subject=subject, body=body
+        )
+        log.info("Hand-over email to an owner: %s", result)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a

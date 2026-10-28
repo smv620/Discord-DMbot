@@ -301,6 +301,7 @@ class RecapFeatures:
         async def run_peek_notices(self) -> None: ...
         async def run_web_settings(self) -> None: ...
         async def run_web_rule_sharing(self) -> None: ...
+        async def read_put_back_lines(self, guild_id: int) -> None: ...
         async def run_web_report_requests(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
@@ -1902,6 +1903,8 @@ class RecapFeatures:
                             await self.web_settings.sweep(guild.id)
                         if self.web_rule_actions is not None:
                             await self.web_rule_actions.sweep(guild.id)
+                        # Lines a DM put back after their session (#2587): read once.
+                        await self.read_put_back_lines(guild.id)
                         if self.peek_notices is not None:
                             await self.peek_notices.sweep(guild.id)
                     except Exception as exc:
