@@ -850,6 +850,61 @@ class TheEdits(Editing):
         self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
         self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # no link made
 
+    async def test_a_pronoun_question_with_one_name_is_listed_and_answerable_on_the_website(
+        self,
+    ) -> None:
+        """#2811: the list showed only questions with two names, so a DM who used only the website
+        never saw "who is she?"; it now shows the one name, and the pick is queued as any other."""
+        which = await self.pronoun_question()
+        got = await self.waiting_now()
+        (question,) = got["which"]
+        self.assertEqual(question["id"], which)
+        self.assertTrue(question["pronoun"])
+        self.assertEqual([c["name"] for c in question["candidates"]], ["Mara Ashgrove"])
+        self.assertEqual(got["counts"]["which"], 1)
+        await self.queue(kind="which", action="pick", id=which, entity=self.mara_a)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(await self.backstory.which_waiting(self.g, self.one.id), [])
+        self.assertEqual(len(await self.backstory.waiting(self.g, self.one.id)), 1)  # joined
+
+    async def test_a_pronoun_question_with_no_name_offers_only_someone_else(self) -> None:
+        which = await self.pronoun_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_a, "rejected", source="dm"
+        )
+        (question,) = (await self.waiting_now())["which"]
+        self.assertEqual(
+            (question["id"], question["pronoun"], question["candidates"]), (which, True, [])
+        )
+        await self.queue(kind="which", action="neither", id=which)  # "Someone else"
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(len(await self.memory.unnamed(self.g, self.one.id)), 1)
+
+    async def test_a_question_about_a_name_with_one_name_left_stays_hidden(self) -> None:
+        await self.which_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_b, "rejected", source="dm"
+        )
+        got = await self.waiting_now()
+        self.assertEqual(got["which"], [])  # nothing can be picked from one name
+        self.assertEqual(got["counts"]["which"], 0)
+
+    async def test_the_website_refuses_a_pick_of_the_questions_own_end(self) -> None:
+        which = await self.pronoun_question()
+        refused = await self.refused_queue(kind="which", action="pick", id=which, entity=self.rook)
+        self.assertEqual(refused, "not_found")  # the bot would refuse it too; nothing is queued
+
+    async def test_a_player_sees_no_pronoun_question_and_cannot_answer_it(self) -> None:
+        which = await self.pronoun_question()
+        for action in ("neither", "pick"):
+            refused = await self.refused_queue(
+                self.player, kind="which", action=action, id=which, entity=self.mara_a
+            )
+            self.assertEqual(refused, "not_allowed")
+        with self.assertRaises(RecapError) as caught:
+            await self.waiting_now(self.player)
+        self.assertEqual(caught.exception.code, "not_found")
+
     async def test_a_pronoun_question_whose_only_name_is_gone_still_waits(self) -> None:
         which = await self.pronoun_question()
         await self.memory.set_entity_status(
