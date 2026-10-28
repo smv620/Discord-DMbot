@@ -459,6 +459,39 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         self.assertIn("**Mirelle** accepted", it.member.send.await_args.args[0])
         it.client.post.assert_not_called()  # no #dm-screen saved: nothing posted
 
+    async def test_the_buttons_email_the_owner_with_the_websites_key(self) -> None:
+        """Accept and No thanks also email the owner (#2532), under the key the website path
+        uses, so the mail log lets one through if both fire."""
+        for button, result, kind in (
+            (AcceptOfferButton, "accepted", "accepted"),
+            (DeclineOfferButton, "declined", "declined"),
+        ):
+            it = interaction(BUYER, guild=False)
+            it.client.email_hand_over_owner = AsyncMock()
+            store = it.client.campaigns
+            (
+                store.accept_handover if kind == "accepted" else store.decline_handover
+            ).return_value = result
+            await button(GUILD, OFFER_ID).callback(it)
+            it.client.email_hand_over_owner.assert_awaited_once()
+            owner, key, subject, body = it.client.email_hand_over_owner.await_args.args
+            self.assertEqual((owner, key), (OWNER, f"handover-{kind}:{GUILD}-{OFFER_ID}"))
+            self.assertIn("Frost*maiden", subject + body)
+
+    async def test_a_press_that_changed_nothing_sends_no_email(self) -> None:
+        it = interaction(BUYER, guild=False)
+        it.client.email_hand_over_owner = AsyncMock()
+        it.client.campaigns.accept_handover.return_value = "no_free_slot"
+        await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
+        it.client.email_hand_over_owner.assert_not_awaited()
+
+    async def test_a_broken_email_never_undoes_the_answer(self) -> None:
+        it = interaction(BUYER, guild=False)
+        it.client.email_hand_over_owner = AsyncMock(side_effect=RuntimeError("smtp"))
+        it.client.campaigns.accept_handover.return_value = "accepted"
+        await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
+        self.assertIn("Done:", shown(it))
+
     async def test_pressed_again_says_it_again(self) -> None:
         it = interaction(BUYER, guild=False)
         it.client.campaigns.get_offer.return_value = offer(status="accepted")

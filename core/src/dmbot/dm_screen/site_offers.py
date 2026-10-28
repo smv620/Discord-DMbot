@@ -46,6 +46,7 @@ from dmbot.dm_screen.handover import (
     TOLD_EXPIRED_UNSENT,
     TOLD_WITHDRAWN,
     deliver_offer,
+    email_owner,
     md,
 )
 from dmbot.logs import log_context
@@ -101,6 +102,9 @@ Listen = Callable[[str, Callable[[], None]], AsyncGenerator[str, None]]
 # The message sent, or None when the person can't be reached. Raises
 # discord.HTTPException when Discord failed for another reason (try again later).
 Deliver = Callable[[discord.Guild, Campaign, HandoverOffer], Awaitable[discord.Message | None]]
+# Email the owner (user ID, once-only kind, subject, body): sends nothing when DMbot has no address
+# for them. Never raises (#2532, slice D).
+OwnerMail = Callable[[int, str, str, str], Awaitable[object]]
 
 
 async def _deliver(
@@ -124,6 +128,8 @@ class SiteOffers:
         deliver: Deliver = _deliver,
         post: Callable[[int, str], Awaitable[object]] | None = None,
         mover: HandoverMover | None = None,
+        owner_mail: OwnerMail | None = None,
+        site_url: str = "",
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], int] = lambda: int(time.time()),
         clock: Callable[[], float] = time.monotonic,
@@ -135,6 +141,8 @@ class SiteOffers:
         self._spawn = spawn
         self._deliver = deliver
         self._post = post  # a message in a channel: the #dm-screen note on an accept
+        self._site_url = site_url
+        self._owner_mail = owner_mail  # the owner is also told by email, when there is an address
         self._mover = mover  # moves a campaign to the new owner's other server (#2532, slice C)
         if mover is not None:
             mover.told = self._tell_moved
@@ -236,6 +244,11 @@ class SiteOffers:
                         ),
                         allowed_mentions=NO_PINGS,
                     )
+            # Last, so a slow mail server never delays the two private messages. A process that
+            # does not serve the new server still emails, with a generic server name.
+            await self._email_owner(
+                offer, moved.campaign_name, "moved", server=new.name if new is not None else ""
+            )
 
     async def follow_decided(self, listen: Listen) -> None:
         """Tell the other person when an offer is answered or taken back on the website
@@ -315,6 +328,8 @@ class SiteOffers:
                 await _tell_decision(guild, offer, campaign)
                 if offer.status == "accepted":  # as the Discord Accept button does
                     await self._screen_note(campaign, offer)
+                if offer.status in ("accepted", "declined"):  # last: a slow mail server waits
+                    await self._email_owner(offer, campaign.name, offer.status)
             except Exception as exc:
                 # Only the error's kind: a database error's text can quote the row (names).
                 log.error(
@@ -322,6 +337,14 @@ class SiteOffers:
                     offer_id,
                     type(exc).__name__,
                 )
+
+    async def _email_owner(
+        self, offer: HandoverOffer, campaign_name: str, kind: str, *, server: str = ""
+    ) -> None:
+        """The owner's email about the offer (see `handover.email_owner`)."""
+        await email_owner(
+            self._owner_mail, offer, campaign_name, kind, server=server, site=self._site_url
+        )
 
     async def _screen_note(self, campaign: Campaign, offer: HandoverOffer) -> None:
         """The accept noted in the campaign's #dm-screen, as for the Discord button (it
@@ -415,6 +438,11 @@ class SiteOffers:
                 log.warning("Discord failed announcing offer %s's end (%s)", offer.id, exc)
             else:
                 log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
+            return
+        # Only once the notice is kept: a cancel during the email must not release it, or the
+        # next sweep would send the Discord message again.
+        if campaign is not None:
+            await self._email_owner(offer, campaign.name, "expired")
 
     async def send(self, guild_id: int, offer_id: int) -> None:
         """Send one offer's private message, if this process serves its server and nobody
