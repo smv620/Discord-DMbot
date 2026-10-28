@@ -24,12 +24,12 @@ import time
 from typing import Any
 
 from dmbot import plan_rules, progress
+from dmbot.campaigns.backup_names import backup_campaign_name, backup_parts
 from dmbot.campaigns.models import CampaignError
 from dmbot.campaigns.parts import PART_READ_BYTES
 from dmbot.campaigns.store import GZIP_MAGIC, MAX_BACKUP_BYTES, NOT_A_BACKUP, decode_backup
 from dmbot.db import Database
 from dmbot.entitlements import plan_grant_access
-from dmbot.ui import logic
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _scoped
 from dmbot.web.sessions import Session
@@ -127,8 +127,8 @@ async def stage(
         data = await asyncio.to_thread(decode_backup, blob)
     except CampaignError as exc:
         raise RecapError("not_a_backup" if str(exc) == NOT_A_BACKUP else "too_big") from None
-    name = logic.backup_campaign_name(data)
-    wanted = logic.backup_parts(data)
+    name = backup_campaign_name(data)
+    wanted = backup_parts(data)
     del data  # (a 25 MB file parsed is far more in memory: only the name and the count are needed)
     if name is None:
         raise RecapError("not_a_backup")

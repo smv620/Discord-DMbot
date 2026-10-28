@@ -55,6 +55,12 @@ SUB_COMMAND, SUB_COMMAND_GROUP = 1, 2
 CHAT_INPUT, USER_MENU, MESSAGE_MENU = 1, 2, 3
 
 
+def shorten(text: str, limit: int) -> str:
+    """Trim text to fit a Discord label, ending with an ellipsis if it was cut."""
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def _name_problems(where: str, name: object, *, menu: bool = False) -> list[str]:
     if not isinstance(name, str) or not 1 <= len(name) <= NAME_MAX:
         return [f"{where}: the name {name!r} must be 1 to {NAME_MAX} characters"]
