@@ -4200,7 +4200,7 @@ once. The new-campaign form's link is saved in the same step as the campaign.
     Discord's form) and **Use a document link** (a public web page or PDF the bot reads). Each
     replaces the other, with Discord's warning. The website only queues the choice; the bot
     fetches and applies it, so the link of a document is held in the queue row alone and no page
-    shows it again. A document read costs an AI call: one a minute a person, and Discord's daily
+    shows it again. A document read costs an AI call: one a minute a person in a campaign, and Discord's daily
     document limit for the server still applies at the bot.
 - **Re-reading D&D Beyond.**
   - **Change heard:** about **1 minute** after something said or typed changes a character

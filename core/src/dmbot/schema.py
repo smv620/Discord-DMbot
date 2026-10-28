@@ -17729,7 +17729,7 @@ _SHEET_DOOR = _swap(
             "                EXCEPTION WHEN others THEN\n"
             "                    RETURN jsonb_build_object('status', 'bad_typed');\n"
             "                END;\n"
-            "                IF char_length(body) > 2000 OR jsonb_typeof(pj) <> 'object'\n"
+            "                IF char_length(body) > 4000 OR jsonb_typeof(pj) <> 'object'\n"
             "                   OR (SELECT count(*) FROM jsonb_object_keys(pj)) <> 4\n"
             "                   OR NOT (pj ?& ARRAY['className', 'level', 'species', 'names'])\n"
             "                   OR jsonb_typeof(pj->'className') <> 'string'\n"
@@ -17794,7 +17794,18 @@ WEB_SHEET_TYPED_DOCUMENT = (
         CHECK (char_length(url) <= 400);
     -- The typed form as JSON text (class, level, species, names); empty for every other choice.
     ALTER TABLE web_sheet_actions
-        ADD COLUMN payload TEXT NOT NULL DEFAULT '' CHECK (char_length(payload) <= 2000);
+        ADD COLUMN payload TEXT NOT NULL DEFAULT '' CHECK (char_length(payload) <= 4000);
+    -- While a choice waits, the columns agree with it: only a typed sheet has a payload (so a link
+    -- or a document can never carry stray text), and only a document or a link has an address. A
+    -- finished row (done or failed) may be blanked by the bot, which keeps no link or words.
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_shape_check CHECK (
+        state IN ('done', 'failed')
+        OR (((action = 'typed') = (payload <> ''))
+            AND ((action IN ('link', 'document')) = (url <> ''))));
+    COMMENT ON TABLE web_sheet_actions IS
+        'A website choice about a character sheet waiting for the bot: link, forget, read_again, '
+        'typed (payload: the form as JSON) or document (url: a public https link). Rows hold the '
+        'link or the typed words only until the bot finishes the row.';
 """
     + _SHEET_DOOR
     + r"""

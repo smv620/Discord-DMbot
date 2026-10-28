@@ -204,9 +204,21 @@ class TheQueue(Sheets):
     async def test_a_typed_sheet_the_door_does_not_like_is_refused_even_past_python(self) -> None:
         good = json.dumps(self.TYPED)
         self.assertEqual((await self.door("typed", good))["status"], "ok")
+        # a long list with many line breaks and quotes is legitimate even when its JSON text grows
+        crowded = json.dumps({**self.TYPED, "names": '"a"\n' * 375})
+        self.assertGreater(len(crowded), 2000)
+        await self.sql("UPDATE web_sheet_actions SET created_at = created_at - 30")  # past the 20 s
+        self.assertEqual((await self.door("typed", crowded))["status"], "ok")
         for bad in (
             "not json",
             "[]",
+            "5",
+            "null",
+            '"x"',
+            json.dumps({**self.TYPED, "level": None}),
+            json.dumps({**self.TYPED, "className": None}),
+            json.dumps({**self.TYPED, "species": True}),
+            json.dumps({**self.TYPED, "names": "x" * 4001}),
             json.dumps({**self.TYPED, "level": 21}),
             json.dumps({**self.TYPED, "level": 0}),
             json.dumps({**self.TYPED, "level": "3"}),
@@ -276,7 +288,20 @@ class TheQueue(Sheets):
         self.assertEqual(
             await self.refuse_sheet(self.sorrel, action="document", url=self.DOC + "2"), "too_soon"
         )
-        # a link and a typed sheet share the twenty seconds, a document is its own count
+        # a typed sheet is not held up by a document, and a link is held up by it only for the
+        # twenty seconds of the link's own count, which a document does not start
+        self.assertTrue(await self.queue(self.ivy, action="typed", **self.TYPED))
+        # thirty seconds on: a typed sheet or a link may go again, a document may not
+        await self.sql("UPDATE web_sheet_actions SET created_at = created_at - 30")
+        self.assertTrue(await self.queue(self.sorrel, action="typed", **{**self.TYPED, "level": 4}))
+        self.assertEqual(
+            await self.refuse_sheet(self.sorrel, action="document", url=self.DOC + "3"), "too_soon"
+        )
+        # eighty more seconds: the document's minute is over
+        await self.sql("UPDATE web_sheet_actions SET created_at = created_at - 80")
+        self.assertTrue(await self.queue(self.sorrel, action="document", url=self.DOC + "4"))
+
+    async def test_a_link_and_a_typed_sheet_share_their_twenty_seconds(self) -> None:
         await self.queue(self.ivy, action="typed", **self.TYPED)
         self.assertEqual(await self.refuse_sheet(self.sorrel, action="link", url=LINK), "too_soon")
 
