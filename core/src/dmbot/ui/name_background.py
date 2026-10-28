@@ -903,7 +903,7 @@ async def queue_links(
     settled.unnamed = [replace(u, secret=name_key(u.fixed) in hidden) for u in settled.unnamed]
     await _queue_picks(store, campaign, picks, entry, truth, upload, dropped)
     rows = [
-        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload)
+        NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload, c.decided)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
@@ -976,7 +976,7 @@ async def _unnamed_rows(
             continue
         other = added.entity.id
         a, b = (fixed, other) if u.fixed_is_a else (other, fixed)
-        rows.append(NewLink(a, u.how, b, u.quote, u.secret, u.words, truth, upload))
+        rows.append(NewLink(a, u.how, b, u.quote, u.secret, u.words, truth, upload, u.decided))
     return rows
 
 
@@ -1002,7 +1002,17 @@ async def _queue_picks(
             continue
         rows.append(
             NewWhich(
-                fixed, p.fixed_is_a, p.how, p.word, ids, p.quote, p.secret, p.words, truth, upload
+                fixed,
+                p.fixed_is_a,
+                p.how,
+                p.word,
+                ids,
+                p.quote,
+                p.secret,
+                p.words,
+                truth,
+                upload,
+                p.decided,
             )
         )
     added = int(await store.add_which(campaign.guild_id, campaign.id, rows)) if rows else 0
@@ -1173,6 +1183,7 @@ class WhichOffer(_Menu):
             f"🔎 **Which {asked} is this?**{place}\n"
             f"{pair}\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            + who_resolve.checked_line(c.decided)
             + (
                 f"It could be {names}. Tap the right one. "
                 if names
@@ -1373,7 +1384,9 @@ class ConnectionOffer(_Menu):
         return (
             f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
             f"**{_md(c.subject)}** {how} **{_md(c.object)}**\n"
-            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n{note}"
+            f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
+            + who_resolve.checked_line(c.decided)
+            + f"{note}"
             + self._scope(c)
         )
 
