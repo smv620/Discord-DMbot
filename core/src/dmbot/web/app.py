@@ -49,6 +49,7 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    names_smart,
     npc_pages,
     offers,
     optional_rules,
@@ -186,6 +187,8 @@ def create_app(
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
+    smart_names: names_smart.SmartNames | None = None,
+    smart_limit: RateLimit | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
     clock: Clock = _system_clock,
@@ -208,6 +211,10 @@ def create_app(
     if export_limit is None:
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
+    if smart_limit is None:
+        # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
+        # so one person gets 20 a minute, counted by account.
+        smart_limit = RateLimit(60, count=20)
     # One limiter per group of routes in limits.LIMITS (#1082); tests pass fake clocks.
     if route_limits is None:
         route_limits = {
@@ -835,6 +842,7 @@ def create_app(
         "not_allowed": (409, "not_allowed"),
         "not_editable": (409, "not_editable"),
         "bad_text": (422, "bad_text"),
+        "not_available": (409, "not_available"),  # the Names page's search by meaning cannot run
         "fixed_lines": (422, "fixed_lines"),  # the opening or closing line was edited (#2630)
         "too_soon": (429, "too_soon"),
         "hour_full": (429, "hour_full"),  # thirty talk messages from the campaign this hour (#2545)
@@ -1475,6 +1483,34 @@ def create_app(
                 db, session, ref, q=q, kind=kind, sort=sort, page=number, size=wanted
             )
         except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/all-names/search")
+    async def me_campaign_all_names_search(
+        ref: str, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """The Names page's search by meaning (#2733): the names closest in meaning to the DM's
+        words, best first, with `capped` (the campaign has more numbers than one search compares).
+        The words are in the body, never the address: an address is written to logs on the way.
+        A DM only ("not found" for anyone else). When the search cannot run (off, no credit,
+        Voyage AI not answering, too slow) the refusal is "not_available" and the page falls back
+        to the letters search."""
+        session, _token = signed
+        taken = smart_limit.take(f"user-{session.user_id}")
+        if taken != "ok":
+            raise HTTPException(status_code=429, detail="slow_down" if taken == "wait" else "busy")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        words = body.get("q") if isinstance(body, dict) else None
+        try:
+            if not isinstance(words, str):
+                raise RecapError("bad_text")
+            return await names_smart.search(db, session, ref, words, smart_names)
+        except RecapError as err:
+            smart_limit.give_back(f"user-{session.user_id}")  # a refused search costs no turn
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 

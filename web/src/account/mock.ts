@@ -1718,7 +1718,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         })
         .filter((x) => x.score > 0)
         .sort((a, b) => b.score - a.score || a.n.name.localeCompare(b.n.name));
-      return { names: scored.slice(0, 50).map(({ n }) => ({ ...n, others: [...n.others], aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null })) };
+      const names = scored.slice(0, 50).map(({ n }) => ({ ...n, others: [...n.others], aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null }));
+      // `.smart-capped`: a campaign with more notes than the search reads, so only the newest were searched.
+      return /\.smart-capped$/.test(ref) ? { names, capped: true } : { names };
     },
     async changeName(ref, id, change: NameChange): Promise<NameChanged> {
       calls.push(`changeName:${ref}:${id}:${JSON.stringify(change)}`);

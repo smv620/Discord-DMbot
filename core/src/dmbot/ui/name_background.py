@@ -25,7 +25,7 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import lore_context, lore_read, pronouns
+from dmbot.memory import kin, lore_context, lore_read, pronouns
 from dmbot.memory.backstory_links import (
     DONE,
     FULL,
@@ -533,7 +533,12 @@ class BackgroundOffer(_Menu):
                 queued,
                 ", an answer cut off" if cut else "",
                 read.stats.links_listed,
-                ", ".join(f"{k}={n}" for k, n in sorted(read.stats.dropped.items())) or "nothing",
+                ", ".join(
+                    f"{k}={n}"
+                    for k, n in sorted(read.stats.dropped.items())
+                    if k != "quote_widened"  # (a line kept, not dropped: counted for the log only)
+                )
+                or "nothing",
             )  # (counts only: the questions are the DM's own words, shown only to them)
             await summary(
                 interaction,
@@ -637,6 +642,7 @@ def _waiting_note(queued: int) -> str:
 KNOWN_ALREADY = ("same_pair", "already_have", "already_waiting")
 LEFT_OUT = (
     "name_not_found", "which_one", "unreadable", "word_not_allowed", "bad_names", "not_in_text",
+    "spelling_clash", "which_way",
 )  # fmt: skip
 NOT_READ = ("cut_before_check", "over_cap")
 
@@ -1001,7 +1007,7 @@ class WhichOffer(_Menu):
                 f"🔎 Done. You picked {self.picked}, left out {self.dropped}. Picks are ready to "
                 "check once their names are confirmed (press 📜 Check the connections)."
             )
-        how = link_words(c.predicate, c.detail)
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         asked = _md(bare(c.word))  # (the end as written stays in the quote line)
@@ -1184,7 +1190,7 @@ class ConnectionOffer(_Menu):
         if c is None:
             left = f" Left out {self.left_out}." if self.left_out else ""
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
-        how = link_words(c.predicate, c.detail)
+        how = link_words(c.predicate, c.detail, kin.directional(c.detail))
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
         note = (
@@ -1266,6 +1272,7 @@ class ConnectionOffer(_Menu):
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
                     source=DM, confidence=1.0, status=CONFIRMED, secret=secret or c.secret,
                     detail=c.detail,
+                    directional=kin.directional(c.detail),  # "a is the parent of b" keeps its order
                     unrevealed=True,  # a backstory connection waits to be said at the table (#2404)
                 )  # fmt: skip
             except MemoryRuleError:

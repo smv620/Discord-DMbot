@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import kin
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
@@ -729,9 +730,23 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
         for c in got["claims"]
     ]
     backstory = [
-        {**b, "how": link_words(str(b["predicate"]), str(b["detail"]))} for b in got["backstory"]
+        {
+            **b,
+            "how": link_words(
+                str(b["predicate"]), str(b["detail"]), kin.directional(str(b["detail"]))
+            ),
+        }
+        for b in got["backstory"]
     ]
-    which = [{**w, "how": link_words(str(w["predicate"]), str(w["detail"]))} for w in got["which"]]
+    which = [
+        {
+            **w,
+            "how": link_words(
+                str(w["predicate"]), str(w["detail"]), kin.directional(str(w["detail"]))
+            ),
+        }
+        for w in got["which"]
+    ]
     ready = sum(1 for b in backstory if b["ready"])
     totals = got.get("totals") or {}
     total_claims = max(int(totals.get("claims", 0)), len(claims))  # (the lists are cut at caps)
