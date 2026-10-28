@@ -233,8 +233,9 @@ describe("Who is she?", () => {
     await openPronouns();
     expect(screen.getByRole("heading", { name: w.pronounHeading })).toBeTruthy();
     const card = screen.getByText(w.pronounQuestion("she")).closest(".panel") as HTMLElement;
+    expect(within(card).getByText("She grew up with Rook")).toBeTruthy();
     expect(within(card).getByRole("button", { name: "Mara Ashgrove" })).toBeTruthy();
-    expect(within(card).getByRole("button", { name: w.someoneElse })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: `${w.someoneElse} for she` })).toBeTruthy();
   });
 
   it("a pronoun question with no name offers only Someone else", async () => {
@@ -243,15 +244,44 @@ describe("Who is she?", () => {
     expect(within(card).getByText(w.pronounNoName)).toBeTruthy();
     const buttons = within(card).getAllByRole("button");
     expect(buttons.map((b) => b.textContent)).toEqual([w.someoneElse]);
+    // The note is read with the button, so a screen reader user hears why there is no name.
+    const note = within(card).getByText(w.pronounNoName);
+    const someoneElse = within(card).getByRole("button", { name: `${w.someoneElse} for he` });
+    expect(someoneElse.getAttribute("aria-describedby")?.split(" ")).toContain(note.id);
   });
 
   it("Someone else sends the neither answer and says it kept the connection", async () => {
     const api = await openPronouns();
     const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
-    fireEvent.click(within(card).getByRole("button", { name: w.someoneElse }));
+    fireEvent.click(within(card).getByRole("button", { name: `${w.someoneElse} for he` }));
     expect(await screen.findByText(w.done.someoneElse)).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${PRONOUN_REF}:which:neither:w3`);
     await settled();
+  });
+
+  it("a gone answer to Someone else is refused, and the other question stays", async () => {
+    const api = mockApi("table");
+    await expect(api.answerWaiting!(PRONOUN_REF, { kind: "which", action: "neither", id: "w3" })).resolves.toBeDefined();
+    await expect(api.answerWaiting!(PRONOUN_REF, { kind: "which", action: "neither", id: "w3" })).rejects.toMatchObject({ kind: "gone" });
+    await expect(api.webWaiting!(PRONOUN_REF).then((l) => l.which.some((q) => q.id === "w2"))).resolves.toBe(true);
+  });
+
+  it("a list with both kinds draws both groups, each under its own heading", async () => {
+    const pronounList = mockApi("table");
+    const nameList = mockApi("table");
+    const api = mockApi("table");
+    api.webWaiting = async (ref) => {
+      const pron = await pronounList.webWaiting!(ref);
+      const named = await nameList.webWaiting!(REF);
+      return { ...pron, which: [...named.which, ...pron.which] };
+    };
+    render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect(screen.getByRole("heading", { name: w.whichHeading })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: w.pronounHeading })).toBeTruthy();
+    expect(screen.getByText(w.whichQuestion("Mara"))).toBeTruthy();
+    expect(screen.getByText(w.pronounQuestion("she"))).toBeTruthy();
+    expect(screen.getByText(w.pronounQuestion("he"))).toBeTruthy();
   });
 
   it("a pick of the one name sends that name's id", async () => {
@@ -260,6 +290,13 @@ describe("Who is she?", () => {
     expect(await screen.findByText(w.done.pick)).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${PRONOUN_REF}:which:pick:w2:e3`);
     await settled();
+  });
+
+  it("a question with no pronoun key (an older API) is drawn as a name question, with Neither", async () => {
+    await open();
+    const card = screen.getByText(w.whichQuestion("Mara")).closest(".panel") as HTMLElement;
+    expect(within(card).getByRole("button", { name: w.neither })).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: `${w.someoneElse} for Mara` })).toBeNull();
   });
 
   it("a name question is drawn as before", async () => {

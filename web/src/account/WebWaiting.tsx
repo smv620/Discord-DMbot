@@ -16,6 +16,9 @@ import WorkProgress from "./WorkProgress";
 const sessionDay = (seconds: number): string =>
   new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
 
+/** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
+const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
+
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
 type Said = { ok: boolean; text: string; n: number } | null;
@@ -212,11 +215,15 @@ export default function WebWaiting({
               <p>
                 <strong>{w.pronounQuestion(q.word)}</strong>
               </p>
-              <p id={`wq-${q.id}`}>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
+              <p id={`wq-${q.id}`}>{startCap(w.whichLine(q.other, q.how, q.word, q.otherIsSubject))}</p>
               {q.quote && <p class="muted small">“{q.quote}”</p>}
               {q.secret && <p class="small">{w.secretNote}</p>}
               {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
-              {q.candidates.length === 0 && <p class="small">{w.pronounNoName}</p>}
+              {q.candidates.length === 0 && (
+                <p class="small" id={`wq-none-${q.id}`}>
+                  {w.pronounNoName}
+                </p>
+              )}
               <div class="row">
                 {q.candidates.map((c) => (
                   <button
@@ -242,7 +249,8 @@ export default function WebWaiting({
                   type="button"
                   class="button secondary"
                   disabled={busy}
-                  aria-describedby={`wq-${q.id}`}
+                  aria-label={`${w.someoneElse} for ${q.word}`}
+                  aria-describedby={q.candidates.length === 0 ? `wq-${q.id} wq-none-${q.id}` : `wq-${q.id}`}
                   onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.someoneElse)}
                 >
                   {w.someoneElse}
