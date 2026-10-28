@@ -136,6 +136,7 @@ class Host(Protocol):
         parts: list[bytes],
         left_out: LeftOut,
         progress: Callable[[int, int], Awaitable[None]],
+        step: Callable[[], Awaitable[None]],
         in_transaction: Callable[[Conn, str], Awaitable[None]],
     ) -> Campaign: ...
 
@@ -420,6 +421,9 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
         async def progress(done: int, total: int) -> None:
             await store.move(guild_id, item, done_parts=done)
 
+        async def step() -> None:
+            await store.move(guild_id, item, done_parts=0)  # (still moving: the page's stall line)
+
         async def record(conn: Conn, campaign_id: str) -> None:
             """The row is marked done on the restore's own connection, so the copy and its
             outcome commit together: a crash can never leave a copy that is in as a row that
@@ -437,6 +441,7 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
                 parts=parts,
                 left_out=erased,
                 progress=progress,
+                step=step,
                 in_transaction=record,
             )
         except CampaignError as exc:

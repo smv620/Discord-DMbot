@@ -1663,12 +1663,15 @@ class CampaignStore:
         left_out: LeftOut | None = None,
         progress: Callable[[int, int], Awaitable[None] | None] | None = None,
         in_transaction: Callable[[Conn, str], Awaitable[None]] | None = None,
+        step: Callable[[], Awaitable[None] | None] | None = None,
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
 
-        `progress(done, total)`: told after each step (the files are checked, each section is
-        written, each transcripts file is loaded), for a page that shows "3 of 5 files" and when it
-        last moved (#2746). It cannot change the restore; a failure in it is not the restore's.
+        `progress(done, total)`: told only when there are transcripts files: 0 of N before the
+        first and then after each one is loaded (#2564, #2746). Plain or awaited. It cannot change
+        the restore; a failure in it is not the restore's.
+        `step()`: told when the file has been checked and after each section is written, so a
+        page can show the copy still moving while no transcripts file is loading (#2746).
         `in_transaction(conn, campaign_id)`: run on the restore's own connection just before it
         commits, so a record of the outcome commits with the copy or not at all.
 
@@ -1693,18 +1696,16 @@ class CampaignStore:
         info, sections = await asyncio.to_thread(self._checked, data)
         order = await self._part_order(data, parts)
 
-        async def tick(done: int) -> None:
-            if progress is not None:
+        async def tell(call: Callable[..., Awaitable[None] | None] | None, *args: int) -> None:
+            if call is not None:
                 try:
-                    told = progress(
-                        done, len(order)
-                    )  # (Discord's is a plain call; the web's awaits)
+                    told = call(*args)  # (Discord's callback is a plain call; the website's awaits)
                     if inspect.isawaitable(told):
                         await told
                 except Exception as exc:  # (only a progress line: never the restore's)
                     log.warning("A restore's progress line failed: %s", type(exc).__name__)
 
-        await tick(0)
+        await tell(step)
         # The Shared story switch comes back on only for the person who confirmed the right to
         # use the material (the file's confirmation is theirs); anyone else restoring the file
         # starts with it off and confirms for themselves (#1692, CLAUDE.md IP rule).
@@ -1843,10 +1844,11 @@ class CampaignStore:
                     raise
                 except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
                     raise CampaignError(DAMAGED) from exc
-                await tick(0)
+                await tell(step)
             if order:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
+                await tell(progress, 0, len(order))
                 for done, index in enumerate(order, 1):
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
@@ -1855,7 +1857,7 @@ class CampaignStore:
                     except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
-                    await tick(done)
+                    await tell(progress, done, len(order))
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(
