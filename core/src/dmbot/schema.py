@@ -18007,8 +18007,8 @@ WEB_LINE_FIXES = (
     -- speaker has not agreed to be recorded now), 'same' (the words are the line's own), 'open'
     -- (suggest: the line already has a fix waiting for the DM), 'many' (suggest: three waiting),
     -- 'no_dm_screen' (suggest: the campaign has no DM screen to put it on) and 'queue_full' (twenty
-    -- waiting in the campaign, a flood guard). NULL for a server the caller is not in, a session
-    -- that is not the campaign's, and a line that is not a spoken one.
+    -- waiting of that kind in the campaign, a flood guard). NULL for a server the caller is not in,
+    -- a session that is not the campaign's, and a line that is not a spoken one.
     CREATE FUNCTION dmbot_web_line_fix_add(
         g BIGINT, c TEXT, sid TEXT, who BIGINT, at BIGINT, txt TEXT)
     RETURNS JSONB
@@ -18043,7 +18043,7 @@ WEB_LINE_FIXES = (
         IF char_length(want) NOT BETWEEN 1 AND 200 THEN
             RETURN jsonb_build_object('status', 'bad_text');
         END IF;
-        SELECT regexp_replace(btrim(coalesce(l.text, l.heard)), '\s+', ' ', 'g') INTO shown
+        SELECT btrim(regexp_replace(coalesce(l.text, l.heard), '\s+', ' ', 'g')) INTO shown
             FROM transcript_lines l
             WHERE l.guild_id = g AND l.session_id = sid AND l.user_id = who
               AND l.started_ms = at AND l.sidebar IS NULL AND NOT l.typed
@@ -18054,7 +18054,7 @@ WEB_LINE_FIXES = (
         IF NOT EXISTS (SELECT 1 FROM consent x WHERE x.guild_id = g AND x.user_id = who) THEN
             RETURN jsonb_build_object('status', 'not_recorded');
         END IF;
-        IF regexp_replace(btrim(want), '\s+', ' ', 'g') = shown THEN
+        IF btrim(regexp_replace(want, '\s+', ' ', 'g')) = shown THEN
             RETURN jsonb_build_object('status', 'same');
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('line_fix:' || g::TEXT || c, 0));
@@ -18095,8 +18095,10 @@ WEB_LINE_FIXES = (
                 RETURN jsonb_build_object('status', 'many');
             END IF;
         END IF;
+        -- Each mode has its own count: players' suggestions never lock a DM out of a rewrite.
         IF (SELECT count(*) FROM web_line_fixes f
-            WHERE f.guild_id = g AND f.campaign_id = c AND f.state IN ('waiting', 'working')) >= 20
+            WHERE f.guild_id = g AND f.campaign_id = c AND f.mode = how
+              AND f.state IN ('waiting', 'working')) >= 20
         THEN
             RETURN jsonb_build_object('status', 'queue_full');
         END IF;

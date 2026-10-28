@@ -184,6 +184,14 @@ class Words(FixBase):
         self.assertEqual(await self.refused(self.bob, "we  clime"), "same")
         self.assertEqual(await self.refused(self.session, " we clime "), "same")
 
+    async def test_tabs_and_line_breaks_in_the_line_do_not_hide_a_same_fix(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE transcript_lines SET heard = %s WHERE user_id = %s",
+                ("\twe  clime\n", BOB.id),
+            )
+        self.assertEqual(await self.refused(self.bob, "we clime"), "same")
+
     async def test_control_characters_are_taken_out_before_they_are_kept(self) -> None:
         await self.ask(self.bob, "we‮ climb​\n now")
         (row,) = await self.rows()
@@ -237,6 +245,18 @@ class Queue(FixBase):
             await self.ask(self.session, f"words {n}")
         self.assertEqual(await self.refused(self.session, "one more"), "queue_full")
 
+    async def test_players_suggestions_never_lock_a_dm_out_of_a_rewrite(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            for n in range(20):
+                await conn.execute(
+                    "INSERT INTO web_line_fixes (guild_id, campaign_id, id, user_id, session_id,"
+                    " speaker, started_ms, mode, words, basis, created_at, updated_at)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, 'suggest', 'w', %s, %s, %s)",
+                    (THURSDAY.id, self.one.id, f"{n:032x}", 9000 + n, self.sid, BOB.id, n,
+                     "0" * 32, NOW, NOW),
+                )  # fmt: skip
+        self.assertEqual((await self.ask(self.session))["mode"], "rewrite")
+
     async def test_the_website_changes_no_line(self) -> None:
         await self.ask(self.bob)
         await self.ask(self.session, "the pass is shut", speaker=ALICE, at=ALICE_AT)
@@ -279,7 +299,7 @@ class Status(FixBase):
         made = await self.ask(self.bob)
         got = await line_fixes.status(
             self.web, self.bob, self.cref, 1, made["id"], now=NOW, enforce_plans=False,
-            clock=NOW,
+            moment=NOW,
         )  # fmt: skip
         self.assertEqual((got["stage"], got["state"], got["result"]), ("waiting", "running", None))
         self.assertEqual(got["mode"], "suggest")
@@ -294,9 +314,22 @@ class Status(FixBase):
             )
         got = await line_fixes.status(
             self.web, self.session, self.cref, 1, made["id"], now=NOW, enforce_plans=False,
-            clock=NOW,
+            moment=NOW,
         )  # fmt: skip
         self.assertEqual((got["state"], got["result"], got["undo"]), ("done", "changed", True))
+
+    async def test_a_suggestion_never_tells_the_player_their_words_named_a_secret(self) -> None:
+        made = await self.ask(self.bob)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE web_line_fixes SET state = 'failed', stage = 'failed',"
+                " error = 'secret', words = ''"
+            )
+        got = await line_fixes.status(
+            self.web, self.bob, self.cref, 1, made["id"], now=NOW, enforce_plans=False,
+            moment=NOW,
+        )  # fmt: skip
+        self.assertEqual((got["state"], got["reason"]), ("failed", "failed"))
 
     async def test_a_failure_says_why_in_a_code(self) -> None:
         made = await self.ask(self.session)
@@ -307,7 +340,7 @@ class Status(FixBase):
             )
         got = await line_fixes.status(
             self.web, self.session, self.cref, 1, made["id"], now=NOW, enforce_plans=False,
-            clock=NOW,
+            moment=NOW,
         )  # fmt: skip
         self.assertEqual((got["state"], got["reason"], got["result"]), ("failed", "secret", None))
 

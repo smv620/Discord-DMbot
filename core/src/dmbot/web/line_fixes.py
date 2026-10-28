@@ -35,8 +35,15 @@ REASONS = {
     "line_gone",
     "not_written",
     "not_available",
+    "open",
+    "many",
+    "no_dm_screen",
     "failed",
 }
+# A speaker's suggestion is never checked against the secret names when it is made (Discord checks
+# only when the DM accepts, so a player can never learn whether their words named a secret): a
+# suggestion's wait can only end in these, whatever the bot recorded.
+SUGGEST_REASONS = REASONS - {"secret", "line_changed", "not_written"}
 
 
 async def request(
@@ -89,7 +96,7 @@ async def status(
     *,
     now: int,
     enforce_plans: bool,
-    clock: int | None = None,
+    moment: int | None = None,
 ) -> dict[str, Any]:
     """Where the person's own fix stands: the shared progress shape plus `result` ("sent" for a
     suggestion now with the DM, "changed" for a rewrite, else null), `mode`, and `undo` (a rewrite
@@ -108,14 +115,15 @@ async def status(
     got = found["r"] if found else None
     if got is None:
         raise RecapError("not_found")
-    moment = int(time.time()) if clock is None else clock
+    when = int(time.time()) if moment is None else moment
+    allowed = SUGGEST_REASONS if got["mode"] == "suggest" else REASONS
     reason = got["error"] or None
     shape = progress.shape(
         got["stage"],
         started_at=int(got["createdAt"]),
         updated_at=int(got["updatedAt"]),
-        now=moment,
-        reason=reason if reason in REASONS else ("failed" if reason else None),
+        now=when,
+        reason=reason if reason in allowed else ("failed" if reason else None),
     )
     done = got["state"] == "done"
     return {

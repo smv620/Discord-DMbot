@@ -2459,7 +2459,6 @@ def create_app(
         "many": (409, "many"),  # three of this person's fixes are waiting
         "no_dm_screen": (409, "no_dm_screen"),
         "queue_full": (429, "queue_full"),  # twenty waiting in the campaign: a flood guard only
-        "too_big": (413, "too_big"),
     }
 
     @app.post("/me/campaigns/{ref}/transcripts/{number}/fix", status_code=202)
