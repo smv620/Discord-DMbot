@@ -83,6 +83,14 @@ CI runs all of the above on every pull request. Never merge red CI.
   shows the PR's **own commits** unchanged and every line that left the diff is in the merged
   PR's diff. RepoManager notes "approval carried over from <sha> (stacked base merged)".
   Anything else in the range-diff needs a fresh "approved".
+  **A hand-resolved merge that changes nothing of the PR's own** (owner, 2026-10-28, to stop a
+  fresh review for every resolved conflict): RepoManager carries the approval over itself when the
+  head has no commits of its own since the approved one (`git log --no-merges OLD..NEW
+  ^origin/development` is empty) and the PR's own +/- lines against `development` are identical to
+  the approved head's (`git diff $(git merge-base OLD origin/development) OLD` against `git diff
+  origin/development...NEW`, both sorted). It notes "approval carried over from <sha> (net diff
+  identical)". Any difference, a renumbered migration included, goes to Supervisor for a fresh
+  review.
   **Merging a batch** (2026-10-13, Supervisor, to stop one merge per CI cycle): RepoManager
   may merge up to four approved PRs back to back when one CI run is green on a single branch
   of `development` plus all of them merged in the planned order, and each PR's own patch is
@@ -278,19 +286,31 @@ On the server that copy is the one in Docker Compose, run by dev1.
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
-session of a role works from this file and GitHub alone. **Each session is woken four times an hour (Supervisor once and dev1 twice, owner 2026-10-24)
-by scheduled tasks** (a scheduled task fires at most hourly, so four make the 15 minutes). The minutes
-are staggered so each role finds the others' work done:
+session of a role works from this file and GitHub alone. **Messages move the work; one scheduled
+round an hour is the safety net** (owner, 2026-10-28, to cut costs; it was four an hour from 2026-10-16).
+Each role is woken once an hour by a scheduled task (dev1 twice), at staggered minutes:
 
 | Role | Minutes past the hour | Kind |
 |---|---|---|
-| CloudDev (CloudDev-lead) | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
-| CloudDev-assistant | :07 (hourly check), :22, :37, :52 | long-lived cloud session (smaller model, from 2026-10-28) |
-| WebDev (WebDev-lead) | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
-| WebDev-assistant | :06 (hourly check), :21, :36, :51 | long-lived cloud session (smaller model, from 2026-10-28) |
-| Supervisor | :04 (hourly summary; once an hour, owner 2026-10-24) | long-lived cloud session |
-| RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| CloudDev (CloudDev-lead) | :01 (hourly check) | long-lived cloud session |
+| WebDev (WebDev-lead) | :02 (hourly check) | long-lived cloud session |
+| Supervisor | :04 (hourly summary) | long-lived cloud session |
+| WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
+
+**Messages between sessions** (owner, 2026-10-28): every message wakes the session it goes to, so a
+message is sent only when the other session has something to do now. Each handoff sends one:
+- a developer who pushes a PR, or a fix to one, tells Supervisor (an assistant tells its lead);
+- a lead who files a handoff issue tells its assistant, and its check on an assistant PR tells
+  Supervisor when it matches;
+- Supervisor's approval or send-back tells RepoManager or the author;
+- RepoManager's send-back tells the author.
+
+Message with the session's id (`send_message`); the ids are in the latest "<role> online" notes on
+#516. **No acknowledgements** ("noted", "checked", "confirmed") unless Supervisor asks for one in
+that message. Reports still go on #516 or the issue, where nobody is woken by them.
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
 last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
@@ -307,7 +327,7 @@ last comments, act on what is yours, and stop. A round that finds nothing to do 
   report on #516. **Supervisor's merge lists on #516 are standing instructions**: act on them without
   asking the owner again, within the rules in "Workflow".
 - **Supervisor:** reviews, queues, #516, the owner's questions; on the :04 round, also check that every
-  role above has its four scheduled tasks bound to a live session, and rebind any that died.
+  role above has its scheduled task bound to a live session, and rebind any that died.
 
 **The hourly check** (the first minute in the table): even mid-task, stop at a safe point and post one
 status line on the issue you are working on (done, next, blocked on whom), then carry on.
