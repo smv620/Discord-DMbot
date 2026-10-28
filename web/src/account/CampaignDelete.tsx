@@ -1,5 +1,6 @@
 /** @jsxImportSource preact */
-// "Delete this campaign" on a campaign's card in My Account (#2555; core #2554). The same steps as Discord's
+// "Delete this campaign" at the bottom of a campaign's page, and on the My Account card of a campaign whose server
+// DMbot can't reach (#2555; core #2554; #2879). The same steps as Discord's
 // button: one warning that says what goes and that it can't be undone, a backup offered first, and the
 // campaign's name typed to confirm. It is offered to the plan holder only (the API checks again), and the
 // button stays off until the typed name matches, as Discord's box does (any case, extra spaces ignored).

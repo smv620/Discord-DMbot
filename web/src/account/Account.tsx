@@ -31,6 +31,7 @@ import {
   type RecordingEntry,
 } from "./api";
 import CampaignDelete from "./CampaignDelete";
+import { takeDeleted } from "./deleted-notice";
 import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
 import CampaignFacts from "./CampaignFacts";
@@ -877,7 +878,13 @@ function OfferRow({
 
 function CampaignsSection({ me }: { me: Me }) {
   const { refresh } = useShared();
-  const [done, setDone] = useState<string | null>(null);
+  // A campaign the page has just deleted leaves its line here once (#2879).
+  const [done, setDone] = useState<string | null>(() => {
+    const gone = takeDeleted();
+    return gone && CAMPAIGN_DELETE_LIVE
+      ? `${campaignDeleteWords.deleted(gone.name)}${gone.channelsLeft ? ` ${campaignDeleteWords.channelsLeft}` : ""}`
+      : null;
+  });
   // Long lists fold (#1991): the newest few, and the rest behind one button. Not an inner scroll bar,
   // which is hard on phones and for keyboard and screen-reader users.
   const [all, setAll] = useState(false);
@@ -1027,7 +1034,13 @@ function CampaignRow({
       )}
       {/* Only the plan holder is offered Delete: the API says so with `canDelete` (a campaign with no owner yet
           can be deleted by its game masters); an API without it falls back to the owner. */}
-      {CAMPAIGN_DELETE_LIVE && (campaign.canDelete ?? campaign.role === "owner") && campaign.ref && api.deleteCampaign && (
+      {/* Delete is on the campaign's own page (#2879); here only for a server DMbot can't reach, where that page
+          would say not found. */}
+      {CAMPAIGN_DELETE_LIVE &&
+        campaign.serverReachable === false &&
+        (campaign.canDelete ?? campaign.role === "owner") &&
+        campaign.ref &&
+        api.deleteCampaign && (
         <CampaignDelete
           api={api}
           refId={campaign.ref}

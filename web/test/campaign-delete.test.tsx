@@ -69,55 +69,60 @@ describe("the list", () => {
     expect(within(card("The Brynwater Crossing")).queryByText(w.unreachable)).toBeNull();
   });
 
-  it("offers Delete by the API's canDelete when it sends one (a campaign with no owner yet)", async () => {
+  it("offers Delete on the card by the API's canDelete when it sends one (a campaign with no owner yet)", async () => {
     const api = mockApi("lost-server");
     const base = api.me.bind(api);
     api.me = async () => {
       const got = await base();
-      return got && { ...got, campaigns: got.campaigns.map((c) => (c.id === "cmp-varrow" ? { ...c, canDelete: true } : c.id === "cmp-ashen" ? { ...c, canDelete: false } : c)) };
+      return got && { ...got, campaigns: got.campaigns.map((c) => (c.id === "cmp-hollow" ? { ...c, canDelete: true } : c.id === "cmp-ashen" ? { ...c, canDelete: false } : c)) };
     };
     await page(api);
-    expect(within(card("Shrine of Varrow")).getByRole("button", { name: w.buttonFor("Shrine of Varrow") })).toBeTruthy();
+    expect(within(card("Lost Hollow")).getByRole("button", { name: w.buttonFor("Lost Hollow") })).toBeTruthy();
     expect(within(card("Ashen Crown")).queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
   });
 
-  it("offers Delete to the owner only, never to a co-DM or a player", async () => {
+  it("offers Delete on the card to the owner of an unreachable campaign only, never to a co-DM or a player", async () => {
     await page();
-    expect(within(card("The Brynwater Crossing")).getByRole("button", { name: w.buttonFor("The Brynwater Crossing") })).toBeTruthy();
     expect(within(card("Lost Hollow")).getByRole("button", { name: w.buttonFor("Lost Hollow") })).toBeTruthy();
+    expect(within(card("The Brynwater Crossing")).queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
     expect(within(card("Shrine of Varrow")).queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
     expect(within(card("The Lantern Road")).queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
+  });
+
+  it("a campaign on a server DMbot can still reach has no Delete on its card: it is deleted from its own page", async () => {
+    await page();
+    expect(within(card("The Brynwater Crossing")).queryByRole("button", { name: /Delete this campaign/ })).toBeNull();
   });
 });
 
 describe("deleting", () => {
   it("says what goes and that it can't be undone, offers the backup first, and needs the typed name", async () => {
     const api = await page();
-    const box = await open("The Brynwater Crossing");
-    expect(within(box).getByText(w.warning("The Brynwater Crossing"))).toBeTruthy();
+    const box = await open("Lost Hollow");
+    expect(within(box).getByText(w.warning("Lost Hollow"))).toBeTruthy();
     const buttons = within(box).getAllByRole("button");
     expect(buttons[0]!.textContent).toBe(w.backup); // the backup is the first button
     const confirm = within(box).getByRole("button", { name: w.confirm }) as HTMLButtonElement;
     expect(buttons.indexOf(confirm)).toBeGreaterThan(0);
     expect(confirm.disabled).toBe(true);
-    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "the brynwater" } });
+    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "lost holl" } });
     expect(confirm.disabled).toBe(true); // part of the name is not the name
     expect(within(box).getByText(w.noMatch)).toBeTruthy(); // and the page says why the button is off
     fireEvent.click(confirm);
     expect(calls(api, "deleteCampaign")).toHaveLength(0);
-    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "  the BRYNWATER   crossing " } });
+    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "  lost   HOLLOW " } });
     expect(confirm.disabled).toBe(false); // any case, extra spaces ignored, as in Discord
   });
 
   it("deletes it, says so, and the campaign leaves the list", async () => {
     const api = await page();
-    const box = await open("The Brynwater Crossing");
-    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "The Brynwater Crossing" } });
+    const box = await open("Lost Hollow");
+    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "Lost Hollow" } });
     fireEvent.click(within(box).getByRole("button", { name: w.confirm }));
-    expect(await screen.findByText(w.deleted("The Brynwater Crossing"))).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("link", { name: "The Brynwater Crossing" })).toBeNull());
-    expect(calls(api, "deleteCampaign")).toEqual(["deleteCampaign:100.cmp1:The Brynwater Crossing"]);
-    expect(screen.queryByText(w.channelsLeft)).toBeNull(); // DMbot could reach the server
+    // Lost Hollow's server DMbot can't reach any more, so the line also says its channels stay.
+    expect(await screen.findByText(`${w.deleted("Lost Hollow")} ${w.channelsLeft}`)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Lost Hollow" })).toBeNull());
+    expect(calls(api, "deleteCampaign")).toEqual(["deleteCampaign:300.cmp9:Lost Hollow"]);
   });
 
   it("on a server DMbot can't reach, says its Discord channels stay", async () => {
@@ -131,10 +136,10 @@ describe("deleting", () => {
 
   it("Keep it closes the box and deletes nothing", async () => {
     const api = await page();
-    const box = await open("The Brynwater Crossing");
+    const box = await open("Lost Hollow");
     fireEvent.click(within(box).getByRole("button", { name: w.keep }));
-    expect(screen.queryByRole("group", { name: w.heading("The Brynwater Crossing") })).toBeNull();
-    expect(screen.getByText(w.kept("The Brynwater Crossing"))).toBeTruthy();
+    expect(screen.queryByRole("group", { name: w.heading("Lost Hollow") })).toBeNull();
+    expect(screen.getByText(w.kept("Lost Hollow"))).toBeTruthy();
     expect(calls(api, "deleteCampaign")).toHaveLength(0);
   });
 
@@ -150,11 +155,11 @@ describe("deleting", () => {
       throw new ApiError(kind as never);
     };
     await page(api);
-    const box = await open("The Brynwater Crossing");
-    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "The Brynwater Crossing" } });
+    const box = await open("Lost Hollow");
+    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "Lost Hollow" } });
     fireEvent.click(within(box).getByRole("button", { name: w.confirm }));
     expect(await within(box).findByText(w.problem[kind]!)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "The Brynwater Crossing" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Lost Hollow" })).toBeTruthy();
   });
 
   it("the pretend API refuses while a session is running, and a wrong name", async () => {
@@ -172,28 +177,28 @@ describe("deleting", () => {
       throw new ApiError("not-found");
     };
     await page(api);
-    const box = await open("The Brynwater Crossing");
-    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "The Brynwater Crossing" } });
+    const box = await open("Lost Hollow");
+    fireEvent.input(within(box).getByLabelText(w.typeName), { target: { value: "Lost Hollow" } });
     fireEvent.click(within(box).getByRole("button", { name: w.confirm }));
-    await waitFor(() => expect(screen.queryByRole("link", { name: "The Brynwater Crossing" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("link", { name: "Lost Hollow" })).toBeNull());
     expect(screen.getByText(w.problem["not-found"]!)).toBeTruthy();
-    expect(screen.queryByText(w.deleted("The Brynwater Crossing"))).toBeNull();
+    expect(screen.queryByText(w.deleted("Lost Hollow"))).toBeNull();
   });
 });
 
 describe("the backup", () => {
   it("saves a file from the backup button, before anything is deleted", async () => {
     const api = await page();
-    const box = await open("The Brynwater Crossing");
+    const box = await open("Lost Hollow");
     fireEvent.click(within(box).getByRole("button", { name: w.backup }));
     expect(await within(box).findByText(w.backupDone(["pretend-campaign-2026-10-27.dmbot.json.gz"]))).toBeTruthy();
-    expect(calls(api, "campaignBackup")).toEqual(["campaignBackup:100.cmp1"]);
+    expect(calls(api, "campaignBackup")).toEqual(["campaignBackup:300.cmp9"]);
     expect(calls(api, "deleteCampaign")).toHaveLength(0);
   });
 
   it("shows the stage and how long it has run while the backup is made", async () => {
     const api = await page();
-    const box = await open("The Brynwater Crossing");
+    const box = await open("Lost Hollow");
     let finish: (set: { files: { name: string; blob: Blob }[] }) => void = () => {};
     api.campaignBackup = (_ref, onProgress) => {
       const now = Math.floor(Date.now() / 1000);
@@ -211,7 +216,7 @@ describe("the backup", () => {
 
   it("no longer says the transcripts are missing, now that the backup carries them", async () => {
     await page();
-    const box = await open("The Brynwater Crossing");
+    const box = await open("Lost Hollow");
     expect(within(box).queryByText(new RegExp(w.backupWithoutTranscripts))).toBeNull();
   });
 
@@ -231,10 +236,10 @@ describe("the backup", () => {
         "pretend-campaign-2026-10-27.transcripts-1-of-2.dmbot.json.gz",
         "pretend-campaign-2026-10-27.transcripts-2-of-2.dmbot.json.gz",
       ];
-      const api = mockApi("table");
-      api.campaignBackup = (ref, onProgress, onFile) => mockApi("table").campaignBackup!(`${ref}.bk-parts`, onProgress, onFile);
+      const api = mockApi("lost-server");
+      api.campaignBackup = (ref, onProgress, onFile) => mockApi("lost-server").campaignBackup!(`${ref}.bk-parts`, onProgress, onFile);
       await page(api);
-      const box = await open("The Brynwater Crossing");
+      const box = await open("Lost Hollow");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.backupDone(files), {}, { timeout: 5000 })).toBeTruthy();
       expect(saved).toEqual(files);
@@ -244,24 +249,24 @@ describe("the backup", () => {
     });
 
     it("says a file is large when any file, the main one included, is over 10 MB", async () => {
-      const api = mockApi("table");
+      const api = mockApi("lost-server");
       const big = new Blob([new Uint8Array(w.bigFileBytes + 1)]);
       api.campaignBackup = async () => ({ files: [{ name: "x.dmbot.json.gz", blob: big }] });
       await page(api);
-      const box = await open("The Brynwater Crossing");
+      const box = await open("Lost Hollow");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.backupBigFile, {}, { timeout: 5000 })).toBeTruthy();
     });
 
     it("shows the clock from the request, and a stuck file as stalled with what to do", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
-      const api = mockApi("table");
+      const api = mockApi("lost-server");
       api.campaignBackup = (_ref, _progress, onFile) => {
         onFile?.(1, 3); // one of three files fetched, then nothing
         return new Promise(() => {});
       };
       await page(api);
-      const box = await open("The Brynwater Crossing");
+      const box = await open("Lost Hollow");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(`1 of 3 ${w.filesUnit(3)}`)).toBeTruthy();
       expect(within(box).queryByText(w.fileSlow)).toBeNull();
@@ -271,7 +276,7 @@ describe("the backup", () => {
     });
 
     it("shows how many files are fetched while it goes", async () => {
-      const api = mockApi("table");
+      const api = mockApi("lost-server");
       let hold: () => void = () => {};
       api.campaignBackup = async (_ref, _progress, onFile) => {
         onFile?.(2, 7);
@@ -279,7 +284,7 @@ describe("the backup", () => {
         return { files: [{ name: "a.dmbot.json.gz", blob: new Blob(["{}"]) }] };
       };
       await page(api);
-      const box = await open("The Brynwater Crossing");
+      const box = await open("Lost Hollow");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.stage["fetching"] as string)).toBeTruthy();
       expect(within(box).getByText(`2 of 7 ${w.filesUnit(7)}`)).toBeTruthy();
@@ -287,20 +292,20 @@ describe("the backup", () => {
     });
 
     it("says the whole backup failed when one file does not come through, and saves nothing", async () => {
-      const api = mockApi("table");
-      api.campaignBackup = (ref, p, f) => mockApi("table").campaignBackup!(`${ref}.bk-partfail`, p, f);
+      const api = mockApi("lost-server");
+      api.campaignBackup = (ref, p, f) => mockApi("lost-server").campaignBackup!(`${ref}.bk-partfail`, p, f);
       await page(api);
-      const box = await open("The Brynwater Crossing");
+      const box = await open("Lost Hollow");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.problem["backup-part"] as string)).toBeTruthy();
       expect(saved).toEqual([]);
     });
 
     it("says what to change when the campaign has more transcripts files than one backup carries", async () => {
-      const api = mockApi("table");
-      api.campaignBackup = (ref, p, f) => mockApi("table").campaignBackup!(`${ref}.bk-toomany`, p, f);
+      const api = mockApi("lost-server");
+      api.campaignBackup = (ref, p, f) => mockApi("lost-server").campaignBackup!(`${ref}.bk-toomany`, p, f);
       await page(api);
-      const box = await open("The Brynwater Crossing");
+      const box = await open("Lost Hollow");
       fireEvent.click(within(box).getByRole("button", { name: w.backup }));
       expect(await within(box).findByText(w.problem["backup-too-many-files"] as string)).toBeTruthy();
       expect(w.problem["backup-too-many-files"]).toMatch(/Keep transcripts for/);
@@ -308,8 +313,14 @@ describe("the backup", () => {
   });
 
   it("a Try It campaign is offered no backup, but can still be deleted", async () => {
-    await page(mockApi("try-it"));
-    const box = await open("The Brynwater Crossing");
+    const api = mockApi("lost-server");
+    const base = api.me.bind(api);
+    api.me = async () => {
+      const got = await base();
+      return got && { ...got, plan: { ...got.plan, id: "try-it" } };
+    };
+    await page(api);
+    const box = await open("Lost Hollow");
     expect(within(box).queryByRole("button", { name: w.backup })).toBeNull();
     expect(within(box).getByRole("button", { name: w.confirm })).toBeTruthy();
   });
@@ -352,7 +363,7 @@ describe("held", () => {
 
   it("has nothing serious or critical for axe", async () => {
     await page();
-    await open("The Brynwater Crossing");
+    await open("Lost Hollow");
     const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
     expect(result.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
   });

@@ -14,6 +14,9 @@ import { type AccountApi, ApiError, type Campaign, type CampaignPage } from "./a
 import CampaignFacts from "./CampaignFacts";
 import CampaignNav from "./CampaignNav";
 import CampaignSettings from "./CampaignSettings";
+import CampaignDelete from "./CampaignDelete";
+import { CAMPAIGN_DELETE_LIVE } from "../content/campaign-delete";
+import { rememberDeleted } from "./deleted-notice";
 import LazyPanel from "./LazyPanel";
 
 /** The campaign in the address: `/account/campaigns/<server>.<campaign>`. */
@@ -36,6 +39,8 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
   // The campaign's card on My Account: its facts for this page's heading (left out when the API
   // cannot say, or the person is not in /me's list).
   const [card, setCard] = useState<Campaign | null>(null);
+  // Try It has no backup, so Delete offers none; the plan comes from the same /me answer as the card.
+  const [tryIt, setTryIt] = useState(false);
 
   async function load() {
     if (!ref || !api.campaignPage) return setView("none");
@@ -44,7 +49,10 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
       setPage(await api.campaignPage(ref));
       setView("ok");
       void Promise.resolve(api.me())
-        .then((me) => setCard(me?.campaigns.find((c) => c.ref === ref) ?? null))
+        .then((me) => {
+          setCard(me?.campaigns.find((c) => c.ref === ref) ?? null);
+          setTryIt(me?.plan?.id === "try-it");
+        })
         .catch(() => undefined);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
@@ -133,6 +141,23 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
+      {/* Delete is the last thing on the page (#2879): the person who holds the plan, and only while the switch is on. */}
+      {CAMPAIGN_DELETE_LIVE && ref && api.deleteCampaign && (card?.canDelete ?? page.role === "owner") && (
+        <div class="stack">
+          <CampaignDelete
+            api={api}
+            refId={ref}
+            name={page.name}
+            tryIt={tryIt}
+            onDeleted={(channelsLeft) => {
+              rememberDeleted(page.name, channelsLeft);
+              window.location.assign("/account#campaigns");
+            }}
+            onGone={() => window.location.assign("/account#campaigns")}
+          />
+          <p class="small muted">{words.deleteInDiscord(words.paths.delete)}</p>
+        </div>
+      )}
     </div>
   );
 }

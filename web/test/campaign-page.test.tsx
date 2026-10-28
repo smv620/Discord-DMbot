@@ -94,10 +94,12 @@ describe("the page", () => {
     }
     expect(within(section).getByText(w.gameMastersCount(2))).toBeTruthy();
     expect(within(section).getByText(w.pausedNo)).toBeTruthy();
-    // Game masters, hand over, pause and delete stay in Discord, and the owner sees all of them.
-    for (const key of ["gameMasters", "handOver", "pause", "delete"] as const)
+    // Game masters, hand over and pause stay in Discord, and the owner sees all of them. Delete is not in the list:
+    // it is at the bottom of the page (#2879).
+    for (const key of ["gameMasters", "handOver", "pause"] as const)
       expect(within(section).getByText(w.doThisInDiscord(w.paths[key])), key).toBeTruthy();
-    for (const key of ["gameMasters", "handOver", "pause", "delete"] as const) expect(within(section).getByText(w.settingsLabels[key]), key).toBeTruthy();
+    for (const key of ["gameMasters", "handOver", "pause"] as const) expect(within(section).getByText(w.settingsLabels[key]), key).toBeTruthy();
+    expect(within(section).queryByText(w.doThisInDiscord(w.paths.delete))).toBeNull();
     expect(w.paths.retention).toBe("⚙️ Settings → 🗂️ Campaign management → 🗄️ Transcript retention");
   });
 
@@ -105,7 +107,8 @@ describe("the page", () => {
     await open("/account/campaigns/100.cmp3.cp-co");
     const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
     expect(within(section).getByRole("button", { name: "🔔 Normal" })).toBeTruthy();
-    for (const key of ["handOver", "pause", "delete"] as const) expect(within(section).queryByText(w.doThisInDiscord(w.paths[key])), key).toBeNull();
+    for (const key of ["handOver", "pause"] as const) expect(within(section).queryByText(w.doThisInDiscord(w.paths[key])), key).toBeNull();
+    expect(within(section).getByText(w.ownerOnlyNote)).toBeTruthy();
     expect(within(section).getByText(w.ownerOnlyNote)).toBeTruthy();
   });
 
@@ -130,7 +133,7 @@ describe("the page", () => {
     await open(DM, old);
     const section = (await screen.findByRole("heading", { level: 2, name: w.groups.settings })).closest("section") as HTMLElement;
     expect(within(section).queryByRole("button")).toBeNull(); // nothing to show or change without the choices
-    expect(within(section).getAllByText(/^Do this in Discord:/).length).toBe(4); // the paths still show
+    expect(within(section).getAllByText(/^Do this in Discord:/).length).toBe(3); // the paths still show
   });
 
   it("gives a co-DM the same groups", async () => {
@@ -384,3 +387,45 @@ describe("the breadcrumb on a page inside a list (#2485)", () => {
     expect(within(crumbs).getByText(w.pages.names).getAttribute("aria-current")).toBe("page");
   });
 });
+
+describe("Delete this campaign, at the bottom of the page (#2879)", () => {
+  // (the page helper above is local to its own block; this one renders the same way)
+  const open = async (path: string, api = mockApi("table")) => {
+    render(
+      <div class="account">
+        <h1>Campaign</h1>
+        <CampaignPageView api={api} path={path} />
+      </div>,
+    );
+    await screen.findByRole("heading", { level: 2, name: w.groups.story });
+  };
+  const deleteButton = () => screen.queryByRole("button", { name: /^Delete this campaign: / });
+
+  it("is the last thing on the page for the owner, with the Discord line under it", async () => {
+    await open(DM, mockApi("table"));
+    await waitFor(() => expect(deleteButton()).toBeTruthy());
+    const page = document.querySelector(".campaign-page") as HTMLElement;
+    expect(page.lastElementChild?.contains(deleteButton() as HTMLElement)).toBe(true);
+    expect(within(page.lastElementChild as HTMLElement).getByText(w.deleteInDiscord(w.paths.delete))).toBeTruthy();
+  });
+
+  it("is shown to a co-DM only when the API says they may delete it", async () => {
+    const api = mockApi("table");
+    await open("/account/campaigns/100.cmp3.cp-co", api);
+    expect(deleteButton()).toBeNull();
+    cleanup();
+    const base = api.me.bind(api);
+    api.me = async () => {
+      const got = await base();
+      return got && { ...got, campaigns: got.campaigns.map((c) => ({ ...c, canDelete: true })) };
+    };
+    await open("/account/campaigns/100.cmp3.cp-co", api);
+    await waitFor(() => expect(deleteButton()).toBeTruthy());
+  });
+
+  it("is not shown to a player", async () => {
+    await open(PLAYER, mockApi("table"));
+    expect(deleteButton()).toBeNull();
+  });
+});
+
