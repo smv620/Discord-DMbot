@@ -209,6 +209,30 @@ database.
   range, inverse label, how many are allowed and an example (rules 1–3, 9). An AI free to invent edges
   would scatter one idea across many names (plays, controls, is_player_of, runs) and the checks and
   questions ("who plays Vaelora?") would miss facts.
+- **Reviewed again 2026-10-28 (owner asked: do we need an LPG graph store in parallel with Postgres?):
+  no parallel graph store** (owner agreed). The graph stays the LPG in these Postgres tables, the only copy.
+  - **The design basis:**
+    - One store, scoped by row-level security on `guild_id` and `campaign_id`.
+    - Facts are edges whose properties hold confidence, source, status, game time and evidence.
+    - The vocabulary is checked (`ontology.py`).
+    - Joins go through the store's existing merge.
+  - **Why not a second store:**
+    1. **Isolation.** A graph database sits outside row-level security, so every query there would rely
+       on a hand-written campaign filter, and one slip leaks across campaigns or servers (the reason Neo4j
+       was not chosen on 2026-10-05).
+    2. **Two copies drift.** Every write, merge, delete, backup, restore and campaign move (#2550) would
+       have to happen twice and stay in step. Backups must be complete, and that gets harder to promise.
+    3. **The size doesn't need it.** A campaign is a few thousand entities, and its questions are 1–3
+       steps ("who is Kesh Arn's king?"), which Postgres answers in milliseconds.
+    4. **The new needs fit the tables.** Unnamed people from #2790 ("Kesh Arn's king (name unknown)") are
+       ordinary entities marked unnamed, joined later by the existing merge on the DM's say.
+  - **If deeper graph work is ever needed** (long paths such as "how are these two connected through six
+    others?", or who is central to the plot), take these steps in order, each only when the one before
+    fails on measured numbers:
+    1. Load one campaign's graph into memory in Python and compute there. It is small, and isolated by
+       construction.
+    2. Apache AGE on the same Postgres, after checking it works with row-level security (above).
+    3. Only then, a separate graph database.
 
 **A worker container, and a smaller bot.py** (owner, 2026-10-20; details Supervisor's; the first step toward #57's workers).
 - **The worker.** Heavy background work leaves the live bot for a `worker` container: recap writing, audio rendering with ffmpeg, cleaning imported sessions, PlotBot's checks and the story extractor. It runs the same `core` image and code with a different start command, against the same database, with no new network API. The bot keeps everything that happens live at the table: voice, the Cleaner, the sidebar, rules cards, the live heads-up and the buttons.
