@@ -233,7 +233,7 @@ describe("Type in my character", () => {
 });
 
 describe("a link typed for one campaign", () => {
-  it("does not show under another campaign's character, and comes back for its own", async () => {
+  it("does not show under another campaign's character, and is empty again on return", async () => {
     const api = mockApi("table");
     const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await screen.findByRole("heading", { name: w.heading });
@@ -242,7 +242,7 @@ describe("a link typed for one campaign", () => {
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await waitFor(() => expect(linkBox().value).toBe(""));
     rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
-    await waitFor(() => expect(linkBox().value).toBe("https://www.dndbeyond.com/characters/777"));
+    await waitFor(() => expect(linkBox().value).toBe(""));
   });
 });
 
@@ -290,11 +290,9 @@ describe("a campaign the page has left", () => {
     const api = mockApi("table");
     const answer = api.sheetAnswer!.bind(api);
     let release!: () => void;
-    let asked = false;
     const held = new Promise<void>((r) => (release = r));
     api.sheetAnswer = async (ref, id) => {
       if (ref !== "100.sh") return answer(ref, id);
-      asked = true;
       await held;
       return answer(ref, id);
     };
@@ -303,7 +301,8 @@ describe("a campaign the page has left", () => {
     fireEvent.click(screen.getByRole("button", { name: w.forget }));
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await screen.findByText(w.mine("Sorrel"));
-    await waitFor(() => expect(asked).toBe(true), { timeout: 4000 });
+    // The old section stops asking once the page has left (#2851), so no answer is ever drawn here.
+    await new Promise((r) => setTimeout(r, 2000));
     release();
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(w.forgetDone)).toBeNull();
@@ -391,6 +390,67 @@ describe("Use a document link", () => {
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await waitFor(() => expect(docBox("Ivy").value).toBe(""));
     rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
-    await waitFor(() => expect(docBox("Ivy").value).toBe("https://example.com/half"));
+    await waitFor(() => expect(docBox("Ivy").value).toBe(""));
+  });
+
+  it("a choice still going on one campaign does not disable another campaign's controls", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.sheetAnswer = async (ref, id) => {
+      if (ref === "100.sh") await held;
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    const forget = screen.getByRole("button", { name: w.forget });
+    expect(forget.getAttribute("aria-disabled")).not.toBe("true");
+    expect(screen.queryByText(w.stage.waiting as string)).toBeNull();
+    fireEvent.click(forget);
+    await waitFor(() =>
+      expect(api.calls).toContain(`chooseSheet:100.other:sh-sorrel:${JSON.stringify({ action: "forget" })}`),
+    );
+    release();
+  });
+
+  it("a read from an earlier visit cannot overwrite a later visit", async () => {
+    const api = mockApi("table");
+    const real = api.campaignSheets!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    api.campaignSheets = async (ref) => {
+      const got = await real(ref);
+      if (ref !== "100.sh" || !first) return got;
+      first = false;
+      await held;
+      return { ...got, sheets: got.sheets.map((c) => ({ ...c, name: "Stale Oren" })) };
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Stale Oren", { exact: false })).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("the old section stops asking about its choice once the page has left", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    const asked = () => api.calls.filter((c) => c.startsWith("sheetAnswer:100.sh")).length;
+    const before = asked();
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(asked()).toBe(before);
   });
 });

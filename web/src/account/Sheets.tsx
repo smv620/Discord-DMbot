@@ -36,7 +36,13 @@ const problem = (kind: string): string =>
     : (w.problems.server as string);
 const ENDS = ["not-allowed", "not-found", "signed-out"]; // looking again will not mend these
 
-export default function CharacterSheetsSection({
+/** One copy of the section per campaign: switching campaign remounts it, so nothing from the campaign the page has left
+ * (a choice still going, a stage, a report, a late read) can reach the new one (#2851, #2852). */
+export default function CharacterSheetsSection({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+  return <CharacterSheetsInner key={campaignRef} api={api} campaignRef={campaignRef} />;
+}
+
+function CharacterSheetsInner({
   api,
   campaignRef,
 }: {
@@ -91,11 +97,6 @@ export default function CharacterSheetsSection({
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
-  // Another campaign's list and report must not stay on screen while this one loads (drafts are keyed by campaign).
-  useEffect(() => {
-    setData("loading");
-    setReport(null);
-  }, [campaignRef]);
 
   // One choice at a time: a press while one is on its way is ignored. The answer is looked for until the bot has
   // answered or the minute is up; then the page says so and reads the list again, so nothing is tried twice.
