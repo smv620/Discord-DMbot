@@ -50,6 +50,8 @@ export default function CharacterSheetsSection({
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
   // Keyed by campaign too, so a draft never shows under another campaign's character (CLAUDE.md: scoped per campaign).
   const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
+  // The link box's draft is kept per campaign too, as the typed drafts are (#2842).
+  const linkKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
@@ -193,14 +195,17 @@ export default function CharacterSheetsSection({
                 sheet={s}
                 shown={true}
                 busy={busy}
-                linkValue={link[s.entityId] ?? ""}
+                linkValue={link[linkKey(s.entityId)] ?? ""}
                 onLinkValue={(v) =>
-                  setLink((now) => ({ ...now, [s.entityId]: v }))
+                  setLink((now) => ({ ...now, [linkKey(s.entityId)]: v }))
                 }
                 onLink={() =>
                   void send(
                     s.entityId,
-                    { action: "link", url: (link[s.entityId] ?? "").trim() },
+                    {
+                      action: "link",
+                      url: (link[linkKey(s.entityId)] ?? "").trim(),
+                    },
                     w.linkSaved,
                   )
                 }
