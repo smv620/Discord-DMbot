@@ -16,6 +16,8 @@ import type {
   MyEmail,
   NameChanged,
   NameChange,
+  NameThemResult,
+  NameThemStep,
   NameKind,
   NameRow,
   NamesPage,
@@ -718,6 +720,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     pending: null,
   };
   const memory = startNames();
+  // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
+  // step changed is kept by the answer id, so an Undo can put it back.
+  const unnamedPeople: NameRow[] = [
+    { id: "u1", name: "Ken's sister", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" },
+    { id: "u2", name: "the ferryman's cousin", kind: "not_named", others: [], secret: false, npcId: null, unnamed: true, unnamedWhat: "cousin", unnamedAnchor: "The Ferryman" },
+  ];
+  const nameSteps = new Map<string, { unnamed: NameRow; named?: NameRow; joined?: { into: NameRow; others: string[] } }>();
   // How each listed name is said (#2317), by the name's id; the id the said-as calls take is `al-<id>`.
   const memorySaid = new Map<string, string | null>();
   /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
@@ -1835,8 +1844,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       const view = namesView(ref);
       if (view === "none") throw new ApiError("not-found");
-      const visible = memory.filter((n) => view === "dm" || !n.secret);
-      const kinds: NameKind[] = NAME_KINDS.map((k) => ({ ...k, count: visible.filter((n) => n.kind === k.key).length })).filter((k) => k.count > 0);
+      const withUnnamed = view === "dm" && query.unnamed === true && /\.not-named$/.test(ref);
+      const visible = [...(withUnnamed ? unnamedPeople : []), ...memory].filter((n) => view === "dm" || !n.secret);
+      const kinds: NameKind[] = [{ key: "not_named", label: "Not named yet" }, ...NAME_KINDS].map((k) => ({ ...k, count: visible.filter((n) => n.kind === k.key).length })).filter((k) => k.count > 0);
       const needle = query.q.trim().toLowerCase();
       const found = visible
         .filter((n) => query.kind === "" || query.kind.split(",").includes(n.kind))
@@ -1940,6 +1950,43 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           return { removed: true };
       }
       return { ...row, others: [...row.others] };
+    },
+    async nameThem(ref, id, step: NameThemStep): Promise<NameThemResult> {
+      calls.push(`nameThem:${ref}:${id}:${JSON.stringify(step)}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.timed-out\b/.test(ref)) throw new ApiError("still-waiting");
+      const answer = `ans${nameSteps.size + 1}`;
+      if (step.action === "name-undo") {
+        const done = nameSteps.get(step.answer);
+        if (!done) throw new ApiError("gone");
+        nameSteps.delete(step.answer);
+        if (done.named) memory.splice(memory.indexOf(done.named), 1);
+        if (done.joined) done.joined.into.others = done.joined.others;
+        unnamedPeople.push(done.unnamed);
+        return { state: "done", row: null, undo: null, answer: step.answer };
+      }
+      const person = unnamedPeople.find((n) => n.id === id);
+      if (!person) throw new ApiError("gone");
+      if (/\.ambiguous\b/.test(ref)) throw new ApiError("ambiguous");
+      if (step.action === "name-join") {
+        const into = memory.find((n) => n.id === step.into);
+        if (!into) throw new ApiError("not-found");
+        nameSteps.set(answer, { unnamed: person, joined: { into, others: [...into.others] } });
+        unnamedPeople.splice(unnamedPeople.indexOf(person), 1);
+        return { state: "done", row: { ...into, others: [...into.others] }, undo: answer, answer };
+      }
+      const next = step.name.trim();
+      if (next === "") throw new ApiError("bad-name");
+      if (next.length > NAME_LIMIT) throw new ApiError("ticket-too-long");
+      const known = memory.find((n) => [n.name, ...n.others].some((x) => x.toLowerCase() === next.toLowerCase()));
+      if (known) return { state: "question", other: { id: known.id, name: known.name } };
+      const named: NameRow = { id: person.id, name: next, kind: "npc", others: [], secret: false, npcId: person.id };
+      memory.push(named);
+      nameSteps.set(answer, { unnamed: person, named });
+      unnamedPeople.splice(unnamedPeople.indexOf(person), 1);
+      return { state: "done", row: { ...named }, undo: answer, answer };
     },
     async transcriptCampaigns() {
       calls.push("transcriptCampaigns");

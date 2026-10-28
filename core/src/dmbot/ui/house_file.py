@@ -25,8 +25,7 @@ from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, DocumentError
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house_ai, house_file, house_reader
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _send, _tell
-from dmbot.ui.name_background import message_is_gone
-from dmbot.waiting import WaitingMessage
+from dmbot.waiting import WaitingMessage, message_is_gone
 
 log = logging.getLogger(__name__)
 
