@@ -1813,7 +1813,36 @@ export type ApiErrorKind =
   | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
   | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
+  | "not-a-backup" // the file is not a DMbot backup (#2745)
+  | "too-many-parts" // the copy asks for more transcripts files than the restore takes (#2745)
+  | "bad-part" // a transcripts file that is not one of the copy's (#2745)
+  | "files-missing" // transcripts files are still to come (#2745)
+  | "not-receiving" // the copy has already gone to DMbot (#2745)
+  | "restore-plan" // the plan has no loading of copies, or no free campaign slot (#2745)
+  | "too-slow" // a file took too long to arrive (#2745)
+  | "restore-working" // DMbot has started the restore, so it can't be taken back (#2745)
   | "server"; // anything else
+
+/** A backup loaded from the website (#2745; core web/restores.py). The shared progress shape, plus what the page
+ * needs: the copy's own name (from the file the person picked), how many transcripts files it asked for and has,
+ * and, once it has ended, the campaign it made and how many lines were left out for people who had deleted theirs. */
+export interface RestoreStatus extends JobProgress {
+  id: string;
+  name: string;
+  /** The restore swaps one of the person's own campaigns for the copy. */
+  replacing: boolean;
+  /** The campaign it replaces (its address), so the page can name it after a reload. */
+  replaceRef: string | null;
+  partsWanted: number;
+  partsReceived: number;
+  /** The person chose to restore without the transcripts files. */
+  withoutParts: boolean;
+  /** The new (or replaced) campaign's address, once it is made. */
+  campaign: string | null;
+  leftOut: number;
+  /** Unix seconds the staged copy is deleted if nothing happened. */
+  expiresAt: number;
+}
 
 /** How the page asks for a copy being made on DMbot's side (#2751): first after 1.5 s, then slower, to 10 s. */
 const BACKUP_POLL_MS = 1500;
@@ -1890,6 +1919,23 @@ export interface AccountApi {
   /** Delete a campaign for good, with its name typed to confirm (#2555; core #2554). `channelsLeft` is true
    * when DMbot couldn't reach the server, so its Discord channels stay. Only the plan holder may. */
   deleteCampaign?(ref: string, name: string): Promise<{ channelsLeft: boolean }>;
+  /** Load a backup (#2745; core web/restores.py): the copy's file goes to DMbot, which applies it after checking the
+   * plan, the free slot and the rights again. `replaceRef` swaps one of the person's own campaigns for it; none
+   * makes a new one. Answers the copy's own name and how many transcripts files it asks for. A restore of theirs
+   * that is still on its way refuses with `slow-down`: `restoreStatus(serverId)` finds it. Missing from an older API. */
+  restoreStage?(
+    serverId: string,
+    file: Blob,
+    replaceRef?: string,
+  ): Promise<{ id: string; name: string; partsWanted: number }>;
+  /** One transcripts file of a staged copy (1 to the count it asked for); the same number again replaces it. */
+  restorePart?(serverId: string, id: string, number: number, file: Blob): Promise<void>;
+  /** Send the staged copy to DMbot, with every transcripts file in, or without any (`without`). */
+  restoreGo?(serverId: string, id: string, without: boolean): Promise<void>;
+  /** Where the person's restore stands; with no id, their latest in that server. Null when there is none. */
+  restoreStatus?(serverId: string, id?: string): Promise<RestoreStatus | null>;
+  /** Take a staged copy back before DMbot starts it, or clear one that has ended. */
+  restoreCancel?(serverId: string, id: string): Promise<void>;
   /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
    * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
    * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
@@ -2281,6 +2327,13 @@ const errorKinds: Record<string, ApiErrorKind> = {
   owner: "owner-offer",
   bad_server: "bad-server",
   last_account: "last-account",
+  not_a_backup: "not-a-backup",
+  too_many_parts: "too-many-parts",
+  bad_part: "bad-part",
+  missing: "files-missing",
+  not_receiving: "not-receiving",
+  working: "restore-working",
+  too_slow: "too-slow",
   shares_rules: "shares-rules",
   not_the_owner: "not-allowed",
   session_running: "session-running",
@@ -2449,6 +2502,17 @@ export function httpApi(
     return asFile ? response.blob() : response.json();
   }
 
+  // A copy the person may not load (no plan that allows it, or no free campaign slot) reaches the page as its
+  // own word: "plan" means something else for the rest of the site, so only the restore calls see this (#2745).
+  const restoreCall: typeof call = async (...args) => {
+    try {
+      return await call(...args);
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "plan-needed") throw new ApiError("restore-plan");
+      throw error;
+    }
+  };
+
   /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
    * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
    * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
@@ -2501,7 +2565,42 @@ export function httpApi(
     },
     deleteCampaign: async (ref, name) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
-    campaignBackup: async (ref, onProgress, onFile) => {
+    restoreStage: async (serverId, file, replaceRef) => {
+      const query = replaceRef === undefined ? "" : `?replace=${encodeURIComponent(replaceRef)}`;
+      // The file goes as it is, not as JSON: it can be 25 MB, and the API reads it with a running cap.
+      const raw = new Blob([file], { type: "application/octet-stream" });
+      return (await restoreCall("POST", `/me/restores/${encodeURIComponent(serverId)}${query}`, undefined, false, raw)) as {
+        id: string;
+        name: string;
+        partsWanted: number;
+      };
+    },
+    restorePart: async (serverId, id, number, file) => {
+      const raw = new Blob([file], { type: "application/octet-stream" });
+      await restoreCall(
+        "PUT",
+        `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}/parts/${number}`,
+        undefined,
+        false,
+        raw,
+      );
+    },
+    restoreGo: async (serverId, id, without) => {
+      await restoreCall("POST", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}/go`, { without });
+    },
+    restoreStatus: async (serverId, id) => {
+      try {
+        const tail = id === undefined ? "" : `/${encodeURIComponent(id)}`;
+        return (await restoreCall("GET", `/me/restores/${encodeURIComponent(serverId)}${tail}`)) as RestoreStatus;
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "not-found") return null;
+        throw error;
+      }
+    },
+    restoreCancel: async (serverId, id) => {
+      await restoreCall("DELETE", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}`);
+    },
+        campaignBackup: async (ref, onProgress, onFile) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
       const asked = (await call("POST", base)) as { id: string };
       const copy = `${base}/${encodeURIComponent(asked.id)}`;

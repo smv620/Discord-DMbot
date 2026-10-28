@@ -6,17 +6,20 @@ technical terms, and always clear that DMbot never invents story or decides.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Collection, Iterable
 from datetime import UTC, datetime
 
 from dmbot.campaigns import DM_SCREEN_VISIBILITY, FALLBACK_NONE, RULESETS, Campaign
+from dmbot.campaigns.backup_names import backup_campaign_name as backup_campaign_name
+from dmbot.campaigns.backup_names import backup_filename as backup_filename
+from dmbot.campaigns.backup_names import backup_parts as backup_parts
 from dmbot.campaigns.models import (
     DEFAULT_DM_SCREEN_LEVEL,
     DM_SCREEN_LEVELS,
     DM_SCREEN_LEVELS_OFFERED,
 )
 from dmbot.consent_words import CONSENT_LABEL, MIN_AGE
+from dmbot.discord_limits import shorten as shorten
 from dmbot.transcription.config import Engine
 
 # Discord limits.
@@ -32,12 +35,6 @@ PHONE_LABEL_MAX = 25
 NAME_LABEL_MAX = 32
 
 NO_CAMPAIGN_ACCESS = "Only this campaign's DM (or a server manager) can do that."
-
-
-def shorten(text: str, limit: int) -> str:
-    """Trim text to fit a Discord label, ending with an ellipsis if it was cut."""
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def can_run(campaign: Campaign, user_id: int, is_server_manager: bool) -> bool:
@@ -229,19 +226,6 @@ def writing_status(engine: Engine, backlog: int, last_latency_s: float | None) -
     return f"Writing things down: keeping up{behind}"
 
 
-def backup_filename(campaign_name: str, now: int) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", campaign_name.casefold()).strip("-")[:40] or "campaign"
-    day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
-    return f"{slug}-{day}.dmbot.json.gz"  # compressed since #164; .dmbot.json still restores
-
-
-def backup_parts(data: object) -> int:
-    """How many transcripts files a copy came with (#2552); 0 for one made before them."""
-    manifest = data.get("parts") if isinstance(data, dict) else None
-    count = manifest.get("count") if isinstance(manifest, dict) else None
-    return count if type(count) is int and 0 < count <= 1000 else 0
-
-
 def part_filename(campaign_name: str, now: int, number: int, total: int) -> str:
     """The name of one transcripts file of a copy (#2552): the copy's name, then which of them."""
     base = backup_filename(campaign_name, now).removesuffix(".dmbot.json.gz")
@@ -311,17 +295,6 @@ HELP_TEXT = (
     "**Yes**, or "
     "type `/consent revoke`."
 )
-
-
-def backup_campaign_name(data: object) -> str | None:
-    """The campaign name inside a parsed backup, for messages; None if it's not there."""
-    if isinstance(data, dict):
-        campaign = data.get("campaign")
-        if isinstance(campaign, dict):
-            name = campaign.get("name")
-            if isinstance(name, str) and name.strip():
-                return shorten(name, OPTION_LABEL_MAX)
-    return None
 
 
 def dm_list(campaign: Campaign) -> str:

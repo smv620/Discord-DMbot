@@ -122,6 +122,9 @@ class WebSettings:
     # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
     # routes answer 404, so nothing is queued before the bot can run it.
     line_delete_on: bool = False
+    # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
+    # until the bot's half, which applies and sweeps staged restores (#2746), is live.
+    web_restore_on: bool = False
     # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
     # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
     co_dms_on: bool = False
@@ -350,6 +353,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
         )
+    restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
+    if restore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
     co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
     if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
@@ -372,6 +378,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         sheets_on=sheets_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         line_delete_on=line_delete_raw in ("1", "true", "on"),
+        web_restore_on=restore_raw in ("1", "true", "on"),
         co_dms_on=co_dms_raw in ("1", "true", "on"),
         report_make_on=report_make_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
