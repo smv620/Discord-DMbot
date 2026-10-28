@@ -10635,7 +10635,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one report at a time for a server; the loop does not wait for it
-            # Shutting down: leave the row unclaimed, so the next start takes it.
+            # Shutting down: the row is still waiting, so the next start takes it.
             if self._closing:
                 return
             req = await store.claim_next(guild.id)
@@ -10645,7 +10645,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = self._track(self._run_report_request(store, gid, req), "web-report-request")
             if task is None:
                 # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
-                # (web_report_requests.py).
+                # (core/src/dmbot/memory/web_report_requests.py).
                 continue
             running[gid] = task
 
@@ -10771,7 +10771,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
-            # Shutting down: leave the row unclaimed, so the next start takes it.
+            # Shutting down: the row is still waiting, so the next start takes it.
             if self._closing:
                 return
             item = await store.claim_next(guild.id)
@@ -10781,7 +10781,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = self._track(self._run_sheet_choice(store, gid, item), "web-sheet-choice")
             if task is None:
                 # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
-                # (web_sheets.py).
+                # (core/src/dmbot/memory/web_sheets.py).
                 continue
             running[gid] = task
 
