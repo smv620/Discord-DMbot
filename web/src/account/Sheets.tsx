@@ -62,6 +62,7 @@ export default function CharacterSheetsSection({
   // The campaign on screen now. An answer for a campaign the page has left is not drawn (#2845).
   const current = useRef(campaignRef);
   current.current = campaignRef;
+  const drawnFor = (asked: string) => live.current && current.current === asked;
   const seen = useObservedWait(busy, moved);
   useEffect(() => {
     live.current = true;
@@ -75,9 +76,9 @@ export default function CharacterSheetsSection({
     const asked = campaignRef;
     try {
       const got = await api.campaignSheets(campaignRef);
-      if (live.current && current.current === asked) setData(got);
+      if (drawnFor(asked)) setData(got);
     } catch (error) {
-      if (live.current && current.current === asked) setData("failed");
+      if (drawnFor(asked)) setData("failed");
       if (error instanceof ApiError && ENDS.includes(error.kind)) return;
     }
   };
@@ -101,7 +102,6 @@ export default function CharacterSheetsSection({
     if (flight.current || !api.chooseSheet || !api.sheetAnswer) return;
     // What this choice was made for: its answer is drawn only while the page still shows that campaign (#2845).
     const asked = campaignRef;
-    const here = () => live.current && current.current === asked;
     flight.current = true;
     setBusy(true);
     setReport(null);
@@ -126,13 +126,13 @@ export default function CharacterSheetsSection({
         > | null = null;
         try {
           got = await api.sheetAnswer(campaignRef, id);
-          if (got && here()) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
+          if (got && drawnFor(asked)) setMoved(`${got.stage}|${got.updatedAt ?? ""}`);
         } catch (error) {
           if (error instanceof ApiError && ENDS.includes(error.kind))
             throw error;
         }
         if (got?.state === "done") {
-          if (here()) {
+          if (drawnFor(asked)) {
             setStage(null);
             setReport({ ok: true, text: done });
             await read();
@@ -140,9 +140,9 @@ export default function CharacterSheetsSection({
           return;
         }
         if (got?.state === "failed") throw new ApiError("server");
-        if (got && here()) setStage(stageWords(w.stage, got.stage));
+        if (got && drawnFor(asked)) setStage(stageWords(w.stage, got.stage));
         if (final) {
-          if (here()) {
+          if (drawnFor(asked)) {
             setReport({ ok: false, text: w.quiet });
             await read();
           }
@@ -150,16 +150,18 @@ export default function CharacterSheetsSection({
         }
       }
     } catch (error) {
-      if (here())
+      if (drawnFor(asked))
         setReport({
           ok: false,
           text: problem(error instanceof ApiError ? error.kind : "server"),
         });
     } finally {
       flight.current = false;
+      // Not checked against the campaign on purpose: a new choice cannot start while flight is set, so this cannot
+      // re-enable a button over a choice that is still going (#2845).
       if (live.current) {
         setBusy(false);
-        if (here()) setStage(null);
+        if (drawnFor(asked)) setStage(null);
       }
     }
   };

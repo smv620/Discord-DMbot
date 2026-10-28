@@ -288,12 +288,23 @@ describe("a campaign the page has left", () => {
 
   it("an answer for a choice made in the old campaign shows no report in the new one", async () => {
     const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    let asked = false;
+    const held = new Promise<void>((r) => (release = r));
+    api.sheetAnswer = async (ref, id) => {
+      if (ref !== "100.sh") return answer(ref, id);
+      asked = true;
+      await held;
+      return answer(ref, id);
+    };
     const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await screen.findByRole("heading", { name: w.heading });
     fireEvent.click(screen.getByRole("button", { name: w.forget }));
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await screen.findByText(w.mine("Sorrel"));
-    await waitFor(() => expect(api.calls.some((c) => c.startsWith("sheetAnswer:100.sh"))).toBe(true), { timeout: 8000 });
+    await waitFor(() => expect(asked).toBe(true), { timeout: 4000 });
+    release();
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(w.forgetDone)).toBeNull();
   });
