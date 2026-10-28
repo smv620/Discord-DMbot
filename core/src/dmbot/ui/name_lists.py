@@ -135,7 +135,8 @@ def kinds_in(names: CampaignLookup) -> list[tuple[str, int]]:
             counts[e.kind_key] = counts.get(e.kind_key, 0) + 1
     out = sorted(counts.items(), key=lambda kv: (-kv[1], KIND_SHORT.get(kv[0], kv[0])))
     waiting = len(name_unnamed.unnamed_ids(names))  # (only a DM's view holds any: #2790)
-    return [*out, (name_unnamed.NOT_NAMED, waiting)] if waiting else out
+    # first, so a long list of kinds never cuts it off the menu
+    return [(name_unnamed.NOT_NAMED, waiting), *out] if waiting else out
 
 
 def browse_order(names: CampaignLookup, kind: str, by_heard: bool) -> list[str]:
@@ -273,14 +274,15 @@ class Browse(_Menu):
                     disabled=self.page >= self.total - 1,
                 )
             )
-            self.add_item(
-                _Button(
-                    self._sort,
-                    label="Show A to Z" if by_heard else "Show last heard first",
-                    style=grey,
-                    row=2,
+            if kind != name_unnamed.NOT_NAMED:  # (their one order is A to Z)
+                self.add_item(
+                    _Button(
+                        self._sort,
+                        label="Show A to Z" if by_heard else "Show last heard first",
+                        style=grey,
+                        row=2,
+                    )
                 )
-            )
 
     def text(self, names: CampaignLookup, campaign: Campaign) -> str:
         if self.kind is None:

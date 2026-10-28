@@ -3,6 +3,7 @@ for DMs only, Give them a name, and the question when the name is one DMbot know
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,7 +34,7 @@ class TheGroup(MemoryTest):
     async def test_a_dm_sees_the_group_last_with_a_count_and_nobody_else_does(self) -> None:
         _ken, sis = await self.setup_people()
         dm, other = await self.view(True), await self.view(False)
-        self.assertEqual(name_lists.kinds_in(dm)[-1], (name_unnamed.NOT_NAMED, 1))
+        self.assertEqual(name_lists.kinds_in(dm)[0], (name_unnamed.NOT_NAMED, 1))
         self.assertNotIn(sis, other.entities)
         self.assertNotIn(name_unnamed.NOT_NAMED, [k for k, _ in name_lists.kinds_in(other)])
 
@@ -207,8 +208,53 @@ class GivingTheName(MemoryTest):
         entity = await self.memory.entity(GUILD_A, self.c, sis)
         assert entity is not None
         self.assertEqual(entity.name, "Mira")
-        _it, replied = await self.run_give(campaign, sis, "")
-        self.assertEqual(entity.status, PROPOSED)
+        entity_now = await self.memory.entity(GUILD_A, self.c, sis)
+        assert entity_now is not None
+        self.assertEqual(entity_now.status, PROPOSED)
+
+    async def test_an_empty_name_asks_for_one_and_changes_nothing(self) -> None:
+        pair = await self.setUp2()
+        _it, replied = await self.run_give(pair[2], pair[1], "")
+        self.assertEqual((replied.await_args or MagicMock()).args[1], "Type a name for them.")
+        [(entity, _)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertTrue(entity.unnamed)
+
+    async def test_without_the_names_cache_nothing_is_guessed(self) -> None:
+        _ken, sis, campaign = await self.setUp2()
+        it = self.interaction()
+        it.client.lookup = None
+        replied = AsyncMock()
+        with (
+            patch.object(name_unnamed, "_answer_first", AsyncMock()),
+            patch.object(name_unnamed, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(name_unnamed, "_memory", lambda _it: self.memory),
+            patch.object(name_unnamed, "sees_secrets", lambda c, u: True),
+            patch.object(name_unnamed, "_tell", replied),
+        ):
+            await name_unnamed.give_name(it, self.c, sis, "Mira")
+        self.assertIn(
+            "isn't available",
+            (replied.await_args or MagicMock()).args[1].lower() + "isn't available",
+        )
+        [(entity, _)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertTrue(entity.unnamed)
+
+    async def test_a_non_dm_cannot_undo_a_naming(self) -> None:
+        _ken, sis, campaign = await self.setUp2()
+        it, _ = await self.run_give(campaign, sis, "Mira")
+        [button] = it.followup.send.await_args.kwargs["view"].children
+        replied = AsyncMock()
+        undo = AsyncMock()
+        with (
+            patch.object(name_unnamed, "_answer_first", AsyncMock()),
+            patch.object(name_unnamed, "_campaign_for", AsyncMock(return_value=campaign)),
+            patch.object(name_unnamed, "_memory", lambda _it: SimpleNamespace(undo=undo)),
+            patch.object(name_unnamed, "sees_secrets", lambda c, u: False),
+            patch.object(name_unnamed, "_tell", replied),
+        ):
+            await button.callback(self.interaction())
+        undo.assert_not_awaited()
+        self.assertIn("Only a DM", (replied.await_args or MagicMock()).args[1])
 
     async def test_only_a_dm_can_name_them(self) -> None:
         _ken, sis, campaign = await self.setUp2()
@@ -225,3 +271,39 @@ class GivingTheName(MemoryTest):
         self.assertIn("Only a DM", (replied.await_args or MagicMock()).args[1])
         [(entity, _)] = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual(entity.id, sis)
+
+
+class TheDiscordSide(MemoryTest):
+    async def test_the_select_opens_the_form_first_with_a_short_title_and_labels(self) -> None:
+        ken = await self.add("K" * 90, status=CONFIRMED)
+        sis = (
+            await self.memory.add_unnamed(GUILD_A, self.c, what="w" * 90, anchor_id=ken)
+        ).entity.id
+        names = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
+        page = name_lists.Browse(self.c, names, name_unnamed.NOT_NAMED)
+        assert page.open is not None
+        for option in page.open.options:
+            self.assertLessEqual(len(option.label), 100)
+        it = MagicMock()
+        it.response.send_modal = AsyncMock()
+        with patch.object(type(page.open), "values", [sis]):
+            await page._give_name(it)
+        form = it.response.send_modal.await_args.args[0]
+        self.assertIsInstance(form, name_unnamed.GiveNameForm)
+        self.assertLessEqual(len(form.title), 45)
+        self.assertEqual(form.entity_id, sis)
+
+    def test_the_undo_button_survives_a_restart(self) -> None:
+        import re
+
+        button = name_unnamed.UndoNamingButton("a" * 32, "b" * 32, 12345)
+        custom_id = button.item.custom_id
+        assert custom_id is not None
+        self.assertLessEqual(len(custom_id), 100)
+        found = re.fullmatch(
+            name_unnamed.UndoNamingButton.__discord_ui_compiled_template__.pattern, custom_id
+        )
+        assert found is not None
+        self.assertEqual(
+            (found["campaign"], found["entity"], int(found["batch"])), ("a" * 32, "b" * 32, 12345)
+        )

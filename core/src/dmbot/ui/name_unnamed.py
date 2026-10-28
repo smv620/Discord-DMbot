@@ -18,13 +18,14 @@ from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
+    _bot,
     _Button,
     _failed,
     _Menu,
     _replace,
     _tell,
 )
-from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secrets
+from dmbot.ui.names import NOT_AVAILABLE, _campaign_for, _md, _memory, changed, sees_secrets
 
 log = logging.getLogger(__name__)
 
@@ -85,26 +86,26 @@ async def give_name(
     memory = _memory(interaction)
     if campaign is None or memory is None:
         return
-    if not sees_secrets(campaign, interaction.user.id) or not name:
-        await _tell(interaction, "Only a DM of this campaign can name them." if name else GONE)
+    if not sees_secrets(campaign, interaction.user.id):
+        await _tell(interaction, "Only a DM of this campaign can name them.")
+        return
+    if not name:
+        await _tell(interaction, "Type a name for them.")
         return
     entity = await memory.entity(campaign.guild_id, campaign.id, entity_id)
     if entity is None or not entity.unnamed or entity.status not in LIVE:
         await _tell(interaction, ALREADY_DONE)
         return
-    cache = getattr(interaction.client, "lookup", None)
+    cache = _bot(interaction).lookup
+    if cache is None:  # without the names there is no telling whether it is a known one
+        await _tell(interaction, NOT_AVAILABLE)
+        return
     others: dict[str, str] = {}
-    if cache is not None:
-        found = await cache.get(campaign.guild_id, campaign.id)
-        for entry in found.exact(name):
-            other = found.entities.get(entry.entity_id)
-            if (
-                other is not None
-                and other.id != entity_id
-                and not other.unnamed
-                and not entry.person
-            ):
-                others[other.id] = other.name
+    found = await cache.get(campaign.guild_id, campaign.id)
+    for entry in found.exact(name):
+        other = found.entities.get(entry.entity_id)
+        if other is not None and other.id != entity_id and not other.unnamed and not entry.person:
+            others[other.id] = other.name
     if len(others) > 1:
         await _tell(
             interaction,
@@ -243,6 +244,9 @@ class UndoNamingButton(
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # a DM's list, a DM's undo
+            await _tell(interaction, "Only a DM of this campaign can do that.")
             return
         entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
         if entity is None or entity.unnamed:
