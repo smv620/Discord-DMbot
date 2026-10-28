@@ -439,7 +439,7 @@ export const rulesChannelSteps: Step[] = [
   {
     text: "Each campaign also gets a channel called dmb-rules, with a short name after it. It shows the house rules you have saved, one message for each rule, and a note for each house-rule set your campaign follows. DMbot keeps it up to date when you add, change or remove a rule.",
     names: [
-      { name: "dmb-rules", file: "dm_screen/rules_channel.py" },
+      { name: "dmb-rules", file: "dm_screen/retired_channels.py" },
     ],
   },
   {
@@ -472,7 +472,7 @@ export const timeSuggestionSteps: Step[] = [
 export const npcsChannelSteps: Step[] = [
   {
     text: "Each campaign also gets a channel called dmb-npcs, with a short name after it. It lists the people and groups you confirmed, with their other names, groups and who they are connected to. Only DMbot posts there.",
-    names: [{ name: "dmb-npcs", file: "dm_screen/npcs_channel.py" }],
+    names: [{ name: "dmb-npcs", file: "dm_screen/retired_channels.py" }],
   },
   {
     text: "It never shows anything unconfirmed, secret names, your notes, story threads, or whether someone is dead or missing. Only DMbot can post there, not you or the players.",

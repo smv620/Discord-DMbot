@@ -5,8 +5,8 @@ The website has no right on the rule tables, so a choice (share my house rules, 
 code up, follow a set, stop following) is queued as a row (`web_rule_actions`). This module claims
 the rows in the order made, one at a time for a server, and applies each with the same
 `RuleSetStore`
-calls and the same checks as Discord's ⚙️ Settings → 📚 Shared rules buttons, so the rules channel
-note (`@notifies`), the borrowed definitions and the guess limit all follow, and the DM is told in
+calls and the same checks as Discord's ⚙️ Settings → 📚 Shared rules buttons, so the borrowed
+definitions and the guess limit all follow, and the DM is told in
 Discord's own words.
 
 Checked again at the moment of use, because the queue-time check can be stale: the asker must still

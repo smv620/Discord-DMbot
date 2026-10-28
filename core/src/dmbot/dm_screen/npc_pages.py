@@ -1,155 +1,42 @@
-"""The NPC list's link to each NPC's page on the website, and what the page is made from (#2265;
-docs/PLAN.md, "Every NPC opens its own page").
+"""What each NPC's page on the website is made from, and the tidy-up of people's private notes
+(#2265; docs/PLAN.md, "Every NPC opens its own page").
 
-Each message of the NPC list is a link button, the name itself ("👤 Mira · NPC"), to
-`/account/npc/<server>.<campaign>/<entry>` on the configured website. It is a plain link button:
-the bot handles no click, nothing breaks after a restart, and the message text is unchanged. With
-no usable website address there is no button.
-
-The page shows what the list shows the players and nothing more. The same pass that keeps the list
-(`npcs_channel.sync_campaign`) writes the entries it just listed, with the same function and rules
-(`RecallService.roster`), to `npc_roster`; the website has no right on the memory tables, so that
-copy is what its door reads. It also keeps each person's private notes tidy: a note's NPC name is
-refreshed, a note whose NPC is no longer listed is marked (30 days, then the daily sweep deletes
-it), and one whose NPC is listed again is unmarked. A merge moves notes in `MemoryStore.merge`.
-Notes are never read, logged or sent anywhere here: only counted.
+The page shows what the players may know and nothing more. A pass (`refresh`) writes the entries
+`RecallService.roster` lists for the players, the one function and its rules, to `npc_roster`; the
+website has no right on the memory tables, so that copy is what its door reads. The pass runs when
+a campaign's memory changes (at most once a campaign a minute) and once for every campaign when
+the bot starts. It does not need a Discord channel: since #2874 there is none, and the website's
+story graph is the way into a page. The same pass keeps each person's private notes tidy: a note's
+NPC name is refreshed, a note whose NPC is no longer listed is marked (30 days, then the daily
+sweep deletes it), and one whose NPC is listed again is unmarked. A merge moves notes in
+`MemoryStore.merge`. Notes are never read, logged or sent anywhere here: only counted.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
-from typing import Any
-from urllib.parse import urlsplit
-
-import discord
 
 from dmbot.db import Database
-from dmbot.memory.recall import RosterEntry
+from dmbot.memory.recall import RecallService, RosterEntry
 
 log = logging.getLogger(__name__)
 
-PERSON_MARK, GROUP_MARK = "👤", "👥"  # as the list has always marked them
-PAGE = "/account/npc"
 ORPHAN_DAYS = 30  # a note on a name no longer listed is kept this long
+SETTLE_S = 3.0  # a burst of changes (a merge, a confirm-all) becomes one pass this much later
+PASS_GAP_S = 60.0  # at most one pass for a campaign a minute: a busy session mustn't flood it
 
 
-def page_url(site_url: str, guild_id: int, campaign_id: str, entry_id: str) -> str:
-    """The NPC's page on the configured website, or "" when there is none that Discord would take
-    (a link button needs an https address). The entry's reference is in the address, not in the
-    message text."""
-    parts = urlsplit(site_url.strip())
-    if parts.scheme.lower() != "https" or not parts.netloc:
-        return ""
-    return f"https://{parts.netloc}{PAGE}/{guild_id}.{campaign_id}/{entry_id}"
-
-
-LABEL_MAX = 80  # Discord's limit for a button's label
-CUT = "…"
-
-
-def button_label(name: str, kind: str) -> str:
-    """ "<name> · <kind>" for the button, at most `LABEL_MAX` letters, cut at a word with "…"
-    when the name is long. A button's label is plain text: the name is shown as it is spelt
-    (markdown characters and all), not escaped."""
-    tail = f" · {kind}"
-    label = f"{name}{tail}"
-    if len(label) <= LABEL_MAX:
-        return label
-    room = LABEL_MAX - len(tail) - len(CUT)
-    if room < 8:  # a kind this long leaves no room for a name: cut the whole label
-        return label[: LABEL_MAX - len(CUT)].rstrip() + CUT
-    cut = name[:room]
-    if len(name) > room and " " in cut:
-        cut = cut[: cut.rindex(" ")]  # at a word, not in the middle of one
-    return f"{cut.rstrip()}{CUT}{tail}"
-
-
-@dataclass(frozen=True, slots=True)
-class Look:
-    """What a list message shows, to tell whether it needs changing. `layout`: "v2" (the name is
-    the button; `text` is the other lines) or "text" (the name is in the text; `link` is the old
-    📖 Open button's address, if it has one)."""
-
-    layout: str
-    text: str = ""
-    label: str = ""
-    link: str = ""
-    mark: str = ""  # the button's icon: a person or a group
-
-
-def wanted_look(entry: RosterEntry, other_lines: str, url: str, full_text: str) -> Look:
-    """How an entry's message should look: the name as a link button (with the other lines beside
-    it when there are any) when there is a page to open, else today's text."""
-    if not url:
-        return Look("text", full_text)
-    return Look("v2", other_lines, button_label(entry.name, entry.kind), url, mark_of(entry))
-
-
-def mark_of(entry: RosterEntry) -> str:
-    return GROUP_MARK if entry.is_group else PERSON_MARK
-
-
-def layout_for(entry: RosterEntry, other_lines: str, url: str) -> discord.ui.LayoutView:
-    """The message for an entry with a page: a link button whose label is the name, in a Section
-    beside the other lines, or alone in a row when there are none. The icon is the button's
-    emoji. Components v2: the message has no `content`."""
-    button: discord.ui.Button[Any] = discord.ui.Button(
-        label=button_label(entry.name, entry.kind),
-        emoji=mark_of(entry),
-        url=url,
-    )
-    view = discord.ui.LayoutView(timeout=None)
-    if other_lines:
-        view.add_item(discord.ui.Section(other_lines, accessory=button))
-    else:
-        view.add_item(discord.ui.ActionRow(button))
-    return view
-
-
-def _walk(components: Sequence[Any]) -> tuple[list[str], str, str, str]:
-    """(text pieces, button label, button address, button icon) from a message's components,
-    whatever their shape (a Section's text and accessory, a row's buttons)."""
-    texts: list[str] = []
-    label = url = mark = ""
-    for part in components:
-        content = getattr(part, "content", None)
-        if isinstance(content, str):
-            texts.append(content)
-        for sub in getattr(part, "children", None) or []:
-            more, l2, u2, m2 = _walk([sub])
-            texts += more
-            label, url, mark = label or l2, url or u2, mark or m2
-        accessory = getattr(part, "accessory", None)
-        if accessory is not None:
-            _, l2, u2, m2 = _walk([accessory])
-            label, url, mark = label or l2, url or u2, mark or m2
-        link = getattr(part, "url", None)
-        if isinstance(link, str) and link:
-            label, url = label or str(getattr(part, "label", "") or ""), url or link
-            mark = mark or str(getattr(part, "emoji", "") or "")
-    return texts, label, url, mark
-
-
-def look_of(message: discord.Message) -> Look:
-    """How a list message looks now."""
-    components = list(getattr(message, "components", None) or [])
-    flags = getattr(message, "flags", None)
-    if getattr(flags, "components_v2", False):
-        texts, label, url, mark = _walk(components)
-        return Look("v2", "\n".join(texts), label, url, mark)
-    _, _, url, _ = _walk(components)
-    return Look("text", message.content, "", url)
-
-
-def message_link(message: discord.Message) -> str:
-    """The link a message's button points to now ("" when it has none), in either layout."""
-    return look_of(message).link
+def pass_delay(last_pass: float | None, now: float) -> float:
+    """Seconds to wait before the next pass for a campaign: a short settle, and never sooner
+    than `PASS_GAP_S` after the last one (`last_pass`, on the same clock as `now`)."""
+    if last_pass is None:
+        return SETTLE_S
+    return max(SETTLE_S, last_pass + PASS_GAP_S - now)
 
 
 def entry_view(entry: RosterEntry) -> dict[str, object]:
-    """What the page may show of an entry: exactly the fields the list message is made from."""
+    """What the page may show of an entry: exactly the fields the players' view lists."""
     return {
         "id": entry.id,
         "name": entry.name,
@@ -226,3 +113,14 @@ class NpcRosterStore:
         if gone:
             log.info("NPC notes: %d note(s) on names no longer listed were deleted", gone)
         return gone
+
+
+async def refresh(
+    recall: RecallService, roster: NpcRosterStore, guild_id: int, campaign_id: str, now: int
+) -> int:
+    """Write the campaign's players' view of its NPCs for the pages, and settle the notes. The
+    number of entries listed. Raises on a database failure: the caller logs the type and tries
+    again."""
+    entries = await recall.roster(guild_id, campaign_id)
+    await roster.save(guild_id, campaign_id, entries, now)
+    return len(entries)

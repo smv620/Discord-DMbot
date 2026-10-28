@@ -1346,10 +1346,10 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
-| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | House rules: #1752 (overrides and rulings: Phase 3, with the AI rules alerts) |
+| ~~Rules archive~~ | ~~`dmb-rules-rmfthfrstmdn`~~ | Built in #1752, **removed 2026-10-28 (#2874)**: see below |
 | Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
-| NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Roster: #1761 (standing and relationships beyond the roster: Phase 5) |
+| ~~NPCs~~ | ~~`dmb-npcs-rmfthfrstmdn`~~ | Built in #1761, **removed 2026-10-28 (#2874)**: see below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
 - **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
@@ -1397,64 +1397,34 @@ so the docs always show names the way Discord does. For the campaign
   blocks are lifted the next time DMbot sets up the channel.
 - Changing the setting (the help-card buttons) updates every controlled channel together.
   Peeking opens all controlled channels for that player; hiding closes them all. Once
-  there's more than one controlled channel, the peek warning must name every channel a
-  peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
-- **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
-  is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
-  pinned "What's this channel?" card. It is controlled: its overwrites are the DM screen's, the
-  peekers included, except that nobody posts there, the DM too. Every change to the screen's
-  visibility, DMs or peekers is applied to it; a peek and a hide open and close both channels, and
-  the peek warning names both. It shows one message per saved house rule ("🏠 House rule N": the
-  words, what it replaces, where it came from: your DM, said at the table, or a followed set's
-  copy) and one "📚 This campaign follows the house-rule set **<set>**" line per followed house-rules set. Nothing proposed or waiting,
-  no DM-screen content and no rulebook text goes there, and a rule's "what happened" note stays
-  out. Messages are edited in place when a rule is edited and deleted when it is removed; they
-  are found again by their first words, so nothing about them is stored and a restart rebuilds the
-  same list, at most 5 edits or deletes a run (the rest next time). A change reaches the channel a
-  few seconds later; the bot also brings every campaign's channel up to date once at start. A
-  channel deleted by hand is made again at the next `/dmbot start`. Its id is not in a backup.
-- **The NPC list is built (2026-10-17, #1761), a roster with no AI.** `dmb-npcs-<short name>` is
-  made, repaired and kept like the rules channel (own lock, batching, the start-up sweep, edits in
-  place) and is controlled the same way: it follows the DM screen's visibility and peekers, nobody
-  posts there, and a peek and a hide open and close all three channels, with the peek warning
-  naming the rules channel and the NPC list. One message per **confirmed** NPC, god or group
-  (never a player's character or the party): the name, what it is, the other names it goes by,
-  the groups it is in and who it is closely tied to (up to 5, then "+N more"), only from facts the
-  DM confirmed that are true now. Because players can peek here and the list sits in view all
-  session, it is built by `RecallService.roster`, which applies the **players** audience's rules
-  and not a second copy: never a secret name or a name only misheard, an entry the DM marked
-  "Players don't know yet" (#2321, see "Players don't know this one yet" below), a limited clue or anything
-  that points to one, a story thread, a deed or standing, the DM's note (so there is **no
-  description line**: the only description an entry has is the DM's note), a condition such as
-  dead or missing (the table may not know yet), or anything from the adventure plan. Groups
-  come first, then people, alphabetical, at most 200 messages and then "+N more: open a name card
-  for the rest". A new entry is posted at the end, so the order is exact only after a reorder: when 10
-  or more messages are out of place and no session is running for the campaign (at the start of a
-  session, or at its end), whatever follows the first misplaced message is deleted (in bulk) and
-  posted again; a deploy's start-up sweep never does this while a session runs, and never for fewer
-  than 10. A change to the campaign's memory (confirm, merge, reject, rename, secret flags, Undo)
-  refreshes the list a few seconds later, at most one pass a campaign a minute, and a pass sends
-  edits that take a name away before cosmetic ones. Which message shows which entry is a small
-  table (`npcs_channel_messages`, migration 0128), so no id is in the text; it is not in a backup,
-  and a lost row is made good by deleting DMbot's own unrecorded messages and posting them again.
-  Organized mode is a separate
-  decision and is not changed here.
+  there's more than one controlled channel besides the DM screen, the peek warning must name
+  every channel a peek opens, so players know exactly what they're agreeing to see. (Today a
+  peek opens only the DM screen.)
+- **The rules and NPC channels are gone (owner, 2026-10-28, #2874).** The owner found the Discord
+  channels messy. Anyone can ask DMbot about the rules in `dmb-chat`, the DM has the rules in their
+  🗂️ Menu, and the house rules and the NPCs are on the website (the House rules page and the story
+  graph). Neither channel was ever announced (`RULES_CHANNEL_LIVE` and `NPCS_CHANNEL_LIVE` stayed off),
+  so no player-facing promise is withdrawn. DMbot no longer makes, repairs or fills either one, and a
+  peek opens only the DM screen. **The ones made before are deleted once**, at each campaign's next
+  `/dmbot start` and in the start-up sweep (`dm_screen/retired_channels.py`): only when the channel is the
+  one stored for the campaign **and** its name still starts `dmb-rules-` or `dmb-npcs-`; a channel
+  renamed to something else is kept. Either way the stored id is cleared, a failed delete is counted
+  and never stops a start, and the audit-log reason is "DMbot no longer uses this channel". The two id
+  columns and `npcs_channel_messages` stay until every server has run the clean-up, then a later
+  migration drops them. Deleting a campaign still removes a leftover channel whose id is set
+  (`retention_channels.py`). **The NPC pages and My notes do not depend on the channel:**
+  `npc_roster` (what each page shows) is now written by its own pass (`dm_screen/npc_pages.refresh`),
+  from the same `RecallService.roster`, when the campaign's memory changes (at most one pass a
+  campaign a minute), at every `/dmbot start` and once for every campaign when the bot starts, so
+  no NPC drifts toward "no longer listed" and no one's notes start their 30-day deletion.
 - **Every NPC opens its own page, with private notes** (owner, 2026-10-21; details Supervisor's).
-  - **In Discord:** each message in the NPC list gets one small link button, **📖 Open**. It opens
-    that NPC's page on the website. It is a plain link button, so no click is handled by the bot,
-    nothing breaks after a restart, and the message text is unchanged. The link carries the entry's
-    reference in its address, not in the text.
-  - **The name is the button** (owner, 2026-10-22, replacing 📖 Open, which looked sloppy repeated down the
-    list): each NPC's message is the button itself, labelled with the kind's icon, the name and the kind
-    ("👤 Belleros · NPC" style; at most 80 characters, cut with "…"). Its other lines ("Also called: …") sit
-    beside it, as text with the button on the same line, using Discord's newer message layout (a section
-    with a button). With no other lines the message is just the button. With no website address the message
-    stays as it was, the name in bold and no button. Existing messages are replaced once, because a message
-    can't switch to the newer layout by an edit.
+  - **The way in** was a link button on each message of the NPC list in Discord (2026-10-21, then the
+    name as the button, 2026-10-22). The list is gone (#2874): the website's story graph links each NPC
+    to its page instead (#2875, #2887).
   - **Who sees the page:** anyone in the campaign's Discord server, signed in on the website with
     Discord, the same people who may read the transcripts. Someone not in that server gets "This
     page is for the people in that Discord server."
-  - **What the page shows** is the NPC list's own players' view, from `RecallService.roster` with
+  - **What the page shows** is the players' view of the NPCs, from `RecallService.roster` with
     the same rules, not a second copy: the name, what it is, its other names, its groups and close
     ties. It also links the **posted** recaps that mention it, which the table has already seen.
     Never a secret name, a clue, a condition, a thread, the DM's note or anything from the
@@ -1470,8 +1440,8 @@ so the docs always show names the way Discord does. For the campaign
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
-  - **Plans:** the same as the NPC list (where the NPC list exists, its pages do too).
-  - **Words:** "📖 Open" on the button. On the page: "My notes: only you can see these." The privacy
+  - **Plans:** unchanged by removing the NPC list (the pages kept the rule the list had).
+  - **Words:** On the page: "My notes: only you can see these." The privacy
     page says what My notes keeps and who sees it.
 - Server owners and admins always see every channel (see above).
 

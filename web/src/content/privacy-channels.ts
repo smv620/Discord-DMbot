@@ -3,7 +3,7 @@
 // never states something that isn't true yet. Plain words: a few lines each, no technical terms.
 import { INITIATIVE_STYLE_LIVE, NPCS_CHANNEL_LIVE, STORY_STATES_LIVE } from "./help";
 
-/** In "Who can see it": the people list channel (docs/PLAN.md, "Channels"; core dm_screen/npcs_channel.py). */
+/** In "Who can see it": the people list channel (docs/PLAN.md, "Channels"; core dm_screen/retired_channels.py). */
 export const peopleListLine = {
   live: NPCS_CHANNEL_LIVE,
   lead: "The people list.",
