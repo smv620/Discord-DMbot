@@ -251,6 +251,22 @@ class Robustness(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(await ask(RefusedFirst(), PASSAGE, "He", NAMES))
 
+    def test_the_samples_start_with_different_names_even_with_few_names(self) -> None:
+        for names in (["Ken", "Bram"], ["Ken", "Bram", "Orla"]):
+            firsts = []
+            for i in range(len(names) + 1):  # the names and "someone not listed"
+                text = question("p", "he", names, "A", sample=i)
+                block = text.split("<names>\n")[1].split("\n</names>")[0].split("\n")
+                self.assertIn(NOT_LISTED, block)
+                self.assertEqual(sorted(block), sorted([*names, NOT_LISTED]))
+                firsts.append(block[0])
+            with self.subTest(names=names):
+                self.assertEqual(len(set(firsts)), len(names) + 1)
+
+    def test_the_same_passage_always_gets_the_same_orders(self) -> None:
+        a = question("p", "he", ["Ken", "Bram", "Orla"], "A", sample=2)
+        self.assertEqual(a, question("p", "he", ["Ken", "Bram", "Orla"], "A", sample=2))
+
     async def test_each_sample_gets_the_pick_question_its_own_name_order_and_the_schema(
         self,
     ) -> None:

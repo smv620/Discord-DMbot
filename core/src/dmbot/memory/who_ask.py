@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import random
+import zlib
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -125,14 +126,19 @@ def ordered(names: Sequence[str], passage: str) -> list[str]:
 
 
 def question(
-    passage: str, phrase: str, names: Sequence[str], ask: str, *, shuffle: int | None = None
+    passage: str, phrase: str, names: Sequence[str], ask: str, *, sample: int | None = None
 ) -> str:
-    """The question. `shuffle`: show the names in a seeded random order, so each sample sees a
-    different one and position bias cannot make the samples agree for free."""
+    """The question. For sample number `sample` the names, with "someone not listed" among them,
+    are shown in a different order: one shuffle that is fixed for this passage (so a rerun asks the
+    same questions), then turned by `sample` places, so the samples start with different names
+    (while there are at least as many names as samples) and position bias cannot make them agree."""
     local = quoted(passage)[-MAX_PASSAGE_CHARS:]
     shown = ordered(names, passage)
-    if shuffle is not None:
-        random.Random(shuffle).shuffle(shown)
+    if sample is not None:
+        shown.append(NOT_LISTED)
+        random.Random(zlib.crc32(f"{passage}\n{phrase}".encode())).shuffle(shown)
+        turn = sample % len(shown)
+        shown = shown[turn:] + shown[:turn]
     listed = "\n".join(_item(n) for n in shown)
     return (
         f"<passage>\n{local}\n</passage>\n<phrase>{_item(phrase)}</phrase>\n"
@@ -223,7 +229,7 @@ async def _sample(
         try:
             reply = await client.complete(
                 SYSTEM,
-                question(passage, phrase, names, PICK_ASK, shuffle=seed),
+                question(passage, phrase, names, PICK_ASK, sample=seed),
                 max_tokens=PICK_TOKENS,
                 schema=pick_schema(),
             )
