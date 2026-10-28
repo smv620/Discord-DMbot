@@ -48,6 +48,18 @@ PAUSES_S = (5.0, 20.0, 60.0)  # waited before trying a failed call again
 PAGE = 120  # chunks fetched at a time (a few batches)
 KNOWN_NAMES = 150  # names already found, sent so the next batch spells them the same way
 
+
+@dataclass(slots=True)
+class ReadClock:
+    """When a read was asked for, when it got its turn, and when a call last came back (monotonic
+    seconds), for the Shared story card's "running for" and "last change" (#2564). Numbers only,
+    in memory like the read itself."""
+
+    asked: float
+    began: float
+    moved: float
+
+
 SYSTEM = """You help a Dungeon Master by reading a written adventure and listing what is in it.
 
 You get a few consecutive passages of the adventure between <book> and </book>. Each is a

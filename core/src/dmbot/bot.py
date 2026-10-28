@@ -1180,7 +1180,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
         # When each going read was asked for and last moved forward (monotonic seconds), for the
         # card's "running for" and "last change" (#2564). Memory only, like the read itself.
-        self.plan_clocks: dict[tuple[int, str], list[float]] = {}
+        self.plan_clocks: dict[tuple[int, str], plan_reader.ReadClock] = {}
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -8572,17 +8572,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
         key = (guild_id, document_id)
-        clock = self.plan_clocks[key] = [time.monotonic(), time.monotonic()]  # [asked, moved]
+        now = time.monotonic()
+        clock = self.plan_clocks[key] = plan_reader.ReadClock(now, now, now)
 
         async def moved(position: int) -> None:
-            clock[1] = time.monotonic()
+            clock.moved = time.monotonic()  # a call came back (stored, or cut and read in halves)
 
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 self.plan_waiting.add(key)
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
-                    clock[1] = time.monotonic()  # the wait for a turn is over: that is movement
+                    clock.began = clock.moved = time.monotonic()  # the turn has come
                     report = await plan_reader.run(
                         ai,
                         plan,

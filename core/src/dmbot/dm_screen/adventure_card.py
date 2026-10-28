@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any, cast
 
@@ -28,6 +29,7 @@ from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign, say
 from dmbot.logs import set_log_context
+from dmbot.memory import plan_reader
 from dmbot.memory.adventure import (
     DOCUMENTS_MAX,
     FILE_MAX_BYTES,
@@ -136,25 +138,52 @@ CARRY_ON = "Press Read it now to carry on."
 
 SHOW_RUNNING_AFTER_S = 30.0  # "running for" appears once the wait is long enough to wonder
 SHOW_LAST_CHANGE_AFTER_S = 60.0
-STALL_AFTER_S = 300.0  # one batch can take minutes (the AI), so this is well past a slow one
+# The longest silence a healthy read can have: a call that times out, then the longest pause before
+# it is tried again, and a margin. Past this the card says nothing has changed.
+STALL_AFTER_S = plan_reader.CALL_TIMEOUT_S + max(plan_reader.PAUSES_S) + 60.0
 
 
-def age_words(running_s: float, still_s: float, stops_at_s: float | None = None) -> str:
-    """How long a read has been going and when it last moved forward (#2564): "" for a short wait,
-    then "running for 2 min", "last change 1 min ago", and past the stall limit a plain line that
-    says nothing has changed and that DMbot stops by itself. Numbers only: nothing of the file."""
+@dataclass(frozen=True, slots=True)
+class ReadAges:
+    """How long a read has waited for its turn, been running, and sat without a call coming back
+    (seconds). Numbers only: nothing of the file."""
+
+    queued_s: float
+    running_s: float
+    still_s: float
+
+
+def _hours(seconds: float) -> str:
+    whole = int(seconds // 3600)
+    return (
+        f"{whole} hour{'' if whole == 1 else 's'}" if seconds % 3600 == 0 else elapsed_text(seconds)
+    )
+
+
+def age_words(ages: ReadAges, *, short: bool = False, waiting: bool = False) -> str:
+    """How long a read has been waiting or going and when it last moved forward (#2564): "" for a
+    short wait, then "running for 2 min", "last change 1 min ago", and past the stall limit a plain
+    line that says nothing has changed and when DMbot stops by itself. `short` is the form for a
+    card with many files."""
+    if waiting:
+        return (
+            "" if ages.queued_s < SHOW_RUNNING_AFTER_S else f"asked {ago_text(ages.queued_s)} ago"
+        )
+    stalled = ages.still_s >= STALL_AFTER_S
+    if short:
+        if stalled:
+            return f"no change {ago_text(ages.still_s)}"
+        return f"{ago_text(ages.running_s)}" if ages.running_s >= SHOW_LAST_CHANGE_AFTER_S else ""
     parts = []
-    if running_s >= SHOW_RUNNING_AFTER_S:
-        parts.append(f"running for {elapsed_text(running_s)}")
-    if still_s >= STALL_AFTER_S:
-        stall = f"no change for {ago_text(still_s)}"
-        if stops_at_s is not None:
-            stall += (
-                f"; DMbot will stop by itself at {elapsed_text(stops_at_s)} and keep what it has"
-            )
-        parts.append(stall)
-    elif still_s >= SHOW_LAST_CHANGE_AFTER_S:
-        parts.append(f"last change {ago_text(still_s)} ago")
+    if ages.running_s >= SHOW_RUNNING_AFTER_S:
+        parts.append(f"running for {elapsed_text(ages.running_s)}")
+    if stalled:
+        parts.append(
+            f"no change for {ago_text(ages.still_s)}; DMbot stops by itself after "
+            f"{_hours(plan_reader.MAX_RUN_S)} at most, or sooner if the AI keeps failing"
+        )
+    elif ages.still_s >= SHOW_LAST_CHANGE_AFTER_S:
+        parts.append(f"last change {ago_text(ages.still_s)} ago")
     return ", ".join(parts)
 
 
@@ -165,7 +194,7 @@ def read_line(
     *,
     short: bool = False,
     waiting: bool = False,
-    ages: str = "",
+    ages: ReadAges | None = None,
 ) -> str:
     """Where a file's reading stands, in plain words ("" when it has not been read). A stopped
     read says what to do next, which depends on why it stopped."""
@@ -180,11 +209,15 @@ def read_line(
         )
         return "read" if short else f"read: {found}{skipped}"
     if running and waiting:
-        return "waiting for a turn" if not short else "waiting"
-    if running:
+        late = age_words(ages, short=short, waiting=True) if ages is not None else ""
         if short:
-            return f"reading {state.percent}%"
-        return f"reading… {state.percent}%" + (f" ({ages})" if ages else "")
+            return "waiting"
+        return "waiting for a turn" + (f" ({late})" if late else "")
+    if running:
+        late = age_words(ages, short=short) if ages is not None else ""
+        if short:
+            return f"reading {state.percent}%" + (f" ({late})" if late else "")
+        return f"reading… {state.percent}%" + (f" ({late})" if late else "")
     stopped = f"stopped at {state.percent}%"
     if short:
         return stopped
@@ -199,7 +232,7 @@ def card_text(
     counts: dict[str, Counts] | None = None,
     running: frozenset[str] = frozenset(),
     waiting: frozenset[str] = frozenset(),
-    ages: dict[str, str] | None = None,
+    ages: dict[str, ReadAges] | None = None,
 ) -> str:
     states, counts = states or {}, counts or {}
     ages = ages or {}
@@ -219,7 +252,7 @@ def card_text(
                 d.id in running,
                 short=short,
                 waiting=d.id in waiting,
-                ages=ages.get(d.id, ""),
+                ages=ages.get(d.id),
             )
             if status:
                 size += f", {status}"
@@ -322,15 +355,14 @@ def _running(interaction: discord.Interaction, guild_id: int) -> frozenset[str]:
     return frozenset(doc for guild, doc in reads if guild == guild_id)
 
 
-def _ages(interaction: discord.Interaction, guild_id: int) -> dict[str, str]:
-    """For each read going now: how long it has run and when it last moved (#2564)."""
-    from dmbot.memory.plan_reader import MAX_RUN_S
-
+def _ages(interaction: discord.Interaction, guild_id: int) -> dict[str, ReadAges]:
+    """For each read going now: how long it waited, has run, and sat without a call coming back
+    (#2564)."""
     now = time.monotonic()
     clocks = getattr(interaction.client, "plan_clocks", None) or {}
     return {
-        doc: age_words(now - asked, now - moved, MAX_RUN_S)
-        for (guild, doc), (asked, moved) in clocks.items()
+        doc: ReadAges(now - c.asked, now - c.began, now - c.moved)
+        for (guild, doc), c in clocks.items()
         if guild == guild_id
     }
 
