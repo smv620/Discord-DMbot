@@ -78,7 +78,7 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
-from dmbot.waiting import WaitingMessage
+from dmbot.waiting import WaitingMessage, message_is_gone
 
 log = logging.getLogger(__name__)
 
@@ -88,13 +88,6 @@ STALL_AFTER_S = 240.0
 # The who-is-it lookups stop this long before the read's own time limit, so the summary can still
 # be shown inside Discord's 15 minutes (#2790).
 WHO_SUMMARY_MARGIN_S = 60.0
-
-
-def message_is_gone(exc: BaseException) -> bool:
-    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
-    return isinstance(exc, discord.NotFound) or (
-        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
-    )
 
 
 NOT_A_BOOK = "your own notes or background, not a published book"
