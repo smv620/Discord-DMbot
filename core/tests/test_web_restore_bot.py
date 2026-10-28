@@ -743,6 +743,7 @@ class TheBotsOwnSteps(Restoring):
         me = self.host()
         me.guilds = [SimpleNamespace(id=GUILD), SimpleNamespace(id=999)]
         me.web_restores = self.restores
+        me._closing = False  # the loop checks it before each claim (#2896)
         await DMBot.run_web_restores(me)
         self.assertEqual((await self.row())["state"], "done")
 
