@@ -152,3 +152,60 @@ describe("the wait", () => {
     }
   });
 });
+
+describe("Type in my character", () => {
+  // Sorrel (first) has a sheet linked; Ivy (second) has none. The player's list is in that order.
+  const fill = (index: number, values: { className?: string; level?: string; species?: string; names?: string }) => {
+    if (values.className !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedClass)[index]!, { target: { value: values.className } });
+    if (values.level !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedLevel)[index]!, { target: { value: values.level } });
+    if (values.species !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedSpecies)[index]!, { target: { value: values.species } });
+    if (values.names !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedNames)[index]!, { target: { value: values.names } });
+  };
+  // Submitted as a form: a click on the button inside the closed "Type in my character" panel does not submit here.
+  const save = (index: number) => fireEvent.submit(screen.getAllByLabelText(w.typedClass)[index]!.closest("form")!);
+  const typedCalls = (api: ReturnType<typeof mockApi>) => calls(api, "chooseSheet").filter((c) => c.includes('"action":"typed"'));
+
+  it("offers the form to the player and not to the DM", async () => {
+    await open();
+    expect(screen.getAllByText(w.typedSummary).length).toBeGreaterThan(0);
+    cleanup();
+    await open(".sheets-dm");
+    expect(screen.queryByText(w.typedSummary)).toBeNull();
+  });
+
+  it("sends what was typed, trimmed, with the level as a number", async () => {
+    const api = await open();
+    fill(1, { className: "  Wizard ", level: " 5 ", species: " Elf ", names: "Misty Step, Shield" });
+    save(1);
+    expect(await screen.findByText(w.typedSaved, {}, { timeout: 8000 })).toBeTruthy();
+    expect(api.calls).toContain(
+      `chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "typed", className: "Wizard", level: 5, species: "Elf", names: "Misty Step, Shield" })}`,
+    );
+  });
+
+  it("refuses a level that is not 1 to 20 and sends nothing", async () => {
+    const api = await open();
+    for (const level of ["0", "21", "x"]) {
+      fill(1, { className: "Wizard", level });
+      save(1);
+      expect(await screen.findByText(w.typedBadLevel)).toBeTruthy();
+    }
+    expect(typedCalls(api)).toHaveLength(0);
+  });
+
+  it("refuses a blank class and sends nothing", async () => {
+    const api = await open();
+    fill(1, { className: "   ", level: "5" });
+    save(1);
+    expect(await screen.findByText(w.typedNeedsClass)).toBeTruthy();
+    expect(typedCalls(api)).toHaveLength(0);
+  });
+
+  it("tells a player with a linked sheet that saving replaces the link", async () => {
+    await open();
+    expect(screen.getAllByText(w.typedReplacesLink)).toHaveLength(1);
+    fill(0, { className: "Wizard", level: "5" });
+    save(0);
+    expect(await screen.findByText(w.typedSaved + w.typedReplacedLink, {}, { timeout: 8000 })).toBeTruthy();
+  });
+});

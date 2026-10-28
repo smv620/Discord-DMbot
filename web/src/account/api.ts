@@ -1547,7 +1547,11 @@ export interface CharacterSheets {
 }
 
 /** One choice on a character sheet (#2816): a player links or forgets their own; a DM reads them again. */
-export type SheetChoice = { action: "link"; url: string } | { action: "forget" } | { action: "read_again" };
+export type SheetChoice =
+  | { action: "link"; url: string }
+  | { action: "forget" }
+  | { action: "read_again" }
+  | { action: "typed"; className: string; level: number; species: string; names: string };
 
 /** Where a sheet choice stands, in the shared progress shape (#2816). */
 export interface SheetAnswer {
