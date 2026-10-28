@@ -13,6 +13,7 @@ shape of a link before anything is queued (`bad_link`); the bot checks the rest 
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from typing import Any
@@ -24,11 +25,19 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-ACTIONS = frozenset({"link", "forget", "read_again"})
+ACTIONS = frozenset({"link", "forget", "read_again", "typed", "document"})
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 # The campaign-wide choice has no character: the route takes "-" for it, as Discord's ids do.
 NO_CHARACTER = "-"
 LINK_MAX = 80
+# The limits of Discord's own forms (`ui.sheets.TypedForm`, `ui.sheet_import.DocumentLinkForm`), so
+# a choice that Discord would refuse is refused here too. The door checks them again.
+DOCUMENT_LINK_MAX = 400
+TYPED_NAME_MAX = 60
+TYPED_NAMES_TEXT_MAX = 1500
+TYPED_PAYLOAD_MAX = 2000
+# A link the bot may fetch: a web address and nothing that could end the line or the address early.
+DOCUMENT_LINK = re.compile(r"^https?://[^\s\x00-\x1f\x7f<>\"]+$")
 
 
 def shape(got: dict[str, Any]) -> dict[str, Any]:
@@ -69,14 +78,52 @@ async def read_sheets(db: Database, session: Session, ref: str) -> dict[str, Any
     return shape(got)
 
 
+def _typed_payload(body: dict[str, Any]) -> str:
+    """The typed form as the one small JSON text the door keeps (`bad_typed` for anything else):
+    class and species up to 60 characters, a level from 1 to 20, the names up to 1,500."""
+    class_name, species, names = (
+        body.get("className"),
+        body.get("species", ""),
+        body.get("names", ""),
+    )
+    level = body.get("level")
+    if not (isinstance(class_name, str) and isinstance(species, str) and isinstance(names, str)):
+        raise RecapError("bad_typed")
+    class_name = class_name.strip()
+    if not 1 <= len(class_name) <= TYPED_NAME_MAX or len(species.strip()) > TYPED_NAME_MAX:
+        raise RecapError("bad_typed")
+    if len(names) > TYPED_NAMES_TEXT_MAX:
+        raise RecapError("bad_typed")
+    if isinstance(level, bool) or not isinstance(level, int) or not 1 <= level <= 20:
+        raise RecapError("bad_typed")
+    payload = json.dumps(
+        {"className": class_name, "level": level, "species": species.strip(), "names": names},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if len(payload) > TYPED_PAYLOAD_MAX:
+        raise RecapError("bad_typed")
+    return payload
+
+
 def _choice(body: object) -> tuple[str, str]:
-    """The action and, for a link, the character link as typed (spaces taken off the ends)."""
+    """The action and what goes with it for the door: a link's one address (spaces taken off the
+    ends), a document's web address, or the typed form as JSON text; empty for the others."""
     if not isinstance(body, dict):
         raise RecapError("bad_action")
     action = body.get("action")
     if not isinstance(action, str) or action not in ACTIONS:
         raise RecapError("bad_action")
+    if action == "typed":
+        return action, _typed_payload(body)
     link = body.get("url", "")
+    if action == "document":
+        if not isinstance(link, str):
+            raise RecapError("bad_document")
+        link = link.strip()
+        if len(link) > DOCUMENT_LINK_MAX or not DOCUMENT_LINK.match(link):
+            raise RecapError("bad_document")
+        return action, link
     if not isinstance(link, str) or len(link) > LINK_MAX:
         raise RecapError("bad_link")
     if action == "link":
