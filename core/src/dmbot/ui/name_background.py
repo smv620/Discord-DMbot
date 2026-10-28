@@ -14,6 +14,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any, cast
@@ -25,7 +26,8 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import kin, lore_context, lore_read, pronouns
+from dmbot.memory import kin, lore_context, lore_read, pronouns, who_ask, who_resolve
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.backstory_links import (
     DONE,
     FULL,
@@ -81,6 +83,9 @@ log = logging.getLogger(__name__)
 # No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
 # take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
 STALL_AFTER_S = 240.0
+# The who-is-it lookups stop this long before the read's own time limit, so the summary can still
+# be shown inside Discord's 15 minutes (#2790).
+WHO_SUMMARY_MARGIN_S = 60.0
 
 
 def message_is_gone(exc: BaseException) -> bool:
@@ -470,6 +475,8 @@ class BackgroundOffer(_Menu):
                 read_ai = ai
             # (The read keeps its own deadline and returns what it shaped, marked cut.)
             skip_pair = await connected_pairs(memory, campaign)
+            who_ai = getattr(bot, "who_ai", None)  # only with DMBOT_WHO_IS_IT on (#2790)
+            steps = 3 if who_ai is not None else 2
 
             async def show(text: str) -> None:
                 await interaction.edit_original_response(content=text, allowed_mentions=NO_PINGS)
@@ -487,9 +494,13 @@ class BackgroundOffer(_Menu):
                 def on_step(stage: str, done: int, total: int) -> None:
                     if stage == "reading":
                         again = f", try {done}" if done > 1 else ""
-                        waiting.step(f"Step 1 of 2: reading it through{again}", keeps=False)
+                        waiting.step(f"Step 1 of {steps}: reading it through{again}", keeps=False)
                     else:
-                        waiting.step("Step 2 of 2: picking out names and links", done, total)
+                        waiting.step(f"Step 2 of {steps}: picking out names and links", done, total)
+
+                def on_who(done: int, total: int) -> None:
+                    # (counts only; each lookup moves the count, so a long run never looks stalled)
+                    waiting.step(f"Step 3 of {steps}: working out who they mean", done, total)
 
                 read = await lore_read.read_lore(
                     read_ai,
@@ -501,31 +512,36 @@ class BackgroundOffer(_Menu):
                     skip_pair=skip_pair,
                     progress=on_step,
                     aliases=aliases,
+                    hold_open=who_ai is not None,
                 )
-            found = bg.merge(
-                [read.names],
-                known,
-                rules=(campaign.target_ruleset, campaign.fallback_ruleset),
-            )
-            stored = await store(
-                memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
-            )
-            questions: list[str] = []
-            keys: set[tuple[str, str, str]] = set()
-            queued = await queue_links(
-                bot,
-                memory,
-                campaign,
-                found,
-                [read.links],
-                set(own),
-                truth=truth,
-                dropped=read.stats.dropped,
-                questions=questions,
-                keys=keys,
-                upload=upload_label(self.upload.label, time.time()),
-                speaker=speaker,
-            )
+                found = bg.merge(
+                    [read.names],
+                    known,
+                    rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                )
+                stored = await store(
+                    memory, campaign, found, getattr(bot, "lore_context", None), self.upload.text
+                )
+                questions: list[str] = []
+                keys: set[tuple[str, str, str]] = set()
+                queued = await queue_links(
+                    bot,
+                    memory,
+                    campaign,
+                    found,
+                    [read.links],
+                    set(own),
+                    truth=truth,
+                    dropped=read.stats.dropped,
+                    questions=questions,
+                    keys=keys,
+                    upload=upload_label(self.upload.label, time.time()),
+                    speaker=speaker,
+                    unsettled=read.stats.unsettled or (),
+                    who_ai=who_ai,
+                    on_who=on_who,
+                    until=clicked + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+                )
             ready = await count_ready(bot, campaign, keys)
             cut = read.cut
             log.info(
@@ -814,14 +830,23 @@ async def queue_links(
     keys: set[tuple[str, str, str]] | None = None,
     upload: str = "",
     speaker: str | None = None,
+    unsettled: Sequence[bg.Unsettled] = (),
+    who_ai: who_ask.Client | None = None,
+    on_who: Callable[[int, int], None] | None = None,
+    until: float | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
     already is left out before the cap. Returns how many wait. `questions` collects the ends that
     fit two names ("Which Mara?", #2642); `keys` collects the (subject, how, object) of each one
-    queued, so the summary can say how many are ready."""
+    queued, so the summary can say how many are ready.
+
+    `unsettled` (#2790): the open pronouns of a lore read, settled here with `who_ai` once the
+    campaign's names are known: a settled one joins the connections, a doubt becomes a "Which
+    one?" question, and one nobody can name becomes a relationship with an unnamed person. Every
+    one is counted in `dropped` or kept; none is lost without a count."""
     store = getattr(bot, "backstory_links", None)
-    if store is None or not any(answers):
+    if store is None or not (any(answers) or unsettled):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     ends: dict[str, str] = {}
@@ -846,17 +871,64 @@ async def queue_links(
             return True  # an end that is no entry of the campaign (a name that was refused)
         return (a, c.how, b) in have or (c.how in symmetric and (b, c.how, a) in have)
 
+    settled = who_resolve.Settled()
+    if unsettled:
+        if who_ai is not None:
+            names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
+            settled = await who_resolve.settle(
+                unsettled, who_ai, names, until=until, progress=on_who
+            )
+        else:  # (the check was switched off: left out and counted, as before it existed)
+            settled.unresolved = len(unsettled)
+        if dropped is not None:
+            dropped["not_in_text"] += settled.unresolved
+        answers = [*answers, settled.connections]
     picks: list[bg.Pick] = []
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
         questions=questions, speaker=speaker, picks=picks,
     )  # fmt: skip
+    # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
+    # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does
+    # the same for the lines it keeps), so a disguise is never tied to its real name in public.
+    hidden = {name_key(x) for f in found for x in f.secret} | {
+        key for key, entries in lookup.by_key.items() if any(e.secret for e in entries)
+    }
+    asked_before = {(name_key(p.fixed), p.how, p.word.casefold(), p.fixed_is_a) for p in picks}
+    for p in settled.picks:
+        again = (name_key(p.fixed), p.how, p.word.casefold(), p.fixed_is_a)
+        if again in asked_before or len(picks) >= bg.MAX_PICKS:
+            if dropped is not None:
+                dropped["same_pair" if again in asked_before else "over_cap"] += 1
+            continue
+        asked_before.add(again)
+        picks.append(replace(p, secret=name_key(p.fixed) in hidden))
+        if dropped is not None:
+            dropped["which_waiting"] += 1  # (`_queue_picks` takes back any lost)
+    settled.unnamed = [replace(u, secret=name_key(u.fixed) in hidden) for u in settled.unnamed]
     await _queue_picks(store, campaign, picks, entry, truth, upload, dropped)
     rows = [
         NewLink(a, c.how, b, c.quote, c.secret, c.words, truth, upload)
         for c in kept
         if (a := entry(c.a)) is not None and (b := entry(c.b)) is not None
     ]
+    room = max(0, bg.MAX_CONNECTIONS - len(rows))
+    if len(settled.unnamed) > room and dropped is not None:
+        dropped["over_cap"] += len(settled.unnamed) - room  # (counted; no entry is made for them)
+    rows += await _unnamed_rows(
+        memory, campaign, settled.unnamed[:room], entry, truth, upload, dropped
+    )
+    seen_rows: set[tuple[str, str, str]] = set()
+    unique: list[NewLink] = []
+    for r in rows:  # (two lines about one unnamed person are one row)
+        row_key = (r.subject_id, r.predicate, r.object_id)
+        if row_key in seen_rows:
+            if dropped is not None:
+                dropped["same_pair"] += 1
+            continue
+        seen_rows.add(row_key)
+        unique.append(r)
+    rows = unique
     if not rows:
         return 0
     # A connection already waiting from an earlier reading is not new: it is counted as such (and
@@ -871,6 +943,45 @@ async def queue_links(
     if keys is not None:
         keys.update((r.subject_id, r.predicate, r.object_id) for r in fresh)
     return int(await store.add(campaign.guild_id, campaign.id, fresh)) if fresh else 0
+
+
+async def _unnamed_rows(
+    memory: MemoryStore,
+    campaign: Campaign,
+    links: Sequence[who_resolve.UnnamedLink],
+    entry: Callable[[str], str | None],
+    truth: bool,
+    upload: str,
+    dropped: bg.Dropped | None,
+) -> list[NewLink]:
+    """The relationships kept with a person the read could not name (#2790): each makes (or finds)
+    the unnamed entry, hung off the named end when the story gave a relationship word. A named end
+    that is not an entry of the campaign after all is counted as not found."""
+    rows: list[NewLink] = []
+    read: dict[str, str] = {}  # this read's own record: two "a hooded figure" are one person
+    for u in links:
+        fixed = entry(u.fixed)
+        if fixed is None:
+            if dropped is not None:
+                dropped["name_not_found"] += 1
+            continue
+        try:
+            added = await memory.add_unnamed(
+                campaign.guild_id,
+                campaign.id,
+                what=u.what,
+                anchor_id=fixed if u.anchored else None,
+                role=u.role[: unnamed_mod.MAX_ROLE],
+                read=read,
+            )
+        except MemoryRuleError:  # an anchor that went away meanwhile, or no word: counted
+            if dropped is not None:
+                dropped["name_not_found"] += 1
+            continue
+        other = added.entity.id
+        a, b = (fixed, other) if u.fixed_is_a else (other, fixed)
+        rows.append(NewLink(a, u.how, b, u.quote, u.secret, u.words, truth, upload))
+    return rows
 
 
 async def _queue_picks(
@@ -1025,8 +1136,15 @@ class WhichOffer(_Menu):
                     style=discord.ButtonStyle.primary,
                 )
             )
-        self.add_item(_Button(self._neither, label="❌ Neither", style=grey, row=1))
+        # (A pronoun's question never loses the connection: "none of these" keeps it with a person
+        # who is not named yet, #2790.)
+        label = "🙋 Someone else" if self._is_pronoun(self.current) else "❌ Neither"
+        self.add_item(_Button(self._neither, label=label, style=grey, row=1))
         self.add_item(_Button(self._not_now, label="⏭️ Not now", style=grey, row=1))
+
+    @staticmethod
+    def _is_pronoun(w: WhichWaiting) -> bool:
+        return {bare(w.word).casefold()} <= bg.PRONOUNS
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -1059,7 +1177,12 @@ class WhichOffer(_Menu):
             f"🔎 **Which {asked} is this?**{place}\n"
             f"{pair}\n"
             f"From your text: \u201c{_md(logic.shorten(c.quote, QUOTE_SHOWN))}\u201d\n"
-            f"It could be {names}. Tap the right one. Neither leaves this connection out."
+            f"It could be {names}. Tap the right one. "
+            + (
+                "Someone else keeps the connection with a person who isn't named yet."
+                if self._is_pronoun(c)
+                else "Neither leaves this connection out."
+            )
         )
 
     async def _show(self, interaction: discord.Interaction, waiting: list[WhichWaiting]) -> None:
@@ -1097,7 +1220,16 @@ class WhichOffer(_Menu):
                 await self._show(interaction, now)  # it changed: carry on with what is there
                 return
             chosen = None if index is None else same.candidates[index][0]
-            result = await store.pick_which(campaign.guild_id, campaign.id, same.id, chosen)
+            made = False
+            if chosen is None and self._is_pronoun(same):
+                chosen = await self._unnamed_for(interaction, campaign, same)
+                made = chosen is not None
+                if chosen is None:  # nothing could be made: the question stays, nothing is lost
+                    await _tell(interaction, "DMbot couldn't keep that one. It stays waiting.")
+                    return
+            result = await store.pick_which(
+                campaign.guild_id, campaign.id, same.id, chosen, outside=made
+            )
             if result == FULL:
                 await _tell(
                     interaction,
@@ -1114,6 +1246,27 @@ class WhichOffer(_Menu):
             await self._show(interaction, await self._waiting(interaction, campaign))
         if self.current is None and self.picked:  # their connections may be ready now
             await offer_ready(interaction, self.campaign_id)
+
+    async def _unnamed_for(
+        self, interaction: discord.Interaction, campaign: Campaign, w: WhichWaiting
+    ) -> str | None:
+        """The unnamed person for "none of these" (#2790): hung off the named end when the story
+        gave a family word, else "someone". None when it could not be made."""
+        memory = _memory(interaction)
+        if memory is None:
+            return None
+        kin_word = w.predicate == "kin_of" and bool(w.detail)
+        try:
+            added = await memory.add_unnamed(
+                campaign.guild_id,
+                campaign.id,
+                what=w.detail if kin_word else who_resolve.SOMEONE,
+                anchor_id=w.other_id if kin_word else None,
+                role=(w.detail or w.predicate)[: unnamed_mod.MAX_ROLE],
+            )
+        except MemoryRuleError:
+            return None
+        return added.entity.id
 
     async def _pick(self, index: int, interaction: discord.Interaction) -> None:
         await self._answer(interaction, index)

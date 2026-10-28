@@ -314,6 +314,9 @@ class Stats:
     links_kept: int = 0
     # Why connection lines were dropped, by reason (#2563): counts only.
     dropped: Counter[str] = field(default_factory=Counter)
+    # The open pronouns (#2790) the shaping handed over instead of dropping, for the who-is-it
+    # check; None while the check is off, so a line the sentence before did not settle is dropped.
+    unsettled: list[bg.Unsettled] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,7 +498,9 @@ async def _shape(
     if not reply.cut:
         return (
             bg.read_answer(reply.text, text),
-            bg.read_connections(reply.text, text, set(own), stats.dropped, aliases),
+            bg.read_connections(
+                reply.text, text, set(own), stats.dropped, aliases, stats.unsettled
+            ),
             False,
         )
     stats.shape_cut += 1
@@ -561,6 +566,7 @@ async def read_lore(
     skip_pair: Callable[[str, str], bool] | None = None,
     progress: Callable[[str, int, int], None] | None = None,
     aliases: Mapping[str, Sequence[str]] | None = None,
+    hold_open: bool = False,
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
@@ -571,8 +577,11 @@ async def read_lore(
 
     `progress(stage, done, total)` is told where the read is, with counts only (never text):
     "reading" (with the number of the pass-1 call it is on) while pass 1 runs, then "shaping" with
-    the slices finished of all of them."""
-    stats = Stats()
+    the slices finished of all of them.
+
+    `hold_open` (#2790, the who-is-it check is on): a connection whose pronoun the sentence before
+    did not settle is kept in `LoreRead.stats.unsettled` for `who_resolve.settle`, not dropped."""
+    stats = Stats(unsettled=[] if hold_open else None)
     started = time.monotonic()
     tick: Callable[[int], None] | None = None
     if progress is not None:

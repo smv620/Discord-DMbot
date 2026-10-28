@@ -247,12 +247,20 @@ class BackstoryLinks:
         return out
 
     async def pick_which(
-        self, guild_id: int, campaign_id: str, which_id: str, entity_id: str | None
+        self,
+        guild_id: int,
+        campaign_id: str,
+        which_id: str,
+        entity_id: str | None,
+        *,
+        outside: bool = False,
     ) -> str:
         """The DM's answer: one of the candidates (the connection joins the waiting ones, ready
         as soon as both its names are answered) or None for "Neither" (it is dropped). `GONE` when
         the question is gone or the pick is not one of its candidates, `FULL` when the queue is.
-        Under the campaign lock, so two presses answer once."""
+        `outside`: the entry is not one of the candidates (an unnamed person made for "none of
+        these", #2790): the connection still joins the waiting ones. Under the campaign lock, so
+        two presses answer once."""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
@@ -270,7 +278,11 @@ class BackstoryLinks:
                 )
                 ends = {self._end(entities, c) for c in row["candidates"]}
                 end = self._end(entities, entity_id)
-                if end is None or end not in ends or entities[end]["status"] == "rejected":
+                if (
+                    end is None
+                    or (end not in ends and not outside)
+                    or entities[end]["status"] == "rejected"
+                ):
                     return GONE
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"

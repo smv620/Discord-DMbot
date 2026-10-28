@@ -1354,6 +1354,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        # Who "she" is in a lore read (#2790): the small model, only with DMBOT_WHO_IS_IT on.
+        self.who_ai = (
+            self.ai_client.tier(FEATURE_TIERS[Feature.WHO_IS_IT], Feature.WHO_IS_IT)
+            if self.ai_client and settings.who_is_it
+            else None
+        )
         # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
         self.background_read_ai = (
             self.ai_client.tier(
