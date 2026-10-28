@@ -715,7 +715,9 @@ class SettingsWhereTheDmLooks(CommandTests):
 class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
     """The wait for a restore keeps itself current (#2564): the step, how long, and a plain end."""
 
-    async def run_restore(self, **bot_kw: Any) -> tuple[list[str], str]:
+    async def run_restore(
+        self, replace_id: str | None = None, final: Any = None, **bot_kw: Any
+    ) -> tuple[list[str], str]:
         edits: list[str] = []
         real = cmds.WaitingMessage
 
@@ -728,7 +730,9 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
                 "is_campaign_playing": AsyncMock(return_value=False),
                 "restore_gate": AsyncMock(return_value=None),
                 "campaigns": SimpleNamespace(
-                    import_backup=AsyncMock(return_value=MagicMock()),
+                    import_backup=AsyncMock(
+                        return_value=SimpleNamespace(id="c", name="Frostmaiden")
+                    ),
                     get=AsyncMock(return_value=None),
                 ),
             }
@@ -742,12 +746,16 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
             it.response.edit_message = AsyncMock(side_effect=answered)
 
             async def edited(**kw: Any) -> None:
+                if final is not None and not str(kw["content"]).startswith(cmds.RESTORING):
+                    raise final
                 edits.append(str(kw["content"]))
 
             it.edit_original_response = AsyncMock(side_effect=edited)
             choice = cmds.RestoreChoice({}, "Frostmaiden", [])
-            await choice.restore(it, None)
-        return edits, edits[-1]
+            self.user = it.user
+            it.user.send = AsyncMock()
+            await choice.restore(it, replace_id)
+        return edits, (edits[-1] if edits else "")
 
     async def test_a_slow_restore_shows_the_step_and_how_long_then_the_result(self) -> None:
         async def slow(*args: Any, **kw: Any) -> Any:
@@ -775,3 +783,97 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
                 restore_gate=AsyncMock(side_effect=RuntimeError("boom"))
             )
         self.assertEqual(last, cmds.RESTORE_FAILED)
+
+    async def test_every_step_is_named_in_order(self) -> None:
+        async def slow_import(*args: Any, **kw: Any) -> Any:
+            await asyncio.sleep(0.1)
+            return SimpleNamespace(id="c", name="Frostmaiden")
+
+        async def slow_analyze(_gid: int) -> None:
+            await asyncio.sleep(0.1)
+
+        async def slow_gate(*args: Any, **kw: Any) -> None:
+            await asyncio.sleep(0.1)
+
+        edits, _last = await self.run_restore(
+            restore_gate=slow_gate,
+            memory=SimpleNamespace(analyze=slow_analyze),
+            campaigns=SimpleNamespace(import_backup=slow_import, get=AsyncMock(return_value=None)),
+        )
+        steps = [e.splitlines()[1].split(":")[0] for e in edits if "Step" in e]
+        self.assertEqual(
+            sorted(set(steps), key=steps.index), ["Step 1 of 3", "Step 2 of 3", "Step 3 of 3"]
+        )
+
+    async def test_a_problem_after_the_restore_landed_is_never_told_as_nothing_restored(
+        self,
+    ) -> None:
+        memory = SimpleNamespace(analyze=AsyncMock(side_effect=RuntimeError("x")))
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _edits, last = await self.run_restore(memory=memory)
+        self.assertIn("✅ Restored **Frostmaiden**.", last)
+        self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
+        self.assertNotIn("nothing was restored", last)
+
+    async def test_replacing_tells_the_rules_channel_and_a_campaign_error_is_shown(self) -> None:
+        changed = MagicMock()
+        _e, last = await self.run_restore(
+            replace_id="c" * 32,
+            _rules_archive_changed=changed,
+            campaigns=SimpleNamespace(
+                import_backup=AsyncMock(return_value=SimpleNamespace(id="c", name="Frostmaiden")),
+                get=AsyncMock(return_value=SimpleNamespace(name="Old")),
+            ),
+        )
+        changed.assert_called_once()
+        self.assertIn("now holds everything", last)
+        from dmbot.campaigns import CampaignError
+
+        _e, last = await self.run_restore(
+            campaigns=SimpleNamespace(
+                import_backup=AsyncMock(side_effect=CampaignError("That copy is damaged.")),
+                get=AsyncMock(return_value=None),
+            )
+        )
+        self.assertEqual(last, "That copy is damaged.")
+
+    async def test_a_campaign_that_is_playing_and_a_check_that_breaks_end_with_words(self) -> None:
+        _e, last = await self.run_restore(
+            replace_id="c" * 32,
+            is_campaign_playing=AsyncMock(return_value=True),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(name="Old"))),
+        )
+        self.assertIn("playing right now", last)
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _e, last = await self.run_restore(
+                replace_id="c" * 32,
+                is_campaign_playing=AsyncMock(side_effect=OSError()),
+                campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(name="Old"))),
+            )
+        self.assertEqual(last, cmds.RESTORE_FAILED)
+
+    async def test_a_message_that_ran_out_gets_its_result_privately_instead(self) -> None:
+        import discord
+
+        gone = discord.NotFound(SimpleNamespace(status=404, reason="x"), "gone")
+        edits, _last = await self.run_restore(final=gone)
+        self.assertEqual(edits, [e for e in edits if e.startswith(cmds.RESTORING)])
+        sent = self.user.send.await_args
+        self.assertIn("✅ Restored **Frostmaiden**.", sent.args[0])
+
+    async def test_cancelling_a_restore_stops_cleanly(self) -> None:
+        started = asyncio.Event()
+
+        async def hang(*args: Any, **kw: Any) -> Any:
+            started.set()
+            await asyncio.sleep(60)
+
+        task = asyncio.create_task(
+            self.run_restore(
+                campaigns=SimpleNamespace(import_backup=hang, get=AsyncMock(return_value=None))
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
