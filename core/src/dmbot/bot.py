@@ -59,7 +59,7 @@ from dmbot.ai import FEATURE_TIERS, AIModelTier, AnthropicClient, Feature, Gemin
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
 from dmbot.audio_check import Verdict
-from dmbot.campaigns import Campaign, CampaignStore, web_backup
+from dmbot.campaigns import Campaign, CampaignStore, web_backup, web_restore
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
@@ -636,6 +636,7 @@ MEANING_WAIT_S = (
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
+WEB_DOCUMENT_COOLDOWN_S = 60  # per person and campaign: each website document read is an AI read
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
@@ -905,6 +906,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         self._report_tasks: dict[int, asyncio.Task[None]] = {}  # one running report a server
         self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
+        self._sheet_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server (#2817)
+        self._web_document_last: dict[tuple[int, int, str], float] = {}  # website document reads
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
@@ -914,6 +917,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
+        # Copies restored from the website, waiting for the bot to apply them (#2746).
+        self.web_restores = web_restore.WebRestores(recaps.db) if recaps is not None else None
         self._clip_sweep_rounds = 0
         self._voice_tasks: dict[
             int, asyncio.Task[None]
@@ -1390,7 +1395,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # recorded()'s database lookups still running, one per person: a press while one
         # runs waits on it rather than starting another (a stalled database would pile up).
         self._lookups: dict[tuple[int, int], asyncio.Task[ConsentStatus]] = {}
-        self._asking: set[asyncio.Task[None]] = set()  # private-message rounds in flight
+        # Private-message rounds and the website's background work in flight.
+        self._asking: set[asyncio.Task[None]] = set()
         # Loops that last as long as a session (#1128, #1129): kept apart from `_asking`, which
         # tests and `close()` wait on until it is empty.
         self._loops: set[asyncio.Task[None]] = set()
@@ -10327,6 +10333,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     why = await web_backup.build(self, guild_id, item, store)
                     log.info("Website backup: %s", why or "done")  # the word only
 
+    async def run_web_restores(self) -> None:
+        """Apply the copies DMs uploaded on the website (#2746), one at a time per server, with
+        the same code and the same checks as Discord's `/dmbot restore`. Only the servers the bot
+        is in: the person must be in the server for it to count. The copy is never logged."""
+        store = self.web_restores
+        if store is None:
+            return
+        store.beat()  # a round began: the worker is alive
+        for guild in list(self.guilds):
+            for _ in range(web_restore.PER_ROUND):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id):
+                    if not await web_restore.run_one(self, store, guild.id, item):
+                        break
+
+    async def tidy_web_restores(self) -> None:
+        """The upkeep of the website's restore rows (#2746), about once a minute: end what a
+        stopped bot left, end the rows of a server DMbot has left (they hold whole campaigns;
+        decided from the install record, never from the cache), delete what is a day old. Every
+        server that has rows, not only the ones the bot is in."""
+        if self.web_restores is not None:
+            await web_restore.tidy(self.web_restores)
+
+    async def keep_web_restores_alive(self) -> None:
+        """Show the website's queued restores as alive (#2746), from a task of its own so a long
+        restore ahead of them does not make them look stalled."""
+        if self.web_restores is not None:
+            await self.web_restores.keep_waiting_alive()
+
+    async def restorer_in_server(self, guild_id: int, user_id: int) -> bool:
+        """Whether this person is still in the server (a website restore is judged at the moment
+        it is applied, not when it was asked for). The cache first, then one lookup. Only "no such
+        member" is False: a Discord error is not an answer, so it rises."""
+        guild = self.get_guild(guild_id)
+        if guild is None:
+            return False
+        if guild.get_member(user_id) is not None:
+            return True
+        try:
+            await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return False
+        return True  # (any other Discord error rises: the restore fails and can be tried again)
+
+    async def restore_copy(
+        self, guild_id: int, data: object, importer_id: int, **kw: Any
+    ) -> Campaign:
+        """Restore a copy the way Discord's `/dmbot restore` does (for a website restore)."""
+        return await self.campaigns.import_backup(guild_id, data, importer_id, **kw)
+
+    async def after_restore(self, guild_id: int, campaign_id: str, replaced: bool) -> None:
+        """What Discord's restore does once the copy is in: refresh the planner's statistics (a
+        big restore adds thousands of rows at once, #2376) and, for a replaced campaign, its rules
+        channel."""
+        memory = getattr(self, "memory", None)
+        if memory is not None:
+            await memory.analyze(guild_id)
+        if replaced:
+            self._rules_archive_changed(guild_id, campaign_id)
+
     async def run_web_delete_notices(self) -> None:
         """Finish the campaigns the website deleted (#2554): tidy their Discord channels and tell
         the other game masters, the same as Discord's own delete. Every server that ever held a
@@ -10569,13 +10637,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one report at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             req = await store.claim_next(guild.id)
             if req is None:
                 continue
             gid = guild.id
             task = self._track(self._run_report_request(store, gid, req), "web-report-request")
             if task is None:
-                continue  # shutting down: the row is retaken after the door's ten minutes
+                # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
+                # (core/src/dmbot/memory/web_report_requests.py).
+                continue
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
@@ -10681,6 +10754,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             sheets_ui.last_link, (guild_id, user_id), sheets_ui.LINK_COOLDOWN_S
         )
 
+    def document_too_soon(self, guild_id: int, user_id: int, campaign_id: str) -> bool:
+        """The website's document reads: 60 s a person for a campaign (the door's own limit, so
+        this is only a second check). Each one costs an AI read, so it has its own count."""
+        return sheets_ui.too_soon(
+            self._web_document_last, (guild_id, user_id, campaign_id), WEB_DOCUMENT_COOLDOWN_S
+        )
+
     def read_too_soon(self, guild_id: int, campaign_id: str) -> bool:
         return sheets_ui.too_soon(
             sheets_ui.last_refresh, (guild_id, campaign_id), sheets_ui.REFRESH_COOLDOWN_S
@@ -10695,16 +10775,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.web_sheets
         if store is None or self.sheets is None:
             return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_sheet_tasks", {})
+        running = self._sheet_tasks
         for guild in list(self.guilds):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             item = await store.claim_next(guild.id)
             if item is None:
                 continue
             gid = guild.id
-            task = asyncio.create_task(self._run_sheet_choice(store, gid, item))
+            task = self._track(self._run_sheet_choice(store, gid, item), "web-sheet-choice")
+            if task is None:
+                # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
+                # (core/src/dmbot/memory/web_sheets.py).
+                continue
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:

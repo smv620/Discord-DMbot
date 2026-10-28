@@ -36,7 +36,13 @@ const problem = (kind: string): string =>
     : (w.problems.server as string);
 const ENDS = ["not-allowed", "not-found", "signed-out"]; // looking again will not mend these
 
-export default function CharacterSheetsSection({
+/** One copy of the section per campaign: switching campaign remounts it, so nothing from the campaign the page has left
+ * (a choice still going, a stage, a report, a late read) can reach the new one (#2851, #2852). */
+export default function CharacterSheetsSection({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+  return <CharacterSheetsInner key={campaignRef} api={api} campaignRef={campaignRef} />;
+}
+
+function CharacterSheetsInner({
   api,
   campaignRef,
 }: {
@@ -48,15 +54,11 @@ export default function CharacterSheetsSection({
   );
   const [report, setReport] = useState<Report>(null);
   const [link, setLink] = useState<Record<string, string>>({});
+  // The section is remounted for each campaign (#2851), so every draft here is kept per character only: it starts
+  // empty on a return to a campaign and can never show under another.
   // What a player has typed in per character, so a re-render does not clear a half-typed form.
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
-  // Keyed by campaign too, so a draft never shows under another campaign's character (CLAUDE.md: scoped per campaign).
-  const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
-  // The document link's draft is kept per campaign too, as the typed drafts are (#2843).
-  const documentKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [documents, setDocuments] = useState<Record<string, string>>({});
-  // The link box's draft is kept per campaign too, as the typed drafts are (#2842).
-  const linkKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
@@ -91,11 +93,6 @@ export default function CharacterSheetsSection({
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
-  // Another campaign's list and report must not stay on screen while this one loads (drafts are keyed by campaign).
-  useEffect(() => {
-    setData("loading");
-    setReport(null);
-  }, [campaignRef]);
 
   // One choice at a time: a press while one is on its way is ignored. The answer is looked for until the bot has
   // answered or the minute is up; then the page says so and reads the list again, so nothing is tried twice.
@@ -138,7 +135,8 @@ export default function CharacterSheetsSection({
             throw error;
         }
         if (got?.state === "done") {
-          // The choice went through, so its draft is cleared even if the page has since left the campaign.
+          // onDone clears this section's draft. If the page has left the campaign, this copy is gone and there is
+          // nothing left to clear.
           onDone?.();
           if (drawnFor(asked)) {
             setStage(null);
@@ -216,16 +214,16 @@ export default function CharacterSheetsSection({
                 sheet={s}
                 shown={true}
                 busy={busy}
-                linkValue={link[linkKey(s.entityId)] ?? ""}
+                linkValue={link[s.entityId] ?? ""}
                 onLinkValue={(v) =>
-                  setLink((now) => ({ ...now, [linkKey(s.entityId)]: v }))
+                  setLink((now) => ({ ...now, [s.entityId]: v }))
                 }
                 onLink={() =>
                   void send(
                     s.entityId,
                     {
                       action: "link",
-                      url: (link[linkKey(s.entityId)] ?? "").trim(),
+                      url: (link[s.entityId] ?? "").trim(),
                     },
                     w.linkSaved,
                   )
@@ -233,22 +231,22 @@ export default function CharacterSheetsSection({
                 onForget={() =>
                   void send(s.entityId, { action: "forget" }, w.forgetDone)
                 }
-                typedValue={typed[typedKey(s.entityId)] ?? EMPTY_TYPED}
+                typedValue={typed[s.entityId] ?? EMPTY_TYPED}
                 onTypedValue={(patch) =>
                   setTyped((now) => ({
                     ...now,
-                    [typedKey(s.entityId)]: { ...(now[typedKey(s.entityId)] ?? EMPTY_TYPED), ...patch },
+                    [s.entityId]: { ...(now[s.entityId] ?? EMPTY_TYPED), ...patch },
                   }))
                 }
                 onTyped={(choice, done) => void send(s.entityId, choice, done)}
                 onProblem={(text) => setReport({ ok: false, text })}
-                documentValue={documents[documentKey(s.entityId)] ?? ""}
+                documentValue={documents[s.entityId] ?? ""}
                 onDocumentValue={(v) =>
-                  setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: v }))
+                  setDocuments((now) => ({ ...now, [s.entityId]: v }))
                 }
                 onDocument={(url) =>
                   void send(s.entityId, { action: "document", url }, w.documentSent, () =>
-                    setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: "" })),
+                    setDocuments((now) => ({ ...now, [s.entityId]: "" })),
                   )
                 }
               />

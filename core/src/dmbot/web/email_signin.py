@@ -15,24 +15,13 @@ from __future__ import annotations
 import secrets
 
 from dmbot.db import Database
+
+# The cleaner moved to dmbot.email_address (#2547). The `as` form keeps the name exported here
+# for the website's callers, and mypy strict needs it spelled that way.
+from dmbot.email_address import clean_email as clean_email
 from dmbot.web.sessions import hash_token
 
 LINK_SECONDS = 15 * 60
-MAX_EMAIL = 254  # the longest an address can be
-
-
-def clean_email(raw: object) -> str | None:
-    """The address in a form to look up, or None when it can't be one. Deliberately loose: the
-    only real check is whether it matches an account."""
-    if not isinstance(raw, str):
-        return None
-    email = raw.strip().lower()
-    if not email or len(email) > MAX_EMAIL or email.count("@") != 1 or " " in email:
-        return None
-    name, domain = email.split("@")
-    if not name or "." not in domain or domain.startswith(".") or domain.endswith("."):
-        return None
-    return email
 
 
 async def make_link(db: Database, email: str, *, now: int) -> tuple[int, str] | None:

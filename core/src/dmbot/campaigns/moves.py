@@ -42,11 +42,14 @@ from typing import Literal, Protocol
 from psycopg import sql
 
 from dmbot import campaign_cap
+
+# Re-exported with the `as` form, which mypy strict needs: the tests read it from here.
+from dmbot.audio_due import AUDIO_DUE_WHERE as AUDIO_DUE_WHERE
+from dmbot.audio_due import AUDIO_MAX_TRIES
 from dmbot.campaigns.models import HandoverOffer
 from dmbot.campaigns.store import CampaignStore, _to_offer
 from dmbot.db import Conn, Database
 from dmbot.logs import log_context
-from dmbot.recaps.store import AUDIO_DUE_WHERE, AUDIO_MAX_TRIES
 
 log = logging.getLogger(__name__)
 

@@ -677,7 +677,9 @@ class TheEdits(Editing):
 
     # ---- "Which Mara?" and the read door for what waits (#2652) ----------------------------------
 
-    async def which_question(self, *, secret: bool = False, upload: str = "Lore, 24 Oct") -> str:
+    async def which_question(
+        self, *, secret: bool = False, upload: str = "Lore, 24 Oct", decided: str = ""
+    ) -> str:
         """Two Maras and a question about "Sister Mara" and Rook, waiting for the DM's pick."""
         self.mara_a = await self.add("Mara Ashgrove", "character", role="npc")
         self.mara_b = await self.add("Mara Vell", "character", role="npc")
@@ -685,7 +687,7 @@ class TheEdits(Editing):
             self.g,
             self.one.id,
             [NewWhich(self.rook, True, "knows", "Sister Mara", (self.mara_a, self.mara_b),
-                      "Rook knows Sister Mara", secret=secret, upload=upload)],
+                      "Rook knows Sister Mara", secret=secret, upload=upload, decided=decided)],
         )  # fmt: skip
         (found,) = await self.backstory.which_waiting(self.g, self.one.id)
         return found.id
@@ -849,6 +851,82 @@ class TheEdits(Editing):
         self.assertEqual(result, "gone")
         self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
         self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # no link made
+
+    async def test_a_pronoun_question_with_one_name_is_listed_and_answerable_on_the_website(
+        self,
+    ) -> None:
+        """#2811: the list showed only questions with two names, so a DM who used only the website
+        never saw "who is she?"; it now shows the one name, and the pick is queued as any other."""
+        which = await self.pronoun_question()
+        got = await self.waiting_now()
+        (question,) = got["which"]
+        self.assertEqual(question["id"], which)
+        self.assertTrue(question["pronoun"])
+        self.assertEqual([c["name"] for c in question["candidates"]], ["Mara Ashgrove"])
+        self.assertEqual(got["counts"]["which"], 1)
+        await self.queue(kind="which", action="pick", id=which, entity=self.mara_a)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(await self.backstory.which_waiting(self.g, self.one.id), [])
+        self.assertEqual(len(await self.backstory.waiting(self.g, self.one.id)), 1)  # joined
+
+    async def test_a_pronoun_question_with_no_name_offers_only_someone_else(self) -> None:
+        which = await self.pronoun_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_a, "rejected", source="dm"
+        )
+        (question,) = (await self.waiting_now())["which"]
+        self.assertEqual(
+            (question["id"], question["pronoun"], question["candidates"]), (which, True, [])
+        )
+        await self.queue(kind="which", action="neither", id=which)  # "Someone else"
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual(len(await self.memory.unnamed(self.g, self.one.id)), 1)
+
+    async def test_a_question_about_a_name_with_one_name_left_stays_hidden(self) -> None:
+        await self.which_question()
+        await self.memory.set_entity_status(
+            self.g, self.one.id, self.mara_b, "rejected", source="dm"
+        )
+        got = await self.waiting_now()
+        self.assertEqual(got["which"], [])  # nothing can be picked from one name
+        self.assertEqual(got["counts"]["which"], 0)
+
+    async def test_the_website_refuses_a_pick_of_the_questions_own_end(self) -> None:
+        which = await self.pronoun_question()
+        refused = await self.refused_queue(kind="which", action="pick", id=which, entity=self.rook)
+        self.assertEqual(refused, "not_found")  # the bot would refuse it too; nothing is queued
+
+    async def test_a_player_sees_no_pronoun_question_and_cannot_answer_it(self) -> None:
+        which = await self.pronoun_question()
+        for action in ("neither", "pick"):
+            refused = await self.refused_queue(
+                self.player, kind="which", action=action, id=which, entity=self.mara_a
+            )
+            self.assertEqual(refused, "not_allowed")
+        with self.assertRaises(RecapError) as caught:
+            await self.waiting_now(self.player)
+        self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_a_dm_sees_dmbots_check_on_a_waiting_connection_and_a_question(self) -> None:
+        """#2859: the stored note comes back as the words Discord shows, never the stored code."""
+        asked = "DMbot wasn't sure who the text means. Please check."
+        await self.backstory.add(
+            self.g,
+            self.one.id,
+            [
+                NewLink(self.rook, "knows", self.hall, "q", decided="who-is-it: asked 60%"),
+                NewLink(self.mira, "knows", self.hall, "q"),
+            ],
+        )
+        which = await self.which_question(decided="who-is-it: asked 60%")
+        got = await self.waiting_now()
+        checks = {b["subjectId"]: b["check"] for b in got["backstory"]}
+        self.assertEqual(checks[self.rook], asked)
+        self.assertEqual(checks[self.mira], "")  # nothing decided: nothing shown
+        (question,) = [w for w in got["which"] if w["id"] == which]
+        self.assertEqual(question["check"], asked)
+        for item in (*got["backstory"], *got["which"]):
+            self.assertNotIn("decided", item)  # (the stored code stays inside)
 
     async def test_a_pronoun_question_whose_only_name_is_gone_still_waits(self) -> None:
         which = await self.pronoun_question()

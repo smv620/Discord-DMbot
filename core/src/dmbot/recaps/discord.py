@@ -110,7 +110,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot
-    from dmbot.campaigns import web_backup
+    from dmbot.campaigns import web_backup, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -146,6 +146,8 @@ log = logging.getLogger("dmbot.bot")
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
+WEB_RESTORE_ALIVE_EVERY_S = 30  # seconds between touches of the queued website restores
+WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
 RECAP_REQUEST_ROUND_S = 2  # how often the bot looks for what a DM typed on the recap page
 RECAP_REQUESTS_PER_ROUND = 3  # for one server, so one busy server can't hold the others
 RECAP_VOICE_AT_ONCE = 3  # spoken notes written down at the same time, in all servers (#2161)
@@ -247,6 +249,7 @@ class RecapFeatures:
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
+        web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
         web_rule_actions: RuleActionStore | None
@@ -307,6 +310,10 @@ class RecapFeatures:
         async def read_put_back_lines(self, guild_id: int) -> None: ...
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
+        async def run_web_restores(self) -> None: ...
+        async def tidy_web_restores(self) -> None: ...
+        async def keep_web_restores_alive(self) -> None: ...
+        async def wait_until_ready(self) -> None: ...
         async def sidebar_send_dm(
             self, user_id: int, text: str, view: discord.ui.View | None = None
         ) -> str: ...
@@ -327,6 +334,14 @@ class RecapFeatures:
             ),
             *(
                 [
+                    self._watched(self._web_restore_loop(), "web-restores"),
+                    self._watched(self._web_restore_alive_loop(), "web-restore-queue"),
+                ]
+                if self.web_restores is not None
+                else []
+            ),
+            *(
+                [
                     self._watched(self._recap_request_loop(), "recap-requests"),
                     self._watched(self._recap_voice_loop(), "recap-voice"),
                 ]
@@ -334,6 +349,37 @@ class RecapFeatures:
                 else []
             ),
         ]
+
+    async def _web_restore_loop(self) -> None:
+        """Apply the copies DMs uploaded on the website (#2746). Its own loop: a big restore takes
+        minutes, and the recap requests, settings and backups must not wait for it. One restore at
+        a time in this process, so a row that stopped moving belongs to a bot that stopped."""
+        # No restore is judged before Discord has said where the bot is.
+        await self.wait_until_ready()
+        rounds = 0
+        while True:
+            if rounds % WEB_RESTORE_TIDY_EVERY == 0:  # about a minute; the first round too
+                try:
+                    await self.tidy_web_restores()
+                except Exception as exc:
+                    log.warning("The website restore upkeep failed: %s", type(exc).__name__)
+            rounds += 1
+            try:
+                await self.run_web_restores()
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("The website restores failed: %s", type(exc).__name__)
+            await asyncio.sleep(RECAP_REQUEST_ROUND_S)
+
+    async def _web_restore_alive_loop(self) -> None:
+        """Keep the queued website restores showing as alive (#2746) while a long restore runs in
+        the other loop: the page calls a queued restore stalled after two minutes."""
+        await self.wait_until_ready()
+        while True:
+            try:
+                await self.keep_web_restores_alive()
+            except Exception as exc:  # the type only
+                log.warning("The website restore queue touch failed: %s", type(exc).__name__)
+            await asyncio.sleep(WEB_RESTORE_ALIVE_EVERY_S)
 
     async def _waiting_recaps(self, table: Table) -> None:
         """A session starts and a finished recap from before is still waiting for the DM (#1474):
