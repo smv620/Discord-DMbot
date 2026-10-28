@@ -12,6 +12,7 @@ from unittest.mock import patch
 import httpx
 
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.who_resolve import checked_line
 from dmbot.web import relationships, sessions
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
@@ -486,3 +487,46 @@ class TheRoute(Web):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCheck(Web):
+    """DMbot's check of a pronoun (#2859): a DM's connection says it in words, a member's never."""
+
+    async def test_a_dm_sees_the_check_of_a_connection_and_a_member_does_not(self) -> None:
+        decided = "who-is-it: kept as someone else"
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.rook, "knows", self.hall, source=DM_SOURCE, confidence=1.0,
+            status="confirmed", decided=decided,
+        )  # fmt: skip
+        mine = made.value[0].id
+
+        def checks(got: dict[str, Any]) -> dict[str, str]:
+            return {x["id"]: x["check"] for e in got["edges"] for x in e["links"]}
+
+        dm = checks(await self.graph())
+        self.assertEqual(dm[mine], checked_line(decided).strip())
+        self.assertEqual(dm[mine], "You chose someone else for this one.")
+        self.assertEqual(dm[self.links["mira-keep"]], "")  # nothing decided: nothing shown
+        member = checks(await self.graph(self.player))
+        self.assertEqual(set(member.values()) - {""}, set())  # a member never gets one
+
+
+class TheCheckWords(unittest.TestCase):
+    def test_each_stored_note_is_the_words_discord_shows(self) -> None:
+        for decided in (
+            "who-is-it: picked by the DM",
+            "who-is-it: kept as someone else",
+            "who-is-it: accepted 95%",
+            "who-is-it: asked 60%",
+            "who-is-it: nobody listed",
+            "who-is-it: unsure",
+            "who-is-it: not checked",
+        ):
+            words = relationships.check_words(decided)
+            self.assertEqual(words, checked_line(decided).strip(), decided)
+            self.assertNotEqual(words, "", decided)
+            self.assertNotIn("%", words)  # (a number is never shown)
+
+    def test_nothing_or_something_else_is_no_words(self) -> None:
+        for odd in ("", "other", "who-is-it: ", None, 5):
+            self.assertEqual(relationships.check_words(odd), "", repr(odd))

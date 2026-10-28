@@ -23,6 +23,7 @@ from dmbot.memory import kin
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_words import back_words, link_words, reads_both_ways
 from dmbot.memory.web_actions import RETAKE_AFTER_S
+from dmbot.memory.who_resolve import checked_line
 from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -43,6 +44,13 @@ def label_of(links: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 VIEWS = ("players", "full")  # the switch: what a player sees, or everything (a DM's, or a peek)
+
+
+def check_words(decided: object) -> str:
+    """DMbot's check of a pronoun, in the words Discord shows a DM ("" when there was none,
+    #2859). The doors send the stored note (a fixed vocabulary, no names or text); the words come
+    from the one function Discord uses, so the two cannot drift. Only a DM's door ever sends one."""
+    return checked_line(decided).strip() if isinstance(decided, str) else ""
 
 
 def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, Any]]:
@@ -71,6 +79,8 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
+                # DMbot's check, in words; the door sends the note to a DM only (#2859)
+                "check": check_words(row.get("decided")),
                 "direction": direction,
                 "at": int(row["at"]),
             }
@@ -93,6 +103,7 @@ def edges_from(rows: list[dict[str, Any]], *, can_edit: bool) -> list[dict[str, 
                         "secret": x["secret"] if can_edit else False,
                         "revealed": x["revealed"] if can_edit else True,
                         "pinned": x["pinned"] if can_edit else False,
+                        "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
                     }
                     for x in links
@@ -731,19 +742,21 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
     ]
     backstory = [
         {
-            **b,
+            **{k: v for k, v in b.items() if k != "decided"},
             "how": link_words(
                 str(b["predicate"]), str(b["detail"]), kin.directional(str(b["detail"]))
             ),
+            "check": check_words(b.get("decided")),
         }
         for b in got["backstory"]
     ]
     which = [
         {
-            **w,
+            **{k: v for k, v in w.items() if k != "decided"},
             "how": link_words(
                 str(w["predicate"]), str(w["detail"]), kin.directional(str(w["detail"]))
             ),
+            "check": check_words(w.get("decided")),
         }
         for w in got["which"]
     ]

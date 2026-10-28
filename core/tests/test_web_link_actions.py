@@ -820,15 +820,20 @@ class TheEdits(Editing):
         again = await self.refused_queue(kind="which", action="neither", id=which)
         self.assertEqual(again, "not_found")  # the door no longer finds it
 
-    async def pronoun_question(self) -> str:
+    async def pronoun_question(self, decided: str = "") -> str:
         """A question about "she" with one name, Mara Ashgrove (#2790): the table's second place
         holds the question's own end, Rook, which is never offered."""
         self.mara_a = await self.add("Mara Ashgrove", "character", role="npc")
         await self.backstory.add_which(
             self.g,
             self.one.id,
-            [NewWhich(self.rook, True, "knows", "She", (self.mara_a,), "She knows Rook")],
-        )
+            [
+                NewWhich(
+                    self.rook, True, "knows", "She", (self.mara_a,), "She knows Rook",
+                    decided=decided,
+                )
+            ],
+        )  # fmt: skip
         (found,) = await self.backstory.which_waiting(self.g, self.one.id)
         self.assertEqual([i for i, _ in found.candidates], [self.mara_a])
         return found.id
@@ -849,6 +854,25 @@ class TheEdits(Editing):
         self.assertEqual(result, "gone")
         self.assertEqual(len(await self.backstory.which_waiting(self.g, self.one.id)), 1)
         self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # no link made
+
+    async def test_a_dm_sees_dmbots_check_on_a_waiting_connection_and_a_question(self) -> None:
+        """#2859: the stored note comes back as the words Discord shows, never the stored code."""
+        await self.backstory.add(
+            self.g, self.one.id,
+            [
+                NewLink(self.rook, "knows", self.hall, "q", decided="who-is-it: asked 60%"),
+                NewLink(self.mira, "knows", self.hall, "q"),
+            ],
+        )  # fmt: skip
+        which = await self.pronoun_question(decided="who-is-it: asked 60%")
+        got = await self.waiting_now()
+        checks = {b["subjectId"]: b["check"] for b in got["backstory"]}
+        self.assertEqual(checks[self.rook], "DMbot wasn't sure who the text means. Please check.")
+        self.assertEqual(checks[self.mira], "")  # nothing decided: nothing shown
+        (question,) = [w for w in got["which"] if w["id"] == which]
+        self.assertEqual(question["check"], "DMbot wasn't sure who the text means. Please check.")
+        for item in (*got["backstory"], *got["which"]):
+            self.assertNotIn("decided", item)  # (the stored code stays inside)
 
     async def test_a_pronoun_question_whose_only_name_is_gone_still_waits(self) -> None:
         which = await self.pronoun_question()
