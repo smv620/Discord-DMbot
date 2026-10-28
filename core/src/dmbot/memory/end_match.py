@@ -9,7 +9,8 @@ or last name that fits exactly one name. A word that fits two names ("Mara") is 
 
 Pure. Only names DMbot will already have are candidates (this reading's public names and their
 other spellings, and the campaign's confirmed public names), so a secret name is never matched by
-its first word: a secret spelling matches only exactly, as before.
+its first word: a secret spelling matches only exactly, as before. A public other spelling does
+match by its words, as the name it belongs to (#2841).
 """
 
 from __future__ import annotations
@@ -94,6 +95,15 @@ FILLER = frozenset(
 SHORTEST = 3  # a word shorter than this is no name's whole claim to a match ("of", "de")
 
 
+def usable_alias(key: str) -> bool:
+    """Whether a spelling is distinctive enough to stand for a name on its own (#2762): after the
+    titles and articles are taken off ("the King" is nothing, "the Ashen King" is "ashen"), it
+    needs two words, or one of five letters or more. A bare title or a short word is shared by
+    too many people to be a name."""
+    core = [w for w in key.split() if w not in FILLER]
+    return bool(core) and (len(core) >= 2 or len(core[0]) >= 5)
+
+
 @dataclass(frozen=True, slots=True)
 class Matched:
     """`name` is the name the end stands for; `ambiguous` lists the names that fit equally well
@@ -141,9 +151,19 @@ class Ends:
     their other public spellings, the campaign's confirmed names); `names` are the names whose
     words a shorter end may fit."""
 
-    def __init__(self, exact: Mapping[str, str], names: Iterable[str]) -> None:
+    def __init__(
+        self,
+        exact: Mapping[str, str],
+        names: Iterable[str],
+        spellings: Mapping[str, str] | None = None,
+    ) -> None:
         self._exact = dict(exact)
-        self._words = {n: set(_words(n)) for n in dict.fromkeys(names)}
+        self._words = {n: [set(_words(n))] for n in dict.fromkeys(names)}
+        # A public other spelling ("Brannoc" for "Ken") fits an end by its words too, standing for
+        # its own name (#2841); a name two spellings of one entry both fit is still one name.
+        for spelling, owner in (spellings or {}).items():
+            if owner in self._words:
+                self._words[owner].append(set(_words(spelling)))
 
     def match(self, end: str) -> Matched:
         exact = self._exact.get(name_key(end))
@@ -163,7 +183,7 @@ class Ends:
         # of some length (not just "of" or "the")
         if not any(len(w) >= SHORTEST and w not in FILLER for w in words):
             return Matched()
-        fits = [n for n, have in self._words.items() if set(words) <= have]
+        fits = [n for n, haves in self._words.items() if any(set(words) <= have for have in haves)]
         if len(fits) == 1:
             return Matched(fits[0])
         if len(fits) > 1:

@@ -3566,6 +3566,11 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_rule_action_read", "dmbot_web_rule_action_read(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_report_make", "dmbot_web_report_make(BIGINT, TEXT, BIGINT)"),  # (#2661)
     ("dmbot_web_report_request", "dmbot_web_report_request(BIGINT, TEXT, BIGINT)"),
+    # The character sheets page (#2816): what a person may see, and the queue for a link, a forget
+    # and a DM's read again.
+    ("dmbot_web_sheet_read", "dmbot_web_sheet_read(BIGINT, TEXT)"),
+    ("dmbot_web_sheet_action_add", "dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT)"),
+    ("dmbot_web_sheet_action_read", "dmbot_web_sheet_action_read(BIGINT, TEXT, TEXT)"),
     # The Story timeline page (#2462).
     ("dmbot_web_story_timeline", "dmbot_web_story_timeline(BIGINT, TEXT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
@@ -3630,6 +3635,13 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_my_lines", "dmbot_web_my_lines(BIGINT)"),
     ("dmbot_web_my_lines_delete", "dmbot_web_my_lines_delete(BIGINT)"),
     ("dmbot_web_my_lines_read", "dmbot_web_my_lines_read(BIGINT, TEXT)"),
+    ("dmbot_web_restore_target", "dmbot_web_restore_target(BIGINT, TEXT)"),
+    ("dmbot_web_restore_add", "dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)"),
+    ("dmbot_web_restore_part", "dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)"),
+    ("dmbot_web_restore_go", "dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)"),
+    ("dmbot_web_restore_read", "dmbot_web_restore_read(BIGINT, TEXT)"),
+    ("dmbot_web_restore_pending", "dmbot_web_restore_pending(BIGINT)"),
+    ("dmbot_web_restore_cancel", "dmbot_web_restore_cancel(BIGINT, TEXT)"),
 )
 # The columns the website may fill when it creates a hand-over offer (#728): who, where and the
 # two names. Left out on purpose, so they take their defaults: status and decided_at (an offer
@@ -15643,7 +15655,7 @@ NAMES_FIXED_UNDO = (
 def _swap(text: str, pairs: tuple[tuple[str, str], ...]) -> str:
     for old, new in pairs:
         if text.count(old) != 1:  # (an explicit raise: `python -O` drops an assert)
-            raise RuntimeError(f"the names-to-check door no longer has: {old[:50]}")
+            raise RuntimeError(f"a door no longer has the text this migration changes: {old[:50]}")
         text = text.replace(old, new, 1)
     return text
 
@@ -16565,6 +16577,233 @@ WEB_RULE_ACTIONS = (
 """
 )
 
+WEB_SHEET_ACTIONS = (
+    r"""
+    -- A player's character-sheet choice on the website (#2816; the parity row of #2554), waiting
+    -- for the bot: link a D&D Beyond sheet, forget it (the player's own), or a DM's read again of
+    -- the campaign's sheets. The website never fetches a link: the bot does, with the same store
+    -- calls as Discord's buttons, and checks again who plays the character, that they are still in
+    -- the server, and the cooldowns. `url` is a character link of the one shape D&D Beyond uses,
+    -- checked by the door before anything is queued. A row lives a day, is gone with its campaign,
+    -- and is read back only by the person who made it.
+    CREATE TABLE web_sheet_actions (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        -- ON UPDATE CASCADE like the tables a move rewrites (#2550).
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        entity_id   TEXT NOT NULL DEFAULT '' CHECK (entity_id ~ '^([0-9a-f]{32})?$'),
+        action      TEXT NOT NULL CHECK (action IN ('link', 'forget', 'read_again')),
+        url         TEXT NOT NULL DEFAULT '' CHECK (char_length(url) <= 80),
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        stage       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (stage IN ('waiting', 'reading', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        updated_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id),
+        -- The state and the stage move together, so the page and the answer never disagree.
+        CHECK ((state, stage) IN (('waiting', 'waiting'), ('working', 'reading'),
+                                  ('done', 'done'), ('failed', 'failed')))
+    );
+    CREATE INDEX web_sheet_actions_open ON web_sheet_actions (guild_id, seq)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("web_sheet_actions")
+    + r"""
+    -- What the signed-in person may see of a campaign's character sheets: a DM sees every sheet
+    -- (read only), a player only the sheets of the characters they play. The summary is the
+    -- allow-listed snapshot's names and numbers, read here field by field. NULL for a server the
+    -- person is not in, or someone who is neither a DM nor a player in this campaign.
+    CREATE FUNCTION dmbot_web_sheet_read(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        is_dm BOOLEAN;
+        plays BOOLEAN;
+        found_rows JSONB;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        is_dm := EXISTS (SELECT 1 FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c
+                           AND d.user_id = dmbot_current_user());
+        plays := EXISTS (SELECT 1 FROM memory_entities e
+                         WHERE e.guild_id = g AND e.campaign_id = c
+                           AND e.played_by = dmbot_current_user() AND e.type <> 'person'
+                           AND e.status NOT IN ('merged', 'rejected'));
+        IF NOT is_dm AND NOT plays THEN
+            RETURN NULL;
+        END IF;
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+            'entityId', s.entity_id, 'name', e.name,
+            'mine', e.played_by = dmbot_current_user(),
+            'source', s.source, 'url', s.url, 'fetchedAt', s.fetched_at,
+            'summary', CASE WHEN s.sheet IS NULL THEN NULL ELSE jsonb_build_object(
+                'species', s.sheet->'species', 'level', s.sheet->'level',
+                'classes', s.sheet->'classes', 'maxHp', s.sheet->'max_hp',
+                'ac', s.sheet->'ac') END
+        ) ORDER BY lower(e.name), s.entity_id), '[]'::jsonb) INTO found_rows
+            FROM character_sheets s JOIN memory_entities e
+              ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id AND e.id = s.entity_id
+            WHERE s.guild_id = g AND s.campaign_id = c
+              AND e.status NOT IN ('merged', 'rejected') AND e.played_by IS NOT NULL
+              AND e.type <> 'person'
+              -- Only the sheet of whoever plays the character now, never a previous player's.
+              AND s.player_id = e.played_by
+              AND (is_dm OR e.played_by = dmbot_current_user());
+        RETURN jsonb_build_object('isDm', is_dm, 'sheets', found_rows);
+    END
+    $fn$;
+
+    -- Queue one choice. `act` is link (the player's own character, a D&D Beyond character link
+    -- in `link`), forget (the player's own sheet) or read_again (a DM, the campaign's sheets, once
+    -- a minute). Answers 'ok' with the id; a second press of the same choice while one is open
+    -- gets that one back. 'not_found' for a character or sheet that isn't there, 'not_allowed'
+    -- when the caller isn't the one who plays it (or a DM, for read_again), 'bad_link' for a link
+    -- of any other shape, 'too_soon' inside the link cooldown (20 seconds a person),
+    -- 'read_too_soon' inside the read_again cooldown (a minute a campaign) and 'queue_full' when
+    -- the queue is full. A link for another URL than an open one is queued on its own. NULL for
+    -- a server the person is
+    -- not in.
+    CREATE FUNCTION dmbot_web_sheet_action_add(g BIGINT, c TEXT, ent TEXT, act TEXT, lnk TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        have TEXT;
+        is_dm BOOLEAN;
+        mine BOOLEAN;
+        want TEXT := COALESCE(lnk, '');
+        who TEXT := COALESCE(ent, '');
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        is_dm := EXISTS (SELECT 1 FROM campaign_dms d
+                         WHERE d.guild_id = g AND d.campaign_id = c
+                           AND d.user_id = dmbot_current_user());
+        IF act IS NULL OR act NOT IN ('link', 'forget', 'read_again') THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF act = 'read_again' THEN
+            IF NOT is_dm THEN
+                RETURN jsonb_build_object('status', 'not_allowed');
+            END IF;
+            who := '';
+            want := '';
+        ELSE
+            IF who !~ '^[0-9a-f]{32}$' THEN
+                RETURN jsonb_build_object('status', 'not_found');
+            END IF;
+            mine := EXISTS (SELECT 1 FROM memory_entities e
+                            WHERE e.guild_id = g AND e.campaign_id = c AND e.id = who
+                              AND e.played_by = dmbot_current_user() AND e.type <> 'person'
+                              AND e.status NOT IN ('merged', 'rejected'));
+            IF NOT mine THEN
+                RETURN jsonb_build_object('status', 'not_allowed');
+            END IF;
+            IF act = 'link'
+               AND want !~ '^https://www[.]dndbeyond[.]com/characters/[0-9]{1,12}$' THEN
+                RETURN jsonb_build_object('status', 'bad_link');
+            END IF;
+            IF act = 'forget' THEN
+                want := '';
+                IF NOT EXISTS (SELECT 1 FROM character_sheets s
+                               WHERE s.guild_id = g AND s.campaign_id = c
+                                 AND s.entity_id = who AND s.player_id = dmbot_current_user()) THEN
+                    RETURN jsonb_build_object('status', 'not_found');
+                END IF;
+            END IF;
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('sheet_action:' || g::TEXT || c, 0));
+        DELETE FROM web_sheet_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.created_at < now_s - 86400;
+        -- A choice the bot took and then went quiet on for ten minutes goes back to waiting.
+        UPDATE web_sheet_actions a SET state = 'waiting', stage = 'waiting', claimed_at = 0,
+            updated_at = now_s
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state = 'working'
+              AND a.updated_at < now_s - 600;
+        SELECT a.id INTO have FROM web_sheet_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.user_id = dmbot_current_user()
+              AND a.entity_id = who AND a.action = act AND a.url = want
+              AND a.state IN ('waiting', 'working');
+        IF have IS NOT NULL THEN
+            RETURN jsonb_build_object('status', 'ok', 'id', have);
+        END IF;
+        IF act = 'link' AND EXISTS (SELECT 1 FROM web_sheet_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.user_id = dmbot_current_user()
+              AND a.action = 'link' AND a.created_at > now_s - 20) THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        IF act = 'read_again' AND EXISTS (SELECT 1 FROM web_sheet_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.action = 'read_again'
+              AND a.created_at > now_s - 60) THEN
+            RETURN jsonb_build_object('status', 'read_too_soon');
+        END IF;
+        IF (SELECT count(*) FROM web_sheet_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.state IN ('waiting', 'working')) >= 20
+        THEN
+            RETURN jsonb_build_object('status', 'queue_full');
+        END IF;
+        INSERT INTO web_sheet_actions (guild_id, campaign_id, id, user_id, entity_id, action, url,
+                                       created_at, updated_at)
+            VALUES (g, c, rid, dmbot_current_user(), who, act, want, now_s, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- The state of one of the caller's own choices: the state and stage for the shared progress
+    -- shape, the plain error word, and the character it was about. NULL when there is no such
+    -- choice of the caller's in this campaign, or it is over a day old.
+    CREATE FUNCTION dmbot_web_sheet_action_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r web_sheet_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM web_sheet_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user()
+              AND a.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'action', r.action, 'entityId', r.entity_id, 'createdAt', r.created_at,
+            'updatedAt', r.updated_at);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_sheet_read(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_sheet_action_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_sheet_read(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_sheet_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
 REPORT_FIXED_REMIND = """
     -- A `fixed` answer (#2661) replaces a "remind me": the date goes here, so Undoing the change
     -- that fixed the item puts the reminder back as it was.
@@ -17104,6 +17343,380 @@ WEB_NAME_UNNAMED = (
 """
 )
 
+# The servers that have website-restore rows (#2746): `web_restores` is isolated per server, so a
+# sweep that must reach a server the bot has left (its rows hold whole campaigns) cannot list them
+# itself. A routing table like `campaign_guilds`: server ids and nothing else, so no row-level
+# security (see the rules at the top of this file). A trigger fills it when a row is staged, and
+# the bot's upkeep removes a server once it has no rows left: it locks the server's row first
+# (`SELECT … FOR UPDATE`), then runs the delete as a second statement, so the check sees every row
+# committed by then; an insert staged meanwhile waits on the same lock (the trigger's conflict
+# clause takes it) and puts the row back. (`web_restores` is new and empty
+# everywhere, so there is nothing to backfill.)
+WEB_RESTORE_GUILDS = """
+    CREATE TABLE web_restore_guilds (
+        guild_id BIGINT PRIMARY KEY
+    );
+    CREATE FUNCTION dmbot_note_restore_guild() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        INSERT INTO web_restore_guilds (guild_id) VALUES (NEW.guild_id)
+            ON CONFLICT (guild_id) DO UPDATE SET guild_id = EXCLUDED.guild_id;
+        RETURN NULL;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_note_restore_guild() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_note_restore_guild() FROM PUBLIC;
+    CREATE TRIGGER web_restore_guilds_note
+        AFTER INSERT ON web_restores
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_restore_guild();
+"""
+
+WEB_RESTORES = (
+    """
+    -- A backup loaded from the website (#2745), waiting for the bot. The website's role cannot
+    -- write the campaign tables, so it stages the file here through the doors below, and the bot
+    -- applies it with the same code as Discord's `/dmbot restore`: after checking again the plan,
+    -- the free campaign slot, that the person is still in the server and (to replace a campaign)
+    -- still one of its DMs, and that the campaign is not playing. `main` is the copy and
+    -- `web_restore_parts` its transcripts files (all of them or none, as in Discord). One row is
+    -- one restore: `receiving` while the person's own files are still arriving, then `waiting`,
+    -- `working` (with `stage`, `done_parts` of `parts_wanted` and `updated_at` for the shared
+    -- progress shape of #2564), then `done` or `failed` with a plain reason word. The bytes are
+    -- emptied when the bot has applied or refused it, and the row goes 24 hours after it began,
+    -- whichever is first (the bot sweeps; the doors also do). A copy holds the campaign's secrets,
+    -- like any backup, so it is never logged. Isolated per server, read by the person who made it
+    -- only, one pending restore per person per server, and not itself in a backup.
+    CREATE TABLE web_restores (
+        guild_id      BIGINT NOT NULL,
+        id            TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        user_id       BIGINT NOT NULL CHECK (user_id > 0),
+        -- The campaign to replace, or NULL for a new one. Not a foreign key: the bot judges whether
+        -- it still exists and is the person's, and a row must outlive a deleted campaign to say so.
+        replace_id    TEXT,
+        name          TEXT NOT NULL CHECK (char_length(name) <= 100),
+        parts_wanted  INT NOT NULL CHECK (parts_wanted BETWEEN 0 AND 24),
+        main          BYTEA,
+        state         TEXT NOT NULL DEFAULT 'receiving'
+            CHECK (state IN ('receiving', 'waiting', 'working', 'done', 'failed')),
+        stage         TEXT NOT NULL DEFAULT 'restore_receiving'
+            CHECK (stage IN ('restore_receiving', 'restore_waiting', 'restore_reading',
+                             'restore_writing', 'done', 'failed')),
+        error         TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        done_parts    INT NOT NULL DEFAULT 0,
+        left_out      INT NOT NULL DEFAULT 0,
+        without_parts BOOLEAN NOT NULL DEFAULT FALSE,
+        result_id     TEXT,
+        created_at    BIGINT NOT NULL,
+        claimed_at    BIGINT NOT NULL DEFAULT 0,
+        updated_at    BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id)
+    );
+    CREATE INDEX web_restores_open ON web_restores (guild_id, created_at)
+        WHERE state IN ('waiting', 'working');
+    -- One restore on its way per person across every server (a copy can be 625 MB): the index sees
+    -- all servers' rows even though a door sees one server's.
+    CREATE UNIQUE INDEX web_restores_one_each ON web_restores (user_id)
+        WHERE state IN ('receiving', 'waiting', 'working');
+    CREATE TABLE web_restore_parts (
+        guild_id   BIGINT NOT NULL,
+        restore_id TEXT NOT NULL,
+        n          INT NOT NULL CHECK (n BETWEEN 1 AND 24),
+        data       BYTEA,
+        -- ON UPDATE CASCADE: a foreign key that carries guild_id (CLAUDE.md, #2550).
+        FOREIGN KEY (guild_id, restore_id)
+            REFERENCES web_restores (guild_id, id) ON DELETE CASCADE ON UPDATE CASCADE,
+        PRIMARY KEY (guild_id, restore_id, n)
+    );
+    """
+    + _isolate("web_restores")
+    + _isolate("web_restore_parts")
+    + r"""
+    -- The bytes never outlive the end of a restore, whatever the bot does: the moment a row turns
+    -- done or failed, the copy is emptied and its transcripts files go (the 24-hour sweep catches
+    -- the rows that never ended).
+    CREATE FUNCTION web_restores_empty() RETURNS trigger
+    LANGUAGE plpgsql AS $fn$
+    BEGIN
+        IF NEW.state IN ('done', 'failed') THEN
+            NEW.main := NULL;
+            DELETE FROM web_restore_parts p
+                WHERE p.guild_id = NEW.guild_id AND p.restore_id = NEW.id;
+        END IF;
+        RETURN NEW;
+    END
+    $fn$;
+    CREATE TRIGGER web_restores_empty BEFORE UPDATE ON web_restores
+        FOR EACH ROW EXECUTE FUNCTION web_restores_empty();
+
+    -- Stage a restore: the copy itself, already checked by the API (a backup of this name, asking
+    -- for this many transcripts files). `replace_` is a campaign of the caller's to swap for the
+    -- copy, or NULL for a new campaign. The door checks what it can see: the caller is in the
+    -- server (and, to replace, a DM of that campaign), no other restore of theirs is still pending
+    -- in any server, and fewer than 5 in the last hour here. Answers 'ok' with the id and the state
+    -- (`receiving`), 'busy' with the id of the one pending, 'too_soon', or 'bad_target'; NULL for
+    -- anyone not in the server.
+    CREATE FUNCTION dmbot_web_restore_add(
+        g BIGINT, replace_ TEXT, nm TEXT, wanted INT, copy BYTEA
+    ) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        me BIGINT := dmbot_current_user();
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        have TEXT;
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+    BEGIN
+        IF me IS NULL OR g IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        IF copy IS NULL OR nm IS NULL OR wanted IS NULL OR wanted < 0 OR wanted > 24 THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        IF replace_ IS NOT NULL AND NOT EXISTS (
+               SELECT 1 FROM campaign_dms d
+               WHERE d.guild_id = g AND d.campaign_id = replace_ AND d.user_id = me) THEN
+            RETURN jsonb_build_object('status', 'bad_target');
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('web_restore:' || me::TEXT, 0));
+        DELETE FROM web_restores r WHERE r.guild_id = g AND r.created_at < now_s - 86400;
+        SELECT r.id INTO have FROM web_restores r
+            WHERE r.guild_id = g AND r.user_id = me
+              AND r.state IN ('receiving', 'waiting', 'working')
+            ORDER BY r.created_at DESC LIMIT 1;
+        IF FOUND THEN
+            RETURN jsonb_build_object('status', 'busy', 'id', have);
+        END IF;
+        -- (Counted in this server only; the API's per-person rate limit is the real one.)
+        IF (SELECT count(*) FROM web_restores r
+            WHERE r.guild_id = g AND r.user_id = me AND r.created_at > now_s - 3600) >= 5 THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        -- Always `receiving` first: nothing goes to the bot until the person has seen what it
+        -- will do and pressed Load it (`dmbot_web_restore_go`), even with no transcripts files.
+        BEGIN
+            INSERT INTO web_restores (guild_id, id, user_id, replace_id, name, parts_wanted, main,
+                                      created_at, updated_at)
+                VALUES (g, rid, me, replace_, left(nm, 100), wanted, copy, now_s, now_s);
+        EXCEPTION WHEN unique_violation THEN
+            -- Pending in another server (this server's was found above): no id to give.
+            RETURN jsonb_build_object('status', 'busy');
+        END;
+        RETURN jsonb_build_object('status', 'ok', 'id', rid, 'state', 'receiving');
+    END
+    $fn$;
+
+    -- One transcripts file of a restore that is still receiving, numbered 1 to the count the copy
+    -- asked for; sending a number again replaces it. 'ok' with how many have arrived, 'bad_part'
+    -- for a number outside the count, 'not_receiving' once it is on its way; NULL when it is not
+    -- the caller's.
+    CREATE FUNCTION dmbot_web_restore_part(g BIGINT, rid TEXT, num INT, blob BYTEA) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r web_restores%ROWTYPE;
+        got INT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO r FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF r.state <> 'receiving' THEN
+            RETURN jsonb_build_object('status', 'not_receiving');
+        END IF;
+        IF num IS NULL OR num < 1 OR num > r.parts_wanted OR blob IS NULL THEN
+            RETURN jsonb_build_object('status', 'bad_part');
+        END IF;
+        INSERT INTO web_restore_parts (guild_id, restore_id, n, data) VALUES (g, rid, num, blob)
+            ON CONFLICT (guild_id, restore_id, n) DO UPDATE SET data = EXCLUDED.data;
+        SELECT count(*) INTO got FROM web_restore_parts p
+            WHERE p.guild_id = g AND p.restore_id = rid;
+        RETURN jsonb_build_object('status', 'ok', 'received', got);
+    END
+    $fn$;
+
+    -- Send it to the bot: with every transcripts file in (`without` false), or restoring without
+    -- them (`without` true, as Discord allows: all of them or none). 'ok', 'missing' when files
+    -- are still to come, 'not_receiving' if it already went; NULL when it is not the caller's.
+    CREATE FUNCTION dmbot_web_restore_go(g BIGINT, rid TEXT, without BOOLEAN) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r web_restores%ROWTYPE;
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        got INT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT * INTO r FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        IF r.state <> 'receiving' THEN
+            RETURN jsonb_build_object('status', 'not_receiving');
+        END IF;
+        SELECT count(*) INTO got FROM web_restore_parts p
+            WHERE p.guild_id = g AND p.restore_id = rid;
+        IF COALESCE(without, false) THEN
+            DELETE FROM web_restore_parts p WHERE p.guild_id = g AND p.restore_id = rid;
+        ELSIF got <> r.parts_wanted THEN
+            RETURN jsonb_build_object('status', 'missing', 'received', got);
+        END IF;
+        UPDATE web_restores x SET state = 'waiting', stage = 'restore_waiting',
+               without_parts = COALESCE(without, false), updated_at = now_s
+            WHERE x.guild_id = g AND x.id = rid;
+        RETURN jsonb_build_object('status', 'ok');
+    END
+    $fn$;
+
+    -- Where a restore stands, for the person who made it (nobody else): the progress fields, the
+    -- name of the copy (the campaign's own name, which they supplied), how many transcripts files
+    -- it asks for and has, and, once it has ended, the plain reason word and how many lines were
+    -- left out for people who had deleted theirs. NULL when it is not theirs.
+    CREATE FUNCTION dmbot_web_restore_read(g BIGINT, rid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r RECORD;
+        got INT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        -- Named columns, so a poll never reads the copy itself.
+        SELECT x.state, x.stage, x.error, x.name, x.parts_wanted, x.done_parts, x.left_out,
+               x.replace_id, x.result_id, x.without_parts, x.created_at, x.updated_at INTO r
+            FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        SELECT count(*) INTO got FROM web_restore_parts p
+            WHERE p.guild_id = g AND p.restore_id = rid;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'name', r.name, 'partsWanted', r.parts_wanted, 'partsReceived', got,
+            'doneParts', r.done_parts, 'leftOut', r.left_out, 'replaceId', r.replace_id,
+            'resultId', r.result_id, 'withoutParts', r.without_parts,
+            'createdAt', r.created_at, 'updatedAt', r.updated_at);
+    END
+    $fn$;
+
+    -- The caller's own pending restore in this server, if any (id only), so a page that was
+    -- closed can find its way back.
+    CREATE FUNCTION dmbot_web_restore_pending(g BIGINT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out TEXT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT x.id INTO out FROM web_restores x
+            WHERE x.guild_id = g AND x.user_id = dmbot_current_user()
+              AND x.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400
+            ORDER BY x.created_at DESC LIMIT 1;
+        RETURN out;
+    END
+    $fn$;
+
+    -- Take it back: the person's own restore, while the bot has not started it. The bytes go with
+    -- the row. True when something was removed.
+    CREATE FUNCTION dmbot_web_restore_cancel(g BIGINT, rid TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        st TEXT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT x.state INTO st FROM web_restores x
+            WHERE x.guild_id = g AND x.id = rid AND x.user_id = dmbot_current_user()
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN 'gone';
+        END IF;
+        -- The bot has it: it cannot be taken back, and the page must go on showing it.
+        IF st = 'working' THEN
+            RETURN 'working';
+        END IF;
+        DELETE FROM web_restores x WHERE x.guild_id = g AND x.id = rid;
+        RETURN 'ok';
+    END
+    $fn$;
+    -- Who owns the campaign a restore would replace, for the plan check made before any bytes are
+    -- stored: the owner's id as text (or '' when it has none), only for a DM of that campaign in
+    -- this server. NULL for anyone else.
+    CREATE FUNCTION dmbot_web_restore_target(g BIGINT, c TEXT) RETURNS TEXT
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        own BIGINT;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT k.owner_user_id INTO own FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        RETURN COALESCE(own::TEXT, '');
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_target(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_read(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_pending(BIGINT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_restore_cancel(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_target(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_read(BIGINT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_pending(BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_restore_cancel(BIGINT, TEXT) FROM PUBLIC;
+"""
+)
+
+
 WEB_LINE_DELETIONS = (
     """
     -- A person's own "Delete my transcripts" asked for on the website (#2769), waiting for the bot.
@@ -17255,6 +17868,288 @@ WEB_LINE_DELETIONS = (
     REVOKE ALL ON FUNCTION dmbot_web_my_lines_delete(BIGINT) FROM PUBLIC;
     REVOKE ALL ON FUNCTION dmbot_web_my_lines_read(BIGINT, TEXT) FROM PUBLIC;
     """
+)
+
+
+# A pronoun's "Which one?" on the website (#2811, after #2810): a question about "she" or "her" can
+# have one name to offer, or none once its names are refused, and is then answered with that name
+# or with "Someone else" (the existing 'backstory-which-neither' action: the bot keeps a pronoun's
+# connection with an unnamed person, `none_of_these`). The waiting list showed only questions with
+# two names, so a DM who used only the website never saw these. A question about a name keeps
+# needing two. The list says which questions are about a pronoun, by the same words as
+# `memory.pronouns.PRONOUNS` (a test keeps the two lists equal). The pick door now also refuses a
+# question's own end, which the bot refuses too (it sits in `candidates` as a filler and is never
+# offered). Both doors are cut from their latest text by guarded replacement, so a drift makes this
+# fail loudly instead of quietly changing a rule. No row changes.
+PRONOUN_WORDS = (
+    "he", "she", "his", "her", "hers", "him", "himself", "herself", "they", "their", "theirs",
+    "them", "its", "who", "whose", "whom",
+)  # fmt: skip
+_PRONOUN_SQL = (
+    "lower(btrim(btrim(regexp_replace(q.word, '\\s+', ' ', 'g')), '.,;:!?\"''“”‘’()'))"
+    " = ANY (ARRAY[" + ", ".join(f"'{w}'" for w in PRONOUN_WORDS) + "])"
+)
+_PRONOUN_WAITING_SWAPS = (
+    (
+        "-- (a question left with fewer than two live candidates is not shown: nothing can be\n"
+        "            -- picked, and the bot deletes it when it next reads the queue)",
+        "-- (a question about a name left with fewer than two live candidates is not shown:\n"
+        "            -- nothing can be picked, and the bot deletes it when it next reads the\n"
+        '            -- queue. One about a pronoun is shown with one name or none: "Someone else")',
+    ),
+    (
+        "'upload', w.upload, 'candidates', w.cands)",
+        "'upload', w.upload,\n"
+        "                    'candidates', COALESCE(w.cands, '[]'::jsonb), 'pronoun', w.pron)",
+    ),
+    ("SELECT q.*, (\n", "SELECT q.*, " + _PRONOUN_SQL + " AS pron, (\n"),
+    (
+        ">= 2), '[]'::jsonb));",
+        ">= CASE WHEN w.pron THEN 0 ELSE 2 END), '[]'::jsonb));",
+    ),
+)
+_PRONOUN_PICK_SWAPS = (
+    (
+        "OR clean = ANY (w.candidates))) THEN",
+        "OR (clean = ANY (w.candidates) AND clean <> w.other_id))) THEN",
+    ),
+)
+# Both doors are read back from the database as they are now, as 0266 does, and not rebuilt from
+# the text of the migration that last wrote them: 0266 widened the name door in place (the
+# 'name' actions and the unnamed guards), and making it again from older text would undo that.
+WEB_PRONOUN_WHICH = (
+    r"""
+    CREATE OR REPLACE FUNCTION pg_temp.swap_once(def text, old text, new text) RETURNS text
+    LANGUAGE plpgsql AS $f$
+    BEGIN
+        IF (length(def) - length(replace(def, old, ''))) <> length(old) THEN
+            RAISE EXCEPTION 'not found exactly once: %', left(old, 80);
+        END IF;
+        RETURN replace(def, old, new);
+    END
+    $f$;
+
+    DO $do$
+    DECLARE
+        def text;
+    BEGIN
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_waiting';
+"""
+    + _swaps("def", _PRONOUN_WAITING_SWAPS)
+    + r"""
+        EXECUTE def;
+
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_name_action_add';
+"""
+    + _swaps("def", _PRONOUN_PICK_SWAPS)
+    + r"""
+        EXECUTE def;
+    END
+    $do$;
+"""
+)
+
+
+# The website's character sheets take two more choices (#2818): `typed` (the form Discord's "Type in
+# my character" has: class, level, species and names, kept as one small JSON text in `payload`) and
+# `document` (a public https web page or PDF link in `url`, which the bot fetches and reads; the
+# website never does, and the bot's fetch is https only, so an http link is refused here too). The
+# door gets the same fifth argument as for a link (`lnk`): the link for `document`, the JSON text
+# for `typed`. It refuses a shape the bot would not read (`bad_document`, `bad_typed`) and the bot
+# checks the rest again. A document read costs an AI call, so a person may queue one a minute,
+# where a link or typed sheet may be queued every 20 seconds. The link stays in this row only; no
+# door gives it back (the answer door returns the state and the plain error word). The door is cut
+# from its text in 0268 by guarded replacement, so a drift fails loudly.
+_SHEET_DOOR = WEB_SHEET_ACTIONS[
+    WEB_SHEET_ACTIONS.index("    CREATE FUNCTION dmbot_web_sheet_action_add(") :
+]
+_SHEET_DOOR = _SHEET_DOOR[
+    : _SHEET_DOOR.index("    -- The state of one of the caller's own choices")
+]
+_SHEET_DOOR = _swap(
+    _SHEET_DOOR.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION"),
+    (
+        (
+            "        who TEXT := COALESCE(ent, '');\n    BEGIN",
+            "        who TEXT := COALESCE(ent, '');\n"
+            "        body TEXT := '';\n"
+            "        pj JSONB;\n"
+            "    BEGIN",
+        ),
+        (
+            "IF act IS NULL OR act NOT IN ('link', 'forget', 'read_again') THEN",
+            "IF act IS NULL\n"
+            "           OR act NOT IN ('link', 'forget', 'read_again', 'typed', 'document') THEN",
+        ),
+        (
+            "            IF act = 'forget' THEN\n                want := '';",
+            "            IF act = 'document'\n"
+            "               AND (char_length(want) > 400\n"
+            "                    OR want !~ '^https://[^[:space:][:cntrl:]<>\"]+$') THEN\n"
+            "                RETURN jsonb_build_object('status', 'bad_document');\n"
+            "            END IF;\n"
+            "            IF act = 'typed' THEN\n"
+            "                -- the form as one JSON object with exactly its four fields, each in\n"
+            "                -- the limits Discord's form has "
+            "(class and species 60, level 1 to 20,\n"
+            "                -- names 1500); the bot checks the words again\n"
+            "                body := want;\n"
+            "                want := '';\n"
+            "                BEGIN\n"
+            "                    pj := body::jsonb;\n"
+            "                EXCEPTION WHEN others THEN\n"
+            "                    RETURN jsonb_build_object('status', 'bad_typed');\n"
+            "                END;\n"
+            "                IF char_length(body) > 4000 OR jsonb_typeof(pj) <> 'object'\n"
+            "                   OR (SELECT count(*) FROM jsonb_object_keys(pj)) <> 4\n"
+            "                   OR NOT (pj ?& ARRAY['className', 'level', 'species', 'names'])\n"
+            "                   OR jsonb_typeof(pj->'className') <> 'string'\n"
+            "                   OR char_length(btrim(pj->>'className')) NOT BETWEEN 1 AND 60\n"
+            "                   OR jsonb_typeof(pj->'level') <> 'number'\n"
+            "                   OR (pj->>'level') !~ '^([1-9]|1[0-9]|20)$'\n"
+            "                   OR jsonb_typeof(pj->'species') <> 'string'\n"
+            "                   OR char_length(pj->>'species') > 60\n"
+            "                   OR jsonb_typeof(pj->'names') <> 'string'\n"
+            "                   OR char_length(pj->>'names') > 1500 THEN\n"
+            "                    RETURN jsonb_build_object('status', 'bad_typed');\n"
+            "                END IF;\n"
+            "            END IF;\n"
+            "            IF act = 'forget' THEN\n                want := '';",
+        ),
+        (
+            "AND a.entity_id = who AND a.action = act AND a.url = want\n",
+            "AND a.entity_id = who AND a.action = act AND a.url = want\n"
+            "              AND a.payload = body\n",
+        ),
+        (
+            "        IF act = 'link' AND EXISTS (SELECT 1 FROM web_sheet_actions a\n"
+            "            WHERE a.guild_id = g AND a.campaign_id = c "
+            "AND a.user_id = dmbot_current_user()\n"
+            "              AND a.action = 'link' AND a.created_at > now_s - 20) THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_soon');\n"
+            "        END IF;\n",
+            "        IF act IN ('link', 'typed') AND EXISTS (SELECT 1 FROM web_sheet_actions a\n"
+            "            WHERE a.guild_id = g AND a.campaign_id = c "
+            "AND a.user_id = dmbot_current_user()\n"
+            "              AND a.action IN ('link', 'typed') AND a.created_at > now_s - 20) THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_soon');\n"
+            "        END IF;\n"
+            "        IF act = 'document' AND EXISTS (SELECT 1 FROM web_sheet_actions a\n"
+            "            WHERE a.guild_id = g AND a.campaign_id = c "
+            "AND a.user_id = dmbot_current_user()\n"
+            "              AND a.action = 'document' AND a.created_at > now_s - 60) THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_soon');\n"
+            "        END IF;\n",
+        ),
+        (
+            "INSERT INTO web_sheet_actions (guild_id, campaign_id, "
+            "id, user_id, entity_id, action, url,\n"
+            "                                       created_at, updated_at)\n"
+            "            VALUES (g, c, rid, dmbot_current_user(), who, act, want, now_s, now_s);",
+            "INSERT INTO web_sheet_actions (guild_id, campaign_id, "
+            "id, user_id, entity_id, action, url,\n"
+            "                                       payload, created_at, updated_at)\n"
+            "            VALUES (g, c, rid, dmbot_current_user(), "
+            "who, act, want, body, now_s, now_s);",
+        ),
+    ),
+)
+WEB_SHEET_TYPED_DOCUMENT = (
+    r"""
+    ALTER TABLE web_sheet_actions DROP CONSTRAINT web_sheet_actions_action_check;
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_action_check
+        CHECK (action IN ('link', 'forget', 'read_again', 'typed', 'document'));
+    -- A document link is longer than a character link (Discord's field holds 400).
+    ALTER TABLE web_sheet_actions DROP CONSTRAINT web_sheet_actions_url_check;
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_url_check
+        CHECK (char_length(url) <= 400);
+    -- The typed form as JSON text (class, level, species, names); empty for every other choice.
+    ALTER TABLE web_sheet_actions
+        ADD COLUMN payload TEXT NOT NULL DEFAULT '' CHECK (char_length(payload) <= 4000);
+    -- While a choice waits, the columns agree with it: only a typed sheet has a payload (so a link
+    -- or a document can never carry stray text), and only a document or a link has an address. A
+    -- finished row (done or failed) may be blanked by the bot, which keeps no link or words.
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_shape_check CHECK (
+        state IN ('done', 'failed')
+        OR (((action = 'typed') = (payload <> ''))
+            AND ((action IN ('link', 'document')) = (url <> ''))));
+    COMMENT ON TABLE web_sheet_actions IS
+        'A website choice about a character sheet waiting for the bot: link, forget, read_again, '
+        'typed (payload: the form as JSON) or document (url: a public https link). Rows hold the '
+        'link or the typed words only until the bot finishes the row.';
+"""
+    + _SHEET_DOOR
+    + r"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
+# DMbot's check of a pronoun on the website (#2859; the `decided` note of #2790, stored since 0267):
+# a DM sees the same note Discord shows on a waiting connection, a "Which one?" question and a
+# connection's card. The two doors carry the stored words (a fixed vocabulary, never a name or any
+# text) to a DM only; the website's Python turns them into plain words with the one function
+# Discord uses (`who_resolve.checked_line`), so there is no second copy. The doors are read back
+# from the database as they are and widened, each anchor found exactly once (a drift stops the
+# migration), as 0266 and 0270 do. No table changes, no rows change.
+_DECIDED_WAITING_SWAPS = (
+    ("'subjectId', l.subject_id,", "'subjectId', l.subject_id, 'decided', l.decided,"),
+    (
+        "'otherIsSubject', w.other_is_subject,",
+        "'otherIsSubject', w.other_is_subject, 'decided', w.decided,",
+    ),
+)
+_DECIDED_EDGE_SWAPS = (
+    (
+        "'at', r.created_at,",
+        "'at', r.created_at,\n"
+        "                    'decided', CASE WHEN is_dm AND sees_all THEN r.decided END,",
+    ),
+)
+WEB_DECIDED_NOTE = (
+    r"""
+    CREATE OR REPLACE FUNCTION pg_temp.swap_once(def text, old text, new text) RETURNS text
+    LANGUAGE plpgsql AS $f$
+    BEGIN
+        IF (length(def) - length(replace(def, old, ''))) <> length(old) THEN
+            RAISE EXCEPTION 'not found exactly once: %', left(old, 80);
+        END IF;
+        RETURN replace(def, old, new);
+    END
+    $f$;
+
+    DO $do$
+    DECLARE
+        def text;
+    BEGIN
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_waiting';
+"""
+    + _swaps("def", _DECIDED_WAITING_SWAPS)
+    + r"""
+        EXECUTE def;
+
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_relationships';
+"""
+    + _swaps("def", _DECIDED_EDGE_SWAPS)
+    + r"""
+        EXECUTE def;
+    END
+    $do$;
+"""
 )
 
 
@@ -17576,10 +18471,19 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0266_web_name_unnamed", WEB_NAME_UNNAMED),  # "Not named yet" on the Names page (#2803)
     ("0267_who_is_it_decided", BACKSTORY_DECIDED),  # how a pronoun was settled (#2790)
     (
+        "0268_web_sheet_actions",
+        WEB_SHEET_ACTIONS,
+    ),  # a character sheet asked for on the website (#2816)
+    (
         "0269_report_fixed_remind",
         REPORT_FIXED_REMIND,
     ),  # Undo of a fix gives a reminder back (#2661)
+    ("0270_web_pronoun_which", WEB_PRONOUN_WHICH),  # pronoun questions on the website (#2811)
+    ("0271_web_restores", WEB_RESTORES),  # a backup loaded from the website (#2745)
     ("0272_web_line_deletions", WEB_LINE_DELETIONS),  # Delete my transcripts on the website (#2781)
+    ("0273_restore_guilds", WEB_RESTORE_GUILDS),  # servers with restore rows, for the sweep (#2746)
+    ("0274_web_sheet_typed_document", WEB_SHEET_TYPED_DOCUMENT),  # typed and document (#2818)
+    ("0275_web_decided_note", WEB_DECIDED_NOTE),  # DMbot's check on the website (#2859)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -17682,7 +18586,10 @@ ISOLATED_TABLES = (
     "setting_actions",
     "web_rule_actions",
     "web_report_requests",
+    "web_sheet_actions",
     "web_peeks",
+    "web_restores",
+    "web_restore_parts",
     "web_line_deletions",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
@@ -17723,7 +18630,7 @@ USER_ISOLATED_TABLES = (
 # administrator (#665).
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
-ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
+ROUTING_TABLES = ("live_session_guilds", "campaign_guilds", "web_restore_guilds")
 UNSCOPED_TABLES = (
     "schema_migrations",
     "ontology_predicate_versions",

@@ -73,6 +73,22 @@ class TheRule(unittest.TestCase):
     def test_every_inner_state_relationship_exists_in_the_ontology(self) -> None:
         self.assertTrue(set(ONTO.predicates) >= INNER_STATE)
 
+    def test_the_list_is_the_flag_on_the_definitions(self) -> None:
+        self.assertEqual(INNER_STATE, {"sworn_to", "ally_of", "enemy_of", "serves"})
+        flagged = {key for key, term in ONTO.predicates.items() if term.inner_state}
+        self.assertEqual(flagged, INNER_STATE)
+
+    def test_the_flag_is_not_part_of_the_stored_meaning(self) -> None:
+        # (setting it must not move a fingerprint: it changes who speaks, not what is said)
+        from dataclasses import replace
+
+        from dmbot.memory.definitions import definition, fingerprint
+
+        term = ONTO.predicates["ally_of"]
+        plain = replace(term, inner_state=False)
+        self.assertEqual(fingerprint(term), fingerprint(plain))
+        self.assertEqual(definition(term), definition(plain))
+
 
 class TheClaims(unittest.TestCase):
     def judge(self, claim: Extracted, speakers: list[int | None]) -> str:

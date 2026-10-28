@@ -1533,6 +1533,54 @@ interface WebAnswer {
 /** The changed row, or `{ removed: true }` after a removal. */
 export type NameChanged = NameRow | { removed: true };
 
+/** One character's sheet as the page shows it (#2816): names and numbers only, the link to the player and the DMs. */
+export interface SheetCharacter {
+  entityId: string;
+  name: string;
+  /** True for the character the person plays. */
+  mine: boolean;
+  /** Where the sheet came from: a link from dndbeyond.com, or typed in; null when there is none. */
+  source: "dndbeyond" | "typed" | null;
+  /** The link, for the player and the campaign's DMs only; null when there isn't one. */
+  url: string | null;
+  fetchedAt: number | null;
+  summary: {
+    species: string | null;
+    level: number | null;
+    classes: { name: string; level: number; subclass: string | null }[];
+    maxHp: number | null;
+    ac: number | null;
+  } | null;
+}
+
+export interface CharacterSheets {
+  /** True for the campaign's DMs, who see every sheet and only read them. */
+  isDm: boolean;
+  sheets: SheetCharacter[];
+}
+
+/** One choice on a character sheet (#2816, #2832): a player links, forgets or types in their own; a DM reads them
+ * again. `typed` (#2832): `names` is a comma-separated string; the bot keeps at most 20 of them. */
+export type SheetChoice =
+  | { action: "link"; url: string }
+  | { action: "forget" }
+  | { action: "read_again" }
+  | { action: "typed"; className: string; level: number; species: string; names: string }
+  /** A public web page or PDF the player made, read by the bot later (#2843). The page only checks its shape. */
+  | { action: "document"; url: string };
+
+/** Where a sheet choice stands, in the shared progress shape (#2816). */
+export interface SheetAnswer {
+  state: "running" | "stalled" | "done" | "failed";
+  stage: string;
+  action: string;
+  entityId: string;
+  error: string | null;
+  progress?: JobProgress | null;
+  startedAt?: number | null;
+  updatedAt?: number | null;
+}
+
 /** One NPC's page, as the players see it, plus the caller's own note (#2266). */
 export interface NpcPage {
   id: string;
@@ -1590,6 +1638,8 @@ export interface WaitingWhich {
   id: string;
   /** The written name, "Mara". */
   word: string;
+  /** True for a question about a pronoun ("she"): its candidates may be one name or none. */
+  pronoun?: boolean;
   other: string;
   otherIsSubject: boolean;
   how: string;
@@ -1703,10 +1753,12 @@ export type ApiErrorKind =
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "bad-document-link" // a document link the bot can't read (#2843); its own words, not the character link's
   | "not-ready" // the API has no move codes yet (#1231)
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "needs-approval" // "Make the audio again" on a text that is no longer approved (#2090)
   | "too-soon" // the account moved less than 30 days ago (#1246)
+  | "read-too-soon" // a DM asked for the sheets to be read again less than a minute ago (#2816)
   | "email-failed" // the move code could not be emailed just now (#1246)
   | "not-paying" // a support ticket needs an account with a plan, Try It too (#1340, #1435)
   | "one-waiting" // a free account already has a question waiting (#1435)
@@ -1771,7 +1823,36 @@ export type ApiErrorKind =
   | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
   | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
+  | "not-a-backup" // the file is not a DMbot backup (#2745)
+  | "too-many-parts" // the copy asks for more transcripts files than the restore takes (#2745)
+  | "bad-part" // a transcripts file that is not one of the copy's (#2745)
+  | "files-missing" // transcripts files are still to come (#2745)
+  | "not-receiving" // the copy has already gone to DMbot (#2745)
+  | "restore-plan" // the plan has no loading of copies, or no free campaign slot (#2745)
+  | "too-slow" // a file took too long to arrive (#2745)
+  | "restore-working" // DMbot has started the restore, so it can't be taken back (#2745)
   | "server"; // anything else
+
+/** A backup loaded from the website (#2745; core web/restores.py). The shared progress shape, plus what the page
+ * needs: the copy's own name (from the file the person picked), how many transcripts files it asked for and has,
+ * and, once it has ended, the campaign it made and how many lines were left out for people who had deleted theirs. */
+export interface RestoreStatus extends JobProgress {
+  id: string;
+  name: string;
+  /** The restore swaps one of the person's own campaigns for the copy. */
+  replacing: boolean;
+  /** The campaign it replaces (its address), so the page can name it after a reload. */
+  replaceRef: string | null;
+  partsWanted: number;
+  partsReceived: number;
+  /** The person chose to restore without the transcripts files. */
+  withoutParts: boolean;
+  /** The new (or replaced) campaign's address, once it is made. */
+  campaign: string | null;
+  leftOut: number;
+  /** Unix seconds the staged copy is deleted if nothing happened. */
+  expiresAt: number;
+}
 
 /** How the page asks for a copy being made on DMbot's side (#2751): first after 1.5 s, then slower, to 10 s. */
 const BACKUP_POLL_MS = 1500;
@@ -1848,6 +1929,23 @@ export interface AccountApi {
   /** Delete a campaign for good, with its name typed to confirm (#2555; core #2554). `channelsLeft` is true
    * when DMbot couldn't reach the server, so its Discord channels stay. Only the plan holder may. */
   deleteCampaign?(ref: string, name: string): Promise<{ channelsLeft: boolean }>;
+  /** Load a backup (#2745; core web/restores.py): the copy's file goes to DMbot, which applies it after checking the
+   * plan, the free slot and the rights again. `replaceRef` swaps one of the person's own campaigns for it; none
+   * makes a new one. Answers the copy's own name and how many transcripts files it asks for. A restore of theirs
+   * that is still on its way refuses with `slow-down`: `restoreStatus(serverId)` finds it. Missing from an older API. */
+  restoreStage?(
+    serverId: string,
+    file: Blob,
+    replaceRef?: string,
+  ): Promise<{ id: string; name: string; partsWanted: number }>;
+  /** One transcripts file of a staged copy (1 to the count it asked for); the same number again replaces it. */
+  restorePart?(serverId: string, id: string, number: number, file: Blob): Promise<void>;
+  /** Send the staged copy to DMbot, with every transcripts file in, or without any (`without`). */
+  restoreGo?(serverId: string, id: string, without: boolean): Promise<void>;
+  /** Where the person's restore stands; with no id, their latest in that server. Null when there is none. */
+  restoreStatus?(serverId: string, id?: string): Promise<RestoreStatus | null>;
+  /** Take a staged copy back before DMbot starts it, or clear one that has ended. */
+  restoreCancel?(serverId: string, id: string): Promise<void>;
   /** The whole campaign as a backup file, offered before Delete (owner and co-DMs; not Try It). DMbot builds it
    * from its database (#2554): asked for with a POST, polled in the shared progress shape (`onProgress` hears each
    * answer: stage, how long, last moved), then fetched once. Refusals: `no-backup` (the plan has no copies),
@@ -2030,6 +2128,12 @@ export interface AccountApi {
   /** The campaign's game masters (#2768), for its game masters. Missing from an API older than that. A change is
    * sent with `setCampaignSetting({setting: "co_dm", value: <userId>, on})`. */
   campaignGameMasters?(campaignRef: string): Promise<GameMasters>;
+  /** The character sheets the person may see in a campaign (#2816): their own, and for a DM all of them, read only. */
+  campaignSheets?(campaignRef: string): Promise<CharacterSheets>;
+  /** One sheet choice (#2816), queued for the bot: returns the answer's id to poll. `entity` is "-" for a DM's read again. */
+  chooseSheet?(campaignRef: string, entity: string, choice: SheetChoice): Promise<string>;
+  /** Where one of the person's own sheet choices stands (#2816). */
+  sheetAnswer?(campaignRef: string, answer: string): Promise<SheetAnswer>;
   /** Who can be offered as a game master, searched by name (#2768): at most 25, members who agreed to be recorded. */
   campaignGameMasterCandidates?(campaignRef: string, query: string): Promise<GameMasterCandidate[]>;
   /** Where a choice sent with `setCampaignSetting` stands. */
@@ -2218,10 +2322,12 @@ const errorKinds: Record<string, ApiErrorKind> = {
   slow_down: "slow-down",
   busy: "slow-down",
   bad_link: "bad-link",
+  bad_document: "bad-document-link",
   move_off: "not-ready",
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  read_too_soon: "read-too-soon",
   hour_full: "hour-full",
   bad_answer: "bad-answer",
   plot_open: "plot-open",
@@ -2232,6 +2338,13 @@ const errorKinds: Record<string, ApiErrorKind> = {
   owner: "owner-offer",
   bad_server: "bad-server",
   last_account: "last-account",
+  not_a_backup: "not-a-backup",
+  too_many_parts: "too-many-parts",
+  bad_part: "bad-part",
+  missing: "files-missing",
+  not_receiving: "not-receiving",
+  working: "restore-working",
+  too_slow: "too-slow",
   shares_rules: "shares-rules",
   not_the_owner: "not-allowed",
   session_running: "session-running",
@@ -2400,6 +2513,17 @@ export function httpApi(
     return asFile ? response.blob() : response.json();
   }
 
+  // A copy the person may not load (no plan that allows it, or no free campaign slot) reaches the page as its
+  // own word: "plan" means something else for the rest of the site, so only the restore calls see this (#2745).
+  const restoreCall: typeof call = async (...args) => {
+    try {
+      return await call(...args);
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "plan-needed") throw new ApiError("restore-plan");
+      throw error;
+    }
+  };
+
   /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
    * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
    * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
@@ -2452,7 +2576,42 @@ export function httpApi(
     },
     deleteCampaign: async (ref, name) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/delete`, { name })) as { channelsLeft: boolean },
-    campaignBackup: async (ref, onProgress, onFile) => {
+    restoreStage: async (serverId, file, replaceRef) => {
+      const query = replaceRef === undefined ? "" : `?replace=${encodeURIComponent(replaceRef)}`;
+      // The file goes as it is, not as JSON: it can be 25 MB, and the API reads it with a running cap.
+      const raw = new Blob([file], { type: "application/octet-stream" });
+      return (await restoreCall("POST", `/me/restores/${encodeURIComponent(serverId)}${query}`, undefined, false, raw)) as {
+        id: string;
+        name: string;
+        partsWanted: number;
+      };
+    },
+    restorePart: async (serverId, id, number, file) => {
+      const raw = new Blob([file], { type: "application/octet-stream" });
+      await restoreCall(
+        "PUT",
+        `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}/parts/${number}`,
+        undefined,
+        false,
+        raw,
+      );
+    },
+    restoreGo: async (serverId, id, without) => {
+      await restoreCall("POST", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}/go`, { without });
+    },
+    restoreStatus: async (serverId, id) => {
+      try {
+        const tail = id === undefined ? "" : `/${encodeURIComponent(id)}`;
+        return (await restoreCall("GET", `/me/restores/${encodeURIComponent(serverId)}${tail}`)) as RestoreStatus;
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "not-found") return null;
+        throw error;
+      }
+    },
+    restoreCancel: async (serverId, id) => {
+      await restoreCall("DELETE", `/me/restores/${encodeURIComponent(serverId)}/${encodeURIComponent(id)}`);
+    },
+        campaignBackup: async (ref, onProgress, onFile) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/backup`;
       const asked = (await call("POST", base)) as { id: string };
       const copy = `${base}/${encodeURIComponent(asked.id)}`;
@@ -2699,6 +2858,22 @@ export function httpApi(
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/optional-rules`)) as OptionalRules,
     campaignGameMasters: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/game-masters`)) as GameMasters,
+    campaignSheets: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets`)) as CharacterSheets,
+    chooseSheet: async (campaignRef, entity, choice) => {
+      const queued = (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/${encodeURIComponent(entity)}`,
+        choice,
+      )) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      return queued.answer;
+    },
+    sheetAnswer: async (campaignRef, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/answers/${encodeURIComponent(answer)}`,
+      )) as SheetAnswer,
     campaignGameMasterCandidates: async (campaignRef, query) =>
       (
         (await call(

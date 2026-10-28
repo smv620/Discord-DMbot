@@ -19,12 +19,13 @@ from psycopg import errors as pg_errors
 
 from dmbot import entitlements, hours, plans, usage
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.store import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from dmbot.web import grants
 from tests.pg import DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW

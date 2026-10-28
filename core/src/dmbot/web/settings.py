@@ -122,6 +122,9 @@ class WebSettings:
     # A person's own "Delete my transcripts" on the website (#2769; DMBOT_WEB_LINE_DELETE): off, its
     # routes answer 404, so nothing is queued before the bot can run it.
     line_delete_on: bool = False
+    # DMBOT_WEB_RESTORE (#2745): off, the Load a backup routes say 404, so nothing can be staged
+    # until the bot's half, which applies and sweeps staged restores (#2746), is live.
+    web_restore_on: bool = False
     # Game masters added and removed on the website (#2768; DMBOT_WEB_CO_DMS): off, those routes and
     # the queue's `co_dm` choice answer 404, so nothing is queued before the bot can apply it.
     co_dms_on: bool = False
@@ -131,6 +134,9 @@ class WebSettings:
     # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
     # queue a choice answer 404, so nothing is queued before the bot can run it.
     rule_sharing_on: bool = False
+    # Character sheets from the website (#2816; DMBOT_WEB_SHEETS): off, the routes that show
+    # or queue them answer 404, so nothing is queued before the bot that applies them is deployed.
+    sheets_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -347,6 +353,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_LINE_DELETE must be 1 (on) or 0 (off), got "{line_delete_raw}".'
         )
+    restore_raw = (get("DMBOT_WEB_RESTORE") or "0").lower()
+    if restore_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_RESTORE must be 1 (on) or 0 (off), got "{restore_raw}".')
     co_dms_raw = (get("DMBOT_WEB_CO_DMS") or "0").lower()
     if co_dms_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_CO_DMS must be 1 (on) or 0 (off), got "{co_dms_raw}".')
@@ -355,6 +364,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
         )
+    sheets_raw = (get("DMBOT_WEB_SHEETS") or "0").lower()
+    if sheets_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_SHEETS must be 1 (on) or 0 (off), got "{sheets_raw}".')
     rule_sharing_raw = (get("DMBOT_WEB_RULE_SHARING") or "0").lower()
     if rule_sharing_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(
@@ -363,8 +375,10 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
     return WebSettings(
         database_url=get("DATABASE_URL"),
         rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
+        sheets_on=sheets_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         line_delete_on=line_delete_raw in ("1", "true", "on"),
+        web_restore_on=restore_raw in ("1", "true", "on"),
         co_dms_on=co_dms_raw in ("1", "true", "on"),
         report_make_on=report_make_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),

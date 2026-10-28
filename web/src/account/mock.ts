@@ -49,6 +49,8 @@ import type {
   GameMaster,
   GameMasterCandidate,
   GameMasters,
+  CharacterSheets,
+  SheetAnswer,
   QueuedSetting,
   Timeline,
   WebRevealTarget,
@@ -703,6 +705,22 @@ function pretendWaiting(): Waiting {
     counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
   };
 }
+/** A campaign ref ending `.pronoun` has only pronoun questions (#2831): one with a name, one with none. */
+function pronounWaiting(): Waiting {
+  return {
+    claims: [],
+    backstory: [],
+    which: [
+      {
+        id: "w2", word: "she", pronoun: true, other: "Rook", otherIsSubject: false, how: "grew up with", secret: false, upload: "Lore, 24 Oct",
+        candidates: [{ id: "e3", name: "Mara Ashgrove", limited: false }],
+        quote: "She grew up with Rook",
+      },
+      { id: "w3", word: "he", pronoun: true, other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct", candidates: [] },
+    ],
+    counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
+  };
+}
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
@@ -718,6 +736,23 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     pending: null,
   };
   const memory = startNames();
+  // The pretend restores of a backup loaded from the website (#2745), by server.
+  interface PretendRestore {
+    id: string;
+    name: string;
+    replacing: boolean;
+    wanted: number;
+    got: Set<number>;
+    without: boolean;
+    /** -1 until Load it; then how many looks it has moved on. */
+    stageNo: number;
+    state: "running" | "done" | "failed";
+    failing: boolean;
+    campaign: string;
+    moved?: number;
+  }
+  const restores = new Map<string, PretendRestore>();
+  let restoreCount = 0;
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
@@ -1501,7 +1536,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
       return structuredClone({
         ...waiting,
         counts: {
@@ -1520,7 +1555,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
       const ids = "ids" in answer ? answer.ids : [answer.id];
       if (answer.kind === "which" && answer.action === "pick") {
         const q = waiting.which.find((x) => x.id === answer.id);
@@ -1670,6 +1705,46 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return { main: "2024 rules", rules, note: "", default: true };
     },
     // A ref ending `.gm-failed` fails to save; `.gm-full` already has five; `.gm-nobody` has nobody to offer.
+    async campaignSheets(ref): Promise<CharacterSheets> {
+      calls.push(`campaignSheets:${ref}`);
+      await reachable();
+      signedIn();
+      if (/\.sheets-none(\.|$)/.test(ref)) throw new ApiError("not-found");
+      // `.sheets-dm`: the DM's view (every sheet, read only); otherwise the player's own, with a sheet and one without.
+      const dm = /\.sheets-dm(\.|$)/.test(ref);
+      const sheet = {
+        entityId: "sh-sorrel",
+        name: "Sorrel",
+        mine: !dm,
+        source: "dndbeyond" as const,
+        url: "https://www.dndbeyond.com/characters/12345",
+        fetchedAt: 1791000000,
+        summary: { species: "Elf", level: 3, classes: [{ name: "Wizard", level: 3, subclass: null }], maxHp: 18, ac: 12 },
+      };
+      const bare = { entityId: "sh-ivy", name: "Ivy", mine: !dm, source: null, url: null, fetchedAt: null, summary: null };
+      return { isDm: dm, sheets: dm ? [sheet] : [sheet, bare] };
+    },
+    async chooseSheet(ref, entity, choice): Promise<string> {
+      calls.push(`chooseSheet:${ref}:${entity}:${JSON.stringify(choice)}`);
+      await reachable();
+      signedIn();
+      if (/\.sheets-dm(\.|$)/.test(ref) && choice.action !== "read_again") throw new ApiError("not-allowed");
+      if (choice.action === "link" && !/^https:\/\/www\.dndbeyond\.com\/characters\/[0-9]{1,12}$/.test(choice.url)) {
+        throw new ApiError("bad-link");
+      }
+      if (choice.action === "document" && !/^https:\/\/[^\s/]+/i.test(choice.url)) throw new ApiError("bad-document-link");
+      if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
+      return "sheet-answer";
+    },
+    async sheetAnswer(ref, answer): Promise<SheetAnswer> {
+      calls.push(`sheetAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      if (/\.sheets-stuck(\.|$)/.test(ref)) {
+        return { state: "running", stage: "waiting", action: "link", entityId: "sh-ivy", error: null, startedAt: 1, updatedAt: 1 };
+      }
+      return { state: "done", stage: "done", action: "link", entityId: "sh-ivy", error: null };
+    },
     async campaignGameMasters(ref): Promise<GameMasters> {
       calls.push(`campaignGameMasters:${ref}`);
       await reachable();
@@ -2639,6 +2714,108 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       // (copied, never changed in place: the pretend campaigns are shared by every test)
       me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
       return { channelsLeft: found.serverReachable === false };
+    },
+    // A backup loaded from the website (#2745): one pretend restore per server. The file's name says how many
+    // transcripts files it "asks for" (`name-parts-3.dmbot.json.gz`); one called `bad-...` is not a backup. After
+    // Load it the pretend DMbot moves one stage on each look: waiting, checking, writing (part by part), done. A
+    // server whose id ends in 9 refuses with "plan" at the end, to show a failure.
+    async restoreStage(serverId, file, replaceRef) {
+      calls.push(`restoreStage:${serverId}:${replaceRef ?? "new"}`);
+      await reachable();
+      signedIn();
+      const fileName = file instanceof File ? file.name : "";
+      if (/^bad/i.test(fileName)) throw new ApiError("not-a-backup");
+      const current = restores.get(serverId);
+      if (current && current.state === "running") throw new ApiError("slow-down");
+      const wanted = Number(/parts-(\d+)/.exec(fileName)?.[1] ?? 0);
+      const name = fileName.replace(/(-parts-\d+)?\.dmbot.*$/i, "").replace(/\.[a-z]+$/i, "") || "Your campaign";
+      const made: PretendRestore = {
+        id: `rs${++restoreCount}`,
+        name,
+        replacing: replaceRef !== undefined,
+        wanted,
+        got: new Set(),
+        without: false,
+        stageNo: -1,
+        state: "running",
+        failing: serverId.endsWith("9"),
+        campaign: replaceRef ?? `${serverId}.restored`,
+      };
+      restores.set(serverId, made);
+      return { id: made.id, name, partsWanted: wanted };
+    },
+    async restorePart(serverId, id, number, file) {
+      calls.push(`restorePart:${serverId}:${id}:${number}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || found.id !== id) throw new ApiError("not-found");
+      if (found.stageNo >= 0) throw new ApiError("not-receiving");
+      if (number < 1 || number > found.wanted || file.size === 0) throw new ApiError("bad-part");
+      found.got.add(number);
+    },
+    async restoreGo(serverId, id, without) {
+      calls.push(`restoreGo:${serverId}:${id}:${without ? "without" : "with"}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || found.id !== id) throw new ApiError("not-found");
+      if (found.stageNo >= 0) throw new ApiError("not-receiving");
+      if (!without && found.got.size !== found.wanted) throw new ApiError("files-missing");
+      found.without = without;
+      found.stageNo = 0;
+    },
+    async restoreStatus(serverId, id) {
+      calls.push(`restoreStatus:${serverId}:${id ?? "latest"}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || (id !== undefined && found.id !== id)) return null;
+      const now = Math.floor(Date.now() / 1000);
+      if (found.stageNo >= 0 && found.state === "running") {
+        found.stageNo += 1;
+        found.moved = now;
+      }
+      const writing = found.wanted > 0 && !found.without ? found.wanted : 1;
+      const order = ["restore_waiting", "restore_reading", ...Array.from({ length: writing }, () => "restore_writing")];
+      let stage = "restore_receiving";
+      let done: number | undefined;
+      if (found.stageNo >= 0) {
+        if (found.stageNo >= order.length) {
+          found.state = found.failing ? "failed" : "done";
+          stage = found.failing ? "failed" : "done";
+        } else {
+          stage = order[found.stageNo]!;
+          if (stage === "restore_writing") done = found.stageNo - 2;
+        }
+      }
+      return {
+        id: found.id,
+        name: found.name,
+        replacing: found.replacing,
+        replaceRef: found.replacing ? found.campaign : null,
+        partsWanted: found.wanted,
+        partsReceived: found.got.size,
+        withoutParts: found.without,
+        campaign: found.state === "done" ? found.campaign : null,
+        leftOut: found.state === "done" && found.wanted > 0 ? 2 : 0,
+        expiresAt: now + 86400,
+        stage,
+        state: found.state,
+        reason: found.state === "failed" ? "plan" : null,
+        startedAt: now - 5,
+        updatedAt: found.moved ?? now - 5,
+        serverNow: now,
+        ...(done !== undefined ? { done, total: writing, unit: "parts" } : {}),
+      };
+    },
+    async restoreCancel(serverId, id) {
+      calls.push(`restoreCancel:${serverId}:${id}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || found.id !== id || (found.stageNo >= 0 && found.state === "running")) throw new ApiError("not-found");
+      restores.delete(serverId);
     },
     async campaignBackup(ref, onProgress, onFile) {
       calls.push(`campaignBackup:${ref}`);

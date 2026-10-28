@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { recapCard } from "../content/account-cards";
 import { sharingCard } from "../content/sharing";
 import { RECAPS_LIVE } from "../content/recap-words";
+import { WEB_RESTORE_LIVE, restoreLink } from "../content/restore-switch";
 import { RECAP_AUDIO_LIVE } from "../content/recap-words";
 import { accountWords as audioWords, price as audioPrice } from "../content/recap-audio";
 import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-delete";
@@ -952,6 +953,7 @@ function CampaignsSection({ me }: { me: Me }) {
         </button>
       )}
       {RECAPS_LIVE && me.campaigns.some((c) => c.role !== "player") && <a href="/account/recaps">{recapCard.linkToList}</a>}
+      {WEB_RESTORE_LIVE && <a href="/account/restore">{restoreLink}</a>}
     </section>
   );
 }

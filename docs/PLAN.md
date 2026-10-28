@@ -209,6 +209,30 @@ database.
   range, inverse label, how many are allowed and an example (rules 1–3, 9). An AI free to invent edges
   would scatter one idea across many names (plays, controls, is_player_of, runs) and the checks and
   questions ("who plays Vaelora?") would miss facts.
+- **Reviewed again 2026-10-28 (owner asked: do we need an LPG graph store in parallel with Postgres?):
+  no parallel graph store** (owner agreed). The graph stays the LPG in these Postgres tables, the only copy.
+  - **The design basis:**
+    - One store, scoped by row-level security on `guild_id` and `campaign_id`.
+    - Facts are edges whose properties hold confidence, source, status, game time and evidence.
+    - The vocabulary is checked (`ontology.py`).
+    - Joins go through the store's existing merge.
+  - **Why not a second store:**
+    1. **Isolation.** A graph database sits outside row-level security, so every query there would rely
+       on a hand-written campaign filter, and one slip leaks across campaigns or servers (the reason Neo4j
+       was not chosen on 2026-10-05).
+    2. **Two copies drift.** Every write, merge, delete, backup, restore and campaign move (#2550) would
+       have to happen twice and stay in step. Backups must be complete, and that gets harder to promise.
+    3. **The size doesn't need it.** A campaign is a few thousand entities, and its questions are 1–3
+       steps ("who is Kesh Arn's king?"), which Postgres answers in milliseconds.
+    4. **The new needs fit the tables.** Unnamed people from #2790 ("Kesh Arn's king (name unknown)") are
+       ordinary entities marked unnamed, joined later by the existing merge on the DM's say.
+  - **If deeper graph work is ever needed** (long paths such as "how are these two connected through six
+    others?", or who is central to the plot), take these steps in order, each only when the one before
+    fails on measured numbers:
+    1. Load one campaign's graph into memory in Python and compute there. It is small, and isolated by
+       construction.
+    2. Apache AGE on the same Postgres, after checking it works with row-level security (above).
+    3. Only then, a separate graph database.
 
 **A worker container, and a smaller bot.py** (owner, 2026-10-20; details Supervisor's; the first step toward #57's workers).
 - **The worker.** Heavy background work leaves the live bot for a `worker` container: recap writing, audio rendering with ffmpeg, cleaning imported sessions, PlotBot's checks and the story extractor. It runs the same `core` image and code with a different start command, against the same database, with no new network API. The bot keeps everything that happens live at the table: voice, the Cleaner, the sidebar, rules cards, the live heads-up and the buttons.
@@ -250,6 +274,7 @@ database.
     `RecapFeatures` under `if TYPE_CHECKING:`, so it is type-checked as before, until the Cog pass gives it a real bot to hold.
 - **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
 - **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
+  - *Built, first piece (CloudDev, 2026-10-28, #2130):* `lint-imports` runs in the core job (config in `core/pyproject.toml`). Three contracts: features never import `bot.py`; domain packages never import the Discord screens in `ui`; and lower packages (memory, rules, transcript, campaigns, names, timebot, audio) never import `recaps` or `web`. The 13 imports that break them today are listed as ignored, each citing #2827, which removes them. A new forbidden import fails CI (`tests/test_import_boundaries.py` shows it on a throwaway package). `recaps` and `dm_screen` are not yet sources of the `ui` contract (they import it widely, late); the first contract does cover them. Features reaching into each other's other internals is not yet checked: that needs each feature's public module named first.
 - **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.
 
 **Hosting target: public bot, shard pods + workers (decided 2026-10-04, #57).** DMbot will
@@ -4170,6 +4195,13 @@ once. The new-campaign form's link is saved in the same step as the campaign.
   - A typed or document sheet has **Edit** on each section.
   - A D&D Beyond sheet has no Edit: a **Open on D&D Beyond** link button instead, since D&D
     Beyond is the record.
+  - **On the website** (#2816, #2818; a player's own characters only, a DM only reads): link
+    a sheet, forget it, **Type in my character** (class, level, species and names, the limits of
+    Discord's form) and **Use a document link** (a public web page or PDF the bot reads). Each
+    replaces the other, with Discord's warning. The website only queues the choice; the bot
+    fetches and applies it, so the link of a document is held in the queue row alone and no page
+    shows it again. A document read costs an AI call: one a minute a person in a campaign, and Discord's daily
+    document limit for the server still applies at the bot.
 - **Re-reading D&D Beyond.**
   - **Change heard:** about **1 minute** after something said or typed changes a character
     (damage, healing, a condition, a spell slot), DMbot re-reads that sheet once. Several

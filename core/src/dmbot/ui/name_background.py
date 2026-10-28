@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
@@ -37,7 +37,7 @@ from dmbot.memory.backstory_links import (
     Waiting,
     WhichWaiting,
 )
-from dmbot.memory.end_match import FILLER, bare
+from dmbot.memory.end_match import bare, usable_alias
 from dmbot.memory.link_words import link_words
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
@@ -536,6 +536,8 @@ class BackgroundOffer(_Menu):
                     who_ai=who_ai,
                     on_who=on_who,
                     until=clicked + lore_read.LORE_TIME_LIMIT_S - WHO_SUMMARY_MARGIN_S,
+                    known_spellings=read.known_spellings,
+                    secret_spellings=read.secret_spellings,
                 )
             ready = await count_ready(bot, campaign, keys)
             cut = read.cut
@@ -640,15 +642,6 @@ async def store(
 def _plural(kind: str, count: int) -> str:
     one, many = bg.LABELS.get(kind, (kind, kind + "s"))
     return f"{count} {one if count == 1 else many}"
-
-
-def usable_alias(key: str) -> bool:
-    """Whether a spelling is distinctive enough to stand for a name on its own (#2762): after the
-    titles and articles are taken off ("the King" is nothing, "the Ashen King" is "ashen"), it
-    needs two words, or one of five letters or more. A bare title or a short word is shared by
-    too many people to be a name."""
-    core = [w for w in key.split() if w not in FILLER]
-    return bool(core) and (len(core) >= 2 or len(core[0]) >= 5)
 
 
 async def confirmed_aliases(memory: MemoryStore, campaign: Campaign) -> dict[str, tuple[str, ...]]:
@@ -829,6 +822,8 @@ async def queue_links(
     who_ai: who_ask.Client | None = None,
     on_who: Callable[[int, int], None] | None = None,
     until: float | None = None,
+    known_spellings: Mapping[str, Sequence[str]] | None = None,
+    secret_spellings: Collection[str] = (),
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -839,7 +834,12 @@ async def queue_links(
     `unsettled` (#2790): the open pronouns of a lore read, settled here with `who_ai` once the
     campaign's names are known: a settled one joins the connections, a doubt becomes a "Which
     one?" question, and one nobody can name becomes a relationship with an unnamed person. Every
-    one is counted in `dropped` or kept; none is lost without a count."""
+    one is counted in `dropped` or kept; none is lost without a count.
+
+    `known_spellings` (#2841): new public spellings the text gives names the campaign already has
+    (name -> spellings); an end written with one finds that name. A spelling two names both claim
+    is no end. `secret_spellings`: every disguise this read listed (new names' and known names'):
+    a connection found through one is kept as secret like any other that touches a disguise."""
     store = getattr(bot, "backstory_links", None)
     if store is None or not (any(answers) or unsettled):
         return 0
@@ -849,6 +849,19 @@ async def queue_links(
         for e in entries:
             if e.confirmed and not e.secret and not e.person:
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
+    owners: dict[str, set[str]] = {}
+    for main, spellings in (known_spellings or {}).items():
+        for sp in spellings:
+            owners.setdefault(name_key(sp), set()).add(name_key(main))
+    for main, spellings in (known_spellings or {}).items():
+        have_name = ends.get(name_key(main))
+        for sp in spellings:
+            if (
+                have_name is not None
+                and len(owners[name_key(sp)]) == 1
+                and usable_alias(name_key(sp))
+            ):
+                ends.setdefault(name_key(sp), have_name)
 
     def entry(name: str) -> str | None:
         ids = {e.entity_id for e in lookup.by_key.get(name_key(name), ()) if not e.person}
@@ -881,7 +894,7 @@ async def queue_links(
     picks: list[bg.Pick] = []
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
-        questions=questions, speaker=speaker, picks=picks,
+        questions=questions, speaker=speaker, picks=picks, secret_keys=secret_spellings,
     )  # fmt: skip
     # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
     # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does

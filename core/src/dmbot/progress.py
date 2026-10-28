@@ -35,6 +35,12 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "deleting": 10 * 60,  # a person's lines being deleted at their asking (#2769)
     "reading": 5 * 60,  # ... then reads the campaign
     "packing": 5 * 60,  # ... and packs it
+    # A backup loaded on the website (#2745): the person's own files arriving (waits for them),
+    # the bot taking it, reading the copy, then writing the campaign.
+    "restore_receiving": None,
+    "restore_waiting": 2 * 60,
+    "restore_reading": 5 * 60,
+    "restore_writing": 15 * 60,
     "sharing": 5 * 60,  # a sharing choice the bot is applying (#2783)
     # The steps of a recap being made on the website's page (#2636; `recaps.progress`). The name
     # pass wait is touched every half minute; a part of a long session can take a while.
@@ -71,6 +77,7 @@ UNITS: Final[Mapping[str, str]] = {
     "cleaning": "lines",
     "audio_voice": "parts",
     "recap_reading": "parts",
+    "restore_writing": "parts",
 }
 
 

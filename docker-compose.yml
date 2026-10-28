@@ -157,6 +157,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Sharing house rules from the website (#2783): off, the routes that queue a choice are 404.
       DMBOT_WEB_RULE_SHARING: ${DMBOT_WEB_RULE_SHARING:-0}
+      # Character sheets on the website (#2816): off, the routes that show or queue them are 404.
+      DMBOT_WEB_SHEETS: ${DMBOT_WEB_SHEETS:-0}
       # "Make it again" on a session's report (#2661): off, the route that queues the request is 404.
       DMBOT_WEB_REPORT_MAKE: ${DMBOT_WEB_REPORT_MAKE:-0}
       # Search by meaning on the Names page (#2733): the same switch, key and models as the bot.
@@ -189,6 +191,8 @@ services:
       DMBOT_HANDOVER_EMAIL: ${DMBOT_HANDOVER_EMAIL:-0}
       # A person's own "Delete my transcripts" on the website (#2769): off, its routes answer 404.
       DMBOT_WEB_LINE_DELETE: ${DMBOT_WEB_LINE_DELETE:-0}
+      # Load a backup from the website (#2745): off, its routes answer 404, until the bot's half is live.
+      DMBOT_WEB_RESTORE: ${DMBOT_WEB_RESTORE:-0}
       # Game masters added and removed on the website (#2768): off, those routes answer 404.
       DMBOT_WEB_CO_DMS: ${DMBOT_WEB_CO_DMS:-0}
       DMBOT_PLOT_CHECK: ${DMBOT_PLOT_CHECK:-0}

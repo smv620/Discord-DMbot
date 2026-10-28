@@ -45,6 +45,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "httpx>=0.27",  # testing the web API in-process
+    "import-linter>=2.0",  # feature boundaries, checked in CI (#2130)
 ]
 
 [project.scripts]
@@ -76,6 +77,59 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = ["dotenv", "faster_whisper", "av", "pypdfium2", "pypdfium2.raw"]
 ignore_missing_imports = true
+
+# Feature boundaries (#2130, docs/PLAN.md "A worker container, and a smaller bot.py"). Run
+# `lint-imports` in core/. Each ignored import below is an exception that exists today; every one
+# cites #2827, which removes them, so the list only shrinks. A new forbidden import fails CI.
+[tool.importlinter]
+root_package = "dmbot"
+
+[[tool.importlinter.contracts]]
+name = "Features never import bot.py"
+type = "forbidden"
+source_modules = [
+    "dmbot.recaps", "dmbot.memory", "dmbot.rules", "dmbot.sidebar", "dmbot.transcript",
+    "dmbot.web", "dmbot.campaigns", "dmbot.names", "dmbot.timebot", "dmbot.dm_screen",
+    "dmbot.audio", "dmbot.transcription",
+]
+forbidden_modules = ["dmbot.bot"]
+allow_indirect_imports = true
+ignore_imports = [
+    "dmbot.recaps.discord -> dmbot.bot",  # type-only (#2827)
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain packages never import the Discord screens (ui)"
+type = "forbidden"
+source_modules = [
+    "dmbot.memory", "dmbot.rules", "dmbot.transcript", "dmbot.campaigns", "dmbot.names",
+    "dmbot.timebot", "dmbot.sidebar", "dmbot.audio", "dmbot.transcription", "dmbot.web",
+]
+forbidden_modules = ["dmbot.ui"]
+allow_indirect_imports = true
+ignore_imports = [  # all #2827
+    "dmbot.sidebar.answer -> dmbot.ui.rule_card",
+    "dmbot.sidebar.looked -> dmbot.ui.logic",
+    "dmbot.sidebar.looked -> dmbot.ui.rule_card",
+    "dmbot.sidebar.looked -> dmbot.ui.rule_lookup",
+    "dmbot.sidebar.service -> dmbot.ui.looked_at",
+    "dmbot.sidebar.service -> dmbot.ui.rule_clash",
+]
+
+[[tool.importlinter.contracts]]
+name = "Lower packages never import recaps or web"
+type = "forbidden"
+source_modules = [
+    "dmbot.memory", "dmbot.rules", "dmbot.transcript", "dmbot.campaigns", "dmbot.names",
+    "dmbot.timebot", "dmbot.audio", "dmbot.transcription",
+]
+forbidden_modules = ["dmbot.recaps", "dmbot.web"]
+allow_indirect_imports = true
+ignore_imports = [  # all #2827
+    "dmbot.campaigns.moves -> dmbot.recaps.store",
+    "dmbot.memory.plot_talk -> dmbot.recaps.feedback",
+    "dmbot.transcript.respell -> dmbot.recaps.store",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

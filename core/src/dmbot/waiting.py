@@ -66,6 +66,7 @@ class WaitingMessage:
         *,
         stall_after_s: float | None = None,
         stops_at_s: float | None = None,
+        stall_note: str = "",
         gone: Callable[[BaseException], bool] = lambda _exc: False,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -74,13 +75,15 @@ class WaitingMessage:
         show_after: float = SHOW_ELAPSED_AFTER_S,
     ) -> None:
         """`stall_after_s`: no movement for this long is named as a stall. `stops_at_s`: when the
-        job stops by itself (seconds since `started`), said in the stall line. `gone(exc)`: True
-        for an error that means the message cannot be edited any more. `started`: the clock
-        reading when the DM clicked, if that was earlier than this object."""
+        job stops by itself (seconds since `started`), said in the stall line. `stall_note`: words
+        after "No change for N min." for a job with no stop time (what the person can do).
+        `gone(exc)`: True for an error that means the message cannot be edited any more.
+        `started`: the clock reading when the DM clicked, if that was earlier than this object."""
         self._edit = edit
         self._title = title
         self._stall_after = stall_after_s
         self._stops_at = stops_at_s
+        self._stall_note = stall_note
         self._gone = gone
         self._clock = clock
         self._sleep = sleep
@@ -124,6 +127,8 @@ class WaitingMessage:
                 stop = elapsed_text(self._stops_at)
                 kept = "keep what it has" if self._keeps else "add nothing"
                 stall += f" DMbot will stop by itself at {stop} and {kept}."
+            if self._stall_note:
+                stall += f" {self._stall_note}"
             notes.append(stall)
         elif still >= SHOW_LAST_CHANGE_AFTER_S:
             notes.append(f"Last change {ago_text(still)} ago.")
