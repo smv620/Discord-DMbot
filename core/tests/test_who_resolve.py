@@ -14,8 +14,9 @@ from unittest.mock import AsyncMock, patch
 from dmbot.ai import Reply
 from dmbot.memory import background as bg
 from dmbot.memory import who_ask, who_resolve
-from dmbot.memory.backstory_links import BackstoryLinks
+from dmbot.memory.backstory_links import BackstoryLinks, NewLink
 from dmbot.memory.models import CONFIRMED, NewName
+from dmbot.memory.which_else import none_of_these
 from dmbot.memory.who_is_it import NOT_LISTED, Candidate
 from dmbot.ui import name_background as ui_bg
 from tests.test_memory_names import GUILD, NamesTest
@@ -120,6 +121,31 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Mara", kept.quote)
         self.assertIn("sister of Ken", kept.quote)
         self.assertEqual(out.counts["accepted"], 1)
+
+    def test_how_each_pronoun_was_settled_is_recorded_in_fixed_words_and_a_rounded_score(
+        self,
+    ) -> None:
+        for answer, want, where in (
+            (asked(("Mara", 94.6), ("Bram", 5)), "who-is-it: accepted 95%", "connections"),
+            (asked(("Mara", 55), ("Bram", 45)), "who-is-it: asked 55%", "picks"),
+            (asked((NOT_LISTED, 90)), "who-is-it: nobody listed 90%", "unnamed"),
+            (None, "who-is-it: not checked", "unnamed"),
+        ):
+            out = who_resolve.Settled()
+            who_resolve._use(unsettled_of(), answer, out)
+            (got,) = getattr(out, where)
+            self.assertEqual(got.decided, want)
+            self.assertLessEqual(len(got.decided), 60)
+            self.assertNotIn("Mara", got.decided)  # (words and a number: never a name)
+
+    async def test_the_cap_and_the_clock_are_recorded_as_not_checked(self) -> None:
+        client = Scripted([("Mara", 95)], "Mara")
+        out = await who_resolve.settle(
+            [unsettled_of(), unsettled_of()], client, ["Mara", "Ken"], cap=1
+        )
+        self.assertEqual(out.unnamed[0].decided, "who-is-it: not checked, over the limit")
+        late = await who_resolve.settle([unsettled_of()], client, ["Mara"], time_limit_s=-1.0)
+        self.assertEqual(late.unnamed[0].decided, "who-is-it: not checked, out of time")
 
     def test_a_sure_answer_that_names_someone_else_is_a_question_not_a_guess(self) -> None:
         out = who_resolve.Settled()
@@ -258,6 +284,94 @@ class ThePath(NamesTest):
             unsettled=[unsettled_of()], who_ai=client,
         )  # fmt: skip
         return queued, lost
+
+    async def test_how_it_was_decided_waits_with_the_connection_and_shows_on_its_card(self) -> None:
+        await self.run_links(Scripted([("Mara", 95), ("Bram", 5)], "Mara"))
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertRegex(w.decided, r"^who-is-it: accepted \d+%$")
+        view = ui_bg.ConnectionOffer(self.campaign.id)
+        self.assertTrue(await view.load(self.it()))
+        self.assertIn("DMbot matched this name from your text.", view.text())
+
+    async def test_how_it_was_decided_goes_with_a_question_through_its_answer(self) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual(q.decided, "who-is-it: asked 90%")
+        view = ui_bg.WhichOffer(self.campaign.id)
+        await view.load(self.it())
+        self.assertIn("DMbot wasn't sure who the text means. Please check.", view.text())
+        with patch("dmbot.ui.name_background.offer_ready", new=AsyncMock()):
+            await view.children[0].callback(self.it())  # Mara
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(w.decided, "who-is-it: picked by the DM")  # not "wasn't sure" any more
+
+    def test_every_stored_check_has_plain_words_and_no_score(self) -> None:
+        for stored, want in (
+            ("who-is-it: accepted 95%", "DMbot matched this name from your text.\n"),
+            ("who-is-it: asked 55%", "DMbot wasn't sure who the text means. Please check.\n"),
+            (
+                "who-is-it: nobody listed 20%",
+                "DMbot couldn't tell who the text means. No name picked.\n",
+            ),
+            ("who-is-it: not checked", "DMbot didn't check this one. Please check it yourself.\n"),
+            ("who-is-it: not checked, over the limit", "Please check it yourself.\n"),
+            ("who-is-it: not checked, out of time", "Please check it yourself.\n"),
+        ):
+            got = who_resolve.checked_line(stored)
+            self.assertTrue(got.endswith(want), got)
+            self.assertNotIn("%", got)
+        self.assertEqual(
+            (who_resolve.checked_line(""), who_resolve.checked_line("other")), ("", "")
+        )
+
+    async def test_a_merge_while_it_waits_keeps_how_it_was_decided(self) -> None:
+        await self.run_links(Scripted([("Mara", 95), ("Bram", 5)], "Mara"))
+        made = await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Mara Vell", "npc", CONFIRMED)], source="dm"
+        )
+        (vell,) = made.value
+        assert vell and self.mara
+        await self.memory.merge(
+            GUILD, self.campaign.id, vell, self.mara, source="dm", dm_said_same=True
+        )
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertRegex(w.decided, r"^who-is-it: accepted \d+%$")
+
+    async def test_a_long_check_is_cut_to_the_column_and_a_full_queue_keeps_the_question(
+        self,
+    ) -> None:
+        assert self.mara and self.ken
+        long = NewLink(self.mara, "knows", self.ken, "q", decided="x" * 200)
+        self.assertEqual(await self.store.add(GUILD, self.campaign.id, [long]), 1)
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(len(w.decided), 60)
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        with patch("dmbot.memory.backstory_links.MAX_WAITING", 0):
+            self.assertEqual(
+                await self.store.pick_which(GUILD, self.campaign.id, q.id, self.mara), "full"
+            )
+        (still,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual(still.decided, q.decided)
+
+    async def test_someone_else_is_recorded_as_the_dms_choice(self) -> None:
+        await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        none = await none_of_these(self.memory, self.store, GUILD, self.campaign.id, q)
+        self.assertEqual(none, "done")
+        (w,) = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(w.decided, "who-is-it: kept as someone else")
+        self.assertIn("You chose someone else", who_resolve.checked_line(w.decided))
+        self.assertIn(
+            "You picked this name", who_resolve.checked_line("who-is-it: picked by the DM")
+        )
+
+    async def test_an_ordinary_connection_has_no_check_line(self) -> None:
+        plain = [[bg.Connection("Mara", "knows", "Ken", "q")]]
+        await ui_bg.queue_links(self.bot, self.memory, self.campaign, [], plain, set())
+        view = ui_bg.ConnectionOffer(self.campaign.id)
+        await view.load(self.it())
+        self.assertNotIn("DMbot matched", view.text())
 
     async def test_off_the_line_is_left_out_and_counted_as_before(self) -> None:
         queued, lost = await self.run_links(None)

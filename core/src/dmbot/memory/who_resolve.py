@@ -48,6 +48,7 @@ class UnnamedLink:
     anchored: bool
     role: str
     secret: bool = False  # set by the caller from the named end, as `keep_connections` does
+    decided: str = ""  # how it was settled, in fixed words (#2790)
 
 
 @dataclass
@@ -58,6 +59,34 @@ class Settled:
     # Counts only (never a name): accepted, asked, unnamed, over_cap, over_time, ai_failed, unsure.
     counts: Counter[str] = field(default_factory=Counter)
     unresolved: int = 0  # lines that could not be kept in any form: counted as `not_in_text`
+
+
+def decided_words(what: str, score: float | None = None) -> str:
+    """How a pronoun was settled, in fixed words and a rounded score only (never a name or any
+    text), kept with the waiting connection so the DM sees DMbot's check beside the quote."""
+    return f"who-is-it: {what}" + (f" {round(score)}%" if score is not None else "")
+
+
+def checked_line(decided: str) -> str:
+    """DMbot's check of a pronoun, in plain words, for a card ("" when there was none, #2790). The
+    stored words are fixed (`who_resolve.decided_words`), so this maps them one by one. No score is
+    shown: a DM at the table cannot act on a percentage, and "sure" would invite a rubber stamp."""
+    how = decided.removeprefix("who-is-it: ").strip()
+    if not how or how == decided:
+        return ""
+    if how.startswith("picked by the DM"):
+        return "You picked this name.\n"
+    if how.startswith("kept as someone else"):
+        return "You chose someone else for this one.\n"
+    if how.startswith("accepted"):
+        return "DMbot matched this name from your text.\n"
+    if how.startswith("asked"):
+        return "DMbot wasn't sure who the text means. Please check.\n"
+    if how.startswith(("nobody listed", "unsure")):
+        return "DMbot couldn't tell who the text means. No name picked.\n"
+    if how.startswith("not checked"):
+        return "DMbot didn't check this one. Please check it yourself.\n"
+    return ""
 
 
 def window_of(passage: str) -> str:
@@ -74,7 +103,7 @@ def _missing(u: bg.Unsettled) -> str:
     return u.made.a if u.missing_is_a else u.made.b
 
 
-def _unnamed(u: bg.Unsettled, quote: str) -> UnnamedLink:
+def _unnamed(u: bg.Unsettled, quote: str, decided: str) -> UnnamedLink:
     kin = u.made.how == "kin_of" and bool(u.made.words)
     return UnnamedLink(
         fixed=_fixed(u),
@@ -85,10 +114,11 @@ def _unnamed(u: bg.Unsettled, quote: str) -> UnnamedLink:
         what=u.made.words if kin else SOMEONE,
         anchored=kin,
         role=u.made.words or u.made.how,
+        decided=decided,
     )
 
 
-def _pick(u: bg.Unsettled, quote: str, names: Sequence[str]) -> bg.Pick | None:
+def _pick(u: bg.Unsettled, quote: str, names: Sequence[str], decided: str) -> bg.Pick | None:
     """The question for the DM: two or three names, the best first, never the named end itself."""
     fixed = name_key(_fixed(u))
     chosen: list[str] = []
@@ -101,7 +131,7 @@ def _pick(u: bg.Unsettled, quote: str, names: Sequence[str]) -> bg.Pick | None:
         return None
     return bg.Pick(
         _fixed(u), not u.missing_is_a, u.phrase, tuple(chosen), u.made.how, quote, False,
-        u.made.words,
+        u.made.words, decided,
     )  # fmt: skip
 
 
@@ -110,12 +140,12 @@ def _use(u: bg.Unsettled, asked: who_ask.Asked | None, out: Settled) -> None:
     quote = window_of(u.passage)
     if asked is None:  # the AI could not answer: the relationship is kept, nothing guessed
         out.counts["ai_failed"] += 1
-        out.unnamed.append(_unnamed(u, quote))
+        out.unnamed.append(_unnamed(u, quote, decided_words("not checked")))
         return
     decision = who_ask.decide_asked(asked)
     if decision.verdict is Verdict.UNNAMED:
         out.counts["unnamed"] += 1
-        out.unnamed.append(_unnamed(u, quote))
+        out.unnamed.append(_unnamed(u, quote, decided_words("nobody listed", decision.top)))
         return
     top = decision.name or ""
     ranked = [c.name for c in asked.candidates]
@@ -126,15 +156,17 @@ def _use(u: bg.Unsettled, asked: who_ask.Asked | None, out: Settled) -> None:
     )
     if decision.verdict is Verdict.ACCEPT and agrees and shown:
         out.counts["accepted"] += 1
-        out.connections.append(replace(u.made, quote=quote))
+        out.connections.append(
+            replace(u.made, quote=quote, decided=decided_words("accepted", decision.top))
+        )
         return
     # A doubt (the rule asked, or the AI's own reading and the check disagree, or the named end is
     # too far back to show in the quote): the DM decides between the names.
     order = [top, _missing(u), *ranked]
-    pick = _pick(u, quote, order)
+    pick = _pick(u, quote, order, decided_words("asked", decision.top))
     if pick is None:  # (no name at all to offer: the relationship is kept with an unnamed person)
         out.counts["unsure"] += 1
-        out.unnamed.append(_unnamed(u, quote))
+        out.unnamed.append(_unnamed(u, quote, decided_words("unsure", decision.top)))
         return
     out.counts["asked"] += 1
     out.picks.append(pick)
@@ -169,12 +201,16 @@ async def settle(
     for index, u in enumerate(ordered):
         if index >= cap:
             out.counts["over_cap"] += 1
-            out.unnamed.append(_unnamed(u, window_of(u.passage)))
+            out.unnamed.append(
+                _unnamed(u, window_of(u.passage), decided_words("not checked, over the limit"))
+            )
             continue
         left = stop - time.monotonic()
         if left <= 0:
             out.counts["over_time"] += 1
-            out.unnamed.append(_unnamed(u, window_of(u.passage)))
+            out.unnamed.append(
+                _unnamed(u, window_of(u.passage), decided_words("not checked, out of time"))
+            )
             continue
         offered = bg.names_in(u.passage[-who_ask.MAX_PASSAGE_CHARS :], names)
         try:
@@ -183,7 +219,9 @@ async def settle(
             )
         except TimeoutError:  # (cut at the deadline: kept unnamed like a failed call)
             out.counts["over_time"] += 1
-            out.unnamed.append(_unnamed(u, window_of(u.passage)))
+            out.unnamed.append(
+                _unnamed(u, window_of(u.passage), decided_words("not checked, out of time"))
+            )
         else:
             _use(u, asked, out)
         if progress is not None:

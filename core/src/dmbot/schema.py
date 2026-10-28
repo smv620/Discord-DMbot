@@ -14043,6 +14043,23 @@ BACKSTORY_LINK_UPLOAD = """
         ADD COLUMN told BOOLEAN NOT NULL DEFAULT false;
 """
 
+BACKSTORY_DECIDED = """
+    -- How a pronoun in a lore read was settled (#2790): fixed words and a rounded score only
+    -- ("who-is-it: accepted 95%", "who-is-it: not checked"), never a name or any text. Kept with a
+    -- waiting connection or question so the DM sees DMbot's check beside the quote. No existing row
+    -- changes (the default is empty).
+    ALTER TABLE backstory_links
+        ADD COLUMN decided TEXT NOT NULL DEFAULT '' CHECK (char_length(decided) <= 60);
+    ALTER TABLE backstory_which
+        ADD COLUMN decided TEXT NOT NULL DEFAULT '' CHECK (char_length(decided) <= 60);
+
+    -- The same note on the kept relationship, for the DM's card only (never in a door, a search or
+    -- a player's view): NULL unless the relationship came from a pronoun DMbot settled. It is
+    -- carried in the change log, merges (the row is kept) and backups.
+    ALTER TABLE memory_relations
+        ADD COLUMN decided TEXT CHECK (decided IS NULL OR char_length(decided) <= 60);
+"""
+
 BACKSTORY_WHICH = """
     -- A backstory connection whose one end fits two names equally ("Mara" when the campaign has
     -- Mara Ashgrove and Mara Voss) waits here for the DM to pick (#2650), instead of being left
@@ -16545,6 +16562,14 @@ WEB_RULE_ACTIONS = (
 """
 )
 
+REPORT_FIXED_REMIND = """
+    -- A `fixed` answer (#2661) replaces a "remind me": the date goes here, so Undoing the change
+    -- that fixed the item puts the reminder back as it was.
+    ALTER TABLE report_answers ADD COLUMN remind_was BIGINT;
+    ALTER TABLE report_answers ADD CONSTRAINT report_answers_remind_was
+        CHECK (remind_was IS NULL OR answer = 'fixed');
+"""
+
 WEB_REPORT_REQUESTS = (
     r"""
     -- A DM's "make the report again" for one session, asked for on the website (#2661), waiting
@@ -17392,6 +17417,11 @@ MIGRATIONS: tuple[Migration, ...] = (
         WEB_REPORT_REQUESTS,
     ),  # make the report again, on the website (#2661)
     ("0266_web_name_unnamed", WEB_NAME_UNNAMED),  # "Not named yet" on the Names page (#2803)
+    ("0267_who_is_it_decided", BACKSTORY_DECIDED),  # how a pronoun was settled (#2790)
+    (
+        "0269_report_fixed_remind",
+        REPORT_FIXED_REMIND,
+    ),  # Undo of a fix gives a reminder back (#2661)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema

@@ -33,7 +33,16 @@ from typing import Any
 from psycopg import errors, sql
 
 from dmbot.db import Database, row_int
-from dmbot.memory import beliefs, evidence, kin, merge_restore, notify, standing, states
+from dmbot.memory import (
+    beliefs,
+    evidence,
+    kin,
+    merge_restore,
+    notify,
+    report_fixed,
+    standing,
+    states,
+)
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
@@ -245,6 +254,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
+        r.get("decided"),
     )  # fmt: skip
 
 
@@ -268,6 +278,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "definition_version": rel.definition_version,
         "unrevealed": rel.unrevealed,
         "directional": rel.directional,
+        "decided": rel.decided,
     }
 
 
@@ -420,6 +431,10 @@ class MemoryStore:
                 undoes=undoes,
             )  # fmt: skip
             yield changes
+            if changes.relation_changes or changes.belief_additions or changes.deleted_items:
+                await self._report_fixed(conn, guild_id, campaign_id, changes)
+            if changes.restored or changes.unbelieved:
+                await self._report_unfixed(conn, guild_id, campaign_id, changes)
             if changes.version != start:
                 await conn.execute(
                     "UPDATE campaigns SET memory_version = %s WHERE guild_id = %s AND id = %s",
@@ -428,6 +443,52 @@ class MemoryStore:
                 names_changed = bool(changes.tables & notify.LOOKUP_TABLES)
                 kinds_changed = bool(changes.tables & notify.KIND_TABLES)
                 await notify.send(conn, campaign_id, changes.version, names_changed, kinds_changed)
+
+    async def _report_fixed(
+        self, conn: Any, guild_id: int, campaign_id: str, changes: Changes
+    ) -> None:
+        """The DM changed a connection: an after-session item that names it is what they fixed
+        (#2661). In the same transaction as the change, so a failed write marks nothing."""
+        moved: set[str] = set()
+        for op, before, after in changes.relation_changes:
+            # (a delete was looked up before it ran: see `Changes.deleted_items`)
+            if after is not None and report_fixed.changed_meaning(op, before, after):
+                moved.add(str(after["id"]))
+        keys = set(changes.deleted_items)
+        keys |= await report_fixed.names(conn, guild_id, campaign_id, moved)
+        keys |= await report_fixed.denied_by(conn, guild_id, campaign_id, changes.belief_additions)
+        await report_fixed.record(conn, guild_id, campaign_id, keys, int(self._clock()))
+
+    async def _report_unfixed(
+        self, conn: Any, guild_id: int, campaign_id: str, changes: Changes
+    ) -> None:
+        """An Undo gave connections their old meaning back, or took The truth's belief away: a
+        `fixed` answer on an item that change fixed was the change just taken back, so the item
+        shows again, with a "remind me" it replaced (#2661). A pin, a secret flag or a reveal
+        undone changes none of that. Other answers stay."""
+        keys = await report_fixed.names(conn, guild_id, campaign_id, changes.restored)
+        if changes.unbelieved:
+            cur = await conn.execute(
+                "SELECT DISTINCT u.r FROM unnest(%s::text[], %s::text[]) AS u(p, r)"
+                " JOIN memory_perspectives t ON t.guild_id = %s AND t.campaign_id = %s"
+                " AND t.id = u.p AND t.kind = 'truth'"  # only The truth's beliefs fix an item
+                " WHERE NOT EXISTS (SELECT 1 FROM memory_beliefs b"
+                " JOIN memory_perspectives p ON p.guild_id = b.guild_id"
+                " AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
+                " AND p.kind = 'truth'"
+                " WHERE b.guild_id = %s AND b.campaign_id = %s AND b.relation_id = u.r)",
+                (
+                    [p for p, _ in changes.unbelieved],
+                    [r for _, r in changes.unbelieved],
+                    guild_id,
+                    campaign_id,
+                    guild_id,
+                    campaign_id,
+                ),
+            )  # (a belief of The truth's that is still there keeps the fix)
+            bare = [row["r"] for row in await cur.fetchall()]
+            keys |= await report_fixed.denied_names(conn, guild_id, campaign_id, bare)
+        await report_fixed.give_back(conn, guild_id, campaign_id, [k for _, k in keys])
 
     @asynccontextmanager
     async def _read(
@@ -3513,6 +3574,7 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        decided: str | None = None,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -3526,7 +3588,7 @@ class MemoryStore:
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
-                directional=directional,
+                directional=directional, decided=decided,
             )  # fmt: skip
             return Written(value, w.batch)
 
@@ -3546,6 +3608,7 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        decided: str | None = None,
         fresh: bool = False,
         leave: bool = False,
         made_by: str | None = None,
@@ -3598,7 +3661,7 @@ class MemoryStore:
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-            pred.version, unrevealed, directional,
+            pred.version, unrevealed, directional, (decided or None),
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
