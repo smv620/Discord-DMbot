@@ -1584,6 +1584,7 @@ function MoveSection() {
 /** Where DMbot may record you (#1151): each server with Stop recording me, the same one short
  * warning and one confirmation as the bot's Menu. Starting again stays in Discord. */
 function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
+  const { api } = useShared();
   const [done, setDone] = useState<string[]>([]);
   // The row goes with the refresh after a stop, so what was done is said here, above the list.
   if (entries.length === 0 && done.length === 0) return null;
@@ -1595,6 +1596,7 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
           {line}
         </p>
       ))}
+      {DELETE_MY_LINES_LIVE && api.myLines && <p class="small muted">{text.recordingLeft}</p>}
       <ul class="campaigns">
         {entries.map((e) => (
           <RecordingRow

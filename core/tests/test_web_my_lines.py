@@ -339,3 +339,40 @@ class TheRoutes(LinesBase):
             got = await client.request(method, path, headers=HEADERS)
             self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"), path)
         self.assertEqual(await self.rows(), [])
+
+
+class TheWordsAreDiscords(LinesBase):
+    """The website says what Discord's 🗑 flow says, word for word (CLAUDE.md: same words where
+    they fit). The page's words are checked against this file in
+    `web/test/delete-my-lines.test.tsx`; this keeps the file equal to Discord's own text, so
+    changing Discord's words fails here until the file (and so the page) is updated too."""
+
+    def test_the_shared_file_equals_discords_text(self) -> None:
+        import json
+        from pathlib import Path
+
+        from dmbot import consent_dm as c
+
+        def plain(text: str) -> str:
+            return text.replace(
+                "**", ""
+            )  # (Discord shows the server name in bold; the page does not)
+
+        expected = {
+            "label": c.DELETE_LABEL,
+            "yes": c.DELETE_YES_LABEL,
+            "cancel": c.DELETE_NO_LABEL,
+            "kept": c.DELETE_KEPT,
+            "failed": c.DELETE_FAILED,
+            "warning_12_3": plain(c.delete_warning_text("Thursday Table", 12, 3)),
+            "warning_1_1": plain(c.delete_warning_text("Thursday Table", 1, 1)),
+            "done": plain(c.delete_done_text("Thursday Table")),
+            "nothing": plain(c.delete_nothing_text("Thursday Table")),
+        }
+        path = Path(__file__).resolve().parents[2] / "web/test/fixtures/discord-delete-words.json"
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8")),
+            expected,
+            "Discord's delete words changed: update web/test/fixtures/discord-delete-words.json "
+            "and the page's words (web/src/content/delete-my-lines-words.ts) to match",
+        )

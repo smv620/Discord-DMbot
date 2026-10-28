@@ -4,8 +4,10 @@
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
 export const deleteMyLinesWords = {
-  button: "Delete my transcripts",
+  /** Discord's own label (consent_dm.DELETE_LABEL), the 🗑 included. */
+  button: "🗑 Delete my transcripts",
   buttonFor: (server: string): string => `Delete my transcripts in ${server}`,
+  sending: "Sending…",
   looking: "Checking what DMbot wrote down…",
   checkAgain: "Check again",
   /** The one warning: plain facts, what it covers and that it can't be undone. */
@@ -15,7 +17,7 @@ export const deleteMyLinesWords = {
   cancel: "Cancel",
   kept: "OK, nothing was deleted.",
   nothing: (server: string): string => `DMbot has nothing written down from you in ${server}, so there is nothing to delete.`,
-  done: (server: string, lines: number): string => `Done. Deleted ${plural(lines, "line", "lines")} you said from ${server}'s transcripts.`,
+  done: (server: string): string => `🗑 Done. What you said is deleted from ${server}'s transcripts.`,
   // The wait for the bot's answer (#2564): DMbot's stage, how long, when it last moved.
   stage: {
     waiting: "Waiting for DMbot to pick it up.",
@@ -23,7 +25,9 @@ export const deleteMyLinesWords = {
     done: "Done.",
     failed: "That didn't work.",
   } as Record<string, string>,
-  quiet: "Still waiting for DMbot. Nothing is deleted yet. You can leave this page and come back.",
+  /** Quiet words that say what is true at the stage the request is in. */
+  quietWaiting: "Still waiting for DMbot to pick it up. Nothing is deleted yet. You can leave this page and come back.",
+  quietDeleting: "DMbot started deleting but hasn't said it is finished. Some of your lines may already be gone. You can leave this page and come back.",
   gaveUp: "DMbot hasn't answered in an hour. It may still delete what you said. Check back later, and don't ask again until then.",
   problem: {
     "not-found": "DMbot can't find that server any more. Reload the page. If it is still missing, ask your DM.",
