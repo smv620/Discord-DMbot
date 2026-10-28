@@ -485,10 +485,6 @@ class TheRoute(Web):
             self.assertEqual(cross.status_code, 404)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheCheck(Web):
     """DMbot's check of a pronoun (#2859): a DM's connection says it in words, a member's never."""
 
@@ -509,6 +505,8 @@ class TheCheck(Web):
         self.assertEqual(dm[self.links["mira-keep"]], "")  # nothing decided: nothing shown
         member = checks(await self.graph(self.player))
         self.assertEqual(set(member.values()) - {""}, set())  # a member never gets one
+        as_players = checks(await self.graph(view="players"))  # a DM looking as the players do
+        self.assertEqual(set(as_players.values()) - {""}, set())
 
 
 class TheCheckWords(unittest.TestCase):
@@ -527,6 +525,18 @@ class TheCheckWords(unittest.TestCase):
             self.assertNotEqual(words, "", decided)
             self.assertNotIn("%", words)  # (a number is never shown)
 
+    def test_an_edge_row_without_a_note_has_no_words(self) -> None:
+        rows = [
+            {"id": "x" * 32, "a": "a" * 32, "b": "b" * 32, "predicate": "knows", "detail": "",
+             "secret": False, "at": 1},
+        ]  # fmt: skip
+        (edge,) = relationships.edges_from(rows, can_edit=True)
+        self.assertEqual(edge["links"][0]["check"], "")
+
     def test_nothing_or_something_else_is_no_words(self) -> None:
         for odd in ("", "other", "who-is-it: ", None, 5):
             self.assertEqual(relationships.check_words(odd), "", repr(odd))
+
+
+if __name__ == "__main__":
+    unittest.main()
