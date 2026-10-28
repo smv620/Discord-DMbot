@@ -21,7 +21,9 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.memory import report_fixed
 from dmbot.memory.contradictions import Candidate
+from dmbot.memory.report_keys import CONTRADICTION, contradiction_key
 from dmbot.memory.store import MemoryStore
 
 MAJOR, MINOR, NOT_GRADED = "major", "minor", "not_graded"
@@ -79,6 +81,7 @@ class GradeStore:
         the time a major one was told). One that names a connection or point of view gone since
         it was found is skipped. How many were kept."""
         kept = 0
+        found: list[str] = []
         async with self._db.guild(guild_id) as conn:
             for g in graded:
                 c = g.candidate
@@ -114,6 +117,13 @@ class GradeStore:
                     ),
                 )  # fmt: skip
                 kept += cur.rowcount
+                if cur.rowcount:  # found again: a "fixed" answer on it was wrong (#2661)
+                    found.append(
+                        contradiction_key(
+                            c.perspective_id, c.kind, c.first_relation_id, c.second_relation_id
+                        )
+                    )
+            await report_fixed.give_back(conn, guild_id, campaign_id, found)
         return kept
 
     async def rows(
@@ -175,4 +185,12 @@ class GradeStore:
                     (guild_id, campaign_id, *key),
                 )
                 dropped += gone.rowcount
+            # (an item no longer found takes its "fixed" answer with it, #2661)
+            await report_fixed.forget_unfound(
+                conn,
+                guild_id,
+                campaign_id,
+                CONTRADICTION,
+                [contradiction_key(*k) for k in keep],
+            )
         return dropped

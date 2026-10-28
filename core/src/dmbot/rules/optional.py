@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from dmbot.campaigns.models import FALLBACK_NONE, RULESETS
+
 XANATHAR = "Xanathar's Guide to Everything"
 TASHA = "Tasha's Cauldron of Everything"
 
@@ -119,3 +121,41 @@ def covered_by(target_ruleset: str) -> list[OptionalRule]:
 def is_on(rule_id: str, overrides: Mapping[str, bool], default: bool) -> bool:
     """A rule the DM switched keeps that choice; any other follows the campaign default."""
     return overrides.get(rule_id, default)
+
+
+# Said after a saved optional rule when the DM screen could not be told. One text for Discord's
+# menu and the website's Settings tab, so the two never drift apart.
+NO_SCREEN_NOTE = (
+    "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that "
+    "channel; `/dmbot start` sets it up again next session."
+)
+
+
+def screen_line(rule: OptionalRule, turn_on: bool, by: str) -> str:
+    """The DM screen's record of a rule switched on or off. `by` is the mention of whoever chose
+    it (the DM screen's own posts never ping)."""
+    mark, word = ("✅", "on") if turn_on else ("⬜", "off")
+    return f"{mark} Optional rule turned {word}: **{rule.name}** (by {by})"
+
+
+def main_rules(target_ruleset: str) -> str:
+    """The main rules' name for a sentence: without "(newest)", which reads oddly mid-sentence.
+    Discord's list and the website's Settings tab both get it here (#2753), so they can't drift."""
+    if target_ruleset in RULESETS:
+        return f"{target_ruleset} rules"
+    if target_ruleset == FALLBACK_NONE:
+        return "None (main rules only)"
+    return RULESETS.get(target_ruleset, target_ruleset)
+
+
+def covered_note(target_ruleset: str) -> str:
+    """The sentence naming the rules left out for these main rules because they have their own
+    version, built from the catalog so it can't drift; empty when nothing is left out."""
+    names = [r.name[0].lower() + r.name[1:] for r in covered_by(target_ruleset)]
+    if not names:
+        return ""
+    return (
+        f"Not listed, because the {target_ruleset} rules have their own version: "
+        + ", ".join(names)
+        + "."
+    )

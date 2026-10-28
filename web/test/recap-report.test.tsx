@@ -80,6 +80,12 @@ describe("the report", () => {
     expect(document.body.textContent).not.toContain("THE WORDS A PLAYER SAID");
   });
 
+  it("a report the call limit cut short never reads as nothing to check", async () => {
+    await open("100.cmp1.report-cut");
+    await screen.findByText(w.leftForNextTime);
+    expect(screen.queryByText(w.empty)).toBeNull();
+  });
+
   it("says there is nothing to check when the report is empty", async () => {
     await open("100.cmp1.report-empty");
     await screen.findByText(w.empty);
@@ -305,6 +311,33 @@ describe("making the report", () => {
       await vi.advanceTimersByTimeAsync(7000);
     });
     await screen.findByText(/2 that may not fit/);
+  });
+
+  it("shows a report that was asked for and not started yet as waiting, with its clock (#2661)", async () => {
+    const api = mockApi("table");
+    const waiting: SessionReport = {
+      session: { at: AT },
+      state: "making",
+      progress: { stage: "waiting", done: null, total: null, unit: null, startedAt: 1, updatedAt: 1, serverNow: 10, state: "running", reason: null },
+      counts: { contradictions: 0, disguised: 0, misunderstood: 0, false: 0, open: 0, answered: 0 },
+      contradictions: [],
+      differences: { disguised: [], misunderstood: [], false: [] },
+    };
+    api.sessionReport = async () => waiting;
+    await open("100.cmp1", api);
+    expect(await screen.findByText(w.stages["waiting"] as string)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.make })).toBeNull(); // no second press while it waits
+  });
+
+  it("says so when making it again did not work, keeps the old report, and offers Try again (#2661)", async () => {
+    const api = mockApi("table");
+    const first = await api.sessionReport!("100.cmp1", AT);
+    api.sessionReport = async () => ({ ...first, lastRequest: { state: "failed", updatedAt: 5 } });
+    await open("100.cmp1", api);
+    expect(await screen.findByText(w.lastFailed)).toBeTruthy();
+    expect(screen.getByText(/2 that may not fit/)).toBeTruthy(); // the old report is still there
+    fireEvent.click(screen.getByRole("button", { name: w.makeAgain }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("makeSessionReport"))).toBe(true));
   });
 
   it("stops looking after 30 minutes and says so", async () => {
