@@ -8,6 +8,7 @@
 import type { PlanId } from "../content/pricing";
 import type {
   AccountApi,
+  BackupFile,
   Campaign,
   Character,
   ImportProgress,
@@ -2525,7 +2526,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
       return { channelsLeft: found.serverReachable === false };
     },
-    async campaignBackup(ref, onProgress) {
+    async campaignBackup(ref, onProgress, onFile) {
       calls.push(`campaignBackup:${ref}`);
       await reachable();
       signedIn();
@@ -2535,7 +2536,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       for (const stage of ["waiting", "reading", "packing"]) {
         onProgress?.({ stage, state: "running", startedAt: now, updatedAt: now, serverNow: now });
       }
-      return new Blob([JSON.stringify({ campaign: ref })], { type: "application/json" });
+      // A ref ending `.bk-parts` has two transcripts files besides the main one; `.bk-toomany` has more
+      // than one backup carries; `.bk-partfail` loses its second file on the way.
+      if (/\.bk-toomany$/.test(ref)) throw new ApiError("backup-too-many-files");
+      const stem = "pretend-campaign-2026-10-27";
+      const names = /\.bk-(parts|partfail)$/.test(ref)
+        ? [`${stem}.dmbot.json.gz`, `${stem}.transcripts-1-of-2.dmbot.json.gz`, `${stem}.transcripts-2-of-2.dmbot.json.gz`]
+        : [`${stem}.dmbot.json.gz`];
+      onFile?.(0, names.length);
+      const files: BackupFile[] = [];
+      for (const name of names) {
+        if (/\.bk-partfail$/.test(ref) && files.length === 2) throw new ApiError("backup-part");
+        files.push({ name, blob: new Blob([JSON.stringify({ campaign: ref, file: name })], { type: "application/gzip" }) });
+        onFile?.(files.length, names.length);
+      }
+      return { files };
     },
     async takeBackHandover(ref) {
       calls.push(`takeBackHandover:${ref}`);
