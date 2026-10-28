@@ -94,8 +94,8 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 2)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 1)
+        self.assertEqual(text.count("NAMES\n"), 3)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 2)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -108,7 +108,7 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 2.", 1)[1]
+        second = lr.EXAMPLES.split("Example 3.", 1)[1]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
@@ -120,6 +120,32 @@ class TheExamples(unittest.TestCase):
         self.assertIn("person, place, group, god, item, event, idea", prompt)
         self.assertIn("mentor_of", prompt)
         self.assertIn(lr.EXAMPLES, prompt)
+
+    def test_the_prompt_asks_for_every_stated_relationship_sentence_by_sentence(self) -> None:
+        prompt = lr.read_instructions()
+        for rule in (
+            "sentence by sentence",
+            "One sentence may give several",
+            "Do not stop while the text still has sentences",
+            "never infer",
+            "is a member of",
+            "works for",
+            "mentors",
+            "is an apprentice of",
+            "founded",
+            "lives in",
+            "is family of",
+            "leads",
+        ):
+            self.assertIn(rule, prompt)
+
+    def test_the_third_example_gives_several_lines_for_one_sentence(self) -> None:
+        third = lr.EXAMPLES.split("Example 2.", 1)[1].split("Example 3.", 1)[0]
+        listed = lr.parse_plain(third.split("Output:\n", 1)[1])
+        self.assertGreaterEqual(len(listed.links), 6)
+        self.assertEqual(
+            sum("mentors" in x for x in listed.links), 2
+        )  # (two apprentices, two lines)
 
 
 class ThePlainList(unittest.TestCase):
@@ -709,7 +735,7 @@ class TheSpellingVariants(unittest.TestCase):
 
 
 class TheSecondLook(unittest.IsolatedAsyncioTestCase):
-    async def test_names_with_no_relationship_are_asked_about_once_more(self) -> None:
+    async def test_a_paragraph_missing_relationships_is_asked_about_on_its_own(self) -> None:
         first = (
             'NAMES\n- Brother Aldric | person | quote: "Brother Aldric"\n'
             '- Mira | person | quote: "Mira, called the Fox"\n'
@@ -735,11 +761,18 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(asked), 2)
         system, request = asked[1]
         self.assertIn("SECOND LOOK", system)
-        self.assertIn("<names_to_check>\n- Mira\n</names_to_check>", request)
-        self.assertNotIn("- Greyfen Abbey\n</names_to_check>", request)
-        self.assertEqual((done.stats.lonely, done.stats.extra_links), (1, 1))
+        self.assertIn("ONE PARAGRAPH", system)
+        # (the paragraph, and the names that are in it)
+        self.assertIn("Mira, called the Fox, is the niece of Brother Aldric", request)
+        for name in ("Brother Aldric", "Mira", "Greyfen Abbey"):
+            self.assertIn(f"\n- {name}\n", request.split("<names_to_check>")[1])
+        stats = done.stats
+        self.assertEqual((stats.paragraphs_asked, stats.second_calls, stats.extra_links), (1, 1, 1))
         # the summary's "found" count includes the lines the second look added
-        self.assertEqual(done.stats.links_listed, 2)
+        self.assertEqual((stats.pass1_links, stats.links_listed), (1, 2))
+        self.assertEqual(
+            (stats.paragraph_lines_before, stats.paragraph_lines_after), ("0/1/0/0", "0/0/1/0")
+        )
 
     async def test_a_short_text_or_no_lonely_name_asks_nothing_more(self) -> None:
         calls = 0
@@ -773,7 +806,7 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)  # (every name has a line)
 
     async def test_a_failed_second_look_leaves_the_list_as_it_was(self) -> None:
-        queue = [Reply("NAMES\n- Mira | person\n", False)]
+        queue = [Reply("NAMES\n- Mira | person\n- Brother Aldric | person\n", False)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
             if schema is None:
@@ -784,11 +817,13 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
 
         fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
         done = await read(fake, text=LONG)
-        self.assertEqual((done.stats.lonely, done.stats.extra_links, done.cut), (1, 0, False))
+        stats = done.stats
+        self.assertEqual((stats.paragraphs_asked, stats.second_calls), (1, 0))
+        self.assertEqual((stats.extra_links, done.cut), (0, False))
 
     async def test_what_the_second_look_adds_still_has_to_pass_the_same_checks(self) -> None:
-        first = 'NAMES\n- Mira | person | quote: "Mira"\n- Zorgul | person | quote: "Zorgul"\n'
-        more = 'RELATIONSHIPS\n- Mira — owns — Zorgul | quote: "Mira owns Zorgul"\n'
+        first = 'NAMES\n- Mira | person | quote: "Mira"\n- Brother Aldric | person\n'
+        more = 'RELATIONSHIPS\n- Mira — owns — Brother Aldric | quote: "Mira owns Brother Aldric"\n'
         queue = [Reply(first, False), Reply(more, False)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
@@ -798,7 +833,9 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
                 json.dumps(
                     {
                         "names": [],
-                        "connections": [row("Mira", "owns", "Zorgul", "Mira owns Zorgul")],
+                        "connections": [
+                            row("Mira", "owns", "Brother Aldric", "Mira owns Brother Aldric")
+                        ],
                     }
                 ),
                 False,
@@ -816,7 +853,7 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
 
 class TheSecondLookLimits(unittest.IsolatedAsyncioTestCase):
     async def test_out_of_funds_in_the_second_look_is_not_swallowed(self) -> None:
-        queue = [Reply("NAMES\n- Mira | person\n", False)]
+        queue = [Reply("NAMES\n- Mira | person\n- Brother Aldric | person\n", False)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
             if queue:
@@ -828,8 +865,8 @@ class TheSecondLookLimits(unittest.IsolatedAsyncioTestCase):
             await read(fake, text=LONG)
 
     async def test_a_cut_second_look_is_counted_and_its_lines_used(self) -> None:
-        first = 'NAMES\n- Mira | person | quote: "Mira"\n'
-        more = 'RELATIONSHIPS\n- Mira — friend of — Zorgul | quote: "Mira and Zorgul"\n- Mi'
+        first = 'NAMES\n- Mira | person | quote: "Mira"\n- Brother Aldric | person\n'
+        more = 'RELATIONSHIPS\n- Mira — friend of — Brother Aldric | quote: "Mira and Aldric"\n- Mi'
         queue = [Reply(first, False), Reply(more, True)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
@@ -1158,7 +1195,9 @@ class TheSecondLookCeiling(unittest.IsolatedAsyncioTestCase):
         )  # (the first call and its continuation)
 
     async def test_a_second_look_that_runs_out_of_time_leaves_the_list_as_it_was(self) -> None:
-        queue = [Reply('NAMES\n- Mira | person | quote: "Mira"\n', False)]
+        queue = [
+            Reply('NAMES\n- Mira | person | quote: "Mira"\n- Brother Aldric | person\n', False)
+        ]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
             if schema is None:
@@ -1170,7 +1209,7 @@ class TheSecondLookCeiling(unittest.IsolatedAsyncioTestCase):
         fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
         with mock.patch.object(lr, "PASS1_BUDGET_S", 0.3):
             done = await read(fake, text=LONG)
-        self.assertEqual((done.stats.lonely, done.stats.extra_links), (1, 0))
+        self.assertEqual((done.stats.lonely, done.stats.extra_links), (2, 0))
 
 
 class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
