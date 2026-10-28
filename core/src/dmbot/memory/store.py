@@ -254,6 +254,7 @@ def _relation(r: dict[str, Any]) -> Relation:
         float(r["confidence"]), r["status"], r["source"], tuple(r["mention_ids"]),
         r["from_session_at"], r["to_session_at"], r["from_game_time"], r["to_game_time"],
         r["secret"], r["created_at"], r["definition_version"], r["unrevealed"], r["directional"],
+        r.get("decided"),
     )  # fmt: skip
 
 
@@ -277,6 +278,7 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "definition_version": rel.definition_version,
         "unrevealed": rel.unrevealed,
         "directional": rel.directional,
+        "decided": rel.decided,
     }
 
 
@@ -3572,6 +3574,7 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        decided: str | None = None,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -3585,7 +3588,7 @@ class MemoryStore:
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
-                directional=directional,
+                directional=directional, decided=decided,
             )  # fmt: skip
             return Written(value, w.batch)
 
@@ -3605,6 +3608,7 @@ class MemoryStore:
         mention_ids: Sequence[str] = (),
         unrevealed: bool = False,
         directional: bool = False,
+        decided: str | None = None,
         fresh: bool = False,
         leave: bool = False,
         made_by: str | None = None,
@@ -3657,7 +3661,7 @@ class MemoryStore:
         new = Relation(
             new_id(), s, predicate, o, " ".join(detail.split()), confidence, status, source,
             tuple(mention_ids), from_session_at, to_session_at, None, None, secret, w.now,
-            pred.version, unrevealed, directional,
+            pred.version, unrevealed, directional, (decided or None),
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(

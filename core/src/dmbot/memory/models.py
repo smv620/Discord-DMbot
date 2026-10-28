@@ -403,6 +403,8 @@ class Relation:
     unrevealed: bool = False
     # A family connection whose detail is a role that reads one way, written by a DM (#2457).
     directional: bool = False
+    # How a pronoun was settled (#2790), in fixed words: the DM's card only, never a player's.
+    decided: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -44,7 +44,7 @@ async def keep_all(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
                 source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
                 directional=kin.directional(c.detail),  # a family role keeps who holds it
-                unrevealed=True,
+                unrevealed=True, decided=c.decided or None,
             )  # fmt: skip
         except MemoryRuleError:
             done.refused += 1
