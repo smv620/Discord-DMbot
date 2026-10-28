@@ -1153,6 +1153,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.web_settings = web_settings.SettingStore(recaps.db) if recaps is not None else None
         # What DMs chose on the website's rule sharing section, waiting to be applied (#2793).
         self.web_rule_actions = web_sharing.ActionStore(recaps.db) if recaps is not None else None
+        self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
@@ -10692,7 +10693,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.web_rule_actions
         if store is None or self.rule_sets is None:
             return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_rule_tasks", {})
+        running = self._rule_tasks
         for guild in list(self.guilds):
             task = running.get(guild.id)
             if task is not None and not task.done():
@@ -10701,7 +10702,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if item is None:
                 continue
             gid = guild.id
-            task = asyncio.create_task(self._run_rule_choice(store, gid, item))
+            task = self._track(self._run_rule_choice(store, gid, item), "web-rule-choice")
+            if task is None:
+                continue  # shutting down: the row is retaken after the door's ten minutes
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:

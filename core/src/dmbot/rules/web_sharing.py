@@ -285,7 +285,7 @@ async def _stop(
 async def _look(sets: rule_sets.RuleSetStore, guild_id: int, item: Action) -> Outcome:
     """What a code opens, before anything is copied: the set's name, its publisher's name and how
     many rules it would copy. A wrong guess counts toward Discord's limit."""
-    offer = await sets.by_code(guild_id, item.user_id, item.arg)
+    offer = await sets.by_code(guild_id, item.user_id, item.arg, count=not item.retried)
     if offer.kind != rule_sets.HOUSE_RULES:  # a homebrew pack's code
         return Outcome(FAILED, rule_sets.WRONG_KIND)
     return Outcome(
@@ -302,7 +302,7 @@ async def _follow(
     item: Action,
 ) -> Outcome:
     if item.action == FOLLOW_CODE:
-        offer = await sets.by_code(guild_id, item.user_id, item.arg)
+        offer = await sets.by_code(guild_id, item.user_id, item.arg, count=not item.retried)
     else:
         found = [o for o in await sets.shared_here(guild_id, campaign.id) if o.set_id == item.arg]
         if not found:

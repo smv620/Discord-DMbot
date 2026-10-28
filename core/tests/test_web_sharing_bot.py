@@ -207,6 +207,72 @@ class Following(Base):
         self.assertEqual(follow.name, "Frostmaiden house rules")
         self.assertEqual(self.host.settled, [True])
 
+    async def test_following_a_second_set_while_following_one_is_refused(self) -> None:
+        first = await self.share()
+        await self.houses.add(GUILD_A, self.same, DM_A, "Rest in the dark")
+        other = await self.sets.publish(
+            GUILD_A,
+            self.same,
+            DM_A,
+            "Sunken rules",
+            await self.houses.list(GUILD_A, self.same),
+            None,
+        )
+        assert other.shared
+        second = await self.sets.make_code(GUILD_A, self.same, DM_A)
+        one = await self.put(ws.FOLLOW_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg=first)
+        two = await self.put(
+            ws.FOLLOW_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg=second
+        )
+        await self.take_and_run(GUILD_B)
+        self.assertEqual(await self.result(one, GUILD_B), ("done", ""))
+        self.assertEqual(await self.result(two, GUILD_B), ("failed", ws.FAILED))
+        self.assertEqual(await self.note(two, GUILD_B), rule_sets.ALREADY_FOLLOWING)
+        (follow,) = await self.sets.following(GUILD_B, self.far)
+        self.assertEqual(follow.name, "Frostmaiden house rules")  # nothing of the second copied
+
+    async def test_a_set_unshared_between_look_and_follow_is_not_copied(self) -> None:
+        code = await self.share()
+        (offer,) = await self.sets.shared_here(GUILD_A, self.same)
+        look = await self.put(ws.LOOK_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg=code)
+        await self.take_and_run(GUILD_B)
+        self.assertEqual(await self.result(look, GUILD_B), ("done", ""))
+        await self.sets.stop_sharing(GUILD_A, self.pub, DM_A)  # the publisher stops
+        by_code = await self.put(
+            ws.FOLLOW_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg=code
+        )
+        here = await self.put(ws.FOLLOW_HERE, campaign=self.same, arg=offer.set_id)
+        await self.take_and_run(GUILD_B)
+        await self.take_and_run(GUILD_A)
+        self.assertEqual(await self.result(by_code, GUILD_B), ("failed", ws.BAD_CHOICE))
+        self.assertEqual(await self.note(by_code, GUILD_B), rule_sets.BAD_CODE)
+        self.assertEqual(await self.result(here), ("failed", ws.BAD_CHOICE))
+        self.assertEqual(await self.note(here), rule_sets.NO_SUCH_SET)
+        self.assertEqual(await self.sets.following(GUILD_B, self.far), [])
+        self.assertEqual(await self.sets.following(GUILD_A, self.same), [])
+
+    async def test_a_retaken_look_does_not_count_its_guess_again(self) -> None:
+        await self.share()
+        for _ in range(rule_sets.GUESSES - 1):
+            await self.put(
+                ws.LOOK_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg="AAAAAAAAAA"
+            )
+        await self.take_and_run(GUILD_B)  # four wrong guesses counted
+        retaken = await self.put(
+            ws.LOOK_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg="AAAAAAAAAA"
+        )
+        async with self.db.guild(GUILD_B) as conn:  # the door put it back: updated later than made
+            await conn.execute(
+                "UPDATE web_rule_actions SET updated_at = %s WHERE id = %s", (NOW + 700, retaken)
+            )
+        await self.take_and_run(GUILD_B)
+        self.assertEqual(await self.result(retaken, GUILD_B), ("failed", ws.BAD_CHOICE))
+        fifth = await self.put(
+            ws.LOOK_CODE, campaign=self.far, guild=GUILD_B, user=DM_B, arg="AAAAAAAAAA"
+        )
+        await self.take_and_run(GUILD_B)  # the fifth real guess is still a bad choice, not too soon
+        self.assertEqual(await self.result(fifth, GUILD_B), ("failed", ws.BAD_CHOICE))
+
     async def test_a_code_for_the_campaigns_own_set_is_refused(self) -> None:
         code = await self.share()
         rid = await self.put(ws.FOLLOW_CODE, arg=code)
@@ -380,6 +446,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
 
         b: Any = DMBot.__new__(DMBot)
         b.web_rule_actions = SimpleNamespace(claim_next=claim)
+        b._rule_tasks = {}
+        b._closing = False
+        b._asking = set()
         b.rule_sets = object()
         guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
         with (
