@@ -1346,10 +1346,10 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
-| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | House rules: #1752 (overrides and rulings: Phase 3, with the AI rules alerts) |
-| Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
+| ~~Rules archive~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-rules-rmfthfrstmdn`~~ | Was #1752; see "Two channels removed" below |
+| ~~Game time~~ (removed, owner 2026-10-28, #2877: the clock is a small 🕰️ line in `dmb-chat`) | ~~`dmb-gametime-rmfthfrstmdn`~~ | Was #1116 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
-| NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Roster: #1761 (standing and relationships beyond the roster: Phase 5) |
+| ~~NPCs~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-npcs-rmfthfrstmdn`~~ | Was #1761; see "Two channels removed" below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
 - **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
@@ -1386,8 +1386,8 @@ so the docs always show names the way Discord does. For the campaign
 
 | Kind | Channels | Players see it |
 |---|---|---|
-| **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
-| **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
+| **Controlled** | DM screen, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
+| **Unrestricted** | Live transcript, DMbot chat | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
 - Players can **read but never post** in any DMbot channel (no threads or reactions
   either), the same read-only access as a DM-screen peek. **Slash commands are never
@@ -1399,6 +1399,16 @@ so the docs always show names the way Discord does. For the campaign
   Peeking opens all controlled channels for that player; hiding closes them all. Once
   there's more than one controlled channel, the peek warning must name every channel a
   peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
+- **Two channels removed (owner, 2026-10-28, #2874 core, #2875 website): `dmb-rules-<short name>` and
+  `dmb-npcs-<short name>`.** The owner found the channel list messy. Rules: anyone asks DMbot in the
+  `dmb-chat` channel, the DM has them in the 🗂️ Menu, and everyone in the server can read the House rules
+  page on the website. NPCs: players look up the people tied to the characters they know on the website's
+  story graph, with the same players' view. DMbot stops making both channels and, at each campaign's next
+  start, deletes its own (stored id and DMbot's name both match; a renamed one is left alone), then forgets
+  the ids. **NPC pages and My notes stay**: `npc_pages` keeps being written from `RecallService.roster` by
+  its own pass, so no NPC is marked "no longer listed" because the channel went, and the story graph links to
+  each NPC's page. Neither channel was ever announced (`RULES_CHANNEL_LIVE`, `NPCS_CHANNEL_LIVE` off). The two
+  paragraphs below record what was built and are history.
 - **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
   is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
   pinned "What's this channel?" card. It is controlled: its overwrites are the DM screen's, the
@@ -3194,6 +3204,11 @@ is wrong for half the table, so the DM can split it.
   Undo needs); `game_effects.group_position` says which group a timer counts on. Backups carry the groups
   (`ClockSection`, validated) and each timer's group. Deleting the campaign deletes them.
 *The game-time channel (owner, 2026-10-13, after Test F):*
+- **Replaced (owner, 2026-10-28, #2877):** there is no game-time channel any more. Whenever the players' view of the
+  clock changes (the day and its approximate word, never the exact time), DMbot posts one small line in the campaign's
+  `dmb-chat` channel, `-# 🕰️ Day 5, morning`, and the rest and new-day lines go there the same way. If its last 🕰️ line
+  is still the newest message there, it is edited instead, so quick changes stay one line. DMbot deletes its own old
+  game-time channel once, as for #2874. What follows is the history of the channel.
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
   `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
   can read it and only the bot posts in it. `/dmbot start` creates or repairs it, and a failure
