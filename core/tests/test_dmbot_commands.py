@@ -4,11 +4,12 @@ import asyncio
 import json
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
+from dmbot import waiting as waiting_module
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import MAX_BACKUP_BYTES, encode_backup
@@ -719,7 +720,7 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
         self, replace_id: str | None = None, final: Any = None, **bot_kw: Any
     ) -> tuple[list[str], str]:
         edits: list[str] = []
-        real = cmds.WaitingMessage
+        real = waiting_module.WaitingMessage
 
         def quick(*args: Any, **kw: Any) -> Any:
             return real(*args, every=0.01, show_after=0.0, **kw)
@@ -855,7 +856,7 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
     async def test_a_message_that_ran_out_gets_its_result_privately_instead(self) -> None:
         import discord
 
-        gone = discord.NotFound(SimpleNamespace(status=404, reason="x"), "gone")
+        gone = discord.NotFound(cast(Any, SimpleNamespace(status=404, reason="x")), "gone")
         edits, _last = await self.run_restore(final=gone)
         self.assertEqual(edits, [e for e in edits if e.startswith(cmds.RESTORING)])
         sent = self.user.send.await_args
