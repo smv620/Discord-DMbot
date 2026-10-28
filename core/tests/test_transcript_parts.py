@@ -129,16 +129,22 @@ class TheSet(_Base):
         await self.session(1000, 3)
         main, files = await self.campaigns.export_set(GUILD_A, self.cid)
         seen: list[tuple[int, int]] = []
+        beats: list[int] = []
 
         async def progress(done: int, total: int) -> None:
             seen.append((done, total))
 
-        await self.campaigns.import_backup(GUILD_B, main, DM_B, parts=files, progress=progress)
-        # a tick after the files are checked and after each section, then one for each file
-        self.assertEqual(seen[-1], (1, len(files)))
-        self.assertEqual({total for _, total in seen}, {len(files)})
-        self.assertEqual([done for done, _ in seen], sorted(done for done, _ in seen))
-        self.assertGreater(len(seen), 2)
+        async def step() -> None:
+            beats.append(1)
+
+        await self.campaigns.import_backup(
+            GUILD_B, main, DM_B, parts=files, progress=progress, step=step
+        )
+        # `progress` hears only the files: 0 of N, then one after each (what Discord's waiting
+        # message shows); `step` is the website's beat once the file is checked and after each
+        # section is written
+        self.assertEqual(seen, [(i, len(files)) for i in range(len(files) + 1)])
+        self.assertGreater(len(beats), 1)
 
         async def broken(done: int, total: int) -> None:
             raise RuntimeError("the progress line failed")
