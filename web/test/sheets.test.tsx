@@ -172,6 +172,7 @@ describe("Type in my character", () => {
     cleanup();
     await open(".sheets-dm");
     expect(screen.queryByText(w.typedSummary)).toBeNull();
+    expect(screen.queryByLabelText(w.typedClass)).toBeNull();
   });
 
   it("sends what was typed, trimmed, with the level as a number", async () => {
@@ -199,6 +200,18 @@ describe("Type in my character", () => {
     save(1);
     expect(await screen.findByText(w.typedSaved, {}, { timeout: 8000 })).toBeTruthy();
     expect(typedCalls(api).some((c) => c.includes(`"level":${level},`))).toBe(true);
+  });
+
+  it("keeps a half-typed draft across a re-render, and never shows it under another campaign", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.input(screen.getAllByLabelText(w.typedClass)[1]!, { target: { value: "Wizard" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    expect((screen.getAllByLabelText(w.typedClass)[1] as HTMLInputElement).value).toBe("Wizard");
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect((screen.getAllByLabelText(w.typedClass)[1] as HTMLInputElement).value).toBe("");
   });
 
   it("refuses a blank class and sends nothing", async () => {

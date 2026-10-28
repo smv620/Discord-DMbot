@@ -15,7 +15,7 @@ describe("checkTyped", () => {
     expect(checkTyped(typed({ level }))).toEqual({ ok: false, problem: "level" });
   });
 
-  it.each([["1", 1], ["20", 20], [" 7 ", 7]])("accepts the level %j as the number %i", (level, n) => {
+  it.each([["1", 1], ["01", 1], ["20", 20], [" 7 ", 7]])("accepts the level %j as the number %i", (level, n) => {
     expect(checkTyped(typed({ level }))).toMatchObject({ ok: true, level: n });
   });
 
