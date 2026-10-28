@@ -5,6 +5,8 @@ names throughout."""
 
 from __future__ import annotations
 
+import asyncio
+import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, PropertyMock, patch
@@ -227,3 +229,62 @@ class TheDeletion(DatabaseTest):
         ):
             await DMBot.run_web_line_deletions(self.bot)
         self.assertEqual((await self.row(OTHER_GUILD, far))["state"], "done")
+
+    async def test_a_retake_after_an_unmarked_erasure_still_reports_what_was_deleted(self) -> None:
+        rid = await self.ask(ME)
+        with patch.object(self.rows, "done", AsyncMock(side_effect=RuntimeError("blip"))):
+            self.assertEqual(await self.carry(), web_line_delete.NOT_MARKED)
+        self.clock[0] += 601
+        self.assertEqual(await self.carry(), "")  # the retake finds nothing left
+        got = await self.row(GUILD, rid)
+        self.assertEqual((got["state"], got["lines"], got["sessions"]), ("done", 3, 2))
+
+
+class TheLoopWiring(unittest.IsolatedAsyncioTestCase):
+    """The recaps loop calls the line deletions every round and sweeps them with the others."""
+
+    async def test_the_loop_runs_the_deletions_each_round_and_sweeps_them(self) -> None:
+        from dmbot.recaps import discord as recaps_discord
+
+        host: Any = AsyncMock()
+        host.guilds = [SimpleNamespace(id=GUILD)]
+        host.campaigns.guilds_with_campaigns = AsyncMock(return_value=[])
+        rounds = 0
+
+        async def sleep(seconds: float) -> None:
+            nonlocal rounds
+            rounds += 1
+            if rounds >= 300:  # the sweep runs on the 300th round
+                raise asyncio.CancelledError
+
+        with (
+            patch("dmbot.recaps.discord.asyncio.sleep", sleep),
+            self.assertRaises(asyncio.CancelledError),
+        ):
+            await recaps_discord.RecapFeatures._recap_request_loop(host)
+        self.assertEqual(host.run_web_line_deletions.await_count, 300)
+        host.web_line_deletions.sweep.assert_awaited_with(GUILD)
+
+    async def test_a_failing_round_is_logged_by_type_and_the_loop_goes_on(self) -> None:
+        from dmbot.recaps import discord as recaps_discord
+
+        host: Any = AsyncMock()
+        host.guilds = []
+        host.run_web_line_deletions = AsyncMock(side_effect=RuntimeError("row words"))
+        rounds = 0
+
+        async def sleep(seconds: float) -> None:
+            nonlocal rounds
+            rounds += 1
+            if rounds >= 2:
+                raise asyncio.CancelledError
+
+        with (
+            patch("dmbot.recaps.discord.asyncio.sleep", sleep),
+            self.assertRaises(asyncio.CancelledError),
+            self.assertLogs("dmbot.bot", "WARNING") as logged,
+        ):
+            await recaps_discord.RecapFeatures._recap_request_loop(host)
+        self.assertEqual(host.run_web_line_deletions.await_count, 2)
+        self.assertIn("RuntimeError", "\n".join(logged.output))
+        self.assertNotIn("row words", "\n".join(logged.output))

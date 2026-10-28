@@ -37,12 +37,16 @@ class Request:
     id: str
     user_id: int  # the person asking, and the only person whose lines may go
     claimed_at: int  # this worker's claim: only it may write
+    lines: int = 0  # counts a first try noted before it erased (0, 0 on a first try)
+    sessions: int = 0
 
 
 class Host(Protocol):
     """What the erasure needs from the running bot, so tests can stand in for it."""
 
     async def delete_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]: ...
+
+    async def count_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]: ...
 
 
 class WebLineDeletions:
@@ -62,13 +66,23 @@ class WebLineDeletions:
                 " WHERE guild_id = %s AND (state = 'waiting' OR (state = 'working'"
                 " AND claimed_at < %s)) AND created_at >= %s ORDER BY created_at LIMIT 1"
                 " FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, user_id",
+                " RETURNING id, user_id, lines, sessions",
                 (now, now, guild_id, now - RETAKE_AFTER_S, now - KEEP_FOR_S),
             )
             row = await cur.fetchone()
         if row is None:
             return None
-        return Request(row["id"], int(row["user_id"]), now)
+        return Request(row["id"], int(row["user_id"]), now, int(row["lines"]), int(row["sessions"]))
+
+    async def note_counts(self, guild_id: int, item: Request, lines: int, sessions: int) -> None:
+        """What is about to go, kept on the row before the erasure, so a retake after an erasure
+        that could not be marked still reports the numbers that were deleted."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE web_line_deletions SET lines = %s, sessions = %s, updated_at = %s"
+                " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                (lines, sessions, int(self._now()), guild_id, item.id, item.claimed_at),
+            )
 
     async def done(self, guild_id: int, item: Request, lines: int, sessions: int) -> bool:
         async with self._db.guild(guild_id) as conn:
@@ -84,7 +98,8 @@ class WebLineDeletions:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE web_line_deletions SET state = 'failed', stage = 'failed', error = %s,"
-                " updated_at = %s WHERE guild_id = %s AND id = %s AND state = 'working'"
+                " lines = 0, sessions = 0, updated_at = %s WHERE guild_id = %s AND id = %s"
+                " AND state = 'working'"
                 " AND claimed_at = %s",
                 (error, int(self._now()), guild_id, item.id, item.claimed_at),
             )
@@ -107,6 +122,12 @@ async def carry_out(host: Host, guild_id: int, item: Request, store: WebLineDele
     `failed` is written only when the erasure itself failed (nothing was deleted: it is one
     transaction). If it worked and the row cannot be marked, the row stays `working` and is
     retaken after ten minutes, which is harmless: the erasure repeats as a no-op."""
+    if item.lines == 0 and item.sessions == 0:  # a first try: note what is about to go
+        try:
+            counted = await host.count_my_lines(guild_id, item.user_id)
+            await store.note_counts(guild_id, item, *counted)
+        except Exception as exc:  # best effort: the numbers are only for the page
+            log.warning("A website line deletion could not note its counts: %s", type(exc).__name__)
     try:
         lines, sessions = await host.delete_my_lines(guild_id, item.user_id)
     except Exception as exc:  # the type only: an error can quote a row
@@ -117,7 +138,8 @@ async def carry_out(host: Host, guild_id: int, item: Request, store: WebLineDele
             log.warning("A website line deletion could not be marked failed")
         return FAILED
     try:
-        # (A retake that finds nothing left reports 0: the lines went in the first try.)
+        if (lines, sessions) == (0, 0):  # a retake finds nothing left: the first try deleted them
+            lines, sessions = item.lines, item.sessions
         return "" if await store.done(guild_id, item, lines, sessions) else TAKEN
     except Exception as exc:
         log.warning("A website line deletion could not be marked done: %s", type(exc).__name__)
