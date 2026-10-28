@@ -158,6 +158,36 @@ class TheBotsClock(unittest.IsolatedAsyncioTestCase):
                 await task
         self.assertEqual(bot.plan_clocks, {})
 
+    async def test_a_cut_off_run_keeps_its_counts_and_only_its_own_timeout_says_time(self) -> None:
+        bot = running_bot()
+
+        async def run(*args: Any, report: Any = None, **kw: Any) -> Any:
+            report.calls = 4
+            await asyncio.sleep(60)
+
+        with (
+            mock.patch("dmbot.bot.plan_reader.run", run),
+            mock.patch("dmbot.bot.plan_reader.MAX_RUN_S", 0.05),
+            self.assertLogs("dmbot.bot", "INFO") as logged,
+        ):
+            await DMBot._read_plan(bot, GUILD_A, "c" * 32, "d" * 32, 0)
+        self.assertIn("4", "\n".join(logged.output))  # the run's counts, not a fresh zero
+
+    async def test_a_timeout_that_is_not_the_limit_is_not_called_the_limit(self) -> None:
+        bot = running_bot()
+
+        async def run(*args: Any, **kw: Any) -> Any:
+            raise TimeoutError  # a call's or a store's own timeout, far from the limit
+
+        with (
+            mock.patch("dmbot.bot.plan_reader.run", run),
+            self.assertLogs("dmbot.bot", "ERROR"),
+        ):
+            await DMBot._read_plan(bot, GUILD_A, "c" * 32, "d" * 32, 0)
+        bot.plan.finish.assert_awaited_once_with(
+            GUILD_A, "c" * 32, "d" * 32, "stopped", reader.STOP_ERROR
+        )
+
     async def test_a_read_that_runs_past_its_limit_is_stopped_even_inside_a_call(self) -> None:
         bot = running_bot()
 
@@ -212,6 +242,21 @@ class KeepingTheCardCurrent(unittest.IsolatedAsyncioTestCase):
             self.edits, ["card at 10 s", "card at 20 s", "card at 30 s", "card at 40 s"]
         )
         self.assertNotIn(STOPPED_UPDATING, self.edits[-1])
+
+    async def test_the_first_tick_does_not_edit_a_card_that_has_not_changed(self) -> None:
+        async def same() -> tuple[str, Any]:
+            return "as drawn", None
+
+        await keep_card_current(
+            same,
+            self.edit,
+            lambda: self.now < 15,
+            last="as drawn",
+            every=10.0,
+            clock=self.clock,
+            sleep=self.sleep,
+        )
+        self.assertEqual(self.edits, [])
 
     async def test_a_card_that_does_not_change_is_not_edited_again(self) -> None:
         async def same() -> tuple[str, Any]:
@@ -306,8 +351,9 @@ class StartingTheWatch(unittest.IsolatedAsyncioTestCase):
         seen = AsyncMock()
         campaign = SimpleNamespace(guild_id=GUILD_A)
         with mock.patch.object(ui, "keep_card_current", seen):
-            await ui.watch_card(self.interaction({}), cast(Any, campaign))
+            await ui.watch_card(self.interaction({}), cast(Any, campaign), "card")
         seen.assert_not_awaited()
+        self.assertEqual(ui._watching, {})  # an idle press leaves nothing behind
 
     async def test_a_newer_press_on_the_same_card_takes_over_from_the_older_loop(self) -> None:
         campaign = cast(Any, SimpleNamespace(guild_id=GUILD_A))
@@ -318,7 +364,7 @@ class StartingTheWatch(unittest.IsolatedAsyncioTestCase):
             currents.append(current)
 
         with mock.patch.object(ui, "keep_card_current", fake):
-            await ui.watch_card(self.interaction(reads), campaign)
+            await ui.watch_card(self.interaction(reads), campaign, "card")
             first = currents[0]
             self.assertFalse(first())  # the loop is over, its slot freed: nothing left to hold
         # Two overlapping presses: the older loop is told it is no longer current.
@@ -331,11 +377,91 @@ class StartingTheWatch(unittest.IsolatedAsyncioTestCase):
             order.append(current())
 
         with mock.patch.object(ui, "keep_card_current", held):
-            older = asyncio.create_task(ui.watch_card(self.interaction(reads), campaign))
+            older = asyncio.create_task(ui.watch_card(self.interaction(reads), campaign, "card"))
             await asyncio.sleep(0)
-            newer = asyncio.create_task(ui.watch_card(self.interaction(reads), campaign))
+            newer = asyncio.create_task(ui.watch_card(self.interaction(reads), campaign, "card"))
             await asyncio.sleep(0)
             gate.set()
             await asyncio.gather(older, newer)
         self.assertEqual(order[:2], [True, True])  # both started current
         self.assertFalse(order[2])  # the older one found itself replaced
+
+
+class ThePressesThatStartIt(unittest.IsolatedAsyncioTestCase):
+    """Read it now (yes) and Refresh start the self-updating card; Remove does not."""
+
+    def press(self, reads: dict[Any, Any]) -> Any:
+        return SimpleNamespace(
+            id=5,
+            guild_id=GUILD_A,
+            user=SimpleNamespace(id=DM),
+            message=SimpleNamespace(id=99),
+            client=SimpleNamespace(plan_reads=reads),
+            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock()),
+            edit_original_response=AsyncMock(),
+        )
+
+    async def test_read_it_now_yes_starts_the_card_with_its_note(self) -> None:
+        campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32)
+        it = self.press({})
+        started: list[Any] = []
+        plan = SimpleNamespace(begin=AsyncMock(return_value=SimpleNamespace(next_chunk=0)))
+        it.client.plan_ai = object()
+        it.client.start_plan_read = lambda *a: it.client.plan_reads.update({(GUILD_A, a[2]): 1})
+        it.client.plan_gate = AsyncMock(return_value=None)
+        with (
+            mock.patch.object(ui, "_allowed", AsyncMock(return_value=campaign)),
+            mock.patch.object(ui, "_plan", return_value=plan),
+            mock.patch.object(ui, "_card", AsyncMock(return_value=("the card", None))),
+            mock.patch.object(ui, "_watch_in_background", lambda *a: started.append(a)),
+        ):
+            await ui.ReadYesButton("c" * 32, "d" * 32).callback(it)
+        self.assertEqual(len(started), 1)
+        self.assertEqual(started[0][2:], ("the card", ui.READING_STARTED))
+        self.assertIn("updates by itself", ui.READING_STARTED)
+
+    async def test_refresh_starts_the_card_and_remove_does_not(self) -> None:
+        campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32)
+        it = self.press({(GUILD_A, "d" * 32): object()})
+        started: list[Any] = []
+        with (
+            mock.patch.object(ui, "_allowed", AsyncMock(return_value=campaign)),
+            mock.patch.object(ui, "_card", AsyncMock(return_value=("the card", None))),
+            mock.patch.object(ui, "_watch_in_background", lambda *a: started.append(a)),
+        ):
+            await ui.RefreshButton("c" * 32).callback(it)
+        self.assertEqual(len(started), 1)
+
+    async def test_without_the_bots_track_a_reference_to_the_task_is_kept(self) -> None:
+        it = self.press({})
+        ran = asyncio.Event()
+
+        async def fake(*args: Any) -> None:
+            ran.set()
+
+        with mock.patch.object(ui, "watch_card", fake):
+            ui._watch_in_background(it, cast(Any, SimpleNamespace(guild_id=GUILD_A)), "x")
+            self.assertEqual(len(ui._watchers), 1)
+            await ran.wait()
+            await asyncio.sleep(0)
+        self.assertEqual(len(ui._watchers), 0)  # dropped when it finishes
+
+    async def test_the_end_line_says_how_long_a_read_has_not_moved(self) -> None:
+        now = time.monotonic()
+        reads = {(GUILD_A, "d" * 32): object()}
+        it = self.press(reads)
+        it.client.plan_clocks = {
+            (GUILD_A, "d" * 32): reader.ReadClock(now - 900, now - 900, now - 400)
+        }
+        captured: dict[str, Any] = {}
+
+        async def fake(*args: Any, late_note: Any, **kw: Any) -> None:
+            captured["late"] = late_note()
+
+        with (
+            mock.patch.object(ui, "keep_card_current", fake),
+            mock.patch.object(ui, "_card", AsyncMock(return_value=("c", None))),
+        ):
+            await ui.watch_card(it, cast(Any, SimpleNamespace(guild_id=GUILD_A, id="c")), "c")
+        self.assertIn("No change for 6 min.", captured["late"])
+        self.assertTrue(captured["late"].endswith(STOPPED_UPDATING))

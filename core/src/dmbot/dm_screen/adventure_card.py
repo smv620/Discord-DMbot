@@ -46,6 +46,7 @@ from dmbot.memory.story_plan import Counts, Listed, ReadState
 from dmbot.waiting import (
     SHOW_ELAPSED_AFTER_S,
     SHOW_LAST_CHANGE_AFTER_S,
+    STOPPED_UPDATING,
     ago_text,
     elapsed_text,
     keep_card_current,
@@ -141,6 +142,10 @@ STOPPED_WORDS = {
     ),
 }
 CARRY_ON = "Press Read it now to carry on."
+READING_STARTED = (
+    "Reading started. This card updates by itself for about 14 minutes; the end of the read is "
+    "told on the DM screen. Press Refresh to check at any time."
+)
 
 
 # The longest silence a read can have and still be allowed to go on: every call may time out, with
@@ -391,22 +396,33 @@ def _still_reading(interaction: discord.Interaction, campaign: Campaign) -> bool
     return any(guild == campaign.guild_id for guild, _doc in reads)
 
 
-async def watch_card(interaction: discord.Interaction, campaign: Campaign) -> None:
+async def watch_card(
+    interaction: discord.Interaction, campaign: Campaign, drawn: str, note: str = ""
+) -> None:
     """After 📖 Read it now or 🔄 Refresh, keep the card current while a read goes (#2564): the
     elapsed time and last movement move without another press, for as long as the interaction's
-    token allows (`waiting.EDIT_FOR_S`), then the card says it has stopped updating by itself. The
-    end of a read is told on the DM screen as before. Never raises."""
+    token allows (`waiting.EDIT_FOR_S`), then the card says it has stopped updating by itself (and
+    how long the read has not moved, if it has not). `drawn` is the text just shown, so the first
+    tick edits only if something changed; `note` is a line kept above the card. The end of a read
+    is told on the DM screen as before. Never raises."""
+    if not _still_reading(interaction, campaign):
+        return  # nothing to keep current: no loop, nothing remembered
     message = getattr(interaction, "message", None)
     key = message.id if message is not None else interaction.id
     generation = _watching[key] = _watching.get(key, 0) + 1
-    if not _still_reading(interaction, campaign):
-        return
 
     async def render() -> tuple[str, discord.ui.View]:
-        return await _card(interaction, campaign)
+        text, view = await _card(interaction, campaign)
+        return (f"{note}\n\n{text}" if note else text), view
 
     async def edit(text: str, view: Any) -> None:
         await interaction.edit_original_response(content=text, view=view)
+
+    def late_note() -> str:
+        still = max((a.still_s for a in _ages(interaction, campaign.guild_id).values()), default=0)
+        if still < SHOW_LAST_CHANGE_AFTER_S:
+            return STOPPED_UPDATING
+        return f"No change for {ago_text(still)}. {STOPPED_UPDATING}"
 
     try:
         await keep_card_current(
@@ -414,6 +430,8 @@ async def watch_card(interaction: discord.Interaction, campaign: Campaign) -> No
             edit,
             lambda: _still_reading(interaction, campaign),
             current=lambda: _watching.get(key) == generation,
+            last=f"{note}\n\n{drawn}" if note else drawn,
+            late_note=late_note,
         )
     except Exception:
         log.exception("Couldn't keep the adventure card current")
@@ -422,16 +440,22 @@ async def watch_card(interaction: discord.Interaction, campaign: Campaign) -> No
             _watching.pop(key, None)
 
 
-def _watch_in_background(interaction: discord.Interaction, campaign: Campaign) -> None:
+_watchers: set[asyncio.Task[Any]] = set()  # held so a watching task is not collected mid-way
+
+
+def _watch_in_background(
+    interaction: discord.Interaction, campaign: Campaign, drawn: str, note: str = ""
+) -> None:
     """Start `watch_card` without holding the button's own answer."""
-    work = watch_card(interaction, campaign)
+    work = watch_card(interaction, campaign, drawn, note)
     track = getattr(interaction.client, "track", None)
-    if track is not None and track(work, "adventure-card") is not None:
+    if track is not None:
+        if track(work, "adventure-card") is None:
+            work.close()  # shutting down: the work was dropped
         return
-    if track is None:
-        asyncio.get_running_loop().create_task(work)
-    else:
-        work.close()  # shutting down: the work was dropped
+    task = asyncio.get_running_loop().create_task(work)
+    _watchers.add(task)
+    task.add_done_callback(_watchers.discard)
 
 
 async def _card(
@@ -703,7 +727,6 @@ class RemoveYesButton(
             note = COULDNT
         text, view = await _card(interaction, campaign)
         await interaction.edit_original_response(content=f"{note}\n\n{text}", view=view)
-        _watch_in_background(interaction, campaign)
 
 
 class RemoveNoButton(
@@ -845,9 +868,7 @@ class ReadYesButton(
         if (campaign.guild_id, self.document_id) in getattr(bot, "plan_reads", {}):
             await interaction.response.send_message(BUSY, ephemeral=True)
             return
-        note = (
-            "Reading started. Nothing pops up when it's done: press Refresh to see how far it is."
-        )
+        note = READING_STARTED
         await interaction.response.defer()  # the checks below may take longer than Discord waits
         try:
             state = await plan.begin(
@@ -861,6 +882,7 @@ class ReadYesButton(
             note = COULDNT
         text, view = await _card(interaction, campaign)
         await interaction.edit_original_response(content=f"{note}\n\n{text}", view=view)
+        _watch_in_background(interaction, campaign, text, note)
 
 
 class ReadNoButton(
@@ -927,7 +949,7 @@ class RefreshButton(
             return
         text, view = await _card(interaction, campaign)
         await interaction.edit_original_response(content=text, view=view)
-        _watch_in_background(interaction, campaign)
+        _watch_in_background(interaction, campaign, text)
 
 
 class BackToFilesButton(

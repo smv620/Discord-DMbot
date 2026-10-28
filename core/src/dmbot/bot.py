@@ -8584,11 +8584,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
                     clock.began = clock.moved = time.monotonic()  # the turn has come
+                    report = plan_reader.Report()  # the caller's: a cut-off run keeps its counts
+                    # The whole read ends within MAX_RUN_S, a call in progress included (the
+                    # reader checks the time only between calls), so the card's "stops by itself
+                    # after" is true (#2564).
+                    limit = asyncio.timeout(plan_reader.MAX_RUN_S)
                     try:
-                        # The whole read ends within MAX_RUN_S, a call in progress included (the
-                        # reader checks the time only between calls), so the card's "stops by
-                        # itself after" is true (#2564).
-                        async with asyncio.timeout(plan_reader.MAX_RUN_S):
+                        async with limit:
                             report = await plan_reader.run(
                                 ai,
                                 plan,
@@ -8599,9 +8601,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 model=lambda: ai.model,
                                 allowed=plan_allowed,
                                 progress=moved,
+                                report=report,
                             )
                     except TimeoutError:
-                        report = plan_reader.Report()
+                        if not limit.expired():
+                            raise  # a store's or a call's own timeout: the generic handler
                         report.stopped = plan_reader.STOP_TIME
                 log.info("%s", report.line())
                 if report.stopped:

@@ -179,6 +179,8 @@ async def keep_card_current(
     still_going: Callable[[], bool],
     *,
     current: Callable[[], bool] = lambda: True,
+    last: str = "",
+    late_note: Callable[[], str] = lambda: STOPPED_UPDATING,
     every: float = EDIT_EVERY_S,
     limit_s: float = EDIT_FOR_S,
     clock: Callable[[], float] = time.monotonic,
@@ -192,7 +194,6 @@ async def keep_card_current(
     False: say nothing) or the message is gone. A draw or an edit that fails for another reason is
     logged and tried again at the next tick. The caller draws the card once before starting this."""
     started = clock()
-    last = ""
     while True:
         await sleep(every)
         if not current():
@@ -203,7 +204,7 @@ async def keep_card_current(
             ended = not still_going()
             late = clock() - started >= limit_s
             if late and not ended:
-                text = f"{text}\n\n{STOPPED_UPDATING}"
+                text = f"{text}\n\n{late_note()}"
             if text != last:
                 await edit(text, view)
                 last = text

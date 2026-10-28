@@ -195,6 +195,7 @@ async def run(
     max_seconds: float = MAX_RUN_S,
     clock: Callable[[], float] = time.monotonic,
     pause: Pause = asyncio.sleep,
+    report: Report | None = None,
 ) -> Report:
     """Read the document from chunk position `start_chunk` on, batch by batch, storing each batch
     as it is read. `allowed` is asked before every batch (the plan; the switch and the confirmation
@@ -204,7 +205,7 @@ async def run(
     Money: before each call the most it could cost is reserved against both caps (`reserve`), and
     settled to the real cost when it returns. A call that fails keeps its input cost on the ledger
     (the AI service may have billed it); one cut short by a restart keeps the whole reservation."""
-    report = Report()
+    report = Report() if report is None else report  # the caller's, to keep what a cut-off run did
     started = clock()
     position = start_chunk
     failures = 0
