@@ -54,10 +54,10 @@ function CharacterSheetsInner({
   );
   const [report, setReport] = useState<Report>(null);
   const [link, setLink] = useState<Record<string, string>>({});
+  // The section is remounted for each campaign (#2851), so every draft here is kept per character only: it starts
+  // empty on a return to a campaign and can never show under another.
   // What a player has typed in per character, so a re-render does not clear a half-typed form.
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
-  // The section is remounted for each campaign (#2851), so a draft is kept per character only; it starts empty on a
-  // return to a campaign and can never show under another.
   const [documents, setDocuments] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
@@ -135,7 +135,8 @@ function CharacterSheetsInner({
             throw error;
         }
         if (got?.state === "done") {
-          // The choice went through, so its draft is cleared even if the page has since left the campaign.
+          // onDone clears this section's draft. If the page has left the campaign, this copy is gone and there is
+          // nothing left to clear.
           onDone?.();
           if (drawnFor(asked)) {
             setStage(null);
