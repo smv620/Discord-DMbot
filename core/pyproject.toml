@@ -127,7 +127,6 @@ forbidden_modules = ["dmbot.recaps", "dmbot.web"]
 allow_indirect_imports = true
 ignore_imports = [  # all #2827
     "dmbot.campaigns.moves -> dmbot.recaps.store",
-    "dmbot.memory.plot_talk -> dmbot.recaps.feedback",
     "dmbot.transcript.respell -> dmbot.recaps.store",
 ]
 

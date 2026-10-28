@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.memory.extractor import quoted
-from dmbot.recaps.feedback import STORY_HELP_REPLY, asks_to_invent
+from dmbot.memory.story_help import STORY_HELP_REPLY, asks_to_invent
 
 MAX_REPLY = 700  # characters of PlotBot's own words
 MAX_PROPOSALS = 3
