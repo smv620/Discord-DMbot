@@ -56,6 +56,7 @@ from dmbot.web import (
     past_sessions,
     relationships,
     report,
+    rule_sharing,
     sessions,
     shared_recaps,
     sharing,
@@ -2225,6 +2226,20 @@ def create_app(
         return {"campaigns": await house_rule_pages.list_campaigns(db, session)}
 
     # The Shared rules page (#2460 part 2): what the person's campaigns publish and follow.
+    @app.get("/me/campaigns/{ref}/rule-sharing")
+    async def me_campaign_rule_sharing(ref: str, signed: Signed) -> dict[str, Any]:
+        """What the campaign shares and follows, the sets it could follow in its server, how many
+        house rules it has and whether its plan lets it share (#2783), for its DMs only: a player
+        or another campaign's DM gets 403 `not_allowed`; a bad address 404. Never a share code."""
+        session, _token = signed
+        try:
+            return await rule_sharing.read_sharing(
+                db, session, ref, now=clock(), enforce_plans=settings.enforce_plans
+            )
+        except RecapError as err:
+            status, detail = setting_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/shared-rules")
     async def me_shared_rules(signed: Signed) -> dict[str, Any]:
         """The campaigns the person runs that publish or follow a house-rules set or homebrew
