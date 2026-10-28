@@ -19,10 +19,10 @@ import discord
 from dmbot import bot as bot_module
 from dmbot import table_chat
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import Table
 from dmbot.consent import TERMS_VERSION
 from dmbot.dm_screen import table_chat_panel as panel
 from dmbot.sidebar.service import Recent
+from dmbot.table import Table
 from dmbot.transcript import export
 from dmbot.transcript.models import Line, TranscriptSession
 from tests.test_timebot import (

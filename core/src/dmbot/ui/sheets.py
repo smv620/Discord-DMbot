@@ -175,6 +175,10 @@ def _too_soon(last: dict[Any, float], key: Any, gap: float) -> bool:
     return False
 
 
+# The website's character sheets page shares these cooldowns (#2817): each link reads D&D Beyond.
+last_link, last_refresh, too_soon = _last_link, _last_refresh, _too_soon
+
+
 # ---- words -------------------------------------------------------------------------
 
 

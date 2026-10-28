@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
@@ -22,6 +22,7 @@ from dmbot.memory.models import CONFIRMED, NAME_MAX, PROPOSED, REJECTED, MemoryR
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from dmbot.ui import logic
 from dmbot.ui import names as ui
 from tests.pg import DatabaseTest

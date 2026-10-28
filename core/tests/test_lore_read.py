@@ -94,8 +94,8 @@ async def read(read_ai: Any, shape_ai: Any = None, text: str = TEXT) -> lr.LoreR
 class TheExamples(unittest.TestCase):
     def test_their_format_is_pinned(self) -> None:
         text = lr.EXAMPLES
-        self.assertEqual(text.count("NAMES\n"), 2)
-        self.assertEqual(text.count("RELATIONSHIPS\n"), 1)
+        self.assertEqual(text.count("NAMES\n"), 3)
+        self.assertEqual(text.count("RELATIONSHIPS\n"), 2)
         self.assertEqual(text.count("NOT INCLUDED\n"), 1)
         name_line = re.compile(r"^- .+ \| (person|place|group|god|item|event|idea)( \| .+)*$")
         link_line = re.compile(r'^- .+ — .+ — .+ \| quote: ".+"$')
@@ -108,7 +108,7 @@ class TheExamples(unittest.TestCase):
         self.assertIn("Wyrmhold", listed.left_out[0])
 
     def test_the_second_example_is_a_names_list_that_keeps_the_aside_as_another_name(self) -> None:
-        second = lr.EXAMPLES.split("Example 2.", 1)[1]
+        second = lr.EXAMPLES.split("Example 3.", 1)[1]
         self.assertNotIn("RELATIONSHIPS", second)
         self.assertIn("other names: the rogue", second)
         self.assertIn("said: kah-ZETH", second)
@@ -120,6 +120,52 @@ class TheExamples(unittest.TestCase):
         self.assertIn("person, place, group, god, item, event, idea", prompt)
         self.assertIn("mentor_of", prompt)
         self.assertIn(lr.EXAMPLES, prompt)
+
+    def test_the_prompt_asks_for_every_stated_relationship_sentence_by_sentence(self) -> None:
+        prompt = lr.read_instructions()
+        for rule in (
+            "sentence by sentence",
+            "One sentence may give several",
+            "Do not stop while the text still has sentences",
+            "never infer",
+            "is a member of",
+            "works for",
+            "mentors",
+            "is an apprentice of",
+            "founded",
+            "lives in",
+            "is family of",
+            "leads",
+        ):
+            self.assertIn(rule, prompt)
+
+    def test_every_example_quote_is_in_its_document_and_holds_both_ends(self) -> None:
+        """What the prompt teaches must pass the checks it is taught for (#2854 review)."""
+        for block in lr.EXAMPLES.split("Example ")[1:]:
+            document = block.split("<document>", 1)[1].split("</document>", 1)[0]
+            listed = lr.parse_plain(block.split("Output:\n", 1)[1])
+            for line in listed.links:
+                ends = lr.line_ends(line)
+                assert ends is not None
+                quote = line.split('quote: "', 1)[1].rsplit('"', 1)[0]
+                self.assertIn(quote, document)
+                self.assertLessEqual(len(quote.split()), bg.QUOTE_WORDS)
+                for end in ends:  # (the name, or one of the other names the list gives it)
+                    forms = [end]
+                    for name_line in listed.names:
+                        if lr.line_name(name_line) == end:
+                            forms = lr.name_forms(name_line)
+                    self.assertTrue(
+                        any(f.casefold() in quote.casefold() for f in forms), (line, end)
+                    )
+
+    def test_the_third_example_gives_several_lines_for_one_sentence(self) -> None:
+        third = lr.EXAMPLES.split("Example 2.", 1)[1].split("Example 3.", 1)[0]
+        listed = lr.parse_plain(third.split("Output:\n", 1)[1])
+        self.assertGreaterEqual(len(listed.links), 6)
+        self.assertEqual(
+            sum("mentors" in x for x in listed.links), 2
+        )  # (two apprentices, two lines)
 
 
 class ThePlainList(unittest.TestCase):
@@ -296,7 +342,11 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         )
         shaped = [c.args[1] for c in fake.complete.await_args_list if c.kwargs.get("schema")]
         seen = "\n".join(shaped)
-        self.assertNotIn("- Brother Aldric |", seen)
+        # (a known name whose line gives it new spellings is still shaped, so a link written with
+        # one finds it (#2841); it is not offered again, and a known name with nothing new is not
+        # shaped at all)
+        self.assertIn("- Brother Aldric |", seen)
+        self.assertEqual(done.known_spellings, {"Brother Aldric": ("Aldric",)})
         self.assertNotIn("- Greyfen Abbey |", seen)
         self.assertNotIn("Brother Aldric — leads — Greyfen Abbey", seen)
         self.assertEqual({n.name for n in done.names}, {"Ashen Hand", "Mira"})
@@ -705,7 +755,7 @@ class TheSpellingVariants(unittest.TestCase):
 
 
 class TheSecondLook(unittest.IsolatedAsyncioTestCase):
-    async def test_names_with_no_relationship_are_asked_about_once_more(self) -> None:
+    async def test_a_paragraph_missing_relationships_is_asked_about_on_its_own(self) -> None:
         first = (
             'NAMES\n- Brother Aldric | person | quote: "Brother Aldric"\n'
             '- Mira | person | quote: "Mira, called the Fox"\n'
@@ -731,11 +781,18 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(asked), 2)
         system, request = asked[1]
         self.assertIn("SECOND LOOK", system)
-        self.assertIn("<names_to_check>\n- Mira\n</names_to_check>", request)
-        self.assertNotIn("- Greyfen Abbey\n</names_to_check>", request)
-        self.assertEqual((done.stats.lonely, done.stats.extra_links), (1, 1))
+        self.assertIn("ONE PARAGRAPH", system)
+        # (the paragraph, and the names that are in it)
+        self.assertIn("Mira, called the Fox, is the niece of Brother Aldric", request)
+        for name in ("Brother Aldric", "Mira", "Greyfen Abbey"):
+            self.assertIn(f"\n- {name}\n", request.split("<names_to_check>")[1])
+        stats = done.stats
+        self.assertEqual((stats.paragraphs_asked, stats.second_calls, stats.extra_links), (1, 1, 1))
         # the summary's "found" count includes the lines the second look added
-        self.assertEqual(done.stats.links_listed, 2)
+        self.assertEqual((stats.pass1_links, stats.links_listed), (1, 2))
+        self.assertEqual(
+            (stats.paragraph_lines_before, stats.paragraph_lines_after), ("0/1/0/0", "0/0/1/0")
+        )
 
     async def test_a_short_text_or_no_lonely_name_asks_nothing_more(self) -> None:
         calls = 0
@@ -769,7 +826,7 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, 1)  # (every name has a line)
 
     async def test_a_failed_second_look_leaves_the_list_as_it_was(self) -> None:
-        queue = [Reply("NAMES\n- Mira | person\n", False)]
+        queue = [Reply("NAMES\n- Mira | person\n- Brother Aldric | person\n", False)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
             if schema is None:
@@ -780,11 +837,13 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
 
         fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
         done = await read(fake, text=LONG)
-        self.assertEqual((done.stats.lonely, done.stats.extra_links, done.cut), (1, 0, False))
+        stats = done.stats
+        self.assertEqual((stats.paragraphs_asked, stats.second_calls), (1, 0))
+        self.assertEqual((stats.extra_links, done.cut), (0, False))
 
     async def test_what_the_second_look_adds_still_has_to_pass_the_same_checks(self) -> None:
-        first = 'NAMES\n- Mira | person | quote: "Mira"\n- Zorgul | person | quote: "Zorgul"\n'
-        more = 'RELATIONSHIPS\n- Mira — owns — Zorgul | quote: "Mira owns Zorgul"\n'
+        first = 'NAMES\n- Mira | person | quote: "Mira"\n- Brother Aldric | person\n'
+        more = 'RELATIONSHIPS\n- Mira — owns — Brother Aldric | quote: "Mira owns Brother Aldric"\n'
         queue = [Reply(first, False), Reply(more, False)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
@@ -794,7 +853,9 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
                 json.dumps(
                     {
                         "names": [],
-                        "connections": [row("Mira", "owns", "Zorgul", "Mira owns Zorgul")],
+                        "connections": [
+                            row("Mira", "owns", "Brother Aldric", "Mira owns Brother Aldric")
+                        ],
                     }
                 ),
                 False,
@@ -812,7 +873,7 @@ class TheSecondLook(unittest.IsolatedAsyncioTestCase):
 
 class TheSecondLookLimits(unittest.IsolatedAsyncioTestCase):
     async def test_out_of_funds_in_the_second_look_is_not_swallowed(self) -> None:
-        queue = [Reply("NAMES\n- Mira | person\n", False)]
+        queue = [Reply("NAMES\n- Mira | person\n- Brother Aldric | person\n", False)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
             if queue:
@@ -824,8 +885,8 @@ class TheSecondLookLimits(unittest.IsolatedAsyncioTestCase):
             await read(fake, text=LONG)
 
     async def test_a_cut_second_look_is_counted_and_its_lines_used(self) -> None:
-        first = 'NAMES\n- Mira | person | quote: "Mira"\n'
-        more = 'RELATIONSHIPS\n- Mira — friend of — Zorgul | quote: "Mira and Zorgul"\n- Mi'
+        first = 'NAMES\n- Mira | person | quote: "Mira"\n- Brother Aldric | person\n'
+        more = 'RELATIONSHIPS\n- Mira — friend of — Brother Aldric | quote: "Mira and Aldric"\n- Mi'
         queue = [Reply(first, False), Reply(more, True)]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
@@ -1075,7 +1136,7 @@ class TheWidenedQuoteKeepsTheStatement(unittest.TestCase):
         self.assertLessEqual(len(c.quote.split()), bg.QUOTE_WORDS)
 
     def test_a_window_that_only_holds_the_names_by_dropping_the_quote_is_not_kept(self) -> None:
-        early = " ".join(["Aldric Vane and Mira Thorn walked"] + ["slowly"] * 18 + ["home."])
+        early = " ".join(["Aldric Vane and Mira Thorn walked"] + ["slowly"] * 45 + ["home."])
         text = early + " She later founded the Hand of Dusk."
         got, lost = connections(
             [row("Aldric Vane", "mentor", "Mira Thorn", "She later founded the Hand of Dusk.")],
@@ -1154,7 +1215,9 @@ class TheSecondLookCeiling(unittest.IsolatedAsyncioTestCase):
         )  # (the first call and its continuation)
 
     async def test_a_second_look_that_runs_out_of_time_leaves_the_list_as_it_was(self) -> None:
-        queue = [Reply('NAMES\n- Mira | person | quote: "Mira"\n', False)]
+        queue = [
+            Reply('NAMES\n- Mira | person | quote: "Mira"\n- Brother Aldric | person\n', False)
+        ]
 
         async def complete(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
             if schema is None:
@@ -1166,7 +1229,7 @@ class TheSecondLookCeiling(unittest.IsolatedAsyncioTestCase):
         fake = SimpleNamespace(complete=AsyncMock(side_effect=complete), model="claude-sonnet-5-5")
         with mock.patch.object(lr, "PASS1_BUDGET_S", 0.3):
             done = await read(fake, text=LONG)
-        self.assertEqual((done.stats.lonely, done.stats.extra_links), (1, 0))
+        self.assertEqual((done.stats.lonely, done.stats.extra_links), (2, 0))
 
 
 class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
@@ -1192,13 +1255,22 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c["directional"] for c in calls], [True, False])
         self.assertEqual([c["args"][3:5] for c in calls], [("kin_of", "o")] * 2)  # (order as given)
 
-    def test_a_paragraph_break_of_any_kind_stops_the_widening(self) -> None:
+    def test_a_quote_that_opens_its_paragraph_borrows_the_one_before_whatever_the_break(
+        self,
+    ) -> None:
+        """The paragraph before joins only when the quote opens its paragraph (#2841)."""
         for sep in ("\n\n", "\r\n", "\r", "\u2029", "\u2028", "\x85"):
             text = f"Brother Aldric ruled Greyfen.{sep}His sister, Mira, ran the farm."
             got, lost = connections(
                 [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text
             )
-            self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}), repr(sep))
+            self.assertEqual(len(got), 1, repr(sep))
+            self.assertEqual(
+                got[0].quote, "Brother Aldric ruled Greyfen. His sister, Mira, ran the farm."
+            )
+            self.assertEqual(dict(lost), {"quote_widened": 1, "quote_prev_paragraph": 1}, repr(sep))
+
+    def test_a_break_inside_the_quote_stops_the_widening(self) -> None:
         text = "Brother Aldric ruled Greyfen. His sister,\u2029Mira, ran the farm."
         got, lost = connections(
             [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text
