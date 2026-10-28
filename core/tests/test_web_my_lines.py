@@ -139,7 +139,8 @@ class Asking(LinesBase):
 
     async def test_with_no_lines_there_is_nothing_to_delete(self) -> None:
         self.assertEqual(
-            await self.refused(my_lines.request(self.web, self.session, SERVER)), "nothing"
+            await self.refused(my_lines.request(self.web, self.session, SERVER)),
+            "nothing_to_delete",
         )
         self.assertEqual(await self.rows(), [])
 
@@ -171,6 +172,36 @@ class Asking(LinesBase):
         self.assertEqual(
             await self.refused(my_lines.request(self.web, self.session, SERVER)), "too_soon"
         )
+
+    async def test_two_presses_at_the_same_moment_make_one_request(self) -> None:
+        import asyncio
+
+        await self.lines(ALICE.id)
+        ids = await asyncio.gather(
+            *(my_lines.request(self.web, self.session, SERVER) for _ in range(4))
+        )
+        self.assertEqual(len(set(ids)), 1)
+        self.assertEqual(len(await self.rows()), 1)
+
+    async def test_a_request_the_bot_took_and_dropped_goes_back_to_waiting(self) -> None:
+        await self.lines(ALICE.id)
+        did = await my_lines.request(self.web, self.session, SERVER)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE web_line_deletions SET state = 'working', stage = 'deleting',"
+                " claimed_at = created_at, updated_at = created_at - 700"
+            )
+        again = await my_lines.request(self.web, self.session, SERVER)
+        self.assertEqual(again, did)
+        (row,) = await self.rows()
+        self.assertEqual((row["state"], row["stage"]), ("waiting", "waiting"))
+
+    async def test_state_and_stage_cannot_disagree(self) -> None:
+        await self.lines(ALICE.id)
+        await my_lines.request(self.web, self.session, SERVER)
+        async with self.db.guild(THURSDAY.id) as conn:
+            with self.assertRaises(Exception):  # noqa: B017 (a CHECK refusing the row)
+                await conn.execute("UPDATE web_line_deletions SET state = 'failed'")
 
     async def test_a_day_old_request_is_swept_and_a_new_one_can_be_made(self) -> None:
         await self.lines(ALICE.id)
@@ -285,7 +316,7 @@ class TheRoutes(LinesBase):
     async def test_no_lines_is_a_conflict_named_nothing(self) -> None:
         client = await self.client(True)
         got = await client.post(f"/me/transcripts/{SERVER}/delete", headers=HEADERS)
-        self.assertEqual((got.status_code, got.json()["error"]), (409, "nothing"))
+        self.assertEqual((got.status_code, got.json()["error"]), (409, "nothing_to_delete"))
 
     async def test_a_server_not_on_the_list_is_not_found(self) -> None:
         client = await self.client(True)
@@ -308,3 +339,40 @@ class TheRoutes(LinesBase):
             got = await client.request(method, path, headers=HEADERS)
             self.assertEqual((got.status_code, got.json()["error"]), (404, "not_found"), path)
         self.assertEqual(await self.rows(), [])
+
+
+class TheWordsAreDiscords(LinesBase):
+    """The website says what Discord's 🗑 flow says, word for word (CLAUDE.md: same words where
+    they fit). The page's words are checked against this file in
+    `web/test/delete-my-lines.test.tsx`; this keeps the file equal to Discord's own text, so
+    changing Discord's words fails here until the file (and so the page) is updated too."""
+
+    def test_the_shared_file_equals_discords_text(self) -> None:
+        import json
+        from pathlib import Path
+
+        from dmbot import consent_dm as c
+
+        def plain(text: str) -> str:
+            return text.replace(
+                "**", ""
+            )  # (Discord shows the server name in bold; the page does not)
+
+        expected = {
+            "label": c.DELETE_LABEL,
+            "yes": c.DELETE_YES_LABEL,
+            "cancel": c.DELETE_NO_LABEL,
+            "kept": c.DELETE_KEPT,
+            "failed": c.DELETE_FAILED,
+            "warning_12_3": plain(c.delete_warning_text("Thursday Table", 12, 3)),
+            "warning_1_1": plain(c.delete_warning_text("Thursday Table", 1, 1)),
+            "done": plain(c.delete_done_text("Thursday Table")),
+            "nothing": plain(c.delete_nothing_text("Thursday Table")),
+        }
+        path = Path(__file__).resolve().parents[2] / "web/test/fixtures/discord-delete-words.json"
+        self.assertEqual(
+            json.loads(path.read_text(encoding="utf-8")),
+            expected,
+            "Discord's delete words changed: update web/test/fixtures/discord-delete-words.json "
+            "and the page's words (web/src/content/delete-my-lines-words.ts) to match",
+        )

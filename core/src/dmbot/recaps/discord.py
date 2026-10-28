@@ -75,7 +75,7 @@ from dmbot.recaps.notify import page_link, remind_the_dm, tell_the_dm
 from dmbot.recaps.pipeline import Inputs
 from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.significance import Memory
-from dmbot.recaps.store import Job
+from dmbot.recaps.store import Job, SavedLists
 from dmbot.recaps.text import names_a_secret, strip_cues
 from dmbot.transcript.cleaner import (
     clean,
@@ -2214,6 +2214,24 @@ class RecapFeatures:
                 remember=("recap", cid, session_at),
             )
         return True
+
+    async def recap_saved_lists(
+        self, campaign: Campaign, session_at: int, user_id: int
+    ) -> SavedLists | None:
+        """What making this recap again would throw away, for the question first (#2727): the
+        count of scenes whose "who was there" list the DM saved, and whether a finished recap
+        stands. None: nothing to warn about (no recap yet, or not a DM). A count of None when it
+        cannot be told, so the question warns anyway, as the website's does. Only a DM of the
+        campaign is told anything."""
+        if self.recaps is None or user_id not in campaign.dm_user_ids:
+            return None
+        try:
+            return await self.recaps.saved_lists(campaign.guild_id, campaign.id, session_at)
+        except Exception:
+            log.exception("Recap again: couldn't read whether lists were saved")
+            return SavedLists(
+                None, None, None
+            )  # (neither is known: warn, and do not claim an old one)
 
     async def recap_again(
         self, campaign: Campaign, session_at: int, user_id: int, *, replace_ok: bool = False

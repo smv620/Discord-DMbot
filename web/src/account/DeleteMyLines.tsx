@@ -17,7 +17,8 @@ type Phase =
   | { kind: "idle" }
   | { kind: "looking" }
   | { kind: "asking"; lines: number; sessions: number }
-  | { kind: "working"; seen: "waiting" | "deleting" }
+  | { kind: "sending" } // Yes was pressed; the request is on its way
+  | { kind: "working"; seen: "waiting" | "deleting"; status: MyLinesStatus | null }
   | { kind: "gaveup" }
   | { kind: "done"; text: string }
   | { kind: "error"; message: string };
@@ -43,7 +44,7 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
   /** Follow a request until the bot has answered, or until the hour the page waits is up. */
   async function follow(id: string) {
     if (!api.myLinesStatus) return set({ kind: "error", message: problem("server") });
-    set({ kind: "working", seen: "waiting" });
+    set({ kind: "working", seen: "waiting", status: null });
     const started = Date.now();
     for (let i = 0; live.current; i += 1) {
       const behind = Date.now() - started > OFFLINE_AFTER_MS;
@@ -58,10 +59,10 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
         if (final) return set({ kind: "gaveup" });
         continue; // a look that fails is tried again until the hour is up
       }
-      if (got.state === "done") return set({ kind: "done", text: w.done(serverName, got.lines ?? 0) });
+      if (got.state === "done") return set({ kind: "done", text: w.done(serverName) });
       if (got.state === "failed") return set({ kind: "error", message: w.failed });
       if (final) return set({ kind: "gaveup" });
-      set({ kind: "working", seen: got.stage === "deleting" ? "deleting" : "waiting" });
+      set({ kind: "working", seen: got.stage === "deleting" ? "deleting" : "waiting", status: got });
     }
   }
 
@@ -81,6 +82,7 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
 
   async function ask() {
     if (!api.deleteMyLines) return set({ kind: "error", message: problem("server") });
+    set({ kind: "sending" }); // one press: Yes is not offered again while the request is on its way
     let id: string;
     try {
       id = await api.deleteMyLines(serverId);
@@ -95,7 +97,7 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
     <div class="stack" data-delete-lines={serverId}>
       {(phase.kind === "idle" || phase.kind === "error" || phase.kind === "done" || phase.kind === "gaveup") && (
         <button type="button" class="button secondary" aria-label={w.buttonFor(serverName)} onClick={() => void look()}>
-          {w.button}
+          {phase.kind === "gaveup" ? w.checkAgain : w.button}
         </button>
       )}
       {phase.kind === "looking" && (
@@ -108,7 +110,7 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
           <p role="alert">{w.warning(serverName, phase.lines, phase.sessions)}</p>
           <div class="row">
             {/* First, so the safe choice comes before the one that cannot be undone. */}
-            <button type="button" class="button secondary" onClick={() => set({ kind: "idle" })}>
+            <button type="button" class="button secondary" onClick={() => set({ kind: "done", text: w.kept })}>
               {w.cancel}
             </button>
             <button type="button" class="button" onClick={() => void ask()}>
@@ -117,8 +119,24 @@ export default function DeleteMyLines({ api, serverId, serverName }: { api: Acco
           </div>
         </div>
       )}
-      {phase.kind === "working" && seen.startedAt !== null && (
-        <WorkProgress stage={stageWords(w.stage, phase.seen)} startedAt={seen.startedAt} updatedAt={seen.movedAt} state={seen.quiet ? "stalled" : "running"} whatToDo={w.quiet} />
+      {phase.kind === "sending" && (
+        <p class="muted small" role="status">
+          {w.sending}
+        </p>
+      )}
+      {phase.kind === "working" && phase.status !== null && (
+        // DMbot's own answer: its stage, its clock and when it last moved (#2564), not this page's guess.
+        <WorkProgress
+          stage={stageWords(w.stage, phase.status.stage)}
+          startedAt={phase.status.startedAt}
+          updatedAt={phase.status.updatedAt}
+          serverNow={phase.status.serverNow}
+          state={phase.status.state === "stalled" ? "stalled" : "running"}
+          whatToDo={phase.seen === "deleting" ? w.quietDeleting : w.quietWaiting}
+        />
+      )}
+      {phase.kind === "working" && phase.status === null && seen.startedAt !== null && (
+        <WorkProgress stage={stageWords(w.stage, phase.seen)} startedAt={seen.startedAt} updatedAt={seen.movedAt} state={seen.quiet ? "stalled" : "running"} whatToDo={w.quietWaiting} />
       )}
       {phase.kind === "gaveup" && <WorkProgress stage={stageWords(w.stage, "waiting")} state="stalled" frozen whatToDo={w.gaveUp} />}
       <p class="small" role="status">

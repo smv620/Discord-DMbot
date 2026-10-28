@@ -51,8 +51,8 @@ async def counts(db: Database, session: Session, server_id: str) -> dict[str, An
 
 async def request(db: Database, session: Session, server_id: str) -> str:
     """Ask the bot to delete the person's own lines in the server and return the request's id (the
-    same id again while one is open). `nothing` when they have no lines there, `too_soon` past ten
-    requests in an hour."""
+    same id again while one is open). `nothing_to_delete` when they have no lines there, `too_soon`
+    past ten requests in an hour."""
     guild_id = _server(session, server_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)

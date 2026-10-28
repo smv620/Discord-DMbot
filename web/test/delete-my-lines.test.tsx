@@ -11,7 +11,9 @@ import Account from "../src/account/Account";
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
 import DeleteMyLines from "../src/account/DeleteMyLines";
 import { mockApi } from "../src/account/mock";
+import { text } from "../src/content/account";
 import { deleteMyLinesWords as w } from "../src/content/delete-my-lines-words";
+import discord from "./fixtures/discord-delete-words.json";
 
 const live = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/delete-my-lines-switch", () => ({
@@ -50,11 +52,37 @@ describe("while it is switched off", () => {
     expect(calls(api, "myLines")).toHaveLength(0);
   });
 
+  it("says under the list that a server left behind is handled in Discord's menu, once it is on", async () => {
+    live.on = true;
+    render(<Account api={mockApi("table")} go={vi.fn()} search="" />);
+    expect(await screen.findByText(text.recordingLeft, {}, slow)).toBeTruthy();
+    cleanup();
+    live.on = false;
+    render(<Account api={mockApi("table")} go={vi.fn()} search="" />);
+    await screen.findByText("Where DMbot may record you");
+    expect(screen.queryByText(text.recordingLeft)).toBeNull();
+  });
+
   it("shows a button for each server once it is on", async () => {
     live.on = true;
     render(<Account api={mockApi("table")} go={vi.fn()} search="" />);
     expect(await screen.findByRole("button", { name: w.buttonFor("Thursday Table") }, slow)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.buttonFor("Gorrak's Hall") })).toBeTruthy();
+  });
+});
+
+describe("the words are Discord's", () => {
+  it("are word for word what Discord's 🗑 flow says (core/tests/test_web_my_lines.py keeps the file equal to Discord)", () => {
+    expect(w.button).toBe(discord.label);
+    expect(w.yes).toBe(discord.yes);
+    expect(w.cancel).toBe(discord.cancel);
+    expect(w.kept).toBe(discord.kept);
+    expect(w.failed).toBe(discord.failed);
+    expect(w.problem["server"]).toBe(discord.failed);
+    expect(w.warning("Thursday Table", 12, 3)).toBe(discord.warning_12_3);
+    expect(w.warning("Thursday Table", 1, 1)).toBe(discord.warning_1_1);
+    expect(w.done("Thursday Table")).toBe(discord.done);
+    expect(w.nothing("Thursday Table")).toBe(discord.nothing);
   });
 });
 
@@ -74,12 +102,13 @@ describe("the steps", () => {
     expect(w.warning("A", 1, 1)).toMatch(/1 line in 1 session\./);
   });
 
-  it("Cancel changes nothing and asks nothing more", async () => {
+  it("Cancel changes nothing, says so in Discord's words, and asks nothing more", async () => {
     const api = await section();
     press(w.buttonFor("Thursday Table"));
     await screen.findByText(w.warning("Thursday Table", 12, 3));
     press(w.cancel);
     expect(screen.queryByText(w.warning("Thursday Table", 12, 3))).toBeNull();
+    expect(screen.getByText(w.kept)).toBeTruthy();
     expect(calls(api, "deleteMyLines")).toHaveLength(0);
     expect(screen.getByRole("button", { name: w.buttonFor("Thursday Table") })).toBeTruthy();
   });
@@ -101,12 +130,40 @@ describe("the deleting", () => {
     expect(await screen.findByText(w.stage["waiting"] as string)).toBeTruthy();
     expect(await screen.findByText(w.stage["deleting"] as string, {}, slow)).toBeTruthy();
     expect(screen.getByText(/Running for/)).toBeTruthy();
-    expect(await screen.findByText(w.done("Thursday Table", 12), {}, slow)).toBeTruthy();
+    expect(await screen.findByText(w.done("Thursday Table"), {}, slow)).toBeTruthy();
     expect(calls(api, "deleteMyLines")).toEqual(["deleteMyLines:srv-thursday"]);
     // Gone: the next look finds nothing to delete.
     press(w.buttonFor("Thursday Table"));
     expect(await screen.findByText(w.nothing("Thursday Table"))).toBeTruthy();
   }, 20000);
+
+  it("shows a sending state, and no second Yes, from the press until the bot has the request", async () => {
+    const api = await signedIn();
+    let release: (id: string) => void = () => {};
+    api.deleteMyLines = () => new Promise<string>((resolve) => (release = resolve));
+    await section("srv-thursday", "Thursday Table", api);
+    press(w.buttonFor("Thursday Table"));
+    await screen.findByText(w.warning("Thursday Table", 12, 3));
+    press(w.yes);
+    expect(await screen.findByText(w.sending)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.yes })).toBeNull();
+    release("a".repeat(32));
+  });
+
+  it("shows DMbot's own clock from its answer, and quiet words that fit the stage", async () => {
+    const api = await signedIn();
+    const now = Math.floor(Date.now() / 1000);
+    let stage = "waiting";
+    api.myLinesStatus = async () => ({ stage, state: "stalled", reason: "stalled", startedAt: now - 900, updatedAt: now - 700, serverNow: now, lines: null, sessions: null });
+    await section("srv-thursday", "Thursday Table", api);
+    press(w.buttonFor("Thursday Table"));
+    await screen.findByText(w.warning("Thursday Table", 12, 3));
+    press(w.yes);
+    expect(await screen.findByText(w.quietWaiting, {}, slow)).toBeTruthy();
+    expect(screen.getByText(/Running for 15 min/)).toBeTruthy(); // the server's seconds, not this page's guess
+    stage = "deleting";
+    expect(await screen.findByText(w.quietDeleting, {}, slow)).toBeTruthy();
+  });
 
   it("offers no second press while it works", async () => {
     await section();
@@ -116,7 +173,7 @@ describe("the deleting", () => {
     await screen.findByText(w.stage["waiting"] as string);
     expect(screen.queryByRole("button", { name: w.yes })).toBeNull();
     expect(screen.queryByRole("button", { name: w.buttonFor("Thursday Table") })).toBeNull();
-    await screen.findByText(w.done("Thursday Table", 12), {}, slow);
+    await screen.findByText(w.done("Thursday Table"), {}, slow);
   }, 20000);
 
   it("follows a request that is already open (a reload, or another tab) instead of asking for a second", async () => {
@@ -126,7 +183,7 @@ describe("the deleting", () => {
     press(w.buttonFor("Thursday Table"));
     expect(await screen.findByText(w.stage["waiting"] as string)).toBeTruthy();
     expect(calls(api, "deleteMyLines")).toHaveLength(1);
-    await screen.findByText(w.done("Thursday Table", 12), {}, slow);
+    await screen.findByText(w.done("Thursday Table"), {}, slow);
   }, 20000);
 
   it("says DMbot could not do it, in the same words as Discord, and offers it again", async () => {
@@ -168,17 +225,16 @@ describe("the deleting", () => {
   });
 
   describe("with time moving", () => {
-    it("says so and what to do once DMbot has been quiet, and that nothing is deleted yet", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
+    it("says so and what to do once DMbot's own answer calls it stalled, and that nothing is deleted yet", async () => {
       const api = await signedIn();
-      api.myLinesStatus = async () => ({ stage: "waiting", state: "running", reason: null, startedAt: 1, updatedAt: 1, serverNow: 1, lines: null, sessions: null });
+      const now = Math.floor(Date.now() / 1000);
+      api.myLinesStatus = async () => ({ stage: "waiting", state: "stalled", reason: "stalled", startedAt: now - 300, updatedAt: now - 300, serverNow: now, lines: null, sessions: null });
       await section("srv-thursday", "Thursday Table", api);
       press(w.buttonFor("Thursday Table"));
       await screen.findByText(w.warning("Thursday Table", 12, 3));
       press(w.yes);
-      await screen.findByText(w.stage["waiting"] as string);
-      await vi.advanceTimersByTimeAsync(65_000);
-      expect(screen.getByText(w.quiet)).toBeTruthy();
+      expect(await screen.findByText(w.quietWaiting, {}, slow)).toBeTruthy();
+      expect(screen.getByText(/Quiet for/)).toBeTruthy();
     });
 
     it("gives up after an hour with words that do not claim it failed", async () => {
@@ -233,7 +289,7 @@ describe("the real client", () => {
   });
 
   it.each([
-    [409, "nothing", "nothing-to-delete"],
+    [409, "nothing_to_delete", "nothing-to-delete"],
     [429, "too_soon", "too-soon"],
     [404, "not_found", "not-found"],
   ])("reads %s %s as the %s kind", async (status, code, kind) => {

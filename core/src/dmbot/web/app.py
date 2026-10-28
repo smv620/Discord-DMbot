@@ -1760,7 +1760,7 @@ def create_app(
     }
 
     line_delete_refusals = {
-        "nothing": (409, "nothing"),  # no lines of theirs in that server
+        "nothing_to_delete": (409, "nothing_to_delete"),  # no lines of theirs in that server
         "too_soon": (429, "too_soon"),
     }
 

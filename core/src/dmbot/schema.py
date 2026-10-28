@@ -16042,7 +16042,11 @@ WEB_LINE_DELETIONS = (
         created_at BIGINT NOT NULL,
         claimed_at BIGINT NOT NULL DEFAULT 0,
         updated_at BIGINT NOT NULL,
-        PRIMARY KEY (guild_id, id)
+        PRIMARY KEY (guild_id, id),
+        -- The state and the stage move together, so the page (which reads the stage) and the counts
+        -- (which come with `done`) can never disagree.
+        CHECK ((state, stage) IN (('waiting', 'waiting'), ('working', 'deleting'),
+                                  ('done', 'done'), ('failed', 'failed')))
     );
     CREATE UNIQUE INDEX web_line_deletions_one_open ON web_line_deletions (guild_id, user_id)
         WHERE state IN ('waiting', 'working');
@@ -16079,8 +16083,8 @@ WEB_LINE_DELETIONS = (
     $fn$;
 
     -- Ask for the deletion. The same guard as the read. A person with one already open gets that
-    -- one back (a second press is safe); with no lines there is nothing to delete ('nothing'); at
-    -- most 10 requests an hour ('too_soon'). 'ok' with the id otherwise.
+    -- one back (a second press is safe); with no lines there is nothing to delete
+    -- ('nothing_to_delete'); at most 10 requests an hour ('too_soon'). 'ok' with the id otherwise.
     CREATE FUNCTION dmbot_web_my_lines_delete(g BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -16096,6 +16100,13 @@ WEB_LINE_DELETIONS = (
         END IF;
         PERFORM pg_advisory_xact_lock(hashtextextended('web_line_delete:' || g::TEXT || me, 0));
         DELETE FROM web_line_deletions d WHERE d.guild_id = g AND d.created_at < now_s - 86400;
+        -- A request the bot took and then went quiet on for ten minutes (it stopped mid-way) goes
+        -- back to waiting, so the next press is not stuck behind it for a day. The bot's own retake
+        -- does the same; this only covers a bot that is away.
+        UPDATE web_line_deletions d SET state = 'waiting', stage = 'waiting', claimed_at = 0,
+            updated_at = now_s
+            WHERE d.guild_id = g AND d.user_id = me AND d.state = 'working'
+              AND d.updated_at < now_s - 600;
         SELECT d.id INTO have FROM web_line_deletions d
             WHERE d.guild_id = g AND d.user_id = me AND d.state IN ('waiting', 'working');
         IF FOUND THEN
@@ -16103,7 +16114,7 @@ WEB_LINE_DELETIONS = (
         END IF;
         IF NOT EXISTS (SELECT 1 FROM transcript_lines l
                        WHERE l.guild_id = g AND l.user_id = me) THEN
-            RETURN jsonb_build_object('status', 'nothing');
+            RETURN jsonb_build_object('status', 'nothing_to_delete');
         END IF;
         IF (SELECT count(*) FROM web_line_deletions d WHERE d.guild_id = g AND d.user_id = me
             AND d.created_at >= now_s - 3600) >= 10 THEN
