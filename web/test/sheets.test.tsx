@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// "Character sheets" on a campaign's page (#2816): a player sees and links or forgets their own characters' sheets; a DM
+// "Character sheets" on a campaign's page (#2816): a player sees and links or forgets their own characters' sheets, or types one in (#2832); a DM
 // sees every sheet read only and asks for them to be read again. Against the pretend API, and only while SHEETS_LIVE is
 // on (false today), so nothing is asked of the API before then.
 import {

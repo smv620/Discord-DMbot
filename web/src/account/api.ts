@@ -1546,7 +1546,8 @@ export interface CharacterSheets {
   sheets: SheetCharacter[];
 }
 
-/** One choice on a character sheet (#2816): a player links or forgets their own; a DM reads them again. */
+/** One choice on a character sheet (#2816, #2832): a player links, forgets or types in their own; a DM reads them
+ * again. `typed` (#2832): `names` is a comma-separated string; the bot keeps at most 20 of them. */
 export type SheetChoice =
   | { action: "link"; url: string }
   | { action: "forget" }

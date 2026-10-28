@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554). A player sees their own
-// characters' sheets, links one, or forgets it; a DM sees every sheet, read only, and can ask for them to
+// characters' sheets, links one, forgets it, or types in its class, level and names (#2832); a DM sees every sheet, read only, and can ask for them to
 // be read again. Each choice is queued for the bot and this waits for its answer, showing what DMbot is doing, how
 // long it has run and when it last moved (#2564). The page never fetches a character's link: the bot does. Loaded
 // lazily from the campaign page, and only while SHEETS_LIVE is on.
