@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
 // What waits for the DM on the Story graph (#2635, #2652): facts PlotBot heard at the table, connections
-// found in a backstory (grouped by upload, with Keep all) and "Which Mara?" questions. The DM decides
+// found in a backstory (grouped by upload, with Keep all), "Which Mara?" questions and "Who is she?" pronoun
+// questions (#2831). The DM decides
 // everything: each answer is sent to DMbot, which makes the very calls the DM screen's buttons make, so
 // consent, secrets and Undo hold the same. Only a DM of the campaign gets the list from the API; a player
 // never sees this part. One answer at a time per item: its buttons wait while it is sent, and the list
@@ -114,6 +115,8 @@ export default function WebWaiting({
   const busy = sending !== null;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
+  // A pronoun question can have one name or none, and its "Someone else" keeps the connection with a person
+  // who isn't named yet, so it gets its own group and words; a name question keeps the "Neither" words.
   const names = list.which.filter((q) => !q.pronoun);
   const pronouns = list.which.filter((q) => q.pronoun);
 
