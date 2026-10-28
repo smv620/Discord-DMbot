@@ -331,12 +331,12 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
     // For anyone but a DM the label is rebuilt from the known connections, so a secret one's words can
     // never ride along on the line even if the API sent them.
     .map((e) => {
-      // A pin is the DM's alone: dropped for a player who peeks, and in the players' view.
+      // A pin and DMbot's check are the DM's alone: dropped for a player who peeks, and in the players' view.
       if (showAll && canEdit) return e;
-      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, ...l }) => l) };
+      if (showAll) return { ...e, links: e.links.map(({ pinned: _pinned, check: _check, ...l }) => l) };
       const links = e.links
         .filter((l) => !l.secret && l.revealed !== false)
-        .map(({ belief, pinned: _pinned, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
+        .map(({ belief, pinned: _pinned, check: _check, ...l }) => (belief ? { ...l, belief: { confidence: belief.confidence, status: belief.status } } : l));
       return { ...e, links, label: links.at(-1)?.words ?? "", more: Math.max(0, links.length - 1) };
     })
     .filter((e) => e.links.length > 0);
@@ -710,6 +710,7 @@ function LinkRow({
         {link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
+      {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
       {link.belief && (
         <p class="small">
           {link.belief.status} · {words.confidence(Math.round(link.belief.confidence * 100))}

@@ -221,6 +221,32 @@ describe("Which Mara?", () => {
   });
 });
 
+describe("DMbot's check on the waiting list (#2859)", () => {
+  const B2_CHECK = "DMbot wasn't sure who the text means. Please check.";
+
+  it("a waiting connection shows DMbot's check under it", async () => {
+    await open();
+    expect(screen.getByText(w.checkLine(B2_CHECK))).toBeTruthy();
+  });
+
+  it("a connection with no check shows no check line", async () => {
+    await open();
+    // Only the connection with a check (b2) shows one; the others (b1, b3, b4) show none.
+    expect(screen.queryAllByText(/^DMbot's check: /)).toHaveLength(1);
+  });
+
+  it("a \"Which one?\" question shows DMbot's check", async () => {
+    const api = mockApi("table");
+    const real = api.webWaiting!.bind(api);
+    api.webWaiting = async (ref) => {
+      const got = await real(ref);
+      return { ...got, which: got.which.map((q) => ({ ...q, check: "DMbot matched this name from your text." })) };
+    };
+    await open(api);
+    expect(screen.getByText(w.checkLine("DMbot matched this name from your text."))).toBeTruthy();
+  });
+});
+
 describe("Who is she?", () => {
   const PRONOUN_REF = "100.cmp1.pronoun";
   async function openPronouns(api = mockApi("table")) {
@@ -317,6 +343,12 @@ describe("Who is she?", () => {
     const card = screen.getByText(w.whichQuestion("Mara")).closest(".panel") as HTMLElement;
     // A question with no pronoun key is a name question: it offers Neither, not Someone else.
     expect(within(card).getByRole("button", { name: w.neither })).toBeTruthy();
+  });
+
+  it("a pronoun question shows DMbot's check, and one with none shows none", async () => {
+    await openPronouns();
+    expect(screen.getByText(w.checkLine("You chose someone else for this one."))).toBeTruthy();
+    expect(screen.queryAllByText(/^DMbot's check: /)).toHaveLength(1);
   });
 
   it("a name question is drawn as before", async () => {
