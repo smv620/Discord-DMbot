@@ -202,7 +202,10 @@ export default function CharacterSheetsSection({
                 onLink={() =>
                   void send(
                     s.entityId,
-                    { action: "link", url: (link[linkKey(s.entityId)] ?? "").trim() },
+                    {
+                      action: "link",
+                      url: (link[linkKey(s.entityId)] ?? "").trim(),
+                    },
                     w.linkSaved,
                   )
                 }
