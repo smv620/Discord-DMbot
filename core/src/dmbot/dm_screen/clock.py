@@ -382,7 +382,7 @@ def players_see(campaign: Campaign, what: str = "the day and ") -> str:
 
 MARK = "🕰️"
 SMALL = "-# "  # Discord's small text
-SCAN = 25  # recent messages looked at to find DMbot's last clock line
+SCAN = 50  # recent messages looked at for DMbot's last clock line (a busier chat may post it again)
 SPLIT_HEAD = "The party is split"
 _VIEW = re.compile(r"Day \d+, [a-z -]+")
 
@@ -440,11 +440,15 @@ async def put_line(
         return
     channel = client.get_channel(channel_id)
     me = getattr(client.user, "id", None)
-    if not isinstance(channel, discord.abc.Messageable) or me is None:
-        log.info("A clock line was not posted: the chat channel is not available")
-        return
     text = small(lines)
     try:
+        if channel is None and hasattr(client, "fetch_channel"):
+            channel = await client.fetch_channel(
+                channel_id
+            )  # (a new channel may not be cached yet)
+        if not isinstance(channel, discord.abc.Messageable) or me is None:
+            log.info("A clock line was not posted: the chat channel is not available")
+            return
         recent = [m async for m in channel.history(limit=SCAN)]  # newest first
         last = next(
             (m for m in recent if m.author.id == me and m.content.startswith(SMALL + MARK)), None
@@ -521,7 +525,7 @@ async def update_players(
         log.exception("Couldn't tell the players about the clock")
 
 
-async def correct_players(client: Any, campaign: Campaign, stored: Stored, line: str) -> None:
+async def correct_players(client: Any, campaign: Campaign, line: str) -> None:
     """An Undo: the players may have been told a rest finished, so say it was taken back."""
     try:
         async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
@@ -1466,8 +1470,8 @@ class ClockUndoButton(
         if stored is not None:
             await show(client, campaign, stored)
             fresh = await client.campaigns.get(guild.id, campaign.id) or campaign
-            who = f"{acted.name}: " if acted is not None else ""
-            await correct_players(client, fresh, stored, f"{who}{game.short_label(after.minute)}.")
+            who = f"{acted.name} is" if acted is not None else "it is"
+            await correct_players(client, fresh, f"{who} back to {game.short_label(after.minute)}.")
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=f"↩️ Undone. Back to {game.short_label(self.before)}.", view=None

@@ -529,7 +529,7 @@ class SayingWhereAndTakingBack(SetTimePanel):
         await ui.ClockUndoButton(self.a.id, ui.undo_id(result.before, result.after)).callback(
             cast(Any, it)
         )
-        self.assertEqual(self.chat_lines()[-1], "-# 🕰️ Correction: Day 4, about noon.")
+        self.assertEqual(self.chat_lines()[-1], "-# 🕰️ Correction: it is back to Day 4, about noon.")
         # Nothing to take back (the clock moved since): nothing is said.
         before = len(await self.players_posts())
         await ui.ClockUndoButton(self.a.id, ui.undo_id(result.before, result.after)).callback(

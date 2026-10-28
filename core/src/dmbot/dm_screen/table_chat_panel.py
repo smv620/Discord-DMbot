@@ -28,7 +28,10 @@ ONLY_DM = (
     "Ask them to open ⚙️ Settings."
 )
 FAILED = "Sorry, that didn't save. Please try again."
-NOT_THAT_ONE = "DMbot won't read the DM screen or the transcript as chat. Pick another channel."
+NOT_THAT_ONE = (
+    "That channel is for the DM screen or the transcript, so it can't be table chat. "
+    "Pick a different text channel."
+)
 TEXT_TYPES = [discord.ChannelType.text]
 
 
