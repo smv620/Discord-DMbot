@@ -727,10 +727,12 @@ class WaitingOnAFileRead(SyncTest):
 
     async def test_the_message_opens_then_ends_with_a_plain_result(self) -> None:
         it, message = self.message_interaction()
-        async with file_ui._waiting(it) as waiting:
-            waiting.step(hs.STEP_FINDING)
-            self.assertIn(hs.STEP_FINDING, waiting.text())
-        self.assertEqual(it.followup.send.await_args.args[0], file_ui.READING)
+        async with file_ui._waiting(it) as reading:
+            reading.step(hs.STEP_FINDING, keeps=False)
+            self.assertIn(hs.STEP_FINDING, reading.waiting.text())
+        opening = it.followup.send.await_args.args[0]
+        self.assertIn(file_ui.READING, opening)
+        self.assertIn(file_ui.STEP_READING, opening)  # the stage shows from the first moment
         self.assertTrue(it.followup.send.await_args.kwargs["ephemeral"])
         self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
 
@@ -794,8 +796,66 @@ class WaitingOnAFileRead(SyncTest):
         form.file.component._values = [attachment]  # type: ignore[attr-defined]
         await form.on_submit(it)
         sent = [c.args[0] for c in it.followup.send.await_args_list]
-        self.assertEqual(sent[0], file_ui.READING)
+        self.assertEqual(sent[0].splitlines()[0], file_ui.READING)
         self.assertTrue(any("I found 1 new house rule" in text for text in sent))
         self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
         self.assertNotIn("ZZPLANTED", str(message.edit.await_args_list))
         self.assertNotIn("ZZPLANTED", sent[0])
+
+    async def test_an_unreadable_file_ends_the_wait_as_stopped_not_as_done(self) -> None:
+        it, message = self.message_interaction()
+        form = file_ui.UploadForm(campaign())
+        attachment = SimpleNamespace(
+            size=3, filename="scan.pdf", read=AsyncMock(return_value=blank_pdf())
+        )
+        form.file.component._values = [attachment]  # type: ignore[attr-defined]
+        await form.on_submit(it)
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.UNREADABLE)
+        self.assertIn(house_reader.SCANNED, it.followup.send.await_args.args[0])
+
+    async def test_a_download_that_fails_ends_the_wait_and_frees_the_campaign(self) -> None:
+        it, message = self.message_interaction()
+        form = file_ui.UploadForm(campaign())
+        broken = AsyncMock(
+            side_effect=discord.HTTPException(SimpleNamespace(status=500, reason="x"), "x")
+        )
+        attachment = SimpleNamespace(size=3, filename="a.txt", read=broken)
+        form.file.component._values = [attachment]  # type: ignore[attr-defined]
+        await form.on_submit(it)
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.FAILED_READING)
+        self.assertNotIn((campaign().guild_id, campaign().id), file_ui._busy)  # not stuck
+
+    async def test_a_read_that_breaks_in_an_unexpected_way_still_frees_the_campaign(self) -> None:
+        it, message = self.message_interaction()
+        form = file_ui.UploadForm(campaign())
+        attachment = SimpleNamespace(
+            size=3, filename="a.txt", read=AsyncMock(side_effect=OSError("net"))
+        )
+        form.file.component._values = [attachment]  # type: ignore[attr-defined]
+        with self.assertRaises(OSError):
+            await form.on_submit(it)
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.FAILED_READING)
+        self.assertNotIn((campaign().guild_id, campaign().id), file_ui._busy)
+
+    async def test_the_stall_line_says_when_dmbot_stops_by_itself(self) -> None:
+        it, _message = self.message_interaction()
+        async with file_ui._waiting(it) as reading:
+            reading.step(hs.STEP_FINDING, keeps=False)
+            reading.waiting._moved -= file_ui.STALL_AFTER_S + 1
+            text = reading.waiting.text()
+        self.assertIn("No change for", text)
+        self.assertIn("stop by itself", text)
+        self.assertIn("add nothing", text)
+
+    async def test_the_check_now_button_waits_the_same_way(self) -> None:
+        it, message = self.message_interaction()
+        with (
+            patch.object(file_ui, "_bot", return_value=self.bot),
+            patch.object(file_ui, "_dm_campaign", AsyncMock(return_value=campaign())),
+            patch.object(hs, "check_linked", AsyncMock()) as check,
+        ):
+            await file_ui.check_now(it, campaign())
+        self.assertIn(file_ui.READING, it.followup.send.await_args_list[0].args[0])
+        self.assertEqual(message.edit.await_args.kwargs["content"], file_ui.DONE_READING)
+        self.assertIn("progress", check.await_args.kwargs)
+        file_ui._done(campaign())
