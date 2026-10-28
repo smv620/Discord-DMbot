@@ -10307,8 +10307,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self, owner_id: int, kind: str, subject: str, body: str
     ) -> None:
         """An owner's email about their hand-over offer (#2532, slice D): to the address DMbot has
-        for their account, if any. Once for each `kind` (the mail log); never raises, never logs the
-        address or the text."""
+        for their account, if any. Once for each `kind` (the mail log keeps a row, so a repeat is
+        refused); an email that could not go (the day's cap, the mail server) is not retried, as for
+        other account emails. Never logs the address or the text. Raises only if the account
+        lookup does; the caller (`SiteOffers._email_owner`) catches that."""
         if self.mailer is None or self.meter is None:
             return
         to = await accounts.account_email(self.meter.db, owner_id)

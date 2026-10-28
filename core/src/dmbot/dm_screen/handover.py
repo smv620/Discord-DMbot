@@ -28,6 +28,7 @@ import contextlib
 import logging
 import re
 import time
+import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -166,41 +167,6 @@ TOLD_EXPIRED_UNSENT = (
 )
 
 
-def owner_email(
-    kind: str, *, name: str, campaign: str, server: str = "", days: int = HANDOVER_DAYS
-) -> tuple[str, str]:
-    """(subject, body) of the email to the owner about their offer (#2532, slice D; PLAN: "The
-    owner is told ... by email when DMbot has one"). Plain text, the same facts as the private
-    message. `kind` is accepted, declined, expired or moved. The address the offer went to is never
-    in it (the owner typed it, and never learns more about it than that), and an offer made by
-    email has no name, so `name` is then "The person you emailed"."""
-    if kind == "accepted":
-        return (
-            f'Your offer of "{campaign}" was accepted',
-            f'{name} accepted your offer of "{campaign}": it uses their plan now. You are still '
-            "one of its DMs; nothing else changes.",
-        )
-    if kind == "declined":
-        return (
-            f'Your offer of "{campaign}" was turned down',
-            f'{name} said no thanks to your offer of "{campaign}". It stays yours.',
-        )
-    if kind == "expired":
-        return (
-            f'Your offer of "{campaign}" ended',
-            f"They didn't answer within {days} days, so the offer ended. The campaign is still "
-            "yours. You can offer it again from Settings > Campaign management > Hand over in "
-            "Discord, or from your account page on the DMbot website.",
-        )
-    if kind == "moved":
-        return (
-            f'"{campaign}" now runs on another server',
-            f'{name} took over "{campaign}" on the Discord server "{server}", so it is gone from '
-            "the old server. You are still one of its DMs.",
-        )
-    raise ValueError(f"no email for {kind!r}")
-
-
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
@@ -244,6 +210,50 @@ FAILED = LOAD_FAILED
 # settings.py (which imports this module, so it can't be imported from here).
 Card = Callable[[Campaign, int], tuple[str, discord.ui.View]]  # campaign, who's looking
 _settings_card: Card | None = None
+
+
+def _plain(text: str) -> str:
+    """Text a person chose (a name, a campaign) for an email: no control or direction-changing
+    characters, one line, so it cannot reorder or hide the words around it."""
+    kept = "".join(" " if c.isspace() else c for c in text if unicodedata.category(c) != "Cf")
+    return " ".join("".join(c for c in kept if unicodedata.category(c) != "Cc").split())
+
+
+def owner_email(
+    kind: str, *, name: str, campaign: str, server: str = "", days: int = HANDOVER_DAYS
+) -> tuple[str, str]:
+    """(subject, body) of the email to the owner about their offer (#2532, slice D; PLAN: "The
+    owner is told ... by email when DMbot has one"). Plain text, the same facts as the private
+    message. `kind` is accepted, declined, expired or moved. The address the offer went to is never
+    in it (the owner typed it, and never learns more about it than that), and an offer made by
+    email has no name, so `name` is then "The person you emailed"."""
+    name, campaign, server = _plain(name), _plain(campaign), _plain(server)
+    if kind == "accepted":
+        return (
+            f'Your offer of "{campaign}" was accepted',
+            f'{name} accepted your offer of "{campaign}": it uses their plan now. You are still '
+            "one of its DMs; nothing else changes.",
+        )
+    if kind == "declined":
+        return (
+            f'Your offer of "{campaign}" was turned down',
+            f'{name} said no thanks to your offer of "{campaign}". It stays yours.',
+        )
+    if kind == "expired":
+        return (
+            f'Your offer of "{campaign}" ended',
+            f"They didn't answer within {days} days, so the offer ended. The campaign is still "
+            "yours. You can offer it again from Settings > Campaign management > Hand over in "
+            "Discord, or from your account page on the DMbot website.",
+        )
+    if kind == "moved":
+        where = f'the Discord server "{server}"' if server else "another Discord server"
+        return (
+            f'"{campaign}" now runs on another server',
+            f'{name} took over "{campaign}" on {where}, so it is gone from '
+            "the old server. You are still one of its DMs.",
+        )
+    raise ValueError(f"no email for {kind!r}")
 
 
 def use_settings_card(card: Card) -> None:

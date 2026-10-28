@@ -222,8 +222,6 @@ class SiteOffers:
                     allowed_mentions=NO_PINGS,
                 )
         elif moved.result == "moved":
-            if new is not None:
-                await self._email_owner(offer, moved.campaign_name, "moved", server=new.name)
             if old is not None and new is not None:
                 with contextlib.suppress(discord.HTTPException):
                     member = await _member(old, offer.from_user_id)
@@ -244,6 +242,11 @@ class SiteOffers:
                         ),
                         allowed_mentions=NO_PINGS,
                     )
+            # Last, so a slow mail server never delays the two private messages. A process that
+            # does not serve the new server still emails, with a generic server name.
+            await self._email_owner(
+                offer, moved.campaign_name, "moved", server=new.name if new is not None else ""
+            )
 
     async def follow_decided(self, listen: Listen) -> None:
         """Tell the other person when an offer is answered or taken back on the website

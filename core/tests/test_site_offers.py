@@ -941,10 +941,6 @@ class Following(Harness):
             await follow
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class OwnerEmail(Harness):
     """The owner is told by email too (#2532, slice D), once, in plain text, without the address."""
 
@@ -1031,6 +1027,61 @@ class OwnerEmail(Harness):
         self.assertEqual(len(self.guilds[GUILD].owner.sent), 1)
         self.assertEqual(self.emails, [])
 
+    async def test_a_move_with_a_server_this_process_does_not_serve_is_still_emailed(self) -> None:
+        from dmbot.campaigns.moves import Moved
+
+        moved = replace(offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD)
+        await self.offers._tell_moved(Moved("moved", moved, "Frost*maiden"))  # no such guild here
+        [(_o, _k, _s, body)] = self.emails
+        self.assertIn("another Discord server", body)
+
+    async def test_the_move_email_goes_after_the_private_messages(self) -> None:
+        from dmbot.campaigns.moves import Moved
+
+        self.guilds[OTHER_GUILD] = FakeGuild(OTHER_GUILD)
+        seen: list[str] = []
+        original = self.offers._owner_mail
+
+        async def slow(owner: int, kind: str, subject: str, body: str) -> None:
+            seen.append(f"email after {len(self.guilds[GUILD].owner.sent)} owner messages")
+            assert original is not None
+            await original(owner, kind, subject, body)
+
+        self.offers._owner_mail = slow
+        moved = replace(offer(), via_email=True, to_name="Bea", move_to_guild_id=OTHER_GUILD)
+        await self.offers._tell_moved(Moved("moved", moved, "Frost*maiden"))
+        self.assertEqual(seen, ["email after 1 owner messages"])
+
+    async def test_an_expiry_whose_discord_message_failed_emails_once_after_the_retry(self) -> None:
+        self.store.waiting = {}
+        self.store.to_end = [
+            replace(offer(), status="expired", decided_at=NOW, delivered_at=NOW, via_email=True)
+        ]
+        guild = self.guilds[GUILD]
+        real_send = guild.owner.send
+
+        async def hiccup(text: str, **_: Any) -> None:
+            raise http_error(503)
+
+        guild.owner.send = hiccup  # type: ignore[method-assign]
+        with self.assertLogs("dmbot.dm_screen.site_offers", "WARNING"):
+            await self.offers.sweep_server(GUILD)
+        self.assertEqual(self.emails, [])  # not told yet: nothing is emailed for a failed attempt
+        guild.owner.send = real_send  # type: ignore[method-assign]
+        await self.offers.sweep_server(GUILD)
+        self.assertEqual(len(self.emails), 1)
+
+    async def test_the_same_answer_heard_twice_asks_for_one_email_each_time_and_the_log_dedupes(
+        self,
+    ) -> None:
+        """The once-only guarantee is the mail log's (kind per offer), so both hearings use the
+        same kind; the bot's helper sends and the second send is refused by the log."""
+        self.answered("accepted")
+        await self.decide_quietly(GUILD, 1)
+        await self.decide_quietly(GUILD, 1)
+        kinds = {kind for _o, kind, _s, _b in self.emails}
+        self.assertEqual(kinds, {f"handover-accepted:{GUILD}-1"})
+
 
 class TheEmailText(unittest.TestCase):
     def test_every_kind_is_plain_and_names_no_address(self) -> None:
@@ -1042,6 +1093,20 @@ class TheEmailText(unittest.TestCase):
                 self.assertNotIn("**", text)
                 self.assertNotIn("@", text)
             self.assertIn("Frostmaiden", subject + body)
+
+    def test_a_hostile_name_cannot_reorder_or_hide_the_words_around_it(self) -> None:
+        hostile = "Bea\u202e\n\x00 see http://x.example/y\u200b now"
+        subject, body = handover.owner_email("accepted", name=hostile, campaign="Frost\u202emaiden")
+        for text in (subject, body):
+            self.assertNotIn("\u202e", text)
+            self.assertNotIn("\u200b", text)
+            self.assertNotIn("\x00", text)
+        self.assertNotIn("\n\n", body.split("accepted")[0])  # the name stays on one line
+        self.assertIn("Frostmaiden", subject + body)
+
+    def test_a_move_without_a_server_name_says_another_server(self) -> None:
+        _s, body = handover.owner_email("moved", name="Bea", campaign="Frostmaiden")
+        self.assertIn("another Discord server", body)
 
     def test_an_unknown_kind_is_a_mistake_not_a_blank_email(self) -> None:
         with self.assertRaises(ValueError):
@@ -1090,3 +1155,7 @@ class TheBotsEmailToTheOwner(unittest.IsolatedAsyncioTestCase):
 
         await DMBot._email_hand_over_owner(self.bot(mailer=None), OWNER, "k", "S", "B")
         await DMBot._email_hand_over_owner(self.bot(meter=None), OWNER, "k", "S", "B")
+
+
+if __name__ == "__main__":
+    unittest.main()
