@@ -941,3 +941,45 @@ class TheMakeRoute(TheRoute):
         )
         self.addAsyncCleanup(anonymous.aclose)
         self.assertEqual((await anonymous.post(f"{base}/{S1}/report/make")).status_code, 401)
+
+
+class TheRequestEdges(TheRequest):
+    async def test_a_request_nobody_took_in_half_an_hour_reads_as_failed(self) -> None:
+        await self.ask()
+        await self.sql(
+            "UPDATE web_report_requests SET created_at = created_at - 2000,"
+            " updated_at = updated_at - 2000"
+        )
+        got = await self.read()
+        self.assertEqual((got["state"], got["progress"]["reason"]), ("failed", "failed"))
+
+    async def test_the_next_press_ends_such_a_request_and_queues_a_new_one(self) -> None:
+        await self.ask()
+        await self.sql("UPDATE web_report_requests SET created_at = created_at - 2000")
+        got = await self.ask()
+        self.assertEqual(got["state"], "making")
+        states = sorted((r["state"], r["error"]) for r in await self.rows())
+        self.assertEqual(states, [("failed", "not_taken"), ("waiting", "")])
+
+    async def test_a_report_made_after_the_request_is_not_hidden_by_a_row_left_open(self) -> None:
+        await self.difference("disguised")
+        await self.ask()
+        now = int((await self.one_row("SELECT extract(epoch FROM now())::BIGINT AS n"))["n"])
+        await self.sql(
+            "INSERT INTO memory_report_runs (guild_id, campaign_id, session_at, state, stage,"
+            " done, total, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'ready', 'sorting', 4, 4, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, session_at) DO UPDATE SET state = 'ready',"
+            " updated_at = EXCLUDED.updated_at",
+            GUILD, self.one.id, S1, now, now + 5,
+        )  # fmt: skip
+        self.assertEqual((await self.read())["state"], "ready")
+
+    async def test_the_door_itself_refuses_a_time_that_is_not_the_campaigns_session(self) -> None:
+        async with self.db.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(GUILD),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_report_make(%s, %s, %s) AS r", (GUILD, self.one.id, S1 + 7)
+            )
+            self.assertEqual(((await cur.fetchone()) or {})["r"]["status"], "no_session")
+        self.assertEqual(await self.rows(), [])

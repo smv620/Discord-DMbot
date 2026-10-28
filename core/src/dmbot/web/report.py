@@ -216,7 +216,9 @@ async def read_report(db: Database, session: Session, ref: str, at: object) -> d
         asked = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_allowed")
-    return with_request(shape(got, when, listed), asked, int(got["now"]))
+    run = got.get("run")
+    ready_at = int(run["updatedAt"]) if run and run["state"] == "ready" else None
+    return with_request(shape(got, when, listed), asked, int(got["now"]), ready_at=ready_at)
 
 
 ACTIONS = ("intended", "not_a_problem", "remind", "fix", "undo")
@@ -257,15 +259,30 @@ async def answer_item(
     return {"answer": got["answer"]}
 
 
-def with_request(report: dict[str, Any], asked: dict[str, Any] | None, now: int) -> dict[str, Any]:
+NOT_TAKEN_S = 1800  # a request nobody took in this long is a failed one (the door says so too)
+
+
+def with_request(
+    report: dict[str, Any],
+    asked: dict[str, Any] | None,
+    now: int,
+    *,
+    ready_at: int | None = None,
+) -> dict[str, Any]:
     """Put the DM's "make it again" request into the report (#2661). The run the bot writes says how
     far the making has got once it starts; before that, a request that is asked for and not taken
     yet is a report being made at the stage `waiting`, so the page shows the wait at once and the
-    button cannot be pressed twice. A request the bot gave up on, with no report to show, is a
-    failed one. A run that is already making (or ready after the request) is left as it is."""
+    button cannot be pressed twice. A request the bot gave up on, or nobody took in half an hour,
+    with no report to show, is a failed one. A run that is already making, or that was made after
+    the request was asked for (`ready_at`: the bot may have died before closing the row), is left
+    as it is."""
     if asked is None or report["state"] == "making":
         return report
     state, created, updated = str(asked["state"]), int(asked["createdAt"]), int(asked["updatedAt"])
+    if state == "waiting" and now - created > NOT_TAKEN_S:
+        state = "failed"
+    if state in ("waiting", "working") and ready_at is not None and ready_at >= created:
+        return report
     if state in ("waiting", "working"):
         shown = "stalled" if now - updated > STALLED_S else "running"
         report["state"] = "making"
@@ -322,6 +339,8 @@ async def make_again(db: Database, session: Session, ref: str, at: object) -> di
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_allowed")
+    if got["status"] == "no_session":
+        raise RecapError("not_found")
     if got["status"] not in ("ok", "busy"):
         raise RecapError(str(got["status"]))
     return await read_report(db, session, ref, when)

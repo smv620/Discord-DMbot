@@ -16581,7 +16581,7 @@ WEB_REPORT_REQUESTS = (
     -- (its run touched in the last fifteen minutes, the store's own limit) is 'busy'; five
     -- requests an hour for a campaign is 'too_soon'. A request the bot took and went quiet on for
     -- ten minutes goes back to waiting. 'ok' with the id otherwise. The page checks that the
-    -- session exists.
+    -- session is the campaign's own (the door checks it too).
     CREATE FUNCTION dmbot_web_report_make(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
@@ -16596,12 +16596,24 @@ WEB_REPORT_REQUESTS = (
                             AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
-        PERFORM pg_advisory_xact_lock(hashtextextended('report_request:' || g::TEXT || c, 0));
+        PERFORM pg_advisory_xact_lock(
+            hashtextextended('report_request:' || g::TEXT || ':' || c, 0));
         DELETE FROM web_report_requests r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 86400;
+        -- (Ten minutes quiet puts a taken request back; the page calls a run stalled from fifteen,
+        -- the store's own limit, so the DM hears of it before it is put back.)
         UPDATE web_report_requests r SET state = 'waiting', claimed_at = 0, updated_at = now_s
             WHERE r.guild_id = g AND r.campaign_id = c AND r.state = 'working'
               AND r.updated_at < now_s - 600;
+        -- A request nobody took in half an hour (the bot is off or gone) ends as failed, so the
+        -- page says so and the next press is not stuck behind it for a day.
+        UPDATE web_report_requests r SET state = 'failed', error = 'not_taken', updated_at = now_s
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.state = 'waiting'
+              AND r.created_at < now_s - 1800;
+        IF NOT EXISTS (SELECT 1 FROM transcript_sessions t
+                       WHERE t.guild_id = g AND t.campaign_id = c AND t.started_at = at_) THEN
+            RETURN jsonb_build_object('status', 'no_session');
+        END IF;
         SELECT r.id INTO have FROM web_report_requests r
             WHERE r.guild_id = g AND r.campaign_id = c AND r.session_at = at_
               AND r.state IN ('waiting', 'working');
