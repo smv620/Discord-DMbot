@@ -1588,6 +1588,7 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "hour-full" // the campaign's game masters have sent thirty talk messages to PlotBot this hour (#2774)
   | "plan-needed" // sharing house rules needs a plan that allows it (#2783)
   | "no-rules" // there is no house rule of the campaign's own to share (#2783)
   | "bad-choice" // a sharing choice the API cannot read (#2783)
@@ -2108,6 +2109,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   not_paid: "no-paid-plan",
   no_email: "no-email",
   too_soon: "too-soon",
+  hour_full: "hour-full",
   bad_answer: "bad-answer",
   plot_open: "plot-open",
   not_yet: "not-yet",
