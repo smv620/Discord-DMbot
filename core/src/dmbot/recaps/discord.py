@@ -109,7 +109,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
 
     from dmbot import plan_rules
     from dmbot.ai import TierClient
-    from dmbot.bot import DMBot, HintPeople, Table
+    from dmbot.bot import DMBot
     from dmbot.campaigns import web_backup, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
@@ -123,6 +123,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
+    from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
     from dmbot.recaps.pipeline import RecapWorker
     from dmbot.recaps.plot import PlotRunner
@@ -130,6 +131,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.recaps.store import RecapStore
     from dmbot.recaps.style import NoteStore, StyleStore
     from dmbot.rules.web_sharing import ActionStore as RuleActionStore
+    from dmbot.table import HintPeople, Table
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.import_job import ImportJob
     from dmbot.transcript.store import TranscriptStore
@@ -251,6 +253,7 @@ class RecapFeatures:
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
         web_rule_actions: RuleActionStore | None
+        web_sheets: SheetActionStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -306,6 +309,7 @@ class RecapFeatures:
         async def run_web_rule_sharing(self) -> None: ...
         async def read_put_back_lines(self, guild_id: int) -> None: ...
         async def run_web_report_requests(self) -> None: ...
+        async def run_web_sheets(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -1921,6 +1925,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website rule choices failed: %s", type(exc).__name__)
             try:
+                await self.run_web_sheets()
+            except Exception as exc:
+                log.warning("The website sheet choices failed: %s", type(exc).__name__)
+            try:
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
@@ -1949,6 +1957,8 @@ class RecapFeatures:
                             await self.web_settings.sweep(guild.id)
                         if self.web_rule_actions is not None:
                             await self.web_rule_actions.sweep(guild.id)
+                        if self.web_sheets is not None:
+                            await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
                         await self.read_put_back_lines(guild.id)
                         if self.peek_notices is not None:

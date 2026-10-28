@@ -120,7 +120,7 @@ class Restoring(Base):
             get_campaign=get_campaign,
             restore_gate=restore_gate,
             is_campaign_playing=is_campaign_playing,
-            in_server=member,
+            restorer_in_server=member,
             session_lock=lambda g: asyncio.Lock(),
             restore_copy=restore_copy,
             after_restore=after_restore,
@@ -740,7 +740,7 @@ class TheBotsOwnSteps(Restoring):
         me = self.host()
         me.guilds = [SimpleNamespace(id=GUILD), SimpleNamespace(id=999)]
         me.web_restores = self.restores
-        await DMBot.run_web_restores(me)  # type: ignore[arg-type]
+        await DMBot.run_web_restores(me)
         self.assertEqual((await self.row())["state"], "done")
 
     async def test_a_person_is_in_the_server_from_the_cache_or_one_lookup(self) -> None:
@@ -761,10 +761,10 @@ class TheBotsOwnSteps(Restoring):
                 return object()
 
         me = SimpleNamespace(get_guild=lambda g: Guild({1}, {2}) if g == GUILD else None)
-        self.assertTrue(await DMBot.in_server(me, GUILD, 1))  # type: ignore[arg-type]
-        self.assertTrue(await DMBot.in_server(me, GUILD, 2))  # type: ignore[arg-type]
-        self.assertFalse(await DMBot.in_server(me, GUILD, 3))  # type: ignore[arg-type]
-        self.assertFalse(await DMBot.in_server(me, 999, 1))  # type: ignore[arg-type]
+        self.assertTrue(await DMBot.restorer_in_server(me, GUILD, 1))  # type: ignore[arg-type]
+        self.assertTrue(await DMBot.restorer_in_server(me, GUILD, 2))  # type: ignore[arg-type]
+        self.assertFalse(await DMBot.restorer_in_server(me, GUILD, 3))  # type: ignore[arg-type]
+        self.assertFalse(await DMBot.restorer_in_server(me, 999, 1))  # type: ignore[arg-type]
 
     async def test_the_planner_refresh_and_the_rules_channel_are_done_for_a_replace_only(
         self,
@@ -800,7 +800,7 @@ class TheBotsOwnSteps(Restoring):
 
         me = SimpleNamespace(get_guild=lambda g: Guild())
         with self.assertRaises(discord.HTTPException):
-            await DMBot.in_server(me, GUILD, 1)  # type: ignore[arg-type]
+            await DMBot.restorer_in_server(me, GUILD, 1)  # type: ignore[arg-type]
 
     async def test_an_error_from_discord_ends_the_restore_as_failed_to_try_again(self) -> None:
         import discord
@@ -809,7 +809,7 @@ class TheBotsOwnSteps(Restoring):
             raise discord.HTTPException(SimpleNamespace(status=500, reason="x"), "boom")
 
         host = self.host()
-        host.in_server = raising
+        host.restorer_in_server = raising
         await self.stage(await self.copy_of(self.one))
         got = await self.run_marked(host)
         self.assertEqual((got["state"], got["error"]), ("failed", "failed"))

@@ -296,7 +296,11 @@ class TheReading(unittest.IsolatedAsyncioTestCase):
         )
         shaped = [c.args[1] for c in fake.complete.await_args_list if c.kwargs.get("schema")]
         seen = "\n".join(shaped)
-        self.assertNotIn("- Brother Aldric |", seen)
+        # (a known name whose line gives it new spellings is still shaped, so a link written with
+        # one finds it (#2841); it is not offered again, and a known name with nothing new is not
+        # shaped at all)
+        self.assertIn("- Brother Aldric |", seen)
+        self.assertEqual(done.known_spellings, {"Brother Aldric": ("Aldric",)})
         self.assertNotIn("- Greyfen Abbey |", seen)
         self.assertNotIn("Brother Aldric — leads — Greyfen Abbey", seen)
         self.assertEqual({n.name for n in done.names}, {"Ashen Hand", "Mira"})
@@ -1075,7 +1079,7 @@ class TheWidenedQuoteKeepsTheStatement(unittest.TestCase):
         self.assertLessEqual(len(c.quote.split()), bg.QUOTE_WORDS)
 
     def test_a_window_that_only_holds_the_names_by_dropping_the_quote_is_not_kept(self) -> None:
-        early = " ".join(["Aldric Vane and Mira Thorn walked"] + ["slowly"] * 18 + ["home."])
+        early = " ".join(["Aldric Vane and Mira Thorn walked"] + ["slowly"] * 45 + ["home."])
         text = early + " She later founded the Hand of Dusk."
         got, lost = connections(
             [row("Aldric Vane", "mentor", "Mira Thorn", "She later founded the Hand of Dusk.")],
@@ -1192,13 +1196,22 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c["directional"] for c in calls], [True, False])
         self.assertEqual([c["args"][3:5] for c in calls], [("kin_of", "o")] * 2)  # (order as given)
 
-    def test_a_paragraph_break_of_any_kind_stops_the_widening(self) -> None:
+    def test_a_quote_that_opens_its_paragraph_borrows_the_one_before_whatever_the_break(
+        self,
+    ) -> None:
+        """The paragraph before joins only when the quote opens its paragraph (#2841)."""
         for sep in ("\n\n", "\r\n", "\r", "\u2029", "\u2028", "\x85"):
             text = f"Brother Aldric ruled Greyfen.{sep}His sister, Mira, ran the farm."
             got, lost = connections(
                 [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text
             )
-            self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}), repr(sep))
+            self.assertEqual(len(got), 1, repr(sep))
+            self.assertEqual(
+                got[0].quote, "Brother Aldric ruled Greyfen. His sister, Mira, ran the farm."
+            )
+            self.assertEqual(dict(lost), {"quote_widened": 1, "quote_prev_paragraph": 1}, repr(sep))
+
+    def test_a_break_inside_the_quote_stops_the_widening(self) -> None:
         text = "Brother Aldric ruled Greyfen. His sister,\u2029Mira, ran the farm."
         got, lost = connections(
             [row("Brother Aldric", "family", "Mira", "His sister, Mira, ran the farm.")], text

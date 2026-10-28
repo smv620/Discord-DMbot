@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// "Character sheets" on a campaign's page (#2816): a player sees and links or forgets their own characters' sheets; a DM
+// "Character sheets" on a campaign's page (#2816): a player sees and links or forgets their own characters' sheets, or types one in (#2832); a DM
 // sees every sheet read only and asks for them to be read again. Against the pretend API, and only while SHEETS_LIVE is
 // on (false today), so nothing is asked of the API before then.
 import {
@@ -12,6 +12,7 @@ import {
 } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import CharacterSheetsSection from "../src/account/Sheets";
 import { sheetWords as w } from "../src/content/sheets-words";
@@ -150,5 +151,161 @@ describe("the wait", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Type in my character", () => {
+  // Sorrel (first) has a sheet linked; Ivy (second) has none. The player's list is in that order.
+  const fill = (index: number, values: { className?: string; level?: string; species?: string; names?: string }) => {
+    if (values.className !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedClass)[index]!, { target: { value: values.className } });
+    if (values.level !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedLevel)[index]!, { target: { value: values.level } });
+    if (values.species !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedSpecies)[index]!, { target: { value: values.species } });
+    if (values.names !== undefined) fireEvent.input(screen.getAllByLabelText(w.typedNames)[index]!, { target: { value: values.names } });
+  };
+  // Submitted as a form: a click on the button inside the closed "Type in my character" panel does not submit here.
+  const save = (index: number) => fireEvent.submit(screen.getAllByLabelText(w.typedClass)[index]!.closest("form")!);
+  const typedCalls = (api: ReturnType<typeof mockApi>) => calls(api, "chooseSheet").filter((c) => c.includes('"action":"typed"'));
+
+  it("offers the form to the player and not to the DM", async () => {
+    await open();
+    expect(screen.getAllByText(w.typedSummary).length).toBeGreaterThan(0);
+    expect(screen.getByText(w.typedFor("Sorrel"))).toBeTruthy();
+    cleanup();
+    await open(".sheets-dm");
+    expect(screen.queryByText(w.typedSummary)).toBeNull();
+    expect(screen.queryByLabelText(w.typedClass)).toBeNull();
+  });
+
+  it("sends what was typed, trimmed, with the level as a number", async () => {
+    const api = await open();
+    fill(1, { className: "  Wizard ", level: " 5 ", species: " Elf ", names: "Misty Step, Shield" });
+    save(1);
+    expect(await screen.findByText(w.typedSaved, {}, { timeout: 8000 })).toBeTruthy();
+    expect(api.calls).toContain(
+      `chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "typed", className: "Wizard", level: 5, species: "Elf", names: "Misty Step, Shield" })}`,
+    );
+  });
+
+  // Each case opens a fresh page, so one case's message cannot be the one that another case finds.
+  it.each(["0", "21", "x", "1.5"])("refuses the level %s and sends nothing", async (level) => {
+    const api = await open();
+    fill(1, { className: "Wizard", level });
+    save(1);
+    expect(await screen.findByText(w.typedBadLevel)).toBeTruthy();
+    expect(typedCalls(api)).toHaveLength(0);
+  });
+
+  it.each(["1", "20"])("accepts the level %s as a boundary and sends it as a number", async (level) => {
+    const api = await open();
+    fill(1, { className: "Wizard", level });
+    save(1);
+    expect(await screen.findByText(w.typedSaved, {}, { timeout: 8000 })).toBeTruthy();
+    expect(typedCalls(api).some((c) => c.includes(`"level":${level},`))).toBe(true);
+  });
+
+  it("keeps a half-typed draft across a re-render, and never shows it under another campaign", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.input(screen.getAllByLabelText(w.typedClass)[1]!, { target: { value: "Wizard" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    expect((screen.getAllByLabelText(w.typedClass)[1] as HTMLInputElement).value).toBe("Wizard");
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect((screen.getAllByLabelText(w.typedClass)[1] as HTMLInputElement).value).toBe("");
+  });
+
+  it("refuses a blank class and sends nothing", async () => {
+    const api = await open();
+    fill(1, { className: "   ", level: "5" });
+    save(1);
+    expect(await screen.findByText(w.typedNeedsClass)).toBeTruthy();
+    expect(typedCalls(api)).toHaveLength(0);
+  });
+
+  it("tells a player with a linked sheet that saving replaces the link", async () => {
+    await open();
+    expect(screen.getAllByText(w.typedReplacesLink)).toHaveLength(1);
+    fill(0, { className: "Wizard", level: "5" });
+    save(0);
+    expect(await screen.findByText(w.typedSaved + w.typedReplacedLink, {}, { timeout: 8000 })).toBeTruthy();
+  });
+});
+
+describe("a link typed for one campaign", () => {
+  it("does not show under another campaign's character, and comes back for its own", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    const linkBox = () => screen.getAllByRole("textbox")[0] as HTMLInputElement;
+    fireEvent.input(linkBox(), { target: { value: "https://www.dndbeyond.com/characters/777" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(linkBox().value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(linkBox().value).toBe("https://www.dndbeyond.com/characters/777"));
+  });
+});
+
+describe("a campaign the page has left", () => {
+  it("an old campaign's slow read is not drawn after a switch", async () => {
+    const api = mockApi("table");
+    const fetch = api.campaignSheets!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.campaignSheets = async (ref) => {
+      const got = await fetch(ref);
+      if (ref !== "100.sh") return got;
+      await held;
+      return { ...got, sheets: got.sheets.map((c) => ({ ...c, name: "Stale Oren" })) };
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Stale Oren", { exact: false })).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("an old campaign's failed read does not show the failure on the new one", async () => {
+    const api = mockApi("table");
+    const fetch = api.campaignSheets!.bind(api);
+    let fail!: () => void;
+    const held = new Promise<void>((r) => (fail = r));
+    api.campaignSheets = async (ref) => {
+      if (ref !== "100.sh") return fetch(ref);
+      await held;
+      throw new ApiError("server");
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    fail();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.failedToLoad)).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("an answer for a choice made in the old campaign shows no report in the new one", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    let asked = false;
+    const held = new Promise<void>((r) => (release = r));
+    api.sheetAnswer = async (ref, id) => {
+      if (ref !== "100.sh") return answer(ref, id);
+      asked = true;
+      await held;
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    await waitFor(() => expect(asked).toBe(true), { timeout: 4000 });
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.forgetDone)).toBeNull();
   });
 });

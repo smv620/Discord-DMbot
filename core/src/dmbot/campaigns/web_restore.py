@@ -122,7 +122,7 @@ class Host(Protocol):
 
     async def is_campaign_playing(self, guild_id: int, campaign_id: str) -> bool: ...
 
-    async def in_server(self, guild_id: int, user_id: int) -> bool: ...
+    async def restorer_in_server(self, guild_id: int, user_id: int) -> bool: ...
 
     def session_lock(self, guild_id: int) -> asyncio.Lock: ...
 
@@ -384,7 +384,7 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
     """Apply one claimed restore the way Discord's would. Never raises for a refusal: the outcome
     carries the word."""
     # Who and where, before any bytes are read: nothing the website checked is trusted.
-    if not await host.in_server(guild_id, item.user_id):
+    if not await host.restorer_in_server(guild_id, item.user_id):
         return Outcome(NOT_ALLOWED)
     replacing: Campaign | None = None
     if item.replace_id is not None:
