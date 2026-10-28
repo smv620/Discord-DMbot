@@ -123,7 +123,7 @@ class GradeStore:
                             c.perspective_id, c.kind, c.first_relation_id, c.second_relation_id
                         )
                     )
-            await report_fixed.forget_found(conn, guild_id, campaign_id, found)
+            await report_fixed.give_back(conn, guild_id, campaign_id, found)
         return kept
 
     async def rows(

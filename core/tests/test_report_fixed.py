@@ -112,6 +112,42 @@ class Fixing(ConfirmedMemoryTest):
         await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
         self.assertEqual(await self.answers(), {})
 
+    async def test_undoing_a_fix_gives_back_the_reminder_and_its_date(self) -> None:
+        await self.store.answer(
+            GUILD_A, self.c, self.key, rs.DIFFERENCE, rs.REMIND, 7, remind_from=400
+        )
+        done = await self.memory.update_relation(
+            GUILD_A, self.c, self.truth, source="dm", status=REJECTED
+        )
+        self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
+        (a,) = (await self.answers()).values()
+        self.assertEqual((a.answer, a.remind_from), ("remind", 400))
+
+    async def test_undoing_a_pin_or_a_secret_flag_keeps_the_fix(self) -> None:
+        await self.memory.update_relation(GUILD_A, self.c, self.truth, source="dm", status=REJECTED)
+        secret = await self.memory.update_relation(
+            GUILD_A, self.c, self.truth, source="dm", secret=True
+        )
+        assert secret.batch is not None
+        await self.memory.undo(GUILD_A, self.c, secret.batch, source="dm")
+        self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
+
+    async def test_undoing_a_later_belief_keeps_a_fix_the_truth_still_holds(self) -> None:
+        denied = Difference(self.party, "party", self.held, None, DENIED, False, False)
+        await self.store.save_differences(GUILD_A, self.c, [rs.SortedDifference(denied, rs.FALSE)])
+        truth = next(
+            p.id for p in await self.memory.perspectives(GUILD_A, self.c) if p.kind == "truth"
+        )
+        await self.memory.believe(
+            GUILD_A, self.c, truth, self.held, 1.0, "revealed_fact", source="dm"
+        )
+        pinned = await self.memory.pin(GUILD_A, self.c, self.held, True, source="dm")
+        assert pinned.batch is not None
+        await self.memory.undo(GUILD_A, self.c, pinned.batch, source="dm")
+        self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
+
     async def test_undo_leaves_another_answer_alone(self) -> None:
         done = await self.memory.update_relation(
             GUILD_A, self.c, self.truth, source="dm", status=REJECTED

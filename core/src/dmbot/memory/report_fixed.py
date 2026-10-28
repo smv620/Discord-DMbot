@@ -121,7 +121,8 @@ async def record(
         " FROM unnest(%s::text[], %s::text[]) AS u(item_kind, item_key)"
         " ON CONFLICT (guild_id, campaign_id, item_key) DO UPDATE SET answer = EXCLUDED.answer,"
         " answered_by = EXCLUDED.answered_by, answered_at = EXCLUDED.answered_at,"
-        " remind_from = NULL WHERE a.answer = %s",
+        # the date of the "remind me" goes aside, for an Undo to put back
+        " remind_was = a.remind_from, remind_from = NULL WHERE a.answer = %s",
         (
             guild_id,
             campaign_id,
@@ -135,17 +136,43 @@ async def record(
     return int(cur.rowcount)
 
 
-async def forget_found(conn: Any, guild_id: int, campaign_id: str, keys: Collection[str]) -> int:
-    """These items were found again: a `fixed` answer on them was wrong (the change was undone, or
-    it did not fix the clash). Any other answer stays."""
+async def give_back(conn: Any, guild_id: int, campaign_id: str, keys: Collection[str]) -> int:
+    """A `fixed` answer on these items was wrong (the change was undone, or the check found the
+    item again): it goes, and a "remind me" it replaced comes back with its date. Any other answer
+    stays."""
     if not keys:
         return 0
+    cur = await conn.execute(
+        "UPDATE report_answers SET answer = %s, remind_from = remind_was, remind_was = NULL"
+        " WHERE guild_id = %s AND campaign_id = %s AND answer = %s AND remind_was IS NOT NULL"
+        " AND item_key = ANY(%s)",
+        (REMIND, guild_id, campaign_id, FIXED, list(keys)),
+    )
+    back = int(cur.rowcount)
     cur = await conn.execute(
         "DELETE FROM report_answers WHERE guild_id = %s AND campaign_id = %s AND answer = %s"
         " AND item_key = ANY(%s)",
         (guild_id, campaign_id, FIXED, list(keys)),
     )
-    return int(cur.rowcount)
+    return back + int(cur.rowcount)
+
+
+async def denied_names(
+    conn: Any, guild_id: int, campaign_id: str, relation_ids: Collection[str]
+) -> set[tuple[str, str]]:
+    """The `denied` differences about these connections (what The truth taking up a connection
+    fixed): the only items a belief taken away can bring back."""
+    if not relation_ids:
+        return set()
+    cur = await conn.execute(
+        "SELECT perspective_id, relation_id FROM memory_differences"
+        " WHERE guild_id = %s AND campaign_id = %s AND kind = 'denied' AND relation_id = ANY(%s)",
+        (guild_id, campaign_id, list(relation_ids)),
+    )
+    return {
+        (DIFFERENCE, difference_key(r["perspective_id"], r["relation_id"]))
+        for r in await cur.fetchall()
+    }
 
 
 async def forget_unfound(

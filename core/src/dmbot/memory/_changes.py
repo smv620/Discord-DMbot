@@ -337,7 +337,8 @@ class Changes(Scope):
         # Items that name a connection the DM deleted, found before the delete takes them with it
         # (the database cascades them away), and connections an Undo brought back (#2661).
         self.deleted_items: set[tuple[str, str]] = set()
-        self.restored: set[str] = set()
+        self.restored: set[str] = set()  # connections an Undo gave back their old meaning
+        self.unbelieved: set[str] = set()  # connections an Undo took a belief away from
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
@@ -602,8 +603,9 @@ class Changes(Scope):
         self.tables.add(table.name)
         if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
             self.relation_changes += [(op, b, a) for _, b, a in rows]
-        if self.undoes is not None and table.name in ("memory_relations", "memory_beliefs"):
-            self._note_restored(table, [b or a for _, b, a in rows])
+        if self.undoes is not None:
+            for _, before, after in rows:
+                self._note_undone(table, op, before, after)
         await self.conn.execute(
             "INSERT INTO memory_changes (guild_id, campaign_id, version, batch, table_name,"
             " row_id, op, before, after, source, undoes, made_at)"
@@ -612,10 +614,22 @@ class Changes(Scope):
             (*self.ids, Jsonb(entries)),
         )
 
-    def _note_restored(self, table: Table, rows: Sequence[dict[str, Any] | None]) -> None:
-        """An Undo touched these rows: the connections they belong to may be back as they were."""
-        key = "id" if table.name == "memory_relations" else "relation_id"
-        self.restored |= {str(r[key]) for r in rows if r is not None}
+    def _note_undone(
+        self, table: Table, op: str, before: dict[str, Any] | None, after: dict[str, Any] | None
+    ) -> None:
+        """An Undo wrote this row. What matters to the after-session report (#2661) is a
+        connection given back its old meaning (the undo of a reject, an end, a reword or a delete:
+        not of a pin, a secret flag or a reveal) and a belief taken away. The check reads the undo's
+        own row backwards: the change it undid went from `after` to `before`."""
+        from dmbot.memory import report_fixed
+
+        if table.name == "memory_relations":
+            if op == "insert" and after is not None:  # a deleted connection is back
+                self.restored.add(str(after["id"]))
+            elif report_fixed.changed_meaning("update", after, before) and before is not None:
+                self.restored.add(str(before["id"]))
+        elif table.name == "memory_beliefs" and op == "delete" and before is not None:
+            self.unbelieved.add(str(before["relation_id"]))
 
     async def _log(
         self,
@@ -636,8 +650,8 @@ class Changes(Scope):
                 self.belief_additions.append(
                     (str(after["perspective_id"]), str(after["relation_id"]))
                 )
-        if self.undoes is not None and table.name in ("memory_relations", "memory_beliefs"):
-            self._note_restored(table, [before or after])
+        if self.undoes is not None:
+            self._note_undone(table, op, before, after)
         if self.batch is None:
             self.batch = self.version
         await self.conn.execute(

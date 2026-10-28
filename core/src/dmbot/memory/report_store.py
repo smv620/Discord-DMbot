@@ -149,7 +149,7 @@ class ReportStore:
                 kept += cur.rowcount
                 if cur.rowcount:  # found again: a "fixed" answer on it was wrong (#2661)
                     found.append(difference_key(d.perspective_id, d.relation_id))
-            await report_fixed.forget_found(conn, guild_id, campaign_id, found)
+            await report_fixed.give_back(conn, guild_id, campaign_id, found)
         return kept
 
     async def differences(

@@ -431,8 +431,8 @@ class MemoryStore:
             yield changes
             if changes.relation_changes or changes.belief_additions or changes.deleted_items:
                 await self._report_fixed(conn, guild_id, campaign_id, changes)
-            if changes.restored:
-                await self._report_unfixed(conn, guild_id, campaign_id, changes.restored)
+            if changes.restored or changes.unbelieved:
+                await self._report_unfixed(conn, guild_id, campaign_id, changes)
             if changes.version != start:
                 await conn.execute(
                     "UPDATE campaigns SET memory_version = %s WHERE guild_id = %s AND id = %s",
@@ -458,12 +458,26 @@ class MemoryStore:
         await report_fixed.record(conn, guild_id, campaign_id, keys, int(self._clock()))
 
     async def _report_unfixed(
-        self, conn: Any, guild_id: int, campaign_id: str, restored: set[str]
+        self, conn: Any, guild_id: int, campaign_id: str, changes: Changes
     ) -> None:
-        """An Undo brought connections back: a `fixed` answer on an item naming them was the change
-        just taken back, so the item shows again (#2661). Other answers stay."""
-        keys = await report_fixed.names(conn, guild_id, campaign_id, restored)
-        await report_fixed.forget_found(conn, guild_id, campaign_id, [k for _, k in keys])
+        """An Undo gave connections their old meaning back, or took The truth's belief away: a
+        `fixed` answer on an item that change fixed was the change just taken back, so the item
+        shows again, with a "remind me" it replaced (#2661). A pin, a secret flag or a reveal
+        undone changes none of that. Other answers stay."""
+        keys = await report_fixed.names(conn, guild_id, campaign_id, changes.restored)
+        if changes.unbelieved:
+            cur = await conn.execute(
+                "SELECT r FROM unnest(%s::text[]) AS r"
+                " WHERE NOT EXISTS (SELECT 1 FROM memory_beliefs b"
+                " JOIN memory_perspectives p ON p.guild_id = b.guild_id"
+                " AND p.campaign_id = b.campaign_id AND p.id = b.perspective_id"
+                " AND p.kind = 'truth'"
+                " WHERE b.guild_id = %s AND b.campaign_id = %s AND b.relation_id = r)",
+                (list(changes.unbelieved), guild_id, campaign_id),
+            )  # (a belief of The truth's that is still there keeps the fix)
+            bare = [row["r"] for row in await cur.fetchall()]
+            keys |= await report_fixed.denied_names(conn, guild_id, campaign_id, bare)
+        await report_fixed.give_back(conn, guild_id, campaign_id, [k for _, k in keys])
 
     @asynccontextmanager
     async def _read(
