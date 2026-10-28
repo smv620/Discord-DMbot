@@ -3550,6 +3550,8 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_homebrew_campaigns", "dmbot_web_homebrew_campaigns(BIGINT)"),
     # An NPC's page and a person's own private notes on it, for any member of the server (#2265).
     ("dmbot_web_npc_page", "dmbot_web_npc_page(BIGINT, TEXT, TEXT)"),
+    # Which entries have such a page, so the story graph can link to it (#2887).
+    ("dmbot_web_npc_page_ids", "dmbot_web_npc_page_ids(BIGINT, TEXT)"),
     ("dmbot_web_peek", "dmbot_web_peek(BIGINT, TEXT, TEXT)"),
     ("dmbot_recap_held_names", "dmbot_recap_held_names(BIGINT, TEXT, BIGINT)"),
     ("dmbot_web_npc_note_put", "dmbot_web_npc_note_put(BIGINT, TEXT, TEXT, TEXT)"),
@@ -18153,6 +18155,34 @@ WEB_DECIDED_NOTE = (
 )
 
 
+# Which entries of a campaign have an NPC page (#2887). The story graph marks each name `page: true`
+# when its page exists, so the website can link to it now that the Discord list is gone (#2874).
+# The same source and the same checks as `dmbot_web_npc_page`: the entries in `npc_roster` (the
+# players' view, written by the bot), for a campaign of a server the caller is in. Entry ids only:
+# no names, no words, so nothing is revealed beyond "a page exists".
+NPC_PAGE_IDS = r"""
+    CREATE FUNCTION dmbot_web_npc_page_ids(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+            RETURN NULL;
+        END IF;
+        RETURN COALESCE((SELECT jsonb_agg(r.entry_id ORDER BY r.entry_id) FROM npc_roster r
+                         WHERE r.guild_id = g AND r.campaign_id = c), '[]'::jsonb);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_npc_page_ids(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_npc_page_ids(BIGINT, TEXT) FROM PUBLIC;
+"""
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -18484,6 +18514,7 @@ MIGRATIONS: tuple[Migration, ...] = (
     ("0273_restore_guilds", WEB_RESTORE_GUILDS),  # servers with restore rows, for the sweep (#2746)
     ("0274_web_sheet_typed_document", WEB_SHEET_TYPED_DOCUMENT),  # typed and document (#2818)
     ("0275_web_decided_note", WEB_DECIDED_NOTE),  # DMbot's check on the website (#2859)
+    ("0277_npc_page_ids", NPC_PAGE_IDS),  # which entries have a page (#2887)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
