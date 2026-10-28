@@ -14,14 +14,25 @@ A campaign is named by `<server>.<campaign>`, as for the other pages.
 
 from __future__ import annotations
 
+import re
+import time
 from typing import Any
 
-from dmbot import plan_rules
+from dmbot import plan_rules, progress
 from dmbot.db import Database
 from dmbot.entitlements import plan_grant_access
+from dmbot.rules import rule_sets
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+
+ACTIONS = frozenset(
+    {"publish", "stop_sharing", "look_code", "follow_here", "follow_code", "unfollow"}
+)
+ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+# What a failed choice says, as the code the page turns into words; anything else is "failed".
+REASONS = {"failed"}
+NAME_MAX = 60
 
 
 def shape(got: dict[str, Any], *, can_share: bool) -> dict[str, Any]:
@@ -91,3 +102,84 @@ async def read_sharing(
         raise RecapError("not_allowed")
     can_share = await _can_share(db, got.get("owner"), now, enforce_plans=enforce_plans)
     return shape(got, can_share=can_share)
+
+
+def _choice(body: object) -> tuple[str, str]:
+    """The action and its argument from the request, with the code as typed made plain (any case,
+    spaces or dashes, as Discord reads it). The door checks the argument's shape again."""
+    if not isinstance(body, dict):
+        raise RecapError("bad_action")
+    action, arg = body.get("action"), body.get("arg", "")
+    if not isinstance(action, str) or action not in ACTIONS:
+        raise RecapError("bad_action")
+    if not isinstance(arg, str) or len(arg) > 200:
+        raise RecapError("bad_arg")
+    if action in ("look_code", "follow_code"):
+        arg = rule_sets.clean_code(arg)
+    elif action == "publish":
+        arg = arg.strip()
+        if not 1 <= len(arg) <= NAME_MAX:
+            raise RecapError("bad_arg")
+    elif action in ("stop_sharing", "unfollow"):
+        arg = ""
+    return action, arg
+
+
+async def queue_action(
+    db: Database, session: Session, ref: str, body: object, *, now: int, enforce_plans: bool
+) -> str:
+    """Queue one sharing choice of the signed-in DM for the bot and return its id. A server the
+    person is not in is "not found"; a member who is not a DM of the campaign is "not allowed".
+    Sharing needs a plan that allows it, which is said here ("plan") as Discord says it; the bot
+    checks again, with the caps and the guess limit, when it applies the choice."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    action, arg = _choice(body)
+    if action == "publish":
+        mine = await read_sharing(db, session, ref, now=now, enforce_plans=enforce_plans)
+        if not mine["canShare"]:
+            raise RecapError("plan")
+        if mine["ruleCount"] == 0:
+            raise RecapError("no_rules")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_rule_action_add(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, action, arg),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return str(got["id"])
+
+
+async def read_action(
+    db: Database, session: Session, ref: str, answer: str, *, now: int | None = None
+) -> dict[str, Any]:
+    """Where one of the caller's own choices stands, in the shared progress shape, with the words
+    Discord would say (`note`) once it is done or has failed. Nobody else's choice."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not ID_PATTERN.match(answer):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_rule_action_read(%s, %s, %s) AS r", (guild_id, campaign_id, answer)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    reason = got["error"] or None
+    shaped = progress.shape(
+        got["stage"],
+        started_at=int(got["createdAt"]),
+        updated_at=int(got["updatedAt"]),
+        now=int(time.time()) if now is None else now,
+        reason=reason if reason in REASONS else ("failed" if reason else None),
+    )
+    return {**shaped, "action": got["action"], "error": got["error"], "note": got["note"]}

@@ -119,6 +119,9 @@ class WebSettings:
     imports_on: bool = False
     # The same DMBOT_HANDOVER_EMAIL as the bot's (#2532): off, the email hand-over routes say 404.
     handover_email_on: bool = False
+    # Sharing house rules from the website (#2783; DMBOT_WEB_RULE_SHARING): off, the routes that
+    # queue a choice answer 404, so nothing is queued before the bot can run it.
+    rule_sharing_on: bool = False
     # Servers where it is on although DMBOT_IMPORTS is off (#2259): the owner's test servers. Never
     # logged or shown.
     imports_servers: frozenset[int] = field(default=frozenset(), repr=False)
@@ -330,8 +333,14 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_HANDOVER_EMAIL must be 1 (on) or 0 (off), got "{handover_email_raw}".'
         )
+    rule_sharing_raw = (get("DMBOT_WEB_RULE_SHARING") or "0").lower()
+    if rule_sharing_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(
+            f'DMBOT_WEB_RULE_SHARING must be 1 (on) or 0 (off), got "{rule_sharing_raw}".'
+        )
     return WebSettings(
         database_url=get("DATABASE_URL"),
+        rule_sharing_on=rule_sharing_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")
