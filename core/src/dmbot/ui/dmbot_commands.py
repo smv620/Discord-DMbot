@@ -42,6 +42,7 @@ from dmbot.dm_screen.settings import SettingsButton
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic
+from dmbot.waiting import WaitingMessage, message_is_gone
 
 if TYPE_CHECKING:
     from dmbot.bot import DMBot
@@ -55,6 +56,11 @@ TIMED_OUT = "This menu timed out. Run the command again."
 Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
+RESTORING = (
+    "Restoring… a big copy can take a few minutes. It is restored all at once or not at all, "
+    "so you can wait for it."
+)
+RESTORE_STALL_S = 300.0  # the restore is one step, so only a long silence is worth naming
 RESTORE_FAILED = "Something went wrong, so nothing was restored. Run `/dmbot restore` again."
 START_FAILED = (
     "Couldn't start. If this message doesn't say Listening, press ▶ Start listening again."
@@ -775,11 +781,42 @@ class RestoreChoice(_Menu):
         if guild is None:
             await _tell(interaction, NOT_IN_SERVER)
             return
-        bot = _bot(interaction)
+        pressed = time.monotonic()
         # Answer first (#88, as #351): the session lock may be held for a few seconds
         # by a /dmbot start setting up the DM screen, and the plan check is a database read.
-        await _replace(interaction, "Restoring…", None)
+        await _replace(interaction, RESTORING, None)
         self.stop()  # its buttons are gone; its timeout mustn't cover the outcome
+
+        async def show(text: str) -> None:
+            await _replace(interaction, text, None)
+
+        # The wait keeps itself current (#2564): the step, how long, and a line when nothing has
+        # changed. The restore is one transaction, so a long one shows no count, only the step; its
+        # result is written after the wait ends, so nothing overwrites the last word.
+        async with WaitingMessage(
+            show,
+            RESTORING,
+            stall_after_s=RESTORE_STALL_S,
+            gone=message_is_gone,
+            started=pressed,
+        ) as waiting:
+            try:
+                done = await self._restore_steps(interaction, guild, replace_id, waiting)
+            except Exception:
+                log.exception("Restoring a backup failed")
+                done = RESTORE_FAILED
+        await _replace(interaction, done, None)
+
+    async def _restore_steps(
+        self,
+        interaction: discord.Interaction,
+        guild: discord.Guild,
+        replace_id: str | None,
+        waiting: WaitingMessage,
+    ) -> str:
+        """The restore itself; the words for the DM at the end, whatever happened."""
+        bot = _bot(interaction)
+        waiting.step("Step 1 of 3: checking the plan", keeps=False)
         # Judged here, once it is known whether a campaign is being replaced: that keeps its
         # owner, so it is the owner's plan that counts; a new campaign makes this person its
         # owner, so it is theirs (#437 part 3). Asked now, not only at /dmbot restore: the
@@ -789,8 +826,8 @@ class RestoreChoice(_Menu):
         )
         refused = await bot.restore_gate(guild.id, interaction.user.id, replacing)
         if refused is not None:
-            await _replace(interaction, refused, None)
-            return
+            return refused  # type: ignore[no-any-return]
+        waiting.step("Step 2 of 3: restoring the copy (all at once or not at all)", keeps=False)
         # The session lock stops a campaign being replaced while it's starting up.
         async with bot.session_lock(guild.id):
             try:
@@ -799,15 +836,12 @@ class RestoreChoice(_Menu):
                 )
             except Exception:
                 log.exception("Couldn't check whether the campaign is playing")
-                await _replace(interaction, RESTORE_FAILED, None)
-                return
+                return RESTORE_FAILED
             if playing:
-                playing_now = (
+                return (
                     "That campaign is playing right now. Use `/dmbot stop` first, then "
                     "`/dmbot restore` again."
                 )
-                await _replace(interaction, playing_now, None)
-                return
             erased_lines = LeftOut()
             try:
                 campaign = await bot.campaigns.import_backup(
@@ -819,12 +853,11 @@ class RestoreChoice(_Menu):
                     left_out=erased_lines,
                 )
             except CampaignError as exc:
-                await _replace(interaction, str(exc), None)
-                return
+                return str(exc)
             except Exception:
                 log.exception("Restoring a backup failed")
-                await _replace(interaction, RESTORE_FAILED, None)
-                return
+                return RESTORE_FAILED
+        waiting.step("Step 3 of 3: tidying up")
         # A big restore adds thousands of rows at once: refresh the planner's statistics (#2376).
         memory = getattr(bot, "memory", None)
         if memory is not None:
@@ -851,9 +884,7 @@ class RestoreChoice(_Menu):
             if erased_lines.lines
             else ""
         )
-        await _replace(
-            interaction, f"{done}{erased} Use `/dmbot start` to play it.{left_out}", None
-        )
+        return f"{done}{erased} Use `/dmbot start` to play it.{left_out}"
 
 
 class ConfirmReplace(_Menu):

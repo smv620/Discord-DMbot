@@ -27,11 +27,20 @@ import time
 from collections.abc import Awaitable, Callable
 from types import TracebackType
 
+import discord
+
 log = logging.getLogger(__name__)
 
 EDIT_EVERY_S = 10.0  # the most often the message is edited
 SHOW_ELAPSED_AFTER_S = 30.0  # "so far" appears once the wait is long enough to wonder
 SHOW_LAST_CHANGE_AFTER_S = 60.0  # "last change N ago" appears once nothing moved for this long
+
+
+def message_is_gone(exc: BaseException) -> bool:
+    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
+    return isinstance(exc, discord.NotFound) or (
+        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
+    )
 
 
 def elapsed_text(seconds: float) -> str:

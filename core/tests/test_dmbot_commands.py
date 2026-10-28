@@ -388,7 +388,7 @@ class AnswerBeforeTheLock(unittest.IsolatedAsyncioTestCase):
         restoring = asyncio.create_task(choice.restore(it, None))
         for _ in range(5):
             await asyncio.sleep(0)
-        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], "Restoring…")
+        self.assertEqual(it.response.edit_message.await_args.kwargs["content"], cmds.RESTORING)
         bot.campaigns.import_backup.assert_not_awaited()  # still waiting for the lock
         lock.release()
         await restoring
@@ -710,3 +710,68 @@ class SettingsWhereTheDmLooks(CommandTests):
         it = self.interaction()
         await cmds.dmbot_settings.callback(it)  # type: ignore[call-arg]
         self.assertIn("/dmbot start", it.response.sent[0][0])
+
+
+class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
+    """The wait for a restore keeps itself current (#2564): the step, how long, and a plain end."""
+
+    async def run_restore(self, **bot_kw: Any) -> tuple[list[str], str]:
+        edits: list[str] = []
+        real = cmds.WaitingMessage
+
+        def quick(*args: Any, **kw: Any) -> Any:
+            return real(*args, every=0.01, show_after=0.0, **kw)
+
+        with patch.object(cmds, "WaitingMessage", quick):
+            defaults: dict[str, Any] = {
+                "session_lock": lambda _gid: asyncio.Lock(),
+                "is_campaign_playing": AsyncMock(return_value=False),
+                "restore_gate": AsyncMock(return_value=None),
+                "campaigns": SimpleNamespace(
+                    import_backup=AsyncMock(return_value=MagicMock()),
+                    get=AsyncMock(return_value=None),
+                ),
+            }
+            bot = SimpleNamespace(**{**defaults, **bot_kw})
+            it = fake_interaction(bot)  # type: ignore[arg-type]
+            it.response.done = False
+
+            async def answered(**_: Any) -> None:
+                it.response.done = True
+
+            it.response.edit_message = AsyncMock(side_effect=answered)
+
+            async def edited(**kw: Any) -> None:
+                edits.append(str(kw["content"]))
+
+            it.edit_original_response = AsyncMock(side_effect=edited)
+            choice = cmds.RestoreChoice({}, "Frostmaiden", [])
+            await choice.restore(it, None)
+        return edits, edits[-1]
+
+    async def test_a_slow_restore_shows_the_step_and_how_long_then_the_result(self) -> None:
+        async def slow(*args: Any, **kw: Any) -> Any:
+            await asyncio.sleep(0.15)
+            return SimpleNamespace(id="c", name="Frostmaiden")
+
+        campaigns = SimpleNamespace(import_backup=slow, get=AsyncMock(return_value=None))
+        edits, last = await self.run_restore(campaigns=campaigns)
+        waiting = [e for e in edits if "Step 2 of 3" in e]
+        self.assertTrue(waiting)
+        self.assertTrue(any("so far" in e for e in waiting))
+        self.assertTrue(all(e.startswith(cmds.RESTORING) for e in waiting))
+        self.assertIn("✅ Restored **Frostmaiden**.", last)
+        self.assertNotIn("Step", last)  # the last word is the result, not a step
+
+    async def test_a_plan_that_refuses_ends_with_its_words_not_a_step(self) -> None:
+        _edits, last = await self.run_restore(
+            restore_gate=AsyncMock(return_value="Not on this plan.")
+        )
+        self.assertEqual(last, "Not on this plan.")
+
+    async def test_a_check_that_breaks_unexpectedly_ends_with_a_plain_failure(self) -> None:
+        with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
+            _edits, last = await self.run_restore(
+                restore_gate=AsyncMock(side_effect=RuntimeError("boom"))
+            )
+        self.assertEqual(last, cmds.RESTORE_FAILED)
