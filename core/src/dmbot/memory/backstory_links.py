@@ -236,7 +236,9 @@ class BackstoryLinks:
                     end = self._end(entities, candidate)
                     if end is not None and entities[end]["status"] != "rejected" and end != other:
                         live[end] = str(entities[end]["name"])
-                needs = 1 if is_pronoun(str(r["word"])) else 2  # (+ "Someone else", #2790)
+                # A pronoun's question is never dropped for want of names: "Someone else" keeps its
+                # connection (#2790), so it waits even when every name it offered is gone.
+                needs = 0 if is_pronoun(str(r["word"])) else 2
                 if other is None or entities[other]["status"] == "rejected" or len(live) < needs:
                     drop.append(str(r["id"]))
                     continue
@@ -293,6 +295,8 @@ class BackstoryLinks:
                     or entities[end]["status"] == "rejected"
                 ):
                     return GONE
+                if end == row["other_id"] and not outside:
+                    return GONE  # (the question's own end is no answer: the question stays)
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
                     " AND campaign_id = %s",
