@@ -36,7 +36,8 @@ class FakeHost:
         self.db: Any = None
 
     async def get_campaign(self, guild_id: int, campaign_id: str) -> Campaign | None:
-        return await self._campaigns.get(guild_id, campaign_id)
+        found: Campaign | None = await self._campaigns.get(guild_id, campaign_id)
+        return found
 
     def fix_has_consent(self, guild_id: int, user_id: int) -> bool:
         return user_id in self.consent
