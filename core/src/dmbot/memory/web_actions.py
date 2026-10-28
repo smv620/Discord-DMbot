@@ -353,8 +353,8 @@ async def _unnamed(
         keep = await memory.entity(guild_id, cid, a.target_id)
         if not entity.unnamed or keep is None or keep.id == entity.id:
             return _failed(GONE)
-        if keep.unnamed or keep.type == PERSON or keep.status not in LIVE:
-            return _failed(GONE)
+        if keep.unnamed or keep.type == PERSON or keep.status != CONFIRMED:
+            return _failed(GONE)  # (only a name the DM has confirmed can take someone in)
         written = await memory.merge(
             guild_id, cid, keep.id, entity.id, source=DM, dm_said_same=True
         )

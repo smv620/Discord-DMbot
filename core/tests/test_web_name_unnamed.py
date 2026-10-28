@@ -130,6 +130,12 @@ class Naming(MemoryTest):
                 self.assertEqual((await self.go("name-join", target_id=target)).error, wa.GONE)
         self.assertEqual((await self.status(self.sis)).status, PROPOSED)
 
+    async def test_a_join_into_a_name_the_dm_has_not_confirmed_is_gone(self) -> None:
+        suggested = await self.add("Ilse", status=PROPOSED)
+        out = await self.go("name-join", target_id=suggested)
+        self.assertEqual(out.error, wa.GONE)
+        self.assertEqual((await self.status(self.sis)).status, PROPOSED)  # nothing merged
+
     async def test_a_join_of_a_person_gone_or_already_named_is_gone(self) -> None:
         ilse = await self.add("Ilse", status=CONFIRMED)
         out = await self.go("name-join", self.ken, target_id=ilse)
