@@ -40,6 +40,7 @@ NOT_A_MESSAGE = {
     "sidebar/context.py": "characters of recent scene given to a prompt",
     "sidebar/knowledge.py": "characters in one chunk of the rules knowledge",
     "web/imports.py": "the earliest year a session date may have",
+    "web/sheets.py": "the longest list of names Discord's typed-sheet form holds",
     "ui/name_lists.py": "the longest link in a form field",
     "ui/rule_lookup.py": "entries kept in a map",
 }

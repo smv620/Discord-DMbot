@@ -44,7 +44,7 @@ export const sheetWords = {
   documentSent: "Sent. DMbot is reading your document; this can take a minute.",
   documentProblems: {
     empty: "Nothing was sent: paste the link first.",
-    "not-web": "Nothing was sent: the link must start with https:// or http://.",
+    "not-web": "Nothing was sent: the link must start with https://.",
     "too-long": "Nothing was sent: the link is longer than 400 characters.",
   } satisfies Record<DocumentLinkProblem, string>,
   typedNeedsClass: "Nothing was saved: type the class first.",
@@ -60,7 +60,7 @@ export const sheetWords = {
   notYet: "Not read yet.",
   problems: {
     "bad-document-link":
-      "That isn't a web address DMbot can read. Use a public link that starts with https:// or http://.",
+      "That isn't a web address DMbot can read. Use a public link that starts with https://.",
     "bad-link":
       "That isn't a character link from dndbeyond.com. It looks like https://www.dndbeyond.com/characters/12345.",
     "not-allowed": "Only the player of this character can change its sheet.",
