@@ -1119,6 +1119,23 @@ export interface TranscriptView {
   skips?: TranscriptSkip[];
   /** Lines kept, left out, and put back by a DM and still in force (cleaned reading). */
   filter?: { kept: number; leftOut: number; putBack: number };
+  /** Who is reading, for a line fix (#2858; core #2882): a DM, or the player whose lines these are. */
+  viewer?: { id: string; isDm: boolean };
+  /** The lines this viewer may fix, by their index in THIS page's `lines`, with the speaker and start to name them to
+   * the API (#2858). Only the cleaned reading has them. */
+  fixable?: { line: number; speaker: string; startedMs: number }[];
+}
+
+/** A line fix's answer: a suggestion to the DM, or a change made at once (#2858). */
+export type FixMode = "suggest" | "rewrite";
+
+/** A line fix as the bot reports it (#2858): the shared progress shape, plus what was done. */
+export interface FixAnswer extends JobProgress {
+  mode: FixMode;
+  /** "sent" for a suggestion to the DM, "changed" for a rewrite; null while it is still going. */
+  result: "sent" | "changed" | null;
+  /** True when a rewrite can be undone from the fix notes in Discord. */
+  undo: boolean;
 }
 
 /** One stretch of off-topic chat left out of the cleaned transcript. `line` is its marker's index in the
@@ -1753,6 +1770,21 @@ export type ApiErrorKind =
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "bad-text" // a fix must be between 1 and 200 characters (#2858)
+  | "same" // a fix that is what the line already says (#2858)
+  | "not-yours" // only the speaker or the DM may fix a line (#2858)
+  | "not-recorded" // the speaker has stopped being recorded, so the line can't be changed (#2858)
+  | "line-changed" // the line was changed by someone else since the page was read (#2858)
+  | "line-gone" // the line is gone (#2858)
+  | "not-written" // DMbot could not save the change (#2858)
+  | "not-available" // fixing lines is not on right now (#2858)
+  | "fix-open" // this line already has a fix waiting for the DM (#2858)
+  | "fix-many" // the person already has three fixes waiting for the DM (#2858)
+  | "no-dm-screen" // the campaign has no DM screen to send a fix to (#2858)
+  | "fix-queue-full" // too many fixes are waiting in this campaign (#2858)
+  | "fix-bad-choice" // a fix choice the bot does not know (#2858)
+  | "player-stopped" // the speaker has stopped being recorded (#2858)
+  | "secret" // the change would reveal a secret, so it can't be made (#2858)
   | "bad-document-link" // a document link the bot can't read (#2843); its own words, not the character link's
   | "not-ready" // the API has no move codes yet (#1231)
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
@@ -2132,6 +2164,15 @@ export interface AccountApi {
   campaignSheets?(campaignRef: string): Promise<CharacterSheets>;
   /** One sheet choice (#2816), queued for the bot: returns the answer's id to poll. `entity` is "-" for a DM's read again. */
   chooseSheet?(campaignRef: string, entity: string, choice: SheetChoice): Promise<string>;
+  /** Asks to fix one line of a session's cleaned transcript; the answer comes back through `fixAnswer` (#2858). */
+  fixTranscriptLine?(
+    campaignRef: string,
+    number: number,
+    line: { speaker: string; startedMs: number },
+    text: string,
+  ): Promise<{ answer: string; mode: FixMode }>;
+  /** Where one line fix stands (#2858). */
+  fixAnswer?(campaignRef: string, number: number, answer: string): Promise<FixAnswer>;
   /** Where one of the person's own sheet choices stands (#2816). */
   sheetAnswer?(campaignRef: string, answer: string): Promise<SheetAnswer>;
   /** Who can be offered as a game master, searched by name (#2768): at most 25, members who agreed to be recorded. */
@@ -2322,6 +2363,16 @@ const errorKinds: Record<string, ApiErrorKind> = {
   slow_down: "slow-down",
   busy: "slow-down",
   bad_link: "bad-link",
+  same: "same",
+  not_yours: "not-yours",
+  not_recorded: "not-recorded",
+  line_changed: "line-changed",
+  line_gone: "line-gone",
+  not_written: "not-written",
+  open: "fix-open",
+  many: "fix-many",
+  no_dm_screen: "no-dm-screen",
+  player_stopped: "player-stopped",
   bad_document: "bad-document-link",
   move_off: "not-ready",
   not_paid: "no-paid-plan",
@@ -2874,6 +2925,20 @@ export function httpApi(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/sheets/answers/${encodeURIComponent(answer)}`,
       )) as SheetAnswer,
+    fixTranscriptLine: async (campaignRef, number, line, text) => {
+      const queued = (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix`,
+        { speaker: line.speaker, startedMs: line.startedMs, text },
+      )) as { answer: string; mode: FixMode };
+      if (!queued?.answer) throw new ApiError("server");
+      return queued;
+    },
+    fixAnswer: async (campaignRef, number, answer) =>
+      (await call(
+        "GET",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/transcripts/${number}/fix/${encodeURIComponent(answer)}`,
+      )) as FixAnswer,
     campaignGameMasterCandidates: async (campaignRef, query) =>
       (
         (await call(

@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
+import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -1736,6 +1736,24 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
       return "sheet-answer";
     },
+    async fixTranscriptLine(ref, number, line, text) {
+      calls.push(`fixTranscriptLine:${ref}:${number}:${line.speaker}:${line.startedMs}:${text}`);
+      await reachable();
+      signedIn();
+      if (!text.trim() || text.length > 200) throw new ApiError("bad-text");
+      // A rewrite for the mock's text that ends in "!", a suggestion for the rest (the mock's own choice).
+      return { answer: `fix-${number}-${line.startedMs}`, mode: text.endsWith("!") ? "rewrite" : "suggest" };
+    },
+    async fixAnswer(ref, number, answer): Promise<FixAnswer> {
+      calls.push(`fixAnswer:${ref}:${number}:${answer}`);
+      await reachable();
+      signedIn();
+      const mode: FixMode = answer.endsWith("62000") ? "rewrite" : "suggest";
+      if (answer.includes("-62000") && mode === "rewrite") {
+        return { stage: "done", state: "done", mode, result: "changed", undo: true };
+      }
+      return { stage: "done", state: "done", mode, result: "sent", undo: false };
+    },
     async sheetAnswer(ref, answer): Promise<SheetAnswer> {
       calls.push(`sheetAnswer:${ref}:${answer}`);
       await reachable();
@@ -3201,6 +3219,8 @@ function mockTranscript(number: number, version: TranscriptVersion, putBack = fa
       ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
     ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
+    // The DM may fix any spoken line of the cleaned reading (#2858); the as-heard reading has no fixes.
+    ...(heard ? {} : { viewer: { id: "pretend-dm", isDm: true }, fixable: [{ line: 1, speaker: "Speaker 2", startedMs: 40_000 }, { line: 2, speaker: "Speaker 1", startedMs: 62_000 }] }),
   };
 }
 
