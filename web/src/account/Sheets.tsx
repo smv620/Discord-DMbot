@@ -24,6 +24,8 @@ import {
 import { useObservedWait } from "./useObservedWait";
 import { EMPTY_TYPED, checkTyped, type TypedValues } from "./sheets-typed";
 import TypedForm from "./TypedForm";
+import DocumentForm from "./DocumentForm";
+import { checkDocumentLink } from "./sheets-document";
 import WorkProgress from "./WorkProgress";
 
 type Report = { ok: boolean; text: string } | null;
@@ -50,6 +52,9 @@ export default function CharacterSheetsSection({
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
   // Keyed by campaign too, so a draft never shows under another campaign's character (CLAUDE.md: scoped per campaign).
   const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
+  // The document link's draft is kept per campaign too, as the typed drafts are (#2843).
+  const documentKey = (entityId: string) => `${campaignRef}:${entityId}`;
+  const [documents, setDocuments] = useState<Record<string, string>>({});
   // The link box's draft is kept per campaign too, as the typed drafts are (#2842).
   const linkKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
@@ -98,6 +103,7 @@ export default function CharacterSheetsSection({
     entity: string,
     choice: SheetChoice,
     done: string,
+    onDone?: () => void,
   ): Promise<void> => {
     if (flight.current || !api.chooseSheet || !api.sheetAnswer) return;
     // What this choice was made for: its answer is drawn only while the page still shows that campaign (#2845).
@@ -132,6 +138,8 @@ export default function CharacterSheetsSection({
             throw error;
         }
         if (got?.state === "done") {
+          // The choice went through, so its draft is cleared even if the page has since left the campaign.
+          onDone?.();
           if (drawnFor(asked)) {
             setStage(null);
             setReport({ ok: true, text: done });
@@ -234,6 +242,15 @@ export default function CharacterSheetsSection({
                 }
                 onTyped={(choice, done) => void send(s.entityId, choice, done)}
                 onProblem={(text) => setReport({ ok: false, text })}
+                documentValue={documents[documentKey(s.entityId)] ?? ""}
+                onDocumentValue={(v) =>
+                  setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: v }))
+                }
+                onDocument={(url) =>
+                  void send(s.entityId, { action: "document", url }, w.documentSent, () =>
+                    setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: "" })),
+                  )
+                }
               />
             </li>
           ))}
@@ -258,6 +275,9 @@ export default function CharacterSheetsSection({
                     onTypedValue={() => {}}
                     onTyped={() => {}}
                     onProblem={() => {}}
+                    documentValue=""
+                    onDocumentValue={() => {}}
+                    onDocument={() => {}}
                   />
                 </li>
               ))}
@@ -295,6 +315,9 @@ function Character({
   onTypedValue,
   onTyped,
   onProblem,
+  documentValue,
+  onDocumentValue,
+  onDocument,
 }: {
   sheet: SheetCharacter;
   shown: boolean;
@@ -307,6 +330,9 @@ function Character({
   onTypedValue: (patch: Partial<TypedValues>) => void;
   onTyped: (choice: SheetChoice, done: string) => void;
   onProblem: (text: string) => void;
+  documentValue: string;
+  onDocumentValue: (value: string) => void;
+  onDocument: (url: string) => void;
 }) {
   const summary = sheet.summary;
   const classes =
@@ -329,6 +355,16 @@ function Character({
       },
       w.typedSaved + (sheet.source === "dndbeyond" ? w.typedReplacedLink : ""),
     );
+  };
+  // The document link is checked here, so a wrong shape is refused with the plain words and nothing is sent (#2843).
+  const submitDocument = () => {
+    if (busy) return;
+    const checked = checkDocumentLink(documentValue);
+    if (!checked.ok) {
+      onProblem(w.documentProblems[checked.problem]);
+      return;
+    }
+    onDocument(checked.url);
   };
   return (
     <div class="stack">
@@ -384,6 +420,15 @@ function Character({
           busy={busy}
           onValues={onTypedValue}
           onSubmit={submitTyped}
+        />
+      )}
+      {shown && (
+        <DocumentForm
+          sheet={sheet}
+          value={documentValue}
+          busy={busy}
+          onValue={onDocumentValue}
+          onSubmit={submitDocument}
         />
       )}
     </div>

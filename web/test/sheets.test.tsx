@@ -309,3 +309,78 @@ describe("a campaign the page has left", () => {
     expect(screen.queryByText(w.forgetDone)).toBeNull();
   });
 });
+
+describe("Use a document link", () => {
+  const docBox = (name: string) => screen.getByLabelText(w.documentLabel(name)) as HTMLInputElement;
+  const sendDocument = (name: string) => fireEvent.submit(docBox(name).closest("form")!);
+  const documentCalls = (api: ReturnType<typeof mockApi>) => calls(api, "chooseSheet").filter((c) => c.includes('"action":"document"'));
+
+  it("a player sends a document link and the choice is queued as document", async () => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(api.calls).toContain(`chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "document", url: "https://example.com/sheet.pdf" })}`);
+  });
+
+  // Each case opens a fresh page, so one case's message cannot be the one another case finds.
+  it.each([
+    ["", "empty"],
+    ["a word with spaces", "not-web"],
+    ["ftp://example.com/x", "not-web"],
+  ] as const)("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: text } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentProblems[problem]!)).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(0);
+  });
+
+  it("the mock refuses a link it can't read with bad-document-link, in the document's own words", async () => {
+    const api = await open();
+    // Passes the page's check (a literal prefix and a host), but the mock reads no host after the slashes.
+    fireEvent.input(docBox("Ivy"), { target: { value: "https:///example.com" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.problems["bad-document-link"] as string, {}, { timeout: 8000 })).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(1);
+  });
+
+  it("a link longer than 400 characters is refused with the plain words, not cut short", async () => {
+    const api = await open();
+    const long = "https://example.com/" + "a".repeat(401 - "https://example.com/".length);
+    fireEvent.input(docBox("Ivy"), { target: { value: long } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentProblems["too-long"]!)).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(0);
+  });
+
+  it("a DM does not see the document form", async () => {
+    await open(".sheets-dm");
+    expect(screen.queryByText(w.documentSummary)).toBeNull();
+    expect(screen.queryByLabelText(w.documentLabel("Sorrel"))).toBeNull();
+  });
+
+  it("an existing sheet shows that reading a document replaces it", async () => {
+    await open();
+    expect(screen.getAllByText(w.documentReplaces)).toHaveLength(1);
+  });
+
+  it("the document draft is cleared after a successful send", async () => {
+    await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(docBox("Ivy").value).toBe("");
+  });
+
+  it("a half-typed document link does not show under another campaign", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/half" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(docBox("Ivy").value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(docBox("Ivy").value).toBe("https://example.com/half"));
+  });
+});

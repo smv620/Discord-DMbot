@@ -1,3 +1,4 @@
+import type { DocumentLinkProblem } from "../account/sheets-document";
 // The words of "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554): a player links or
 // forgets their own character's sheet, and a DM reads every sheet (read only) and asks for them to be read
 // again. Plain words. The bot fetches the link; the page never does. The link is shown to the player and the campaign's
@@ -34,6 +35,18 @@ export const sheetWords = {
   typedReplacedLink: " This replaced your link.",
   typedReplacesLink: "You have a sheet linked. Saving what you type replaces the link.",
   typedBadLevel: "Nothing was saved: the level is a number from 1 to 20.",
+  documentSummary: "Use a document link",
+  documentFor: (name: string): string => `Use a document link for ${name}`,
+  documentLabel: (name: string): string => `Link to your sheet for ${name}`,
+  documentHint: "Anyone with the link must be able to open it. DMbot keeps no document.",
+  documentRead: "Read my sheet",
+  documentReplaces: "You have a sheet already. Reading a document replaces it.",
+  documentSent: "Sent. DMbot is reading your document; this can take a minute.",
+  documentProblems: {
+    empty: "Nothing was sent: paste the link first.",
+    "not-web": "Nothing was sent: the link must start with https:// or http://.",
+    "too-long": "Nothing was sent: the link is longer than 400 characters.",
+  } satisfies Record<DocumentLinkProblem, string>,
   typedNeedsClass: "Nothing was saved: type the class first.",
   readAgain: "Read the sheets again",
   readAgainNote:
@@ -46,6 +59,8 @@ export const sheetWords = {
   readAt: (when: string): string => `Read ${when}`,
   notYet: "Not read yet.",
   problems: {
+    "bad-document-link":
+      "That isn't a web address DMbot can read. Use a public link that starts with https:// or http://.",
     "bad-link":
       "That isn't a character link from dndbeyond.com. It looks like https://www.dndbeyond.com/characters/12345.",
     "not-allowed": "Only the player of this character can change its sheet.",
