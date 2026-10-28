@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // "Character sheets" on a campaign's page (#2816; the character-sheets row of #2554). A player sees their own
-// characters' sheets, links one, or forgets it; a DM sees every sheet, read only, and can ask for them to
+// characters' sheets, links one, forgets it, or types in its class, level and names (#2832); a DM sees every sheet, read only, and can ask for them to
 // be read again. Each choice is queued for the bot and this waits for its answer, showing what DMbot is doing, how
 // long it has run and when it last moved (#2564). The page never fetches a character's link: the bot does. Loaded
 // lazily from the campaign page, and only while SHEETS_LIVE is on.
@@ -22,6 +22,8 @@ import {
   POLL_MS,
 } from "./settings-timing";
 import { useObservedWait } from "./useObservedWait";
+import { EMPTY_TYPED, checkTyped, type TypedValues } from "./sheets-typed";
+import TypedForm from "./TypedForm";
 import WorkProgress from "./WorkProgress";
 
 type Report = { ok: boolean; text: string } | null;
@@ -44,6 +46,10 @@ export default function CharacterSheetsSection({
   );
   const [report, setReport] = useState<Report>(null);
   const [link, setLink] = useState<Record<string, string>>({});
+  // What a player has typed in per character, so a re-render does not clear a half-typed form.
+  const [typed, setTyped] = useState<Record<string, TypedValues>>({});
+  // Keyed by campaign too, so a draft never shows under another campaign's character (CLAUDE.md: scoped per campaign).
+  const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
@@ -73,6 +79,11 @@ export default function CharacterSheetsSection({
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
+  // Another campaign's list and report must not stay on screen while this one loads (drafts are keyed by campaign).
+  useEffect(() => {
+    setData("loading");
+    setReport(null);
+  }, [campaignRef]);
 
   // One choice at a time: a press while one is on its way is ignored. The answer is looked for until the bot has
   // answered or the minute is up; then the page says so and reads the list again, so nothing is tried twice.
@@ -196,6 +207,15 @@ export default function CharacterSheetsSection({
                 onForget={() =>
                   void send(s.entityId, { action: "forget" }, w.forgetDone)
                 }
+                typedValue={typed[typedKey(s.entityId)] ?? EMPTY_TYPED}
+                onTypedValue={(patch) =>
+                  setTyped((now) => ({
+                    ...now,
+                    [typedKey(s.entityId)]: { ...(now[typedKey(s.entityId)] ?? EMPTY_TYPED), ...patch },
+                  }))
+                }
+                onTyped={(choice, done) => void send(s.entityId, choice, done)}
+                onProblem={(text) => setReport({ ok: false, text })}
               />
             </li>
           ))}
@@ -216,6 +236,10 @@ export default function CharacterSheetsSection({
                     onLinkValue={() => {}}
                     onLink={() => {}}
                     onForget={() => {}}
+                    typedValue={EMPTY_TYPED}
+                    onTypedValue={() => {}}
+                    onTyped={() => {}}
+                    onProblem={() => {}}
                   />
                 </li>
               ))}
@@ -249,6 +273,10 @@ function Character({
   onLinkValue,
   onLink,
   onForget,
+  typedValue,
+  onTypedValue,
+  onTyped,
+  onProblem,
 }: {
   sheet: SheetCharacter;
   shown: boolean;
@@ -257,10 +285,33 @@ function Character({
   onLinkValue: (value: string) => void;
   onLink: () => void;
   onForget: () => void;
+  typedValue: TypedValues;
+  onTypedValue: (patch: Partial<TypedValues>) => void;
+  onTyped: (choice: SheetChoice, done: string) => void;
+  onProblem: (text: string) => void;
 }) {
   const summary = sheet.summary;
   const classes =
     summary?.classes.map((c) => `${c.name} ${c.level}`).join(", ") ?? "";
+  // A press while a choice is on its way is dropped without a word, as the link form does (#2832).
+  const submitTyped = () => {
+    if (busy) return;
+    const checked = checkTyped(typedValue);
+    if (!checked.ok) {
+      onProblem(checked.problem === "class" ? w.typedNeedsClass : w.typedBadLevel);
+      return;
+    }
+    onTyped(
+      {
+        action: "typed",
+        className: checked.className,
+        level: checked.level,
+        species: checked.species,
+        names: checked.names,
+      },
+      w.typedSaved + (sheet.source === "dndbeyond" ? w.typedReplacedLink : ""),
+    );
+  };
   return (
     <div class="stack">
       <p>
@@ -307,6 +358,15 @@ function Character({
             </button>
           )}
         </form>
+      )}
+      {shown && (
+        <TypedForm
+          sheet={sheet}
+          values={typedValue}
+          busy={busy}
+          onValues={onTypedValue}
+          onSubmit={submitTyped}
+        />
       )}
     </div>
   );
