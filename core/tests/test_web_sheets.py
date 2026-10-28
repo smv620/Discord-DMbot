@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -15,7 +15,7 @@ from dmbot.web import sessions, sheets
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordGuild
 from dmbot.web.payments import FakeProvider
-from dmbot.web.recaps import RecapError
+from dmbot.web.recaps import RecapError, _scoped
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_all_names import Listing
 from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
@@ -57,6 +57,11 @@ class Sheets(Listing):
             NOW,
             BOB.id,
         )
+
+    async def sql_all(self, statement: str, *args: Any) -> list[dict[str, Any]]:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(statement, args)
+            return list(await cur.fetchall())
 
     async def read(self, who: Any = None) -> dict[str, Any]:
         return await sheets.read_sheets(self.web, who or self.player, self.cref)
@@ -164,6 +169,146 @@ class TheQueue(Sheets):
             await self.refuse_sheet("-", self.session, action="read_again"), "read_too_soon"
         )
 
+    # ---- typed and document (#2818) ------------------------------------------------------------
+
+    TYPED: ClassVar[dict[str, Any]] = {
+        "className": "Wizard",
+        "level": 3,
+        "species": "Elf",
+        "names": "Misty Step, Shield",
+    }
+    DOC = "https://docs.example.org/sheet.pdf"
+
+    async def door(self, act: str, lnk: str, who: Any = None, entity: str | None = None) -> Any:
+        """The door itself, with what Python would have sent, so a caller that skips the Python
+        checks still meets the door's."""
+        session = who or self.player
+        async with self.web.user(session.user_id, session=session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_sheet_action_add(%s, %s, %s, %s, %s) AS r",
+                (self.g, self.one.id, entity or self.ivy, act, lnk),
+            )
+            row = await cur.fetchone()
+        return row["r"] if row else None
+
+    async def test_a_player_types_in_their_own_character_and_it_waits_for_the_bot(self) -> None:
+        answer = await self.queue(self.ivy, action="typed", **self.TYPED)
+        self.assertEqual(await self.stage_of(answer), "waiting")
+        (row,) = await self.sql_all(
+            "SELECT action, url, payload FROM web_sheet_actions WHERE id = %s", answer
+        )
+        self.assertEqual((row["action"], row["url"]), ("typed", ""))
+        self.assertEqual(json.loads(row["payload"]), self.TYPED)
+
+    async def test_a_typed_sheet_the_door_does_not_like_is_refused_even_past_python(self) -> None:
+        good = json.dumps(self.TYPED)
+        self.assertEqual((await self.door("typed", good))["status"], "ok")
+        # a long list with many line breaks and quotes is legitimate even when its JSON text grows
+        crowded = json.dumps({**self.TYPED, "names": '"a"\n' * 375})
+        self.assertGreater(len(crowded), 2000)
+        await self.sql("UPDATE web_sheet_actions SET created_at = created_at - 30")  # past the 20 s
+        self.assertEqual((await self.door("typed", crowded))["status"], "ok")
+        for bad in (
+            "not json",
+            "[]",
+            "5",
+            "null",
+            '"x"',
+            json.dumps({**self.TYPED, "level": None}),
+            json.dumps({**self.TYPED, "className": None}),
+            json.dumps({**self.TYPED, "species": True}),
+            json.dumps({**self.TYPED, "names": "x" * 4001}),
+            json.dumps({**self.TYPED, "level": 21}),
+            json.dumps({**self.TYPED, "level": 0}),
+            json.dumps({**self.TYPED, "level": "3"}),
+            json.dumps({**self.TYPED, "className": " "}),
+            json.dumps({**self.TYPED, "className": "x" * 61}),
+            json.dumps({**self.TYPED, "species": "x" * 61}),
+            json.dumps({**self.TYPED, "names": "x" * 1501}),
+            json.dumps({**self.TYPED, "extra": 1}),
+            json.dumps({k: v for k, v in self.TYPED.items() if k != "species"}),
+        ):
+            self.assertEqual((await self.door("typed", bad))["status"], "bad_typed", bad)
+
+    async def test_typed_input_python_refuses_never_reaches_the_door(self) -> None:
+        for bad in (
+            {"className": "", "level": 3},
+            {"className": "Wizard", "level": 21},
+            {"className": "Wizard", "level": True},
+            {"className": "Wizard", "level": 3, "names": "x" * 1501},
+            {"className": 5, "level": 3},
+        ):
+            self.assertEqual(
+                await self.refuse_sheet(self.ivy, action="typed", **bad), "bad_typed", bad
+            )
+
+    async def test_only_the_player_may_type_in_their_character(self) -> None:
+        self.assertEqual(
+            await self.refuse_sheet(self.ivy, self.session, action="typed", **self.TYPED),
+            "not_allowed",
+        )
+
+    async def test_a_player_gives_a_document_link_and_it_waits_for_the_bot(self) -> None:
+        answer = await self.queue(self.ivy, action="document", url=self.DOC)
+        self.assertEqual(await self.stage_of(answer), "waiting")
+        (row,) = await self.sql_all(
+            "SELECT action, url, payload FROM web_sheet_actions WHERE id = %s", answer
+        )
+        self.assertEqual((row["action"], row["url"], row["payload"]), ("document", self.DOC, ""))
+
+    async def test_a_document_link_of_the_wrong_shape_is_refused(self) -> None:
+        for bad in (
+            "",
+            "ftp://example.org/a",
+            "http://example.org/a",  # the bot's fetch is https only
+            "javascript:alert(1)",
+            "https://",
+            "https://example.org/a b",
+            "https://example.org/a\nb",
+            "https://example.org/<x>",
+            "https://example.org/" + "a" * 400,
+        ):
+            self.assertEqual(
+                await self.refuse_sheet(self.ivy, action="document", url=bad), "bad_document", bad
+            )
+            self.assertEqual((await self.door("document", bad))["status"], "bad_document", bad)
+        self.assertEqual(
+            (await self.door("document", "https://example.org/" + "a" * 380))["status"], "ok"
+        )
+
+    async def test_the_link_of_a_document_is_never_given_back(self) -> None:
+        answer = await self.queue(self.ivy, action="document", url=self.DOC)
+        shown = await sheets.read_action(self.web, self.player, self.cref, answer)
+        self.assertNotIn(self.DOC, json.dumps(shown))
+        self.assertNotIn(self.DOC, json.dumps(await self.read()))
+
+    async def test_a_document_read_costs_a_minute_and_a_typed_sheet_twenty_seconds(self) -> None:
+        await self.queue(self.ivy, action="document", url=self.DOC)
+        self.assertEqual(
+            await self.refuse_sheet(self.sorrel, action="document", url=self.DOC + "2"), "too_soon"
+        )
+        # a typed sheet is not held up by a document, and a link is held up by it only for the
+        # twenty seconds of the link's own count, which a document does not start
+        self.assertTrue(await self.queue(self.ivy, action="typed", **self.TYPED))
+        # thirty seconds on: a typed sheet or a link may go again, a document may not
+        await self.sql("UPDATE web_sheet_actions SET created_at = created_at - 30")
+        self.assertTrue(await self.queue(self.sorrel, action="typed", **{**self.TYPED, "level": 4}))
+        self.assertEqual(
+            await self.refuse_sheet(self.sorrel, action="document", url=self.DOC + "3"), "too_soon"
+        )
+        # eighty more seconds: the document's minute is over
+        await self.sql("UPDATE web_sheet_actions SET created_at = created_at - 80")
+        self.assertTrue(await self.queue(self.sorrel, action="document", url=self.DOC + "4"))
+
+    async def test_a_link_and_a_typed_sheet_share_their_twenty_seconds(self) -> None:
+        await self.queue(self.ivy, action="typed", **self.TYPED)
+        self.assertEqual(await self.refuse_sheet(self.sorrel, action="link", url=LINK), "too_soon")
+
+    async def test_the_same_typed_sheet_pressed_twice_is_one_choice(self) -> None:
+        first = await self.queue(self.ivy, action="typed", **self.TYPED)
+        self.assertEqual(await self.queue(self.ivy, action="typed", **self.TYPED), first)
+
     async def test_an_unknown_action_is_refused(self) -> None:
         self.assertEqual(await self.refuse_sheet(self.ivy, action="rename"), "bad_action")
 
@@ -243,3 +388,22 @@ class TheLinkShape(unittest.TestCase):
         ):
             kept = sheets._choice({"action": "link", "url": given})
             self.assertEqual(kept, ("link", LINK), given)
+
+    def test_the_typed_form_and_a_document_link_are_kept_as_the_door_wants_them(self) -> None:
+        action, payload = sheets._choice(
+            {
+                "action": "typed",
+                "className": " Wizard ",
+                "level": 3,
+                "species": " Elf",
+                "names": "a",
+            }
+        )
+        self.assertEqual(action, "typed")
+        self.assertEqual(
+            json.loads(payload), {"className": "Wizard", "level": 3, "species": "Elf", "names": "a"}
+        )
+        self.assertEqual(
+            sheets._choice({"action": "document", "url": "  https://example.org/a.pdf "}),
+            ("document", "https://example.org/a.pdf"),
+        )
