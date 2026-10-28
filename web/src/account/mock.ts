@@ -705,6 +705,22 @@ function pretendWaiting(): Waiting {
     counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
   };
 }
+/** A campaign ref ending `.pronoun` has only pronoun questions (#2831): one with a name, one with none. */
+function pronounWaiting(): Waiting {
+  return {
+    claims: [],
+    backstory: [],
+    which: [
+      {
+        id: "w2", word: "she", pronoun: true, other: "Rook", otherIsSubject: false, how: "grew up with", secret: false, upload: "Lore, 24 Oct",
+        candidates: [{ id: "e3", name: "Mara Ashgrove", limited: false }],
+        quote: "She grew up with Rook",
+      },
+      { id: "w3", word: "he", pronoun: true, other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct", candidates: [] },
+    ],
+    counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
+  };
+}
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
@@ -1501,7 +1517,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
       return structuredClone({
         ...waiting,
         counts: {
@@ -1520,7 +1536,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
       const ids = "ids" in answer ? answer.ids : [answer.id];
       if (answer.kind === "which" && answer.action === "pick") {
         const q = waiting.which.find((x) => x.id === answer.id);

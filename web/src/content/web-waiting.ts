@@ -42,6 +42,11 @@ export const waitingWords = {
   whichLine: (other: string, how: string, word: string, otherIsSubject: boolean): string =>
     otherIsSubject ? `${other} ${how} ${word}` : `${word} ${how} ${other}`,
   neither: "Neither",
+  pronounHeading: "Who is this?",
+  pronounNote: "DMbot isn't sure who a word like \"she\" means.",
+  pronounQuestion: (word: string): string => `Who is ${word}?`,
+  pronounNoName: "No name fits yet.",
+  someoneElse: "Someone else",
   hiddenMark: "🤫",
   hiddenWord: "Hidden from players:",
   saidAt: (day: string): string => `Said in the session of ${day}.`,
@@ -58,6 +63,7 @@ export const waitingWords = {
     skip: "Skipped.",
     pick: "Picked. It now shows under From your backstory.",
     neither: "Neither. No connection was made.",
+    someoneElse: "Someone else. DMbot kept the connection with a person who isn't named yet.",
   },
   kept: (n?: number): string =>
     n === undefined ? "Done. The list shows what is left." : n === 0 ? "Nothing was ready to keep." : n === 1 ? "Kept 1 connection." : `Kept ${n} connections.`,

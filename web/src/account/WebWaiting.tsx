@@ -114,6 +114,8 @@ export default function WebWaiting({
   const busy = sending !== null;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
+  const names = list.which.filter((q) => !q.pronoun);
+  const pronouns = list.which.filter((q) => q.pronoun);
 
   // The backstory connections by upload, in the order the API sent them.
   const uploads: { label: string; items: Waiting["backstory"] }[] = [];
@@ -149,11 +151,11 @@ export default function WebWaiting({
         />
       )}
 
-      {list.which.length > 0 && (
+      {names.length > 0 && (
         <div class="stack">
           <h4>{w.whichHeading}</h4>
           <p class="small">{w.whichNote}</p>
-          {list.which.map((q) => (
+          {names.map((q) => (
             <div key={q.id} class="panel">
               <p>
                 <strong>{w.whichQuestion(q.word)}</strong>
@@ -191,6 +193,56 @@ export default function WebWaiting({
                   onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.neither)}
                 >
                   {w.neither}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {pronouns.length > 0 && (
+        <div class="stack">
+          <h4>{w.pronounHeading}</h4>
+          <p class="small">{w.pronounNote}</p>
+          {pronouns.map((q) => (
+            <div key={q.id} class="panel">
+              <p>
+                <strong>{w.pronounQuestion(q.word)}</strong>
+              </p>
+              <p id={`wq-${q.id}`}>{w.whichLine(q.other, q.how, q.word, q.otherIsSubject)}</p>
+              {q.quote && <p class="muted small">“{q.quote}”</p>}
+              {q.secret && <p class="small">{w.secretNote}</p>}
+              {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
+              {q.candidates.length === 0 && <p class="small">{w.pronounNoName}</p>}
+              <div class="row">
+                {q.candidates.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    class="button"
+                    disabled={busy}
+                    aria-describedby={`wq-${q.id}`}
+                    onClick={() => void send({ kind: "which", action: "pick", id: q.id, entity: c.id }, w.done.pick)}
+                  >
+                    {c.limited ? (
+                      <>
+                        <span aria-hidden="true">{w.hiddenMark} </span>
+                        <span class="visually-hidden">{w.hiddenWord} </span>
+                        {c.name}
+                      </>
+                    ) : (
+                      c.name
+                    )}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={busy}
+                  aria-describedby={`wq-${q.id}`}
+                  onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.someoneElse)}
+                >
+                  {w.someoneElse}
                 </button>
               </div>
             </div>

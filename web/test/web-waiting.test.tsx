@@ -221,6 +221,55 @@ describe("Which Mara?", () => {
   });
 });
 
+describe("Who is she?", () => {
+  const PRONOUN_REF = "100.cmp1.pronoun";
+  async function openPronouns(api = mockApi("table")) {
+    render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    return api;
+  }
+
+  it("asks a pronoun question under its own heading, with its one name and Someone else", async () => {
+    await openPronouns();
+    expect(screen.getByRole("heading", { name: w.pronounHeading })).toBeTruthy();
+    const card = screen.getByText(w.pronounQuestion("she")).closest(".panel") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Mara Ashgrove" })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: w.someoneElse })).toBeTruthy();
+  });
+
+  it("a pronoun question with no name offers only Someone else", async () => {
+    await openPronouns();
+    const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
+    expect(within(card).getByText(w.pronounNoName)).toBeTruthy();
+    const buttons = within(card).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual([w.someoneElse]);
+  });
+
+  it("Someone else sends the neither answer and says it kept the connection", async () => {
+    const api = await openPronouns();
+    const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: w.someoneElse }));
+    expect(await screen.findByText(w.done.someoneElse)).toBeTruthy();
+    expect(api.calls).toContain(`answerWaiting:${PRONOUN_REF}:which:neither:w3`);
+    await settled();
+  });
+
+  it("a pick of the one name sends that name's id", async () => {
+    const api = await openPronouns();
+    press("Mara Ashgrove");
+    expect(await screen.findByText(w.done.pick)).toBeTruthy();
+    expect(api.calls).toContain(`answerWaiting:${PRONOUN_REF}:which:pick:w2:e3`);
+    await settled();
+  });
+
+  it("a name question is drawn as before", async () => {
+    await open();
+    expect(screen.getByText(w.whichHeading)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: w.pronounHeading })).toBeNull();
+    expect(screen.getByRole("button", { name: w.neither })).toBeTruthy();
+  });
+});
+
 describe("after an answer", () => {
   it("keeps the buttons waiting until the list has been read again, so nobody answers what is gone", async () => {
     const api = mockApi("table");

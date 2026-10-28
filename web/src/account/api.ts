@@ -1618,6 +1618,8 @@ export interface WaitingWhich {
   id: string;
   /** The written name, "Mara". */
   word: string;
+  /** True for a question about a pronoun ("she"): it can have one name or none. */
+  pronoun?: boolean;
   other: string;
   otherIsSubject: boolean;
   how: string;
