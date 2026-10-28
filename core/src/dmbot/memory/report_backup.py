@@ -14,6 +14,7 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
+from dmbot.memory.report_fixed import FIXED
 from dmbot.memory.report_store import ANSWERS, CONTRADICTION, DIFFERENCE, REMIND
 
 MAX_ROWS = 20000
@@ -43,12 +44,19 @@ class ReportAnswersSection:
 
     name = "report_answers"
     _KEYS = frozenset(
-        {"item_key", "item_kind", "answer", "answered_by", "answered_at", "remind_from"}
+        {
+            "item_key",
+            "item_kind",
+            "answer",
+            "answered_by",
+            "answered_at",
+            "remind_from",
+        }
     )
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT item_key, item_kind, answer, answered_by, answered_at, remind_from"
+            "SELECT item_key, item_kind, answer, answered_by, answered_at, remind_from, remind_was"
             " FROM report_answers WHERE guild_id = %s AND campaign_id = %s ORDER BY item_key",
             (guild_id, campaign_id),
         )
@@ -59,8 +67,10 @@ class ReportAnswersSection:
             raise CampaignError(DAMAGED)
         seen: set[str] = set()
         for row in rows:
-            if not isinstance(row, dict) or set(row) != self._KEYS:
+            # (`remind_was` came later, #2661: a backup made before it has none)
+            if not isinstance(row, dict) or set(row) - {"remind_was"} != self._KEYS:
                 raise CampaignError(DAMAGED)
+            row.setdefault("remind_was", None)
             key = row["item_key"]
             if not (
                 isinstance(key, str)
@@ -75,6 +85,10 @@ class ReportAnswersSection:
                     if row["answer"] == REMIND
                     else row["remind_from"] is None
                 )
+                and (
+                    row["remind_was"] is None
+                    or (row["answer"] == FIXED and _int(row["remind_was"], 1))
+                )
             ):
                 raise CampaignError(DAMAGED)
             seen.add(key)
@@ -84,11 +98,12 @@ class ReportAnswersSection:
         for r in self.check(rows or []):
             await conn.execute(
                 "INSERT INTO report_answers (guild_id, campaign_id, item_key, item_kind, answer,"
-                " answered_by, answered_at, remind_from) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                " answered_by, answered_at, remind_from, remind_was)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id, campaign_id, r["item_key"], r["item_kind"], r["answer"],
-                    int(r["answered_by"]), r["answered_at"], r["remind_from"],
+                    int(r["answered_by"]), r["answered_at"], r["remind_from"], r["remind_was"],
                 ),
             )  # fmt: skip
 

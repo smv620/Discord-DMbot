@@ -293,6 +293,46 @@ class Saving(TalkBase):
         self.assertEqual(issue["answer"]["kind"], "changed")
         self.assertIn("Ulfgar: alive", issue["answer"]["note"])
 
+    async def move_saving_back(self, seconds: int, *, stamped: bool = True) -> None:
+        stamp = (
+            "jsonb_set(e, '{saving_at}', to_jsonb(floor(extract(epoch FROM clock_timestamp()))"
+            f"::BIGINT - {seconds}))"
+            if stamped
+            else "e - 'saving_at'"
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE plot_chat SET proposals = (SELECT jsonb_agg("
+                f"{stamp}) FROM jsonb_array_elements(proposals) AS t(e)) WHERE role = 'bot'"
+            )
+
+    async def test_a_save_still_waiting_after_thirty_minutes_is_shown_as_failed(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        [fresh] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(fresh["state"], "saving")
+        self.assertIn("saving_at", fresh)  # the Save is stamped with its time
+        await self.move_saving_back(29 * 60)
+        self.assertEqual((await self.messages())[-1]["proposals"][0]["state"], "saving")
+        await self.move_saving_back(31 * 60)
+        [late] = (await self.messages())[-1]["proposals"]
+        self.assertEqual(
+            (late["state"], late["error"]),
+            ("failed", "PlotBot didn't save this in time. Ask it again."),
+        )
+        # and the bot, back at last, has nothing to make for it
+        self.assertEqual(await self.runner(Ai(good())).apply_round(THURSDAY.id), 0)
+        self.assertEqual(await self.condition(), "dead")
+
+    async def test_a_save_from_before_the_stamp_is_judged_by_its_message(self) -> None:
+        p = await self.reply_with_proposal()
+        await self.press(p, "save")
+        await self.move_saving_back(0, stamped=False)
+        async with self.db.guild(THURSDAY.id) as conn:  # the message itself is an hour old
+            await conn.execute("UPDATE plot_chat SET created_at = created_at - 3600")
+        [late] = (await self.messages())[-1]["proposals"]
+        self.assertEqual((late["state"], late["error"][:8]), ("failed", "PlotBot "))
+
     async def test_a_repeat_changes_nothing_more(self) -> None:
         p = await self.reply_with_proposal()
         await self.press(p, "save")

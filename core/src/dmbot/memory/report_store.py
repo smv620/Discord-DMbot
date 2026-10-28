@@ -12,20 +12,24 @@ composite keys do the rest. Nothing here changes a belief."""
 
 from __future__ import annotations
 
-import hashlib
 import time
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory import report_fixed, report_keys
 from dmbot.memory.contradiction_grades import one_line
 from dmbot.memory.differences import Difference
 from dmbot.memory.store import MemoryStore
 
+# (the answer keys live in `report_keys`; the doors and tests use them under these names)
+CONTRADICTION, DIFFERENCE = report_keys.CONTRADICTION, report_keys.DIFFERENCE
+contradiction_key = report_keys.contradiction_key
+difference_key = report_keys.difference_key
+
 DISGUISED, MISUNDERSTOOD, FALSE, NOT_SORTED = "disguised", "misunderstood", "false", "not_sorted"
 SORTS = (DISGUISED, MISUNDERSTOOD, FALSE, NOT_SORTED)
 
-CONTRADICTION, DIFFERENCE = "contradiction", "difference"
 INTENDED, NOT_A_PROBLEM, REMIND, FIXED = "intended", "not_a_problem", "remind", "fixed"
 ANSWERS = (INTENDED, NOT_A_PROBLEM, REMIND, FIXED)
 
@@ -33,21 +37,6 @@ MAKING, READY, FAILED = "making", "ready", "failed"
 STALLED_S = 900  # a run that has not moved for this long is dead (a restart): it may begin again
 READING, GRADING, SORTING = "reading", "grading", "sorting"
 STAGES = (READING, GRADING, SORTING)
-
-
-def contradiction_key(perspective_id: str, kind: str, first_id: str, second_id: str) -> str:
-    """The answer key of a contradiction item: a hash of its own ids (all hex, never a word). The
-    two connections are in the order the grade table keeps them (the smaller id first, a CHECK
-    there), so the same clash always has the same key."""
-    return _key(CONTRADICTION, perspective_id, kind, first_id, second_id)
-
-
-def difference_key(perspective_id: str, relation_id: str) -> str:
-    return _key(DIFFERENCE, perspective_id, relation_id)
-
-
-def _key(*parts: str) -> str:
-    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:32]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +109,7 @@ class ReportStore:
         One naming a connection or point of view gone since it was found is skipped. How many
         were kept."""
         kept = 0
+        found: list[str] = []
         async with self._db.guild(guild_id) as conn:
             for item in sorted_:
                 d = item.difference
@@ -157,6 +147,9 @@ class ReportStore:
                     ),
                 )  # fmt: skip
                 kept += cur.rowcount
+                if cur.rowcount:  # found again: a "fixed" answer on it was wrong (#2661)
+                    found.append(difference_key(d.perspective_id, d.relation_id))
+            await report_fixed.give_back(conn, guild_id, campaign_id, found)
         return kept
 
     async def differences(
@@ -189,7 +182,13 @@ class ReportStore:
                 "  WHERE k.v = d.perspective_id AND k.r = d.relation_id)",
                 (guild_id, campaign_id, views, relations),
             )
-            return cur.rowcount
+            dropped = cur.rowcount
+            # (an item no longer found takes its "fixed" answer with it, #2661)
+            await report_fixed.forget_unfound(
+                conn, guild_id, campaign_id, DIFFERENCE,
+                [difference_key(v, r) for v, r in keep],
+            )  # fmt: skip
+            return dropped
 
     # --- the DM's answers -------------------------------------------------------------------
 
@@ -218,7 +217,7 @@ class ReportStore:
                 " ON CONFLICT (guild_id, campaign_id, item_key) DO UPDATE SET"
                 " item_kind = EXCLUDED.item_kind, answer = EXCLUDED.answer,"
                 " answered_by = EXCLUDED.answered_by, answered_at = EXCLUDED.answered_at,"
-                " remind_from = EXCLUDED.remind_from",
+                " remind_from = EXCLUDED.remind_from, remind_was = NULL",
                 (
                     guild_id, campaign_id, item_key, item_kind, answer, user_id,
                     int(self._now()), remind_from,

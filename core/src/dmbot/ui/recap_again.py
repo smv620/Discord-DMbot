@@ -30,11 +30,23 @@ GONE = "I can't find this campaign any more. Nothing was changed."
 NO_SESSIONS = "This campaign has no sessions with a transcript yet, so there's no recap to make."
 PICK_CAMPAIGN = "Which campaign?"
 PICK = "Which session's recap? Newest first."
-ASK = (
-    "This session already has a recap. Make a new one?\n"
-    "The old one stays until you approve the new one."
-)
+ASK = "This session already has a recap. Make a new one?"
+ASK_KEPT = ASK + "\n" + "The old one stays until you approve the new one."
+# A recap nobody approved or posted is not kept when a new one is made (the door wipes it), so the
+# question says so plainly instead of promising it stays.
+ASK_DRAFT = ASK + "\n" + "The old one isn't approved yet, so the new one replaces it."
 KEPT_OLD = "👍 Nothing was changed. The recap stays as it is."
+NOTHING_CHANGED = "👍 Nothing was changed."
+LISTS_ONE = "You saved who was in 1 scene of this recap. {action} deletes that list."
+LISTS_MANY = "You saved who was in {n} scenes of this recap. {action} deletes those lists."
+LISTS_UNREADABLE = (
+    "I can't tell whether you saved who was in any scenes. "
+    "If you did, {action} deletes those lists."
+)
+AGAIN_ACTION = "Making it again"
+REPLACE_ACTION = "Replacing it"
+LISTS_ASK = "Make it again anyway?"
+OLD_STAYS = "The old one stays until you approve the new one."
 QUEUED = (
     "📜 Writing the recap of this session. It's on your recap page when it's ready. "
     "Nothing goes to the table until you say so."
@@ -105,11 +117,44 @@ async def _campaign(interaction: discord.Interaction, campaign_id: str) -> Any |
     return campaign
 
 
+def lists_warning(lists: int | None, action: str = AGAIN_ACTION) -> str:
+    """The warning before a recap is made again, or replaced, over scenes whose "who was there"
+    lists the DM saved (#2727): said before the button works, in plain words and how many, naming
+    what is about to happen (`action`). `None`: it could not be read, so it warns anyway."""
+    if lists is None:
+        return LISTS_UNREADABLE.format(action=action.lower())
+    return (LISTS_ONE if lists == 1 else LISTS_MANY).format(n=lists, action=action)
+
+
 async def start(
-    interaction: discord.Interaction, campaign: Any, session_at: int, *, replace_ok: bool = False
+    interaction: discord.Interaction,
+    campaign: Any,
+    session_at: int,
+    *,
+    replace_ok: bool = False,
+    lists_ok: bool = False,
+    keeps_old: bool | None = None,
 ) -> None:
-    """Ask for the recap and say what happened, privately. An existing one is asked about first."""
+    """Ask for the recap and say what happened, privately. An existing one is asked about first,
+    and so is a recap whose saved "who was there" lists would be deleted (#2727): that question
+    comes before anything is started, and "no" changes nothing. `keeps_old`: whether a finished
+    recap stays until the new one is approved (None: say what `replace_ok` says)."""
     bot = _bot(interaction)
+    found = None
+    if not lists_ok:
+        found = await bot.recap_saved_lists(campaign, session_at, interaction.user.id)
+        if found is not None and (found.count is None or found.count > 0):
+            ask = lists_warning(found.count) + "\n" + LISTS_ASK
+            if found.kept:  # (only a posted or approved recap stays; a draft is wiped)
+                ask += "\n" + OLD_STAYS
+            await _tell(
+                interaction,
+                ask,
+                view=ConfirmView(
+                    campaign.id, session_at, lists=True, finished=found.finished, kept=found.kept
+                ),
+            )
+            return
     try:
         outcome = await bot.recap_again(
             campaign, session_at, interaction.user.id, replace_ok=replace_ok
@@ -119,9 +164,13 @@ async def start(
         await _tell(interaction, FAILED)
         return
     if outcome == "needs_confirm":
-        await _tell(interaction, ASK, view=ConfirmView(campaign.id, session_at))
+        kept = found.kept if found is not None else None
+        # Not known (the read failed): the plain question, and nothing is promised either way.
+        ask = ASK if kept is None else ASK_KEPT if kept else ASK_DRAFT
+        await _tell(interaction, ask, view=ConfirmView(campaign.id, session_at, kept=kept))
     elif outcome == "queued":
-        await _tell(interaction, QUEUED_KEEPING if replace_ok else QUEUED)
+        keeping = replace_ok if keeps_old is None else keeps_old
+        await _tell(interaction, QUEUED_KEEPING if keeping else QUEUED)
     else:
         await _tell(interaction, WORDS.get(outcome) or FAILED)
 
@@ -201,21 +250,46 @@ def again_view(campaign_id: str, session_at: int, *, keep: bool = False) -> disc
 
 
 class ConfirmView(discord.ui.View):
-    """Asked once before an existing recap is started over."""
+    """Asked once before an existing recap is started over, or before saved "who was there" lists
+    are deleted (#2727). `lists`: the question is the lists one, so a yes does not ask again;
+    `finished`: a finished recap stands too, which the same yes may replace (the old one stays
+    until the new one is approved). False or None: there is nothing finished to keep, so the
+    words do not talk about an old recap."""
 
-    def __init__(self, campaign_id: str, session_at: int) -> None:
+    def __init__(
+        self,
+        campaign_id: str,
+        session_at: int,
+        *,
+        lists: bool = False,
+        finished: bool | None = True,
+        kept: bool | None = None,
+    ) -> None:
         super().__init__(timeout=TIMEOUT_S)
         self.campaign_id, self.session_at = campaign_id, session_at
+        self.lists, self.finished, self.kept = lists, finished, kept
+        if lists and not finished:
+            self.yes.label, self.no.label = "Make it again", "Leave it"
 
     @discord.ui.button(label="Make a new one", style=discord.ButtonStyle.primary)
     async def yes(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
         campaign = await _campaign(interaction, self.campaign_id)
         if campaign is not None:
-            await start(interaction, campaign, self.session_at, replace_ok=True)
+            await start(
+                interaction,
+                campaign,
+                self.session_at,
+                # The one yes also answers the replace question, so it is not asked twice. Where
+                # it is not known whether a recap stands, replacing is allowed and nothing is
+                # promised about an old one.
+                replace_ok=True if self.finished is None or not self.lists else self.finished,
+                lists_ok=self.lists,
+                keeps_old=bool(self.kept),
+            )
 
     @discord.ui.button(label="Keep the old one", style=discord.ButtonStyle.secondary)
     async def no(self, interaction: discord.Interaction, button: discord.ui.Button[Any]) -> None:
-        await _tell(interaction, KEPT_OLD)
+        await _tell(interaction, KEPT_OLD if self.kept or not self.lists else NOTHING_CHANGED)
 
 
 class SessionPick(discord.ui.View):

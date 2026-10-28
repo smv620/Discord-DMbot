@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { campaignPage as words } from "../content/campaign-page";
+import { CO_DMS_LIVE } from "../content/game-masters-switch";
 import { OPTIONAL_RULES_LIVE } from "../content/optional-rules-switch";
 import { ApiError, type AccountApi, type CampaignPage, type CampaignSettingName } from "./api";
 import LazyPanel from "./LazyPanel";
@@ -244,7 +245,10 @@ export default function CampaignSettings({
         <li>
           <span class="campaign-name">{words.settingsLabels.gameMasters}</span>
           {s && <span class="block">{words.gameMastersCount(s.gameMasters)}</span>}
-          <span class="small muted block">{words.doThisInDiscord(words.paths.gameMasters)}</span>
+          {/* The list is changed on the page below once the website can (CO_DMS_LIVE); until then, in Discord. */}
+          {!(CO_DMS_LIVE && api.campaignGameMasters) && (
+            <span class="small muted block">{words.doThisInDiscord(words.paths.gameMasters)}</span>
+          )}
         </li>
         <li>
           <span class="campaign-name">{words.settingsLabels.pause}</span>
@@ -261,6 +265,9 @@ export default function CampaignSettings({
         ))}
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}
       </ul>
+      {CO_DMS_LIVE && api.campaignGameMasters && (
+        <LazyPanel load={() => import("./GameMasters")} what="the game masters" props={{ api, campaignRef }} />
+      )}
       {OPTIONAL_RULES_LIVE && api.campaignOptionalRules && (
         <LazyPanel
           load={() => import("./OptionalRules")}

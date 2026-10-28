@@ -3,7 +3,7 @@
 // button: one warning that says what goes and that it can't be undone, a backup offered first, and the
 // campaign's name typed to confirm. It is offered to the plan holder only (the API checks again), and the
 // button stays off until the typed name matches, as Discord's box does (any case, extra spaces ignored).
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { BACKUP_HAS_TRANSCRIPTS, campaignDeleteWords as words } from "../content/campaign-delete";
 import { ApiError, type AccountApi, type JobProgress } from "./api";
@@ -39,6 +39,12 @@ export default function CampaignDelete({
   const [kept, setKept] = useState(false);
   // How far DMbot has got with the backup (its own answer: stage, how long, last moved).
   const [made, setMade] = useState<JobProgress | null>(null);
+  // Then how many of its files are fetched ("2 of 7 files"), on this browser's own clock.
+  const [fetched, setFetched] = useState<JobProgress | null>(null);
+  const [savedNames, setSavedNames] = useState<string[]>([]);
+  const [big, setBig] = useState(false);
+  const askedAt = useRef(0); // when the backup was asked for: the clock of the whole wait, files included
+  const [tick, setTick] = useState(0); // redraw so a stuck file is noticed
   const working = useRef(false);
   const opener = useRef<HTMLButtonElement>(null);
   const boxId = `delete-${refId}`;
@@ -56,20 +62,34 @@ export default function CampaignDelete({
     setProblem("");
     setSaved(false);
     setMade(null);
+    setFetched(null);
+    setBig(false);
+    askedAt.current = Math.floor(Date.now() / 1000);
     try {
-      const blob = await api.campaignBackup(refId, setMade);
-      const href = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = href;
-      link.download = words.backupFileName(name);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(href);
+      const set = await api.campaignBackup(refId, setMade, (done, total) => {
+        const now = Math.floor(Date.now() / 1000);
+        setFetched({ stage: "fetching", state: "running", done, total, unit: words.filesUnit(total), startedAt: askedAt.current, updatedAt: now, serverNow: now });
+      });
+      // One download after another, a moment apart, so a browser does not mistake them for a pile of pop-ups.
+      for (const [i, file] of set.files.entries()) {
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+        const href = URL.createObjectURL(file.blob);
+        const link = document.createElement("a");
+        link.href = href;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Not at once: some browsers cancel a download whose address is taken back in the same breath.
+        setTimeout(() => URL.revokeObjectURL(href), 30_000);
+      }
+      setSavedNames(set.files.map((f) => f.name));
+      setBig(set.files.some((f) => f.blob.size > words.bigFileBytes));
       setSaved(true);
     } catch (error) {
       fail(error);
     } finally {
+      askedAt.current = 0;
       working.current = false;
       setState("idle");
     }
@@ -91,6 +111,14 @@ export default function CampaignDelete({
     }
   };
 
+  // While files are being fetched, a quiet minute is shown as stalled, with what to do (#2564).
+  useEffect(() => {
+    if (state !== "backup") return;
+    const timer = setInterval(() => setTick((n) => n + 1), 5000);
+    return () => clearInterval(timer);
+  }, [state]);
+  void tick;
+  const quietFor = fetched ? Math.floor(Date.now() / 1000) - (fetched.updatedAt ?? 0) : 0;
   const matches = squash(typed) === squash(name);
   const backups = !tryIt && !!api.campaignBackup;
   if (!open) {
@@ -121,15 +149,31 @@ export default function CampaignDelete({
           </div>
           {state === "backup" && (
             <WorkProgress
-              stage={made ? stageWords(words.stage, made.stage) : words.backingUp}
-              startedAt={made?.startedAt}
-              updatedAt={made?.updatedAt}
-              serverNow={made?.serverNow}
-              state={made && made.state !== "done" ? made.state : "running"}
+              stage={fetched ? stageWords(words.stage, fetched.stage) : made ? stageWords(words.stage, made.stage) : words.backingUp}
+              done={fetched?.done}
+              total={fetched?.total}
+              unit={fetched?.unit ?? undefined}
+              startedAt={fetched ? fetched.startedAt : made?.startedAt}
+              updatedAt={fetched ? fetched.updatedAt : made?.updatedAt}
+              serverNow={fetched ? fetched.serverNow : made?.serverNow}
+              state={fetched ? (quietFor > 60 ? "stalled" : "running") : made && made.state !== "done" ? made.state : "running"}
+              whatToDo={fetched && quietFor > 60 ? words.fileSlow : undefined}
             />
           )}
           <p class="small">{words.backupNote}</p>
-          {saved && <p role="status" class="small">{words.backupDone(words.backupFileName(name))}</p>}
+          {saved && (
+            <div role="status" class="small">
+              <p>{words.backupDone(savedNames)}</p>
+              {savedNames.length > 1 && (
+                <ul>
+                  {savedNames.map((file) => (
+                    <li key={file}>{file}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {saved && big && <p class="small muted">{words.backupBigFile}</p>}
         </>
       )}
       <label class="field">
