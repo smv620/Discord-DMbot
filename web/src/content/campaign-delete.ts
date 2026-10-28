@@ -1,5 +1,5 @@
-// The words for "Delete this campaign" on My Account, and for a campaign whose Discord server DMbot can no
-// longer reach (#2555; core #2554; docs/PLAN.md, "Everything on the website except picking Discord
+// The words for "Delete this campaign" at the bottom of a campaign's page (#2879), and on the My Account card of a
+// campaign whose Discord server DMbot can no longer reach (#2555; core #2554; docs/PLAN.md, "Everything on the website except picking Discord
 // channels"). They are Discord's own words (dm_screen/delete_campaign.py) in plain form: the same warning,
 // a backup offered first, and the campaign's name typed to confirm. Only the plan holder is offered the
 // button; the API checks it again. Shown only while CAMPAIGN_DELETE_LIVE is true; it moves with the
