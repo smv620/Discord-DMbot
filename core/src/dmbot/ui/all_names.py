@@ -9,7 +9,7 @@ were left out. The page checks who is asking; this module only builds the addres
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import discord
 
@@ -34,6 +34,22 @@ def page_url(site_url: str, guild_id: int, campaign_id: str) -> str:
     if parts.scheme.lower() != "https" or not parts.netloc:
         return ""
     return f"https://{parts.netloc}{PAGE}/{guild_id}.{campaign_id}"
+
+
+SAY_IT = "🎤 Say it"
+SAID_MAX = 80  # the page ignores a longer encoded name (#2580)
+
+
+def say_it_url(site_url: str, guild_id: int, campaign_id: str, name: str) -> str:
+    """The Names page opened on one name, ready for the DM to tell DMbot how it is said (#2580).
+    The name goes after `#`, never `?`: a secret name must not reach a server log, and a fragment
+    is never sent. "" when there is no https address, no name, or the encoded name is longer than
+    the page reads."""
+    page = page_url(site_url, guild_id, campaign_id)
+    encoded = quote(name.strip(), safe="")
+    if not page or not encoded or len(encoded) > SAID_MAX:
+        return ""
+    return f"{page}#said={encoded}"
 
 
 def choice() -> discord.SelectOption:
