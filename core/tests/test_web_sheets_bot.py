@@ -6,23 +6,32 @@ names and numbers throughout."""
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import unittest
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import PropertyMock, patch
+from typing import Any, ClassVar
+from unittest.mock import AsyncMock, PropertyMock, patch
 
+import aiohttp
+
+from dmbot import fetch, plan_rules
+from dmbot.ai import AIError, Reply
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
-from dmbot.memory import sheets
+from dmbot.memory import sheet_document, sheet_import, sheets
 from dmbot.memory import web_sheets as ws
 from dmbot.memory.sheet_store import SheetStore
 from tests.test_memory_store import DM, GUILD_A, MemoryTest
+from tests.test_sheet_import import answer as ai_answer
 from tests.test_sheets import answer
 
 PLAYER, OTHER = 9, 10
 NUMBER = 12345678
 LINK = sheets.sheet_url(NUMBER)
+DOC = "https://docs.example.com/belleros-sheet"
+SHEET_TEXT = "Belleros\nWood Elf Ranger 3 / Druid 3\nAC 18  HP 26\nSTR 10 DEX 16 CON 14 INT 10"
 NOW = 1_700_000_000
 
 
@@ -39,6 +48,11 @@ class FakeHost:
         self.sheets_read = 0
         self.too_soon_link = False
         self.too_soon_read = False
+        self.too_soon_document = False
+        self.plan_refusal: str | None = None
+        self.sheet_ai: Any = SimpleNamespace(
+            complete=AsyncMock(return_value=Reply(ai_answer(), False))
+        )
         self.changed = 0
         self.fail: sheets.SheetError | None = None
 
@@ -67,6 +81,14 @@ class FakeHost:
     def read_too_soon(self, guild_id: int, campaign_id: str) -> bool:
         return self.too_soon_read
 
+    def document_too_soon(self, guild_id: int, user_id: int, campaign_id: str) -> bool:
+        return self.too_soon_document
+
+    async def plan_gate(
+        self, action: plan_rules.Action, guild_id: int, campaign: Campaign, user_id: int
+    ) -> str | None:
+        return self.plan_refusal
+
     def sheets_changed(self, guild_id: int, campaign_id: str) -> None:
         self.changed += 1
 
@@ -84,6 +106,7 @@ class Base(MemoryTest):
     async def put(
         self, action: str, *, user: int = PLAYER, entity: str | None = None, url: str = LINK,
         created: int = NOW, updated: int | None = None, state: str = "waiting",
+        payload: str = "",
     ) -> str:  # fmt: skip
         """One queued row, as the website's door would have written it."""
         rid = f"{len(await self.rows()):032x}"
@@ -91,12 +114,13 @@ class Base(MemoryTest):
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO web_sheet_actions (guild_id, campaign_id, id, user_id, entity_id,"
-                " action, url, state, stage, created_at, claimed_at, updated_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " action, url, payload, state, stage, created_at, claimed_at, updated_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     GUILD_A, self.c, rid, user,
                     (self.pc if entity is None else entity) if action != ws.READ_AGAIN else "",
-                    action, url if action == ws.LINK else "", state, stage, created,
+                    action, url if action in (ws.LINK, ws.DOCUMENT) else "", payload,
+                    state, stage, created,
                     0, created if updated is None else updated,
                 ),
             )  # fmt: skip
@@ -114,6 +138,16 @@ class Base(MemoryTest):
         while (item := await self.queue.claim_next(GUILD_A)) is not None:
             self.assertTrue(await ws.run_one(self.host, self.queue, GUILD_A, item))
         return await self.rows()
+
+    async def left_on_row(self, rid: str) -> tuple[str, str]:
+        """The link and the typed form still on a row."""
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT url, payload FROM web_sheet_actions WHERE id = %s", (rid,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return row["url"], row["payload"]
 
     async def state_of(self, rid: str) -> tuple[str, str]:
         (row,) = [r for r in await self.rows() if r["id"] == rid]
@@ -191,17 +225,260 @@ class Linking(Base):
     async def test_a_link_taken_twice_after_a_slow_try_is_one_link(self) -> None:
         first = await self.put(ws.LINK)
         await self.take_and_run()
-        # The door put the row back to waiting (updated later than created): applied again.
+        # The door put the row back to waiting (updated later than created): applied again. (It
+        # only does that to a row still being worked on, which still holds its link.)
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "UPDATE web_sheet_actions SET state = 'waiting', stage = 'waiting', claimed_at = 0,"
-                " updated_at = %s WHERE id = %s",
-                (NOW + 700, first),
+                " updated_at = %s, url = %s WHERE id = %s",
+                (NOW + 700, LINK, first),
             )
         await self.take_and_run()
         self.assertEqual(await self.state_of(first), ("done", ""))
         (sheet,) = await self.store.sheets(GUILD_A, self.c)
         self.assertEqual(sheet.url, LINK)
+
+
+def form(**more: Any) -> str:
+    """A typed sheet's JSON, as the website's door writes it."""
+    data: dict[str, Any] = {"className": "Cleric", "level": 3, "species": "Hill Dwarf", "names": ""}
+    return json.dumps({**data, **more}, separators=(",", ":"))
+
+
+class Typing(Base):
+    async def test_a_typed_sheet_is_saved_for_the_players_own_character_and_replaces_a_linked_one(
+        self,
+    ) -> None:
+        await self.put(ws.LINK)
+        await self.take_and_run()
+        (linked,) = await self.store.sheets(GUILD_A, self.c)
+        self.assertEqual(linked.url, LINK)
+        self.host.too_soon_link = False
+        rid = await self.put(ws.TYPED, payload=form(names="Bless, Cure Wounds"))
+        await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("done", ""))
+        (kept,) = await self.store.sheets(GUILD_A, self.c)
+        self.assertIsNone(kept.url)  # typed: no longer linked
+        assert kept.sheet is not None
+        self.assertEqual(kept.sheet["classes"][0]["name"], "Cleric")
+        self.assertEqual(kept.sheet["features"], ["Bless", "Cure Wounds"])
+        self.assertEqual(kept.sheet["species"], "Hill Dwarf")
+
+    async def test_a_typed_sheet_for_another_players_character_is_not_allowed(self) -> None:
+        rid = await self.put(ws.TYPED, user=OTHER, payload=form())
+        await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.NOT_ALLOWED))
+        self.assertEqual(await self.store.sheets(GUILD_A, self.c), [])
+
+    async def test_a_typed_sheet_whose_names_are_split_on_commas_and_semicolons_and_kept_to_20(
+        self,
+    ) -> None:
+        names = "; ".join(f"Spell {i}" for i in range(30)) + ", Last one"
+        await self.put(ws.TYPED, payload=form(names=names))
+        await self.take_and_run()
+        (kept,) = await self.store.sheets(GUILD_A, self.c)
+        assert kept.sheet is not None
+        self.assertEqual(len(kept.sheet["features"]), sheets.TYPED_NAMES_MAX)
+        self.assertEqual(kept.sheet["features"][:2], ["Spell 0", "Spell 1"])
+
+    async def test_a_form_of_the_wrong_shape_is_a_bad_typed_one(self) -> None:
+        for payload in ("not json", "[]", form(level=0), form(level=21), form(level=True),
+                        form(className=""), form(names="x" * 1501)):  # fmt: skip
+            with self.subTest(payload[:30]):
+                rid = await self.put(ws.TYPED, payload=payload)
+                await self.take_and_run()
+                self.assertEqual(await self.state_of(rid), ("failed", ws.BAD_TYPED))
+                self.host.too_soon_link = False
+        self.assertEqual(await self.store.sheets(GUILD_A, self.c), [])
+
+    async def test_a_typed_sheet_inside_the_link_cooldown_is_too_soon(self) -> None:
+        self.host.too_soon_link = True
+        rid = await self.put(ws.TYPED, payload=form())
+        await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.TOO_SOON))
+
+
+class Documents(Base):
+    def setUp(self) -> None:
+        sheet_document._busy.clear()
+        sheet_document._reads.clear()
+
+    def opened(self, data: bytes = SHEET_TEXT.encode(), name: str = "sheet.txt") -> Any:
+        return patch.object(fetch, "fetch", AsyncMock(return_value=fetch.Fetched(data, name)))
+
+    async def test_a_document_link_is_read_and_saved_as_a_typed_sheet(self) -> None:
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened() as opened:
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("done", ""))
+        opened.assert_awaited_once_with(DOC)
+        (kept,) = await self.store.sheets(GUILD_A, self.c)
+        assert kept.sheet is not None
+        self.assertEqual(kept.sheet["name"], "Belleros")
+        self.assertIsNone(kept.url)  # typed, not linked
+        self.assertEqual(self.host.sheet_ai.complete.await_count, 1)
+        self.assertEqual(self.host.changed, 1)
+
+    async def test_the_row_is_touched_at_each_step(self) -> None:
+        clock = [NOW]
+        self.queue = ws.ActionStore(self.db, clock=lambda: clock[0])
+        await self.put(ws.DOCUMENT, url=DOC)
+        item = await self.queue.claim_next(GUILD_A)
+        assert item is not None
+        seen: list[int] = []
+        real = self.queue.touch
+
+        async def touch(guild_id: int, it: ws.Action) -> bool:
+            clock[0] += 1
+            seen.append(clock[0])
+            return await real(guild_id, it)
+
+        with self.opened(), patch.object(self.queue, "touch", touch):
+            self.assertEqual(await ws.apply(self.host, GUILD_A, item, self.queue), "")
+        self.assertEqual(len(seen), 3)  # link opened, AI answered, saved
+
+    async def test_a_link_that_is_not_public_is_refused_and_nothing_is_fetched(self) -> None:
+        for address in ("https://127.0.0.1/sheet", "https://10.0.0.5/sheet",
+                        "https://169.254.169.254/latest/meta-data",
+                        "http://example.com/sheet",
+                        "https://user:pw@example.com/sheet"):  # fmt: skip
+            with self.subTest(address):
+                rid = await self.put(ws.DOCUMENT, url=address)
+                with patch.object(aiohttp.ClientSession, "get") as get:
+                    await self.take_and_run()
+                get.assert_not_called()  # not even one request was made
+                self.assertEqual(await self.state_of(rid), ("failed", ws.BAD_DOCUMENT))
+                self.host.too_soon_document = False
+        self.assertEqual(self.host.sheet_ai.complete.await_count, 0)
+        self.assertEqual(sum(sheet_document._reads.values()), 0)  # no read was spent
+
+    async def test_a_name_that_resolves_to_this_machine_is_refused(self) -> None:
+        rid = await self.put(ws.DOCUMENT, url="https://localhost/sheet")
+        await self.take_and_run()  # the resolver refuses it; no connection is made
+        self.assertEqual(await self.state_of(rid), ("failed", ws.BAD_DOCUMENT))
+
+    async def test_a_redirect_to_a_private_address_is_refused(self) -> None:
+        opened: list[str] = []
+
+        class Redirect:
+            status = 302
+            headers: ClassVar[dict[str, str]] = {
+                "Location": "https://169.254.169.254/latest/meta-data"
+            }
+
+            async def __aenter__(self) -> Redirect:
+                return self
+
+            async def __aexit__(self, *_: Any) -> None:
+                return None
+
+        def get(_session: Any, url: Any, **_: Any) -> Redirect:
+            opened.append(str(url))
+            return Redirect()
+
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with patch.object(aiohttp.ClientSession, "get", get):
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.BAD_DOCUMENT))
+        self.assertEqual(opened, [DOC])  # the second address was checked, never requested
+
+    async def test_a_document_longer_than_the_cap_is_too_big(self) -> None:
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened(b"x" * (sheet_import.FILE_MAX_BYTES + 1)):
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.TOO_BIG))
+        self.assertEqual(self.host.sheet_ai.complete.await_count, 0)
+        self.assertEqual(sum(sheet_document._reads.values()), 0)
+
+    async def test_a_document_the_ai_cannot_read_is_cant_read_and_the_days_read_is_given_back(
+        self,
+    ) -> None:
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened(b"%PDF-1.4 nothing", "sheet.pdf"):  # unreadable before the AI is asked
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.CANT_READ))
+        self.assertEqual(self.host.sheet_ai.complete.await_count, 0)
+        self.assertEqual(sum(sheet_document._reads.values()), 0)  # given back
+        self.assertEqual(await self.store.sheets(GUILD_A, self.c), [])
+        self.assertEqual(sheet_document._busy, set())  # and the server is free again
+
+    async def test_an_answer_with_no_sheet_in_it_is_cant_read(self) -> None:
+        self.host.sheet_ai.complete = AsyncMock(return_value=Reply("{}", False))
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened():
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.CANT_READ))
+        self.assertEqual(await self.store.sheets(GUILD_A, self.c), [])
+
+    async def test_the_days_reads_used_up_is_used_up(self) -> None:
+        sheet_document._reads[(GUILD_A, sheet_document.today())] = sheet_document.READS_PER_DAY
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened() as opened:
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.USED_UP))
+        opened.assert_not_awaited()
+
+    async def test_without_an_ai_or_a_plan_that_allows_it_it_is_no_ai(self) -> None:
+        self.host.sheet_ai = None
+        first = await self.put(ws.DOCUMENT, url=DOC)
+        await self.take_and_run()
+        self.assertEqual(await self.state_of(first), ("failed", ws.NO_AI))
+        self.host.sheet_ai = SimpleNamespace(complete=AsyncMock())
+        self.host.plan_refusal = "Upgrade to read documents."
+        second = await self.put(ws.DOCUMENT, url=DOC)
+        await self.take_and_run()
+        self.assertEqual(await self.state_of(second), ("failed", ws.NO_AI))
+
+    async def test_a_second_read_inside_the_cooldown_is_too_soon_and_costs_nothing(self) -> None:
+        self.host.too_soon_document = True
+        rid = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened() as opened:
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.TOO_SOON))
+        opened.assert_not_awaited()
+        self.assertEqual(sum(sheet_document._reads.values()), 0)
+
+    async def test_another_players_character_is_not_allowed_for_a_document(self) -> None:
+        rid = await self.put(ws.DOCUMENT, user=OTHER, url=DOC)
+        with self.opened() as opened:
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(rid), ("failed", ws.NOT_ALLOWED))
+        opened.assert_not_awaited()
+
+    async def test_a_finished_row_has_no_link_and_no_payload_left(self) -> None:
+        doc = await self.put(ws.DOCUMENT, url=DOC)
+        typed = await self.put(ws.TYPED, payload=form())
+        link = await self.put(ws.LINK)
+        bad = await self.put(ws.DOCUMENT, url="https://127.0.0.1/x")
+        with self.opened():
+            await self.take_and_run()
+        for rid in (doc, typed, link, bad):
+            self.assertEqual(await self.left_on_row(rid), ("", ""))
+
+    async def test_no_log_line_holds_a_link_or_text(self) -> None:
+        await self.put(ws.DOCUMENT, url=DOC)
+        await self.put(ws.TYPED, payload=form(names="Secret Spell Name"))
+        await self.put(ws.DOCUMENT, url="https://127.0.0.1/private-path")
+        with self.assertLogs(level=logging.DEBUG) as logs, self.opened():
+            await self.take_and_run()
+        text = "\n".join(r.getMessage() + str(r.exc_text) for r in logs.records)
+        for forbidden in ("docs.example.com", "belleros-sheet", "127.0.0.1", "private-path",
+                          "Belleros", "Secret Spell Name", "Wood Elf"):  # fmt: skip
+            self.assertNotIn(forbidden, text)
+
+    async def test_an_ai_failure_ends_as_no_ai_and_a_bug_as_server(self) -> None:
+        self.host.sheet_ai.complete = AsyncMock(side_effect=AIError("The AI is busy."))
+        first = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened():
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(first), ("failed", ws.NO_AI))
+        self.host.too_soon_document = False
+        self.host.sheet_ai.complete = AsyncMock(side_effect=RuntimeError("boom"))
+        second = await self.put(ws.DOCUMENT, url=DOC)
+        with self.opened():
+            await self.take_and_run()
+        self.assertEqual(await self.state_of(second), ("failed", ws.SERVER))
+        self.assertEqual(sheet_document._busy, set())  # even after a bug
 
 
 class Forgetting(Base):
@@ -393,6 +670,29 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*b._sheet_tasks.values())
         await asyncio.sleep(0)
         self.assertEqual(b._sheet_tasks, {})  # forgotten when done
+
+    async def test_the_poll_loop_does_not_wait_for_a_document_read(self) -> None:
+        started, release = asyncio.Event(), asyncio.Event()
+        item = SimpleNamespace(campaign_id="c", action=ws.DOCUMENT)
+
+        async def claim(guild_id: int) -> Any:
+            return item if guild_id == 1 and not started.is_set() else None
+
+        async def slow(*_: Any) -> bool:
+            started.set()
+            await release.wait()
+            return True
+
+        b: Any = DMBot.__new__(DMBot)
+        b.web_sheets = SimpleNamespace(claim_next=claim)
+        b.sheets = object()
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1), SimpleNamespace(id=2)])
+        with patch.object(DMBot, "guilds", guilds), patch.object(ws, "run_one", slow):
+            await asyncio.wait_for(b.run_web_sheets(), timeout=1)  # returns at once
+            await started.wait()
+            self.assertEqual(len(b._sheet_tasks), 1)
+            release.set()
+            await asyncio.gather(*b._sheet_tasks.values())
 
     async def test_without_a_store_nothing_happens(self) -> None:
         b: Any = DMBot.__new__(DMBot)

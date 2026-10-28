@@ -9,10 +9,8 @@ of the document goes in a log, a transcript or another campaign. The AI reads it
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any, cast
 
@@ -20,7 +18,7 @@ import discord
 
 from dmbot import fetch
 from dmbot.ai import AIError
-from dmbot.memory import sheet_import
+from dmbot.memory import sheet_document, sheet_import
 from dmbot.memory.document_reader import READING, RESTARTING, TOO_SLOW, read_document
 from dmbot.memory.name_documents import (
     NO_TEXT,
@@ -101,13 +99,15 @@ READ_OK = (
 )
 SHORTENED = " Only the first part of a long document was read."
 COOLDOWN_S = 30  # per person
-READS_PER_DAY = 20  # per server, for the operator's bill (bring-your-own keys: #50)
-TIME_LIMIT_S = 240  # well inside Discord's 15 minutes to answer
+READS_PER_DAY = sheet_document.READS_PER_DAY  # per server, for the operator's bill (#50)
+TIME_LIMIT_S = sheet_document.TIME_LIMIT_S  # well inside Discord's 15 minutes to answer
 FILE_TYPES = (".docx", ".pdf", ".txt", ".md", ".text")
 
 _last: dict[tuple[int, int], float] = {}
-_busy: set[int] = set()  # servers with a sheet being read right now
-_reads: dict[tuple[int, str], int] = {}  # (server, day) → AI reads
+# The website's reads count against the same day and the same one-at-a-time rule (#2849), so the
+# state lives in `memory.sheet_document`; these are the same objects.
+_busy = sheet_document._busy
+_reads = sheet_document._reads
 
 
 class DocumentLinkForm(discord.ui.Modal, title="Read my sheet from a link"):
@@ -181,21 +181,16 @@ async def _text_of(
                 return None, "DMbot couldn't download that file. Try again."
             filename = attachment.filename
         else:
-            got = await fetch.fetch(link or "")
-            raw, filename = got.data, got.filename
-            if len(raw) > sheet_import.FILE_MAX_BYTES:
-                return None, TOO_BIG
+            return await sheet_document.link_text(link or ""), None
         async with READING:  # the same limit as the names screen
             return await read_document(filename, raw), None
+    except sheet_document.TooBig:
+        return None, TOO_BIG
     except (fetch.LinkError, DocumentError) as exc:
         return None, SHEET_WORDS.get(str(exc), CANT_READ)
 
 
-def _give_back(guild_id: int, day: str) -> None:
-    """A read that never reached the AI doesn't count against the day. (Another server's import
-    may already have cleared yesterday's key just after midnight.)"""
-    key = (guild_id, day)
-    _reads[key] = max(0, _reads.get(key, 0) - 1)
+_give_back = sheet_document.give_back
 
 
 async def import_sheet(
@@ -229,23 +224,18 @@ async def import_sheet(
     if refused is not None:
         await _tell(interaction, refused)
         return
-    day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
-    # From here to `_busy.add` there is no await: two imports for one server can't both pass
+    day = sheet_document.today()
+    # From here to `claim` there is no await: two imports for one server can't both pass
     # (the server's one-at-a-time rule and its daily cap would both be broken). The person's
     # wait starts only now, so a wrong file or a busy server doesn't cost them 30 seconds.
-    if guild_id in _busy:
-        await _tell(interaction, BUSY)
-        return
-    if _reads.get((guild_id, day), 0) >= READS_PER_DAY:
-        await _tell(interaction, DAILY)
+    refused_now = sheet_document.refusal(guild_id, day)
+    if refused_now is not None:
+        await _tell(interaction, BUSY if refused_now == sheet_document.BUSY else DAILY)
         return
     if ui._too_soon(_last, (guild_id, user), COOLDOWN_S):
         await _tell(interaction, WAIT)
         return
-    _busy.add(guild_id)
-    for old in [k for k in _reads if k[1] != day]:
-        del _reads[old]  # only today counts
-    _reads[(guild_id, day)] = _reads.get((guild_id, day), 0) + 1
+    sheet_document.claim(guild_id, day)
     try:
         if not await ui._still_member(interaction, guild_id):
             _give_back(guild_id, day)
@@ -255,10 +245,8 @@ async def import_sheet(
             _give_back(guild_id, day)  # nothing was sent to the AI: no read used
             await _tell(interaction, problem or "DMbot couldn't read that.")
             return
-        shortened = len(text) > sheet_import.TEXT_MAX
         try:
-            async with asyncio.timeout(TIME_LIMIT_S):
-                snapshot = await sheet_import.read_character(ai, text)
+            snapshot, shortened = await sheet_document.read_snapshot(ai, text)
         except AIError as exc:
             await _tell(interaction, str(exc))
             return
@@ -273,7 +261,7 @@ async def import_sheet(
         log.exception("Reading a sheet document failed")  # no text: the cause only
         await _tell(interaction, GENERIC)
     finally:
-        _busy.discard(guild_id)
+        sheet_document.release(guild_id)
 
 
 async def _keep(
