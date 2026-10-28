@@ -313,6 +313,22 @@ describe("making the report", () => {
     await screen.findByText(/2 that may not fit/);
   });
 
+  it("shows a report that was asked for and not started yet as waiting, with its clock (#2661)", async () => {
+    const api = mockApi("table");
+    const waiting: SessionReport = {
+      session: { at: AT },
+      state: "making",
+      progress: { stage: "waiting", done: null, total: null, unit: null, startedAt: 1, updatedAt: 1, serverNow: 10, state: "running", reason: null },
+      counts: { contradictions: 0, disguised: 0, misunderstood: 0, false: 0, open: 0, answered: 0 },
+      contradictions: [],
+      differences: { disguised: [], misunderstood: [], false: [] },
+    };
+    api.sessionReport = async () => waiting;
+    await open("100.cmp1", api);
+    expect(await screen.findByText(w.stages["waiting"] as string)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.make })).toBeNull(); // no second press while it waits
+  });
+
   it("stops looking after 30 minutes and says so", async () => {
     const api = mockApi("table");
     const stuck: SessionReport = {

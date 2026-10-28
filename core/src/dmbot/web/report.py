@@ -210,9 +210,13 @@ async def read_report(db: Database, session: Session, ref: str, at: object) -> d
             "SELECT dmbot_web_report(%s, %s, %s) AS r", (guild_id, campaign_id, when)
         )
         got = (await cur.fetchone() or {}).get("r")
+        cur = await conn.execute(
+            "SELECT dmbot_web_report_request(%s, %s, %s) AS r", (guild_id, campaign_id, when)
+        )
+        asked = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_allowed")
-    return shape(got, when, listed)
+    return with_request(shape(got, when, listed), asked, int(got["now"]))
 
 
 ACTIONS = ("intended", "not_a_problem", "remind", "fix", "undo")
@@ -251,3 +255,73 @@ async def answer_item(
     if got["status"] != "ok":
         raise RecapError("gone" if got["status"] == "gone" else "bad_action")
     return {"answer": got["answer"]}
+
+
+def with_request(report: dict[str, Any], asked: dict[str, Any] | None, now: int) -> dict[str, Any]:
+    """Put the DM's "make it again" request into the report (#2661). The run the bot writes says how
+    far the making has got once it starts; before that, a request that is asked for and not taken
+    yet is a report being made at the stage `waiting`, so the page shows the wait at once and the
+    button cannot be pressed twice. A request the bot gave up on, with no report to show, is a
+    failed one. A run that is already making (or ready after the request) is left as it is."""
+    if asked is None or report["state"] == "making":
+        return report
+    state, created, updated = str(asked["state"]), int(asked["createdAt"]), int(asked["updatedAt"])
+    if state in ("waiting", "working"):
+        shown = "stalled" if now - updated > STALLED_S else "running"
+        report["state"] = "making"
+        report["progress"] = {
+            "stage": "waiting",
+            "done": None,
+            "total": None,
+            "unit": None,
+            "startedAt": created,
+            "updatedAt": min(max(updated, created), max(now, created)),
+            "serverNow": now,
+            "state": shown,
+            "reason": "stalled" if shown == "stalled" else None,
+        }
+    elif state == "failed" and report["state"] in ("none", "failed"):
+        report["state"] = "failed"
+        report["progress"] = {
+            "stage": "waiting",
+            "done": None,
+            "total": None,
+            "unit": None,
+            "startedAt": created,
+            "updatedAt": min(max(updated, created), max(now, created)),
+            "serverNow": now,
+            "state": "failed",
+            "reason": "failed",
+        }
+    return report
+
+
+async def make_again(db: Database, session: Session, ref: str, at: object) -> dict[str, Any]:
+    """Ask the bot to make this session's report (again): queued like the other choices, then the
+    report is read back as it now stands (`making`, at the stage `waiting`). DM only. The session
+    has to be one of the campaign's (`not_found` otherwise). A report being made now is `busy`
+    (nothing is queued; the page reads the report), and five requests an hour for a campaign
+    is `too_soon`."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    when = _parse_at(at)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT 1 FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s AND user_id = %s",
+            (guild_id, campaign_id, session.user_id),
+        )
+        if await cur.fetchone() is None:
+            raise RecapError("not_allowed")
+        listed = await numbered_sessions(conn, guild_id, campaign_id)
+        if not any(int(s["startedAt"]) == when for s in listed):
+            raise RecapError("not_found")
+        cur = await conn.execute(
+            "SELECT dmbot_web_report_make(%s, %s, %s) AS r", (guild_id, campaign_id, when)
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] not in ("ok", "busy"):
+        raise RecapError(str(got["status"]))
+    return await read_report(db, session, ref, when)

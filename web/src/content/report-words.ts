@@ -13,6 +13,7 @@ export const reportWords = {
   makeAgain: "Try again",
   // The wait (owner rule 2026-10-23): the stage, how far, how long, and when it last moved.
   stages: {
+    waiting: "Waiting for DMbot to start",
     reading: "Reading the session's notes",
     grading: "Checking what might not fit",
     sorting: "Sorting what the party has wrong",
