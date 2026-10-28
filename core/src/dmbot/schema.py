@@ -3490,6 +3490,7 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_backup_add", "dmbot_web_backup_add(BIGINT, TEXT)"),
     ("dmbot_web_backup_read", "dmbot_web_backup_read(BIGINT, TEXT, TEXT)"),
     ("dmbot_web_backup_take", "dmbot_web_backup_take(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_backup_take_part", "dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT)"),
     # Notes typed on the recap page and "Rewrite with these" (#2113).
     ("dmbot_recap_request_add", "dmbot_recap_request_add(BIGINT, TEXT, BIGINT, TEXT)"),
     ("dmbot_recap_request_read", "dmbot_recap_request_read(BIGINT, TEXT, BIGINT, TEXT)"),
@@ -3553,6 +3554,9 @@ WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("dmbot_web_campaign_facts", "dmbot_web_campaign_facts(BIGINT)"),
     # The Shared rules page (#2460).
     ("dmbot_web_shared_rules", "dmbot_web_shared_rules(BIGINT)"),
+    ("dmbot_web_rule_sharing", "dmbot_web_rule_sharing(BIGINT, TEXT)"),  # (#2783)
+    ("dmbot_web_rule_action_add", "dmbot_web_rule_action_add(BIGINT, TEXT, TEXT, TEXT)"),
+    ("dmbot_web_rule_action_read", "dmbot_web_rule_action_read(BIGINT, TEXT, TEXT)"),
     # The Story timeline page (#2462).
     ("dmbot_web_story_timeline", "dmbot_web_story_timeline(BIGINT, TEXT)"),
     # A campaign's session transcripts, read by any member of the server (#1501).
@@ -13518,10 +13522,6 @@ WEB_BACKUPS = (
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_backup_add(BIGINT, TEXT)'
-            ' SET search_path = pg_catalog, %I, pg_temp',
-            current_schema());
-        EXECUTE format(
             'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp',
             current_schema());
@@ -13639,6 +13639,112 @@ OPTIONAL_RULE_SETTING = r"""
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_optional_rule_add(BIGINT, TEXT, TEXT, BOOLEAN) FROM PUBLIC;
 """
+
+
+WEB_BACKUP_PARTS = (
+    """
+    -- The transcripts files of a copy the website downloads (#2772, #2552): Discord's backup
+    -- sends a campaign's transcripts as extra files next to the main one, and a website copy is
+    -- the same set. One row is one such file, waiting in the database for the person who asked
+    -- (like `web_backups.file`: kept 15 minutes at most, handed over once, never logged, the DM's
+    -- secrets inside no more than in any backup). `web_backups.parts` says how many there were.
+    -- The row goes with its copy; `data` is emptied as the file is fetched.
+    ALTER TABLE web_backups ADD COLUMN parts INT NOT NULL DEFAULT 0;
+    CREATE TABLE web_backup_parts (
+        guild_id  BIGINT NOT NULL,
+        backup_id TEXT NOT NULL,
+        FOREIGN KEY (guild_id, backup_id)
+            REFERENCES web_backups (guild_id, id) ON DELETE CASCADE ON UPDATE CASCADE,
+        n         INT NOT NULL CHECK (n >= 1 AND n <= 24),
+        data      BYTEA,
+        size      INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, backup_id, n)
+    );
+    """
+    + _isolate("web_backup_parts")
+    + r"""
+    -- (Asking for a copy is 0219's door, unchanged: a copy whose main file has been taken is never
+    -- handed back, so a retry after a failed part starts a fresh copy and the old one's leftovers
+    -- go with the 15-minute sweep, #2778.)
+
+    -- Where one copy stands: the same answer as before, plus the files still waiting for the
+    -- person (number and size, never the bytes).
+    CREATE OR REPLACE FUNCTION dmbot_web_backup_read(g BIGINT, c TEXT, bid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r RECORD;
+        waiting JSONB;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT b.state, b.stage, b.error, b.file_name, b.size, b.parts, b.created_at,
+               b.updated_at, (b.file IS NOT NULL) AS has_file INTO r
+            FROM web_backups b
+            WHERE b.guild_id = g AND b.campaign_id = c AND b.id = bid
+              AND b.user_id = dmbot_current_user()
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('n', p.n, 'size', p.size) ORDER BY p.n),
+                        '[]'::jsonb) INTO waiting
+            FROM web_backup_parts p
+            WHERE p.guild_id = g AND p.backup_id = bid AND p.data IS NOT NULL;
+        -- Gone once the main file and every part have been fetched.
+        IF r.state = 'done' AND NOT r.has_file AND waiting = '[]'::jsonb THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'fileName', r.file_name, 'size', r.size, 'fileWaiting', r.has_file,
+            'parts', waiting, 'partsTotal', r.parts,
+            'createdAt', r.created_at, 'updatedAt', r.updated_at);
+    END
+    $fn$;
+
+    -- One transcripts file, once, for the person who asked: emptied from the row as it is read.
+    -- NULL when it is not theirs, not ready or already taken.
+    CREATE FUNCTION dmbot_web_backup_take_part(g BIGINT, c TEXT, bid TEXT, part INT)
+    RETURNS BYTEA
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        out BYTEA;
+    BEGIN
+        IF dmbot_current_user() IS NULL
+           OR current_setting('dmbot.guild_id', true) IS DISTINCT FROM g::text THEN
+            RETURN NULL;
+        END IF;
+        SELECT p.data INTO out
+            FROM web_backup_parts p JOIN web_backups b
+                ON b.guild_id = p.guild_id AND b.id = p.backup_id
+            WHERE p.guild_id = g AND p.backup_id = bid AND p.n = part AND p.data IS NOT NULL
+              AND b.campaign_id = c AND b.user_id = dmbot_current_user() AND b.state = 'done'
+              AND b.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 900
+            FOR UPDATE OF p;
+        IF out IS NULL THEN
+            RETURN NULL;
+        END IF;
+        UPDATE web_backup_parts p SET data = NULL, size = 0
+            WHERE p.guild_id = g AND p.backup_id = bid AND p.n = part;
+        RETURN out;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT)'
+            ' SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_backup_take_part(BIGINT, TEXT, TEXT, INT) FROM PUBLIC;
+    """
+)
 
 TOPIC_CHOICES = """
     -- Who put a line back (or left it out again) after the session, and what the off-topic filter
@@ -16107,6 +16213,233 @@ REPORT_ANSWER_DOOR = (
     """
 )
 
+RULE_SHARING_READ = r"""
+    -- What a campaign shares and follows, and the sets other campaigns share in its server, for the
+    -- website's House rules page (#2783; docs/PLAN.md, "Shared rulesets"). Read only, and for a DM
+    -- of the campaign alone (NULL for anyone else), in a server on the session's list. It tells
+    -- the page whether a share code is on, never the code (the page does not show codes: they are
+    -- read in Discord, #2460), and for the sets of other campaigns only their name, their
+    -- publisher campaign's name, the version and how many rules: none of a rule's words, who
+    -- wrote it or anything else of those campaigns. Only rules cross, and these are numbers.
+    CREATE FUNCTION dmbot_web_rule_sharing(g BIGINT, c TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        mine JSONB;
+        followed JSONB;
+        here JSONB;
+        n_rules BIGINT;
+        owner_id BIGINT;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT jsonb_build_object(
+                   'name', s.name, 'shared', s.status = 'shared',
+                   'version', (SELECT max(v.version) FROM rule_set_versions v
+                               WHERE v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                                 AND v.set_id = s.id),
+                   'hasCode', EXISTS (SELECT 1 FROM rule_set_codes k
+                                      WHERE k.guild_id = s.guild_id
+                                        AND k.campaign_id = s.campaign_id
+                                        AND k.set_id = s.id AND k.active))
+            INTO mine
+            FROM rule_sets s
+            WHERE s.guild_id = g AND s.campaign_id = c AND s.kind = 'house_rules';
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                   'name', f.set_name, 'publisher', f.publisher, 'version', f.version,
+                   'updating', f.updating) ORDER BY f.position, f.followed_at, f.set_id),
+                   '[]'::jsonb)
+            INTO followed
+            FROM rule_set_follows f
+            WHERE f.guild_id = g AND f.campaign_id = c AND f.kind = 'house_rules';
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                   'setId', s.id, 'name', s.name, 'publisher', p.name, 'version', v.version,
+                   'rules', COALESCE(jsonb_array_length(v.content -> 'rules'), 0))
+                   ORDER BY lower(s.name), s.id), '[]'::jsonb)
+            INTO here
+            FROM rule_sets s
+            JOIN campaigns p ON p.guild_id = s.guild_id AND p.id = s.campaign_id
+            JOIN rule_set_versions v ON v.guild_id = s.guild_id AND v.campaign_id = s.campaign_id
+                AND v.set_id = s.id
+                AND v.version = (SELECT max(m.version) FROM rule_set_versions m
+                                 WHERE m.guild_id = s.guild_id AND m.campaign_id = s.campaign_id
+                                   AND m.set_id = s.id)
+            WHERE s.guild_id = g AND s.status = 'shared' AND s.kind = 'house_rules'
+              AND s.campaign_id <> c;
+        SELECT count(*) INTO n_rules FROM house_rules r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.from_set IS NULL;
+        SELECT k.owner_user_id INTO owner_id FROM campaigns k WHERE k.guild_id = g AND k.id = c;
+        -- The owner goes to the API only to judge the plan; the page is told yes or no.
+        RETURN jsonb_build_object('published', mine, 'following', followed, 'here', here,
+                                  'ruleCount', n_rules, 'owner', owner_id::TEXT);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_rule_sharing(BIGINT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_rule_sharing(BIGINT, TEXT) FROM PUBLIC;
+"""
+
+WEB_RULE_ACTIONS = (
+    r"""
+    -- What a DM chose on the website's House rules page about sharing (#2783), waiting for the
+    -- bot: publish the campaign's rules as a set, stop sharing, look at a set by its share code,
+    -- follow a set shared in the server or by code, stop following. The website has no right on
+    -- the rule tables, so its door only checks the signed-in DM and queues the choice here; the
+    -- bot applies it with the same store calls as Discord's buttons (the plan, the caps, the
+    -- guess limit and who asked are checked again then). Share codes are never made, turned off
+    -- or shown from here: they stay in Discord (#2460). `arg` is the set's name (1 to 60
+    -- characters, `publish`), a set's id (`follow_here`) or a share code (`look_code`,
+    -- `follow_code`), checked for its shape and nothing else. `note` is what the DM sees after,
+    -- in Discord's own words (for `look_code`: the set's name, publisher and how many rules would
+    -- be copied, never a rule's words). A row lives a day at most, is gone with its campaign,
+    -- left out of backups, isolated per server and read back only by the DM who made it.
+    CREATE TABLE web_rule_actions (
+        guild_id    BIGINT NOT NULL,
+        campaign_id TEXT NOT NULL,
+        -- ON UPDATE CASCADE like the tables a move rewrites (#2550).
+        FOREIGN KEY (campaign_id, guild_id)
+            REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
+        id          TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
+        action      TEXT NOT NULL CHECK (action IN ('publish', 'stop_sharing', 'look_code',
+                                                    'follow_here', 'follow_code', 'unfollow')),
+        arg         TEXT NOT NULL DEFAULT '' CHECK (char_length(arg) <= 64),
+        state       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (state IN ('waiting', 'working', 'done', 'failed')),
+        stage       TEXT NOT NULL DEFAULT 'waiting'
+            CHECK (stage IN ('waiting', 'sharing', 'done', 'failed')),
+        error       TEXT NOT NULL DEFAULT '' CHECK (char_length(error) <= 40),
+        note        TEXT NOT NULL DEFAULT '' CHECK (char_length(note) <= 1000),
+        created_at  BIGINT NOT NULL,
+        claimed_at  BIGINT NOT NULL DEFAULT 0,
+        updated_at  BIGINT NOT NULL,
+        PRIMARY KEY (guild_id, id),
+        -- The state and the stage move together, so the page (which reads the stage) and the
+        -- answer (which comes with `done` or `failed`) can never disagree.
+        CHECK ((state, stage) IN (('waiting', 'waiting'), ('working', 'sharing'),
+                                  ('done', 'done'), ('failed', 'failed')))
+    );
+    CREATE INDEX web_rule_actions_open ON web_rule_actions (guild_id, seq)
+        WHERE state IN ('waiting', 'working');
+    """
+    + _isolate("web_rule_actions")
+    + r"""
+    -- Queue one choice. The door checks what it can see: the caller is a DM of the campaign, the
+    -- action is one Discord offers, its argument has the right shape, and the campaign's queue is
+    -- not full. A second press of the same action and argument while one is open gets that one
+    -- back. Answers 'ok' with the id, or 'bad_action', 'bad_arg' or 'too_soon'; NULL for anyone
+    -- who is not a DM of the campaign.
+    CREATE FUNCTION dmbot_web_rule_action_add(g BIGINT, c TEXT, act TEXT, a TEXT)
+    RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        rid TEXT := replace(gen_random_uuid()::TEXT, '-', '');
+        now_s BIGINT := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+        have TEXT;
+        want TEXT := COALESCE(a, '');
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        IF act IS NULL OR act NOT IN ('publish', 'stop_sharing', 'look_code', 'follow_here',
+                                      'follow_code', 'unfollow') THEN
+            RETURN jsonb_build_object('status', 'bad_action');
+        END IF;
+        IF (act IN ('stop_sharing', 'unfollow') AND want <> '')
+           OR (act = 'publish' AND char_length(btrim(want)) NOT BETWEEN 1 AND 60)
+           OR (act IN ('look_code', 'follow_code') AND want !~ '^[A-Z2-7]{10}$')
+           OR (act = 'follow_here' AND want !~ '^[0-9a-f]{32}$') THEN
+            RETURN jsonb_build_object('status', 'bad_arg');
+        END IF;
+        IF act = 'publish' THEN
+            want := btrim(want);  -- the name is stored as it was checked, and as the store keeps it
+        END IF;
+        PERFORM pg_advisory_xact_lock(hashtextextended('rule_action:' || g::TEXT || c, 0));
+        DELETE FROM web_rule_actions r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.created_at < now_s - 86400;
+        -- A choice the bot took and then went quiet on for ten minutes goes back to waiting, so
+        -- it is not stuck behind itself for a day; the bot's own retake does the same. (The page
+        -- calls it stalled from five minutes, `progress.STALL_AFTER_S`, so the DM hears of it
+        -- before it is put back.) The share codes in `arg` are blanked by the bot as it finishes
+        -- a row (#2793); the row itself stays a day.
+        UPDATE web_rule_actions r SET state = 'waiting', stage = 'waiting', claimed_at = 0,
+            updated_at = now_s
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.state = 'working'
+              AND r.updated_at < now_s - 600;
+        SELECT r.id INTO have FROM web_rule_actions r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.user_id = dmbot_current_user()
+              AND r.action = act AND r.arg = want AND r.state IN ('waiting', 'working');
+        IF have IS NOT NULL THEN
+            RETURN jsonb_build_object('status', 'ok', 'id', have);
+        END IF;
+        IF (SELECT count(*) FROM web_rule_actions r
+            WHERE r.guild_id = g AND r.campaign_id = c AND r.state IN ('waiting', 'working')) >= 10
+        THEN
+            RETURN jsonb_build_object('status', 'too_soon');
+        END IF;
+        INSERT INTO web_rule_actions (guild_id, campaign_id, id, user_id, action, arg,
+                                      created_at, updated_at)
+            VALUES (g, c, rid, dmbot_current_user(), act, want, now_s, now_s);
+        RETURN jsonb_build_object('status', 'ok', 'id', rid);
+    END
+    $fn$;
+
+    -- The state of one choice, for the DM who made it (nobody else's): the state, the stage and
+    -- times for the shared progress shape, the plain error word, and the note to show. NULL when
+    -- there is no such choice of the caller's in this campaign, or it is over a day old.
+    CREATE FUNCTION dmbot_web_rule_action_read(g BIGINT, c TEXT, aid TEXT) RETURNS JSONB
+    LANGUAGE plpgsql SECURITY DEFINER AS $fn$
+    DECLARE
+        r web_rule_actions%ROWTYPE;
+    BEGIN
+        IF dmbot_current_guild() IS DISTINCT FROM g
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
+            RETURN NULL;
+        END IF;
+        SELECT a.* INTO r FROM web_rule_actions a
+            WHERE a.guild_id = g AND a.campaign_id = c AND a.id = aid
+              AND a.user_id = dmbot_current_user()
+              AND a.created_at >= floor(extract(epoch FROM clock_timestamp()))::BIGINT - 86400;
+        IF NOT FOUND THEN
+            RETURN NULL;
+        END IF;
+        RETURN jsonb_build_object('state', r.state, 'stage', r.stage, 'error', r.error,
+            'action', r.action, 'note', r.note, 'createdAt', r.created_at,
+            'updatedAt', r.updated_at);
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_rule_action_add(BIGINT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_rule_action_read(BIGINT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_rule_action_add(BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_rule_action_read(BIGINT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -16410,6 +16743,9 @@ MIGRATIONS: tuple[Migration, ...] = (
         OPTIONAL_RULE_SETTING,
     ),  # a rule switched on the website is queued for the bot (#2753)
     ("0256_plot_chat_followups", PLOT_CHAT_FOLLOWUPS),  # hour_full, Save stamped, timed out (#2545)
+    ("0258_web_backup_parts", WEB_BACKUP_PARTS),  # a website copy carries its transcripts (#2772)
+    ("0261_rule_sharing_read", RULE_SHARING_READ),  # a campaign's shared and followed rules (#2783)
+    ("0262_web_rule_actions", WEB_RULE_ACTIONS),  # sharing asked for on the website (#2783)
     ("0263_unnamed_people", UNNAMED_PEOPLE),  # a person described but never named (#2790)
 )
 
@@ -16435,6 +16771,7 @@ ISOLATED_TABLES = (
     "secret_exposures",
     "web_delete_notices",
     "web_backups",
+    "web_backup_parts",
     "merge_restores",
     "transcript_respells",
     "image_day_use",
@@ -16510,6 +16847,7 @@ ISOLATED_TABLES = (
     "name_answers",
     "name_actions",
     "setting_actions",
+    "web_rule_actions",
     "web_peeks",
 )
 # A person's own rows (the website, #435): row-level security on `user_id`, set by
