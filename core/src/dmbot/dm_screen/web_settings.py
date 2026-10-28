@@ -4,8 +4,9 @@ The website has no right on the campaign tables, so a choice (who can see the DM
 DMbot says, how long transcripts are kept) is queued as a row (`setting_actions`). This module
 claims the rows one at a time in the order made and applies each exactly as Discord's ⚙️ Settings
 buttons do: the same store calls, so channel permissions, the notice in the DM screen and a running
-session all follow, and the DM is told in the same words. Not here: game masters, hand over, pause
-and delete (the page sends the DM to Discord for those).
+session all follow, and the DM is told in the same words. Not here: hand over, pause and delete (the
+page sends the DM to Discord for those). A game master added or removed (#2776) goes through the
+same store calls and the same follow-up as Discord's 👑 Game masters.
 
 Checked again at the moment of use, because the queue-time check can be stale: the sender must still
 be a DM of that campaign (Discord lets a server manager change visibility too; the website asks
@@ -24,10 +25,13 @@ from typing import Protocol
 
 from dmbot.campaigns import Campaign, CampaignError
 from dmbot.campaigns.models import DM_SCREEN_LEVELS_OFFERED
+from dmbot.campaigns.store import OWNER_STAYS
 from dmbot.db import Database
-from dmbot.dm_screen import messages
+from dmbot.dm_screen import game_masters, messages
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.transcript_keep import CHOICES, _shorter, days_of, saved_text
+from dmbot.rules import optional
+from dmbot.rules.optional import NO_SCREEN_NOTE, OptionalRule
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +39,9 @@ SETTINGS_PER_ROUND = 10  # choices applied for one server in one round
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
 
-VISIBILITY, LEVEL, RETENTION = "visibility", "level", "retention"
+VISIBILITY, LEVEL, RETENTION, OPTIONAL_RULE = "visibility", "level", "retention", "optional_rule"
+CO_DM = "co_dm"  # a game master added or removed (#2776)
+PERSON_ID_MAX = 19  # digits in a Discord id
 VISIBILITIES = ("private", "peek", "open")
 RETENTION_CHOICES = tuple(choice for choice, _days in CHOICES)
 
@@ -57,6 +63,25 @@ class Setting:
     value: str
     flag: bool = False
     claimed_at: int = 0  # this worker's claim: only it may finish the row
+    turn_on: bool | None = None  # an optional rule: on or off; None for every other setting
+
+
+@dataclass(frozen=True, slots=True)
+class Member:
+    """A person of the server, as far as a game master change needs to know."""
+
+    name: str
+    bot: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CoDmDone:
+    """What the bot did after saving a game master change: whether the one private message
+    reached a new game master (always True for a removal), and Discord's `ACCESS_LATE` words when
+    the DM screen's permissions could not be updated yet ("" when they were)."""
+
+    told: bool = True
+    late: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +104,30 @@ class Host(Protocol):
 
     async def apply_retention(self, campaign: Campaign, days: int | None) -> Campaign: ...
 
+    async def apply_optional_rule(
+        self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
+    ) -> bool:
+        """Save an optional rule on or off and note it in the DM screen, as `/dmbot optionalrules`
+        does. True when the DM screen has its line (or the campaign has none); False when the line
+        could not be posted: the rule is saved either way. Raises `CampaignError` when the
+        campaign is gone."""
+        ...
+
+    async def find_member(self, guild_id: int, user_id: int) -> Member | None:
+        """The person in the server, or None when Discord says they are not in it. Raises when
+        Discord cannot be asked: that is a failed try, never "they left"."""
+        ...
+
+    async def apply_co_dm(
+        self, campaign: Campaign, user_id: int, add: bool, asker_id: int
+    ) -> CoDmDone:
+        """Save the change with the store's own rules (raises `CampaignError` with Discord's
+        words), then do what Discord's menu does: the running session takes the new set, the
+        DM screen's permissions and game-time channel are applied again, and a new game master
+        gets the one private message. The caller has checked an added person is in the server and
+        not a bot. Nothing here touches anyone's consent."""
+        ...
+
 
 class SettingStore:
     def __init__(self, db: Database, clock: Callable[[], float] = time.time) -> None:
@@ -100,7 +149,7 @@ class SettingStore:
                 " AND p.campaign_id = setting_actions.campaign_id AND p.seq < setting_actions.seq"
                 " AND (p.state = 'waiting' OR (p.state = 'working' AND p.claimed_at >= %s)))"
                 " ORDER BY seq LIMIT 1 FOR UPDATE SKIP LOCKED)"
-                " RETURNING id, campaign_id, user_id, setting, value, flag",
+                " RETURNING id, campaign_id, user_id, setting, value, flag, turn_on",
                 (now, guild_id, now - RETAKE_AFTER_S * 1000, guild_id, now - RETAKE_AFTER_S * 1000),
             )
             row = await cur.fetchone()
@@ -114,6 +163,7 @@ class SettingStore:
             row["value"],
             bool(row["flag"]),
             now,
+            None if row["turn_on"] is None else bool(row["turn_on"]),
         )
 
     async def finish(self, guild_id: int, item: Setting, outcome: Outcome) -> bool:
@@ -152,6 +202,10 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
         return Outcome(NOT_FOUND)
     if item.user_id not in campaign.dm_user_ids:  # checked again: they may have handed over since
         return Outcome(NOT_ALLOWED)
+    if item.setting == OPTIONAL_RULE:
+        return await _optional_rule(host, campaign, item)
+    if item.setting == CO_DM:
+        return await _co_dm(host, campaign, item)
     try:
         if item.setting == VISIBILITY:
             if item.value not in VISIBILITIES:
@@ -180,11 +234,87 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
     return Outcome(BAD_VALUE)
 
 
+async def _optional_rule(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """An optional rule on or off (#2755), as Discord's menu does it. The website checked the id is
+    in the catalog; whether it applies to THIS campaign's main rules is checked here, because the
+    list can change under a page that stayed open (the page says to reload). What a campaign
+    follows in a shared ruleset is not looked at, as in Discord."""
+    chosen = optional.rule(item.value)
+    if (
+        item.turn_on is None
+        or chosen is None
+        or chosen not in optional.applying(campaign.target_ruleset)
+    ):
+        return Outcome(BAD_VALUE)
+    try:
+        noted = await host.apply_optional_rule(campaign, chosen, item.turn_on, item.user_id)
+    except CampaignError:
+        return Outcome(NOT_FOUND)  # the campaign went while the choice was being saved
+    note = f"{chosen.name} is now {'on' if item.turn_on else 'off'}."
+    return Outcome(note=note if noted else f"{note} {NO_SCREEN_NOTE}")
+
+
+async def _co_dm(host: Host, campaign: Campaign, item: Setting) -> Outcome:
+    """A game master added or removed (#2776), by the rules of Discord's 👑 Game masters. Their
+    words are reused, not copied: the store's constants and `game_masters`'. Checked again now:
+    the asker is a DM (by `apply`), an added person is in the server and not a bot. Only ids are
+    logged, never in a channel."""
+    if (
+        item.turn_on is None
+        or not item.value.isascii()
+        or not item.value.isdigit()
+        or len(item.value) > PERSON_ID_MAX
+    ):
+        return Outcome(BAD_VALUE)
+    person, add = int(item.value), item.turn_on
+    if person < 1 or person >= 2**63:  # (the database's id range)
+        return Outcome(BAD_VALUE)
+    guild_id = campaign.guild_id
+    try:
+        member = await host.find_member(guild_id, person)
+    except Exception as exc:
+        if add:
+            raise  # Discord could not be asked: the choice can be sent again
+        log.info("A game master's name could not be looked up: %s", type(exc).__name__)
+        member = None
+    # The page shows these words as plain text, so names go in raw, not escaped for Discord.
+    if add:
+        if member is None:
+            return Outcome(REFUSED, game_masters.NOT_IN_SERVER)
+        if member.bot:
+            return Outcome(REFUSED, game_masters.NOT_A_PERSON)
+        if person in campaign.dm_user_ids:
+            return Outcome(REFUSED, game_masters.ALREADY.format(name=member.name))
+    else:
+        if person not in campaign.dm_user_ids:
+            return Outcome(REFUSED, game_masters.GONE_FROM_LIST)
+    name = member.name if member is not None else game_masters.LEFT  # (a removal; an add has one)
+    try:
+        done = await host.apply_co_dm(campaign, person, add, item.user_id)
+    except CampaignError as exc:
+        if str(exc) == OWNER_STAYS:
+            words = (
+                game_masters.PLAN_HOLDER_SELF
+                if person == item.user_id
+                else game_masters.PLAN_HOLDER_OTHER.format(name=name)
+            )
+            return Outcome(REFUSED, words)
+        return Outcome(REFUSED, str(exc))  # (the limit, the last game master, a campaign gone)
+    if member is None:  # a removal and no name to give: the page uses its own
+        return Outcome()
+    first = (
+        f"**{name}** is now a game master." if add else f"**{name}** is no longer a game master."
+    )
+    extra = ("" if done.told else game_masters.NOT_TOLD) + done.late
+    return Outcome(note=(first + extra.replace("\n", " ")).strip())
+
+
 async def run_one(host: Host, store: SettingStore, guild_id: int, item: Setting) -> bool:
     """Apply one claimed choice and mark it. A bug never leaves the row "working": it ends as
     `failed` for the page to offer a retry. False when the row could not be marked (the loop
-    stops; the row is taken again later and `apply` sees it already done). Only the outcome word
-    is logged, never the choice."""
+    stops; the row is taken again later and `apply` sees it already done: for a game master
+    change that reads as a refusal, and the change itself stays saved). Only the outcome word is
+    logged, never the choice."""
     try:
         done = await apply(host, guild_id, item)
     except Exception as exc:

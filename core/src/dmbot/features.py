@@ -188,6 +188,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
     ),
     Feature(
+        "who is he",
+        'Who "he" and "she" are in a document',
+        "",
+        lambda s: s.who_is_it,
+        ("who_is_it",),
+        for_dms=False,  # not live yet: on only after the calibration run on #2790
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
