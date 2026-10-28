@@ -29,7 +29,7 @@ import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any
@@ -470,6 +470,7 @@ async def _shape(
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
     depth: int = 0,
+    aliases: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[list[bg.Found], list[bg.Connection], bool]:
     """Pass 2 for one slice of the list. An answer cut off is no JSON at all, so the slice is
     halved and shaped again (a few times); a one-line slice still cut is reported as cut."""
@@ -489,19 +490,19 @@ async def _shape(
             # (no credit is no reason to ask again in halves: that only fans the failure out)
             stats.dropped["cut_before_check"] += len(links)
             return [], [], True
-        return await _halves(ai, text, names, links, own, gate, stats, depth)
+        return await _halves(ai, text, names, links, own, gate, stats, depth, aliases)
     stats.shape_calls += 1
     if not reply.cut:
         return (
             bg.read_answer(reply.text, text),
-            bg.read_connections(reply.text, text, set(own), stats.dropped),
+            bg.read_connections(reply.text, text, set(own), stats.dropped, aliases),
             False,
         )
     stats.shape_cut += 1
     if lines <= 1 or depth >= SPLIT_DEPTH:
         stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
         return [], [], True
-    return await _halves(ai, text, names, links, own, gate, stats, depth)
+    return await _halves(ai, text, names, links, own, gate, stats, depth, aliases)
 
 
 async def _halves(
@@ -513,6 +514,7 @@ async def _halves(
     gate: AbstractAsyncContextManager[Any],
     stats: Stats,
     depth: int,
+    aliases: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[list[bg.Found], list[bg.Connection], bool]:
     """A slice the model could not shape whole, shaped again in two halves."""
     if len(names) >= len(links):
@@ -527,7 +529,7 @@ async def _halves(
     for n, link_lines in slices:
         if not n and not link_lines:
             continue
-        a, b, c = await _shape(ai, text, n, link_lines, own, gate, stats, depth + 1)
+        a, b, c = await _shape(ai, text, n, link_lines, own, gate, stats, depth + 1, aliases)
         found += a
         joined += b
         cut = cut or c
@@ -558,6 +560,7 @@ async def read_lore(
     skip_name: Callable[[str], bool] | None = None,
     skip_pair: Callable[[str, str], bool] | None = None,
     progress: Callable[[str, int, int], None] | None = None,
+    aliases: Mapping[str, Sequence[str]] | None = None,
 ) -> LoreRead:
     """Both passes over the whole text. Nothing here stores anything: the caller merges the
     names, keeps what the campaign can hold and shows the DM every suggestion.
@@ -599,7 +602,8 @@ async def read_lore(
     # cut (the DM is never shown "nothing" for a long read): the deadline lives here, not around
     # the caller, so what is done is not thrown away with what is not.
     tasks = [
-        asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats)) for a, b in slices
+        asyncio.ensure_future(_shape(shape_ai, text, a, b, own, gate, stats, 0, aliases))
+        for a, b in slices
     ]
     if progress is not None:
         progress("shaping", 0, len(tasks))
