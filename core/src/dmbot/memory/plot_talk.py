@@ -8,7 +8,7 @@ to what an entry is now (alive, dead, resolved...), which the DM saves or declin
 saved here, and a proposal is data until the DM presses Save.
 
 Code, not the model, has the last word:
-- a request to invent or build the story gets the plain no (`feedback.STORY_HELP_REPLY`) and no
+- a request to invent or build the story gets the plain no (`story_help.STORY_HELP_REPLY`) and no
   call is made;
 - any words in quotation marks (of any kind) in the answer must be words of the recap, the issue's
   own source or the DM's own messages: a quotation from anywhere else (a transcript line, the
