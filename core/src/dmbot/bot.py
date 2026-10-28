@@ -8798,12 +8798,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         marks = await self.transcripts.put_back_in(gid, sid)
         if not marks:
             return 0
+        if any(
+            t.campaign_id == cid for t in (self.tables.get(gid), *self._ending.get(gid, [])) if t
+        ):
+            return 0  # the session's own end-of-session reads are still to run: later, not twice
         campaign = await self.campaigns.get(gid, cid)
         agreed = await self.consent.consenting(gid)
         mine = {(uid, at) for uid, at in marks if uid in agreed}
         every = await self.transcripts.lines(gid, sid)
         chosen = [x for x in every if (x.user_id, x.started_ms) in mine and x.text.strip()]
-        done = True  # False: the extractor stopped early, so the lines are tried again later
         if chosen and campaign is not None:
             dms = {*campaign.dm_user_ids}
             users = {x.user_id for x in every} | agreed | dms
@@ -8811,9 +8814,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 gid, cid, [x.text for x in chosen], users, sid, agreed=agreed
             )
             log.info("Put-back lines: %d line(s) scanned, %d new name(s)", len(chosen), len(added))
-            done = await self._extract_put_back(gid, cid, sid, campaign, every, mine, users)
-        if not done:
-            return 0
+            # One try, and the lines are done either way: a retry would send the batches that did
+            # work again (duplicate claims) and count the names again. A run that stops early says
+            # so in the log; the DM can ask for the story to be read again.
+            await self._extract_put_back(gid, cid, sid, campaign, every, mine, users)
         by_person: dict[int, list[int]] = {}
         for uid, at in marks:  # the skipped speakers' lines too: not asked about again
             by_person.setdefault(uid, []).append(at)
@@ -8832,8 +8836,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         users: Collection[int],
     ) -> bool:
         """The story extractor on just the put-back lines (numbered by their place in the whole
-        session, the others marked off-topic so `readable` skips them). True when it ran to the
-        end or is not on; False when it stopped early or failed."""
+        session, the others marked off-topic so `readable` skips them), once. True when it ran to
+        the end or is not on; False when it stopped early or failed (counts in the log)."""
         assert self.transcripts is not None and self.memory is not None
         if (
             not self.settings.story_extractor_on

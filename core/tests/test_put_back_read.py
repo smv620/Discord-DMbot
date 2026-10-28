@@ -63,6 +63,8 @@ class Base(DatabaseTest):
         )
         dm.extractor_ai = None
         dm._put_back_tasks = {}
+        dm.tables = {}
+        dm._ending = {}
 
         async def propose(gid: int, cid: str, texts: list[str], *_: Any, **__: Any) -> list[str]:
             self.scanned.append(list(texts))
@@ -123,7 +125,7 @@ class Reading(Base):
         self.assertEqual(seen["after_ms"], 0)
         self.assertEqual(await self.waiting(), [])
 
-    async def test_an_extractor_that_stopped_early_leaves_the_lines_for_next_time(self) -> None:
+    async def test_an_extractor_that_stopped_early_is_not_tried_again(self) -> None:
         self.dm.settings.story_extractor_on = True
         self.dm.extractor_ai = SimpleNamespace(model="m")
         self.dm.plan_allows = AsyncMock(return_value=True)
@@ -133,8 +135,8 @@ class Reading(Base):
             return Report(calls=1, stopped="call limit")
 
         with patch("dmbot.bot.extractor.run", new=run), patch("dmbot.bot.ClaimStore"):
-            self.assertEqual(await self.dm._read_put_back_all(GUILD), 0)
-        self.assertEqual(len(await self.waiting()), 2)  # tried again later
+            self.assertEqual(await self.dm._read_put_back_all(GUILD), 2)
+        self.assertEqual(await self.waiting(), [])  # one try: a retry would send batches twice
 
     async def test_a_plan_without_the_extractor_still_reads_the_names(self) -> None:
         self.dm.settings.story_extractor_on = True
@@ -143,6 +145,24 @@ class Reading(Base):
         self.assertEqual(await self.dm._read_put_back_all(GUILD), 2)
         self.assertEqual(len(self.scanned), 1)
         self.assertEqual(await self.waiting(), [])
+
+    async def test_a_session_that_is_not_over_or_has_a_table_is_left_alone(self) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET ended_at = NULL WHERE id = %s", (self.sid,)
+            )
+        self.assertEqual(await self.store.sessions_with_put_back(GUILD), [])
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET ended_at = %s WHERE id = %s", (START + 1, self.sid)
+            )
+        self.dm.tables = {GUILD: SimpleNamespace(campaign_id=self.cid)}  # still being ended
+        self.dm._ending = {}
+        self.assertEqual(await self.dm._read_put_back_session(GUILD, self.cid, self.sid), 0)
+        self.assertEqual(self.scanned, [])
+        self.assertEqual(len(await self.waiting()), 2)  # later, not twice
+        self.dm.tables = {}
+        self.assertEqual(await self.dm._read_put_back_session(GUILD, self.cid, self.sid), 2)
 
     async def test_leaned_lines_are_listed_for_the_name_scan(self) -> None:
         async with self.db.guild(GUILD) as conn:
