@@ -34,7 +34,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from dmbot.campaigns import CampaignError
+from dmbot.campaigns import CampaignError, backup_names
 from dmbot.campaigns.models import Campaign
 from dmbot.campaigns.parts import DAMAGED as PART_DAMAGED
 from dmbot.campaigns.parts import TOO_BIG_PART, LeftOut
@@ -52,7 +52,6 @@ from dmbot.campaigns.store import (
 )
 from dmbot.campaigns.store import TOO_BIG as FILE_TOO_BIG
 from dmbot.db import Conn, Database
-from dmbot.ui import logic
 
 log = logging.getLogger(__name__)
 
@@ -403,9 +402,9 @@ async def apply(host: Host, store: WebRestores, guild_id: int, item: Restore) ->
     except CampaignError as exc:
         return Outcome(refusal_word(exc))
     del main
-    if logic.backup_campaign_name(data) is None:
+    if backup_names.backup_campaign_name(data) is None:
         return Outcome(NOT_A_BACKUP_WORD)
-    wanted = logic.backup_parts(data)
+    wanted = backup_names.backup_parts(data)
     if item.without_parts:
         parts = []  # the person chose to restore without them
     if (parts and len(parts) != wanted) or (wanted and not parts and not item.without_parts):
