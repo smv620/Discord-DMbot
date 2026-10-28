@@ -6,6 +6,7 @@ like, the cooldowns and what the answer shows. Invented names and numbers throug
 from __future__ import annotations
 
 import json
+import unittest
 from typing import Any
 
 import httpx
@@ -128,7 +129,7 @@ class TheQueue(Sheets):
             "https://example.com/characters/1",
             "https://www.dndbeyond.com/characters/x",
             "http://www.dndbeyond.com/characters/1",
-            LINK + "/sheet",
+            "https://www.dndbeyond.com/characters/1234567890123",
         ):
             self.assertEqual(
                 await self.refuse_sheet(self.ivy, action="link", url=bad), "bad_link", bad
@@ -227,3 +228,18 @@ class TheRoutes(Sheets):
         )
         client = await self.client_for(BOB, app=off)
         self.assertEqual((await client.get(f"/me/campaigns/{self.cref}/sheets")).status_code, 404)
+
+
+class TheLinkShape(unittest.TestCase):
+    """Any link Discord accepts becomes the one address the door and the bot keep (no database)."""
+
+    def test_every_link_discord_accepts_is_kept_as_the_one_address(self) -> None:
+        for given in (
+            LINK,
+            LINK + "/sheet",
+            "https://dndbeyond.com/characters/12345",
+            LINK + "?tab=spells",
+            "<" + LINK + ">",
+        ):
+            kept = sheets._choice({"action": "link", "url": given})
+            self.assertEqual(kept, ("link", LINK), given)
