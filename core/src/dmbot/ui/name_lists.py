@@ -22,6 +22,7 @@ import discord
 from dmbot import fetch
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
@@ -56,7 +57,7 @@ from dmbot.memory.name_list import (
 )
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import all_names, logic
+from dmbot.ui import all_names, logic, name_unnamed
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -130,14 +131,22 @@ def kinds_in(names: CampaignLookup) -> list[tuple[str, int]]:
     """(kind, how many confirmed names), most first."""
     counts: dict[str, int] = {}
     for e in names.entities.values():
-        if e.status == CONFIRMED:
+        if e.status == CONFIRMED and not e.unnamed:
             counts[e.kind_key] = counts.get(e.kind_key, 0) + 1
-    return sorted(counts.items(), key=lambda kv: (-kv[1], KIND_SHORT.get(kv[0], kv[0])))
+    out = sorted(counts.items(), key=lambda kv: (-kv[1], KIND_SHORT.get(kv[0], kv[0])))
+    waiting = len(name_unnamed.unnamed_ids(names))  # (only a DM's view holds any: #2790)
+    return [*out, (name_unnamed.NOT_NAMED, waiting)] if waiting else out
 
 
 def browse_order(names: CampaignLookup, kind: str, by_heard: bool) -> list[str]:
     """Confirmed entries of one kind: last heard first (never heard last), or A to Z."""
-    ids = [e.id for e in names.entities.values() if e.status == CONFIRMED and e.kind_key == kind]
+    if kind == name_unnamed.NOT_NAMED:
+        return name_unnamed.unnamed_ids(names)  # never heard, so one order: A to Z
+    ids = [
+        e.id
+        for e in names.entities.values()
+        if e.status == CONFIRMED and e.kind_key == kind and not e.unnamed
+    ]
 
     def az(entity_id: str) -> str:
         return name_key(names.entities[entity_id].name)
@@ -168,9 +177,16 @@ def pages(names: CampaignLookup, ids: list[str]) -> list[list[str]]:
 
 def _line(names: CampaignLookup, entity_id: str) -> str:
     entity = names.entities[entity_id]
+    if entity.unnamed:
+        label = logic.shorten(name_unnamed.shown(names, entity_id), 100)
+        return f"**{_md(label)}** · not named yet"
     h = names.heard.get(entity_id)
     when = f"heard <t:{h.last_session_at}:R>" if h and h.last_session_at else "not heard yet"
     return f"**{_md(logic.shorten(entity.name, 100))}** · {when}"
+
+
+def _kind_name(kind: str) -> str:
+    return unnamed_mod.GROUP if kind == name_unnamed.NOT_NAMED else KIND_SHORT.get(kind, kind)
 
 
 class Browse(_Menu):
@@ -195,9 +211,7 @@ class Browse(_Menu):
             self._kind_picked,
             placeholder="Pick a kind…",
             options=[
-                discord.SelectOption(
-                    label=f"{KIND_SHORT.get(k, k)} ({n})", value=k, default=k == kind
-                )
+                discord.SelectOption(label=f"{_kind_name(k)} ({n})", value=k, default=k == kind)
                 for k, n in counts[: logic.SELECT_OPTIONS_MAX]
             ],
         )
@@ -205,12 +219,31 @@ class Browse(_Menu):
             self.add_item(self.pick)
         self.shown: list[str] = []
         self.total = 0
+        self.labels: dict[str, str] = {}  # the unnamed people's labels, for the form's title
         if kind is not None:
             book = pages(names, browse_order(names, kind, by_heard))
             self.total = len(book)
             self.page = max(0, min(page, self.total - 1))
             self.shown = book[self.page]
-            if self.shown:
+            if kind == name_unnamed.NOT_NAMED:
+                self.labels = {e: name_unnamed.shown(names, e) for e in self.shown}
+            if self.shown and kind == name_unnamed.NOT_NAMED:
+                self.open = _Select(
+                    self._give_name,
+                    placeholder="✏️ Give them a name…",
+                    options=[
+                        discord.SelectOption(
+                            label=logic.shorten(
+                                name_unnamed.shown(names, e), logic.OPTION_LABEL_MAX
+                            ),
+                            value=e,
+                        )
+                        for e in self.shown
+                    ],
+                    row=1,
+                )
+                self.add_item(self.open)
+            elif self.shown:
                 self.open = _Select(
                     self._open,
                     placeholder="✏️ Fix, change or remove a name…",
@@ -257,8 +290,12 @@ class Browse(_Menu):
                     "📥 Add many."
                 )
             return f"📚 **Names for {_md(campaign.name)}:** pick a kind."
-        kind = KIND_SHORT.get(self.kind, self.kind)
-        order = "last heard first" if self.by_heard else "A to Z"
+        kind = _kind_name(self.kind)
+        order = (
+            "A to Z"
+            if self.kind == name_unnamed.NOT_NAMED
+            else ("last heard first" if self.by_heard else "A to Z")
+        )
         lines = [f"📚 **{kind}** · {order} · page {self.page + 1} of {max(self.total, 1)}"]
         lines += [_line(names, e) for e in self.shown]
         return "\n".join(lines)
@@ -293,6 +330,18 @@ class Browse(_Menu):
 
     async def _sort(self, interaction: discord.Interaction) -> None:
         await self._redraw(interaction, by_heard=not self.by_heard, page=0)
+
+    async def _give_name(self, interaction: discord.Interaction) -> None:
+        """Opens the form straight away (a form must be the first answer)."""
+        if self.open is None:
+            return
+        entity_id = self.open.values[0]
+        await interaction.response.send_modal(
+            name_unnamed.GiveNameForm(self.campaign_id, entity_id, self._label_of(entity_id))
+        )
+
+    def _label_of(self, entity_id: str) -> str:
+        return self.labels.get(entity_id, "this person")
 
     async def _open(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
