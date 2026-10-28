@@ -168,6 +168,7 @@ describe("Type in my character", () => {
   it("offers the form to the player and not to the DM", async () => {
     await open();
     expect(screen.getAllByText(w.typedSummary).length).toBeGreaterThan(0);
+    expect(screen.getByText(w.typedFor("Sorrel"))).toBeTruthy();
     cleanup();
     await open(".sheets-dm");
     expect(screen.queryByText(w.typedSummary)).toBeNull();
@@ -183,14 +184,21 @@ describe("Type in my character", () => {
     );
   });
 
-  it("refuses a level that is not 1 to 20 and sends nothing", async () => {
+  // Each case opens a fresh page, so one case's message cannot be the one that another case finds.
+  it.each(["0", "21", "x", "1.5"])("refuses the level %s and sends nothing", async (level) => {
     const api = await open();
-    for (const level of ["0", "21", "x"]) {
-      fill(1, { className: "Wizard", level });
-      save(1);
-      expect(await screen.findByText(w.typedBadLevel)).toBeTruthy();
-    }
+    fill(1, { className: "Wizard", level });
+    save(1);
+    expect(await screen.findByText(w.typedBadLevel)).toBeTruthy();
     expect(typedCalls(api)).toHaveLength(0);
+  });
+
+  it.each(["1", "20"])("accepts the level %s as a boundary and sends it as a number", async (level) => {
+    const api = await open();
+    fill(1, { className: "Wizard", level });
+    save(1);
+    expect(await screen.findByText(w.typedSaved, {}, { timeout: 8000 })).toBeTruthy();
+    expect(typedCalls(api).some((c) => c.includes(`"level":${level},`))).toBe(true);
   });
 
   it("refuses a blank class and sends nothing", async () => {

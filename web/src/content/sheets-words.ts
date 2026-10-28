@@ -19,6 +19,7 @@ export const sheetWords = {
   forget: "Forget my sheet",
   forgetDone: "Done. DMbot forgot the sheet: the link and what it read.",
   typedSummary: "Type in my character",
+  typedFor: (name: string): string => `Type in ${name}`,
   typedClass: "Class",
   typedClassHint: "For example: Wizard",
   typedLevel: "Level",

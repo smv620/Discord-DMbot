@@ -22,6 +22,8 @@ import {
   POLL_MS,
 } from "./settings-timing";
 import { useObservedWait } from "./useObservedWait";
+import { EMPTY_TYPED, checkTyped, type TypedValues } from "./sheets-typed";
+import TypedForm from "./TypedForm";
 import WorkProgress from "./WorkProgress";
 
 type Report = { ok: boolean; text: string } | null;
@@ -46,6 +48,8 @@ export default function CharacterSheetsSection({
   const [link, setLink] = useState<Record<string, string>>({});
   // What a player has typed in per character, so a re-render does not clear a half-typed form.
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
+  // Keyed by campaign too, so a draft never shows under another campaign's character (CLAUDE.md: scoped per campaign).
+  const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
@@ -198,11 +202,11 @@ export default function CharacterSheetsSection({
                 onForget={() =>
                   void send(s.entityId, { action: "forget" }, w.forgetDone)
                 }
-                typedValue={typed[s.entityId] ?? EMPTY_TYPED}
+                typedValue={typed[typedKey(s.entityId)] ?? EMPTY_TYPED}
                 onTypedValue={(patch) =>
                   setTyped((now) => ({
                     ...now,
-                    [s.entityId]: { ...(now[s.entityId] ?? EMPTY_TYPED), ...patch },
+                    [typedKey(s.entityId)]: { ...(now[typedKey(s.entityId)] ?? EMPTY_TYPED), ...patch },
                   }))
                 }
                 onTyped={(choice, done) => void send(s.entityId, choice, done)}
@@ -256,10 +260,6 @@ export default function CharacterSheetsSection({
   );
 }
 
-/** What a player types in for a character with no sheet linked (#2832). Level is text until it is checked. */
-type TypedValues = { className: string; level: string; species: string; names: string };
-const EMPTY_TYPED: TypedValues = { className: "", level: "", species: "", names: "" };
-
 function Character({
   sheet,
   shown,
@@ -288,6 +288,25 @@ function Character({
   const summary = sheet.summary;
   const classes =
     summary?.classes.map((c) => `${c.name} ${c.level}`).join(", ") ?? "";
+  // A press while a choice is on its way is dropped without a word, as the link form does (#2832).
+  const submitTyped = () => {
+    if (busy) return;
+    const checked = checkTyped(typedValue);
+    if (!checked.ok) {
+      onProblem(checked.problem === "class" ? w.typedNeedsClass : w.typedBadLevel);
+      return;
+    }
+    onTyped(
+      {
+        action: "typed",
+        className: checked.className,
+        level: checked.level,
+        species: checked.species,
+        names: checked.names,
+      },
+      w.typedSaved + (sheet.source === "dndbeyond" ? w.typedReplacedLink : ""),
+    );
+  };
   return (
     <div class="stack">
       <p>
@@ -336,89 +355,13 @@ function Character({
         </form>
       )}
       {shown && (
-        <details>
-          <summary>{w.typedSummary}</summary>
-          <form
-            class="stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (busy) return;
-              const className = typedValue.className.trim();
-              if (className === "") return onProblem(w.typedNeedsClass);
-              const level = typedValue.level.trim();
-              const n = Number(level);
-              if (!/^\d{1,2}$/.test(level) || n < 1 || n > 20)
-                return onProblem(w.typedBadLevel);
-              onTyped(
-                {
-                  action: "typed",
-                  className,
-                  level: n,
-                  species: typedValue.species.trim(),
-                  names: typedValue.names.trim(),
-                },
-                w.typedSaved +
-                  (sheet.source === "dndbeyond" ? w.typedReplacedLink : ""),
-              );
-            }}
-          >
-            <label>
-              {w.typedClass}
-              <input
-                type="text"
-                required
-                maxLength={60}
-                value={typedValue.className}
-                placeholder={w.typedClassHint}
-                onInput={(e) =>
-                  onTypedValue({ className: (e.target as HTMLInputElement).value })
-                }
-              />
-            </label>
-            <label>
-              {w.typedLevel}
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={2}
-                value={typedValue.level}
-                placeholder={w.typedLevelHint}
-                onInput={(e) =>
-                  onTypedValue({ level: (e.target as HTMLInputElement).value })
-                }
-              />
-            </label>
-            <label>
-              {w.typedSpecies}
-              <input
-                type="text"
-                maxLength={60}
-                value={typedValue.species}
-                placeholder={w.typedSpeciesHint}
-                onInput={(e) =>
-                  onTypedValue({ species: (e.target as HTMLInputElement).value })
-                }
-              />
-            </label>
-            <label>
-              {w.typedNames}
-              <textarea
-                maxLength={1500}
-                value={typedValue.names}
-                placeholder={w.typedNamesHint}
-                onInput={(e) =>
-                  onTypedValue({ names: (e.target as HTMLTextAreaElement).value })
-                }
-              />
-            </label>
-            {sheet.source === "dndbeyond" && (
-              <p class="small muted">{w.typedReplacesLink}</p>
-            )}
-            <button type="submit" class="button" aria-disabled={busy}>
-              {w.typedSave}
-            </button>
-          </form>
-        </details>
+        <TypedForm
+          sheet={sheet}
+          values={typedValue}
+          busy={busy}
+          onValues={onTypedValue}
+          onSubmit={submitTyped}
+        />
       )}
     </div>
   );
