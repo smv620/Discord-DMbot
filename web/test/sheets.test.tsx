@@ -12,6 +12,7 @@ import {
 } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import CharacterSheetsSection from "../src/account/Sheets";
 import { sheetWords as w } from "../src/content/sheets-words";
@@ -228,5 +229,241 @@ describe("Type in my character", () => {
     fill(0, { className: "Wizard", level: "5" });
     save(0);
     expect(await screen.findByText(w.typedSaved + w.typedReplacedLink, {}, { timeout: 8000 })).toBeTruthy();
+  });
+});
+
+describe("a link typed for one campaign", () => {
+  it("does not show under another campaign's character, and is empty again on return", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    const linkBox = () => screen.getAllByRole("textbox")[0] as HTMLInputElement;
+    fireEvent.input(linkBox(), { target: { value: "https://www.dndbeyond.com/characters/777" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(linkBox().value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(linkBox().value).toBe(""));
+  });
+});
+
+describe("a campaign the page has left", () => {
+  it("an old campaign's slow read is not drawn after a switch", async () => {
+    const api = mockApi("table");
+    const fetch = api.campaignSheets!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.campaignSheets = async (ref) => {
+      const got = await fetch(ref);
+      if (ref !== "100.sh") return got;
+      await held;
+      return { ...got, sheets: got.sheets.map((c) => ({ ...c, name: "Stale Oren" })) };
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Stale Oren", { exact: false })).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("an old campaign's failed read does not show the failure on the new one", async () => {
+    const api = mockApi("table");
+    const fetch = api.campaignSheets!.bind(api);
+    let fail!: () => void;
+    const held = new Promise<void>((r) => (fail = r));
+    api.campaignSheets = async (ref) => {
+      if (ref !== "100.sh") return fetch(ref);
+      await held;
+      throw new ApiError("server");
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    fail();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.failedToLoad)).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("an answer for a choice made in the old campaign shows no report in the new one", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = false;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref !== "100.sh") return answer(ref, id);
+      asked = true;
+      await held;
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    // The old section has asked for its answer, and that answer is still held when the page leaves.
+    await waitFor(() => expect(asked).toBe(true), { timeout: 4000 });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(w.forgetDone)).toBeNull();
+  });
+});
+
+describe("Use a document link", () => {
+  const docBox = (name: string) => screen.getByLabelText(w.documentLabel(name)) as HTMLInputElement;
+  const sendDocument = (name: string) => fireEvent.submit(docBox(name).closest("form")!);
+  const documentCalls = (api: ReturnType<typeof mockApi>) => calls(api, "chooseSheet").filter((c) => c.includes('"action":"document"'));
+
+  it("a player sends a document link and the choice is queued as document", async () => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(api.calls).toContain(`chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "document", url: "https://example.com/sheet.pdf" })}`);
+  });
+
+  // Each case opens a fresh page, so one case's message cannot be the one another case finds.
+  it.each([
+    ["", "empty"],
+    ["a word with spaces", "not-web"],
+    ["ftp://example.com/x", "not-web"],
+    ["http://example.com/x", "not-web"],
+  ] as const)("a link of the wrong shape (%j) sends nothing and says why", async (text, problem) => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: text } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentProblems[problem]!)).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(0);
+  });
+
+  it("an upper-case https link is sent, and the mock reads it as a web address", async () => {
+    const api = await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "HTTPS://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(1);
+    expect(api.calls).toContain(`chooseSheet:100.sh:sh-ivy:${JSON.stringify({ action: "document", url: "https://example.com/sheet.pdf" })}`);
+  });
+
+  it("the mock refuses a link it can't read with bad-document-link, in the document's own words", async () => {
+    const api = await open();
+    // Passes the page's check (a literal prefix and a host), but the mock reads no host after the slashes.
+    fireEvent.input(docBox("Ivy"), { target: { value: "https:///example.com" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.problems["bad-document-link"] as string, {}, { timeout: 8000 })).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(1);
+  });
+
+  it("a link longer than 400 characters is refused with the plain words, not cut short", async () => {
+    const api = await open();
+    const long = "https://example.com/" + "a".repeat(401 - "https://example.com/".length);
+    fireEvent.input(docBox("Ivy"), { target: { value: long } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentProblems["too-long"]!)).toBeTruthy();
+    expect(documentCalls(api)).toHaveLength(0);
+  });
+
+  it("a DM does not see the document form", async () => {
+    await open(".sheets-dm");
+    expect(screen.queryByText(w.documentSummary)).toBeNull();
+    expect(screen.queryByLabelText(w.documentLabel("Sorrel"))).toBeNull();
+  });
+
+  it("an existing sheet shows that reading a document replaces it", async () => {
+    await open();
+    expect(screen.getAllByText(w.documentReplaces)).toHaveLength(1);
+  });
+
+  it("the document draft is cleared after a successful send", async () => {
+    await open();
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/sheet.pdf" } });
+    sendDocument("Ivy");
+    expect(await screen.findByText(w.documentSent, {}, { timeout: 8000 })).toBeTruthy();
+    expect(docBox("Ivy").value).toBe("");
+  });
+
+  it("a half-typed document link does not show under another campaign", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.input(docBox("Ivy"), { target: { value: "https://example.com/half" } });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await waitFor(() => expect(docBox("Ivy").value).toBe(""));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(() => expect(docBox("Ivy").value).toBe(""));
+  });
+
+  it("a choice still going on one campaign does not disable another campaign's controls", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    api.sheetAnswer = async (ref, id) => {
+      if (ref === "100.sh") await held;
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    const forget = screen.getByRole("button", { name: w.forget });
+    expect(forget.getAttribute("aria-disabled")).not.toBe("true");
+    expect(screen.queryByText(w.stage.waiting as string)).toBeNull();
+    fireEvent.click(forget);
+    await waitFor(() =>
+      expect(api.calls).toContain(`chooseSheet:100.other:sh-sorrel:${JSON.stringify({ action: "forget" })}`),
+    );
+    release();
+  });
+
+  it("a read from an earlier visit cannot overwrite a later visit", async () => {
+    const api = mockApi("table");
+    const real = api.campaignSheets!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    api.campaignSheets = async (ref) => {
+      const got = await real(ref);
+      if (ref !== "100.sh" || !first) return got;
+      first = false;
+      await held;
+      return { ...got, sheets: got.sheets.map((c) => ({ ...c, name: "Stale Oren" })) };
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("Stale Oren", { exact: false })).toBeNull();
+    expect(screen.getByText(w.mine("Sorrel"))).toBeTruthy();
+  });
+
+  it("the old section stops asking about its choice once the page has left", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref !== "100.sh") return answer(ref, id);
+      asked += 1;
+      await held;
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    const before = asked;
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    await new Promise((r) => setTimeout(r, 2000));
+    expect(asked).toBe(before);
+    release();
   });
 });

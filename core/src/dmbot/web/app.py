@@ -2553,6 +2553,8 @@ def create_app(
         **setting_refusals,
         "bad_action": (400, "bad_action"),
         "bad_link": (400, "bad_link"),
+        "bad_document": (400, "bad_document"),
+        "bad_typed": (400, "bad_typed"),
         "not_allowed": (403, "not_allowed"),
         "too_soon": (429, "too_soon"),
         "read_too_soon": (429, "read_too_soon"),

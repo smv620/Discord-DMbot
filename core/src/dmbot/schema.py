@@ -15655,7 +15655,7 @@ NAMES_FIXED_UNDO = (
 def _swap(text: str, pairs: tuple[tuple[str, str], ...]) -> str:
     for old, new in pairs:
         if text.count(old) != 1:  # (an explicit raise: `python -O` drops an assert)
-            raise RuntimeError(f"the names-to-check door no longer has: {old[:50]}")
+            raise RuntimeError(f"a door no longer has the text this migration changes: {old[:50]}")
         text = text.replace(old, new, 1)
     return text
 
@@ -17343,6 +17343,41 @@ WEB_NAME_UNNAMED = (
 """
 )
 
+# The servers that have website-restore rows (#2746): `web_restores` is isolated per server, so a
+# sweep that must reach a server the bot has left (its rows hold whole campaigns) cannot list them
+# itself. A routing table like `campaign_guilds`: server ids and nothing else, so no row-level
+# security (see the rules at the top of this file). A trigger fills it when a row is staged, and
+# the bot's upkeep removes a server once it has no rows left: it locks the server's row first
+# (`SELECT … FOR UPDATE`), then runs the delete as a second statement, so the check sees every row
+# committed by then; an insert staged meanwhile waits on the same lock (the trigger's conflict
+# clause takes it) and puts the row back. (`web_restores` is new and empty
+# everywhere, so there is nothing to backfill.)
+WEB_RESTORE_GUILDS = """
+    CREATE TABLE web_restore_guilds (
+        guild_id BIGINT PRIMARY KEY
+    );
+    CREATE FUNCTION dmbot_note_restore_guild() RETURNS trigger
+        LANGUAGE plpgsql SECURITY DEFINER
+        AS $fn$
+    BEGIN
+        INSERT INTO web_restore_guilds (guild_id) VALUES (NEW.guild_id)
+            ON CONFLICT (guild_id) DO UPDATE SET guild_id = EXCLUDED.guild_id;
+        RETURN NULL;
+    END
+    $fn$;
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_note_restore_guild() SET search_path = pg_catalog, %I, pg_temp',
+            current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_note_restore_guild() FROM PUBLIC;
+    CREATE TRIGGER web_restore_guilds_note
+        AFTER INSERT ON web_restores
+        FOR EACH ROW EXECUTE FUNCTION dmbot_note_restore_guild();
+"""
+
 WEB_RESTORES = (
     """
     -- A backup loaded from the website (#2745), waiting for the bot. The website's role cannot
@@ -17836,6 +17871,231 @@ WEB_LINE_DELETIONS = (
 )
 
 
+# A pronoun's "Which one?" on the website (#2811, after #2810): a question about "she" or "her" can
+# have one name to offer, or none once its names are refused, and is then answered with that name
+# or with "Someone else" (the existing 'backstory-which-neither' action: the bot keeps a pronoun's
+# connection with an unnamed person, `none_of_these`). The waiting list showed only questions with
+# two names, so a DM who used only the website never saw these. A question about a name keeps
+# needing two. The list says which questions are about a pronoun, by the same words as
+# `memory.pronouns.PRONOUNS` (a test keeps the two lists equal). The pick door now also refuses a
+# question's own end, which the bot refuses too (it sits in `candidates` as a filler and is never
+# offered). Both doors are cut from their latest text by guarded replacement, so a drift makes this
+# fail loudly instead of quietly changing a rule. No row changes.
+PRONOUN_WORDS = (
+    "he", "she", "his", "her", "hers", "him", "himself", "herself", "they", "their", "theirs",
+    "them", "its", "who", "whose", "whom",
+)  # fmt: skip
+_PRONOUN_SQL = (
+    "lower(btrim(btrim(regexp_replace(q.word, '\\s+', ' ', 'g')), '.,;:!?\"''“”‘’()'))"
+    " = ANY (ARRAY[" + ", ".join(f"'{w}'" for w in PRONOUN_WORDS) + "])"
+)
+_PRONOUN_WAITING_SWAPS = (
+    (
+        "-- (a question left with fewer than two live candidates is not shown: nothing can be\n"
+        "            -- picked, and the bot deletes it when it next reads the queue)",
+        "-- (a question about a name left with fewer than two live candidates is not shown:\n"
+        "            -- nothing can be picked, and the bot deletes it when it next reads the\n"
+        '            -- queue. One about a pronoun is shown with one name or none: "Someone else")',
+    ),
+    (
+        "'upload', w.upload, 'candidates', w.cands)",
+        "'upload', w.upload,\n"
+        "                    'candidates', COALESCE(w.cands, '[]'::jsonb), 'pronoun', w.pron)",
+    ),
+    ("SELECT q.*, (\n", "SELECT q.*, " + _PRONOUN_SQL + " AS pron, (\n"),
+    (
+        ">= 2), '[]'::jsonb));",
+        ">= CASE WHEN w.pron THEN 0 ELSE 2 END), '[]'::jsonb));",
+    ),
+)
+_PRONOUN_PICK_SWAPS = (
+    (
+        "OR clean = ANY (w.candidates))) THEN",
+        "OR (clean = ANY (w.candidates) AND clean <> w.other_id))) THEN",
+    ),
+)
+# Both doors are read back from the database as they are now, as 0266 does, and not rebuilt from
+# the text of the migration that last wrote them: 0266 widened the name door in place (the
+# 'name' actions and the unnamed guards), and making it again from older text would undo that.
+WEB_PRONOUN_WHICH = (
+    r"""
+    CREATE OR REPLACE FUNCTION pg_temp.swap_once(def text, old text, new text) RETURNS text
+    LANGUAGE plpgsql AS $f$
+    BEGIN
+        IF (length(def) - length(replace(def, old, ''))) <> length(old) THEN
+            RAISE EXCEPTION 'not found exactly once: %', left(old, 80);
+        END IF;
+        RETURN replace(def, old, new);
+    END
+    $f$;
+
+    DO $do$
+    DECLARE
+        def text;
+    BEGIN
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_waiting';
+"""
+    + _swaps("def", _PRONOUN_WAITING_SWAPS)
+    + r"""
+        EXECUTE def;
+
+        SELECT pg_get_functiondef(p.oid) INTO def FROM pg_proc p
+            WHERE p.pronamespace = current_schema()::regnamespace
+              AND p.proname = 'dmbot_web_name_action_add';
+"""
+    + _swaps("def", _PRONOUN_PICK_SWAPS)
+    + r"""
+        EXECUTE def;
+    END
+    $do$;
+"""
+)
+
+
+# The website's character sheets take two more choices (#2818): `typed` (the form Discord's "Type in
+# my character" has: class, level, species and names, kept as one small JSON text in `payload`) and
+# `document` (a public https web page or PDF link in `url`, which the bot fetches and reads; the
+# website never does, and the bot's fetch is https only, so an http link is refused here too). The
+# door gets the same fifth argument as for a link (`lnk`): the link for `document`, the JSON text
+# for `typed`. It refuses a shape the bot would not read (`bad_document`, `bad_typed`) and the bot
+# checks the rest again. A document read costs an AI call, so a person may queue one a minute,
+# where a link or typed sheet may be queued every 20 seconds. The link stays in this row only; no
+# door gives it back (the answer door returns the state and the plain error word). The door is cut
+# from its text in 0268 by guarded replacement, so a drift fails loudly.
+_SHEET_DOOR = WEB_SHEET_ACTIONS[
+    WEB_SHEET_ACTIONS.index("    CREATE FUNCTION dmbot_web_sheet_action_add(") :
+]
+_SHEET_DOOR = _SHEET_DOOR[
+    : _SHEET_DOOR.index("    -- The state of one of the caller's own choices")
+]
+_SHEET_DOOR = _swap(
+    _SHEET_DOOR.replace("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION"),
+    (
+        (
+            "        who TEXT := COALESCE(ent, '');\n    BEGIN",
+            "        who TEXT := COALESCE(ent, '');\n"
+            "        body TEXT := '';\n"
+            "        pj JSONB;\n"
+            "    BEGIN",
+        ),
+        (
+            "IF act IS NULL OR act NOT IN ('link', 'forget', 'read_again') THEN",
+            "IF act IS NULL\n"
+            "           OR act NOT IN ('link', 'forget', 'read_again', 'typed', 'document') THEN",
+        ),
+        (
+            "            IF act = 'forget' THEN\n                want := '';",
+            "            IF act = 'document'\n"
+            "               AND (char_length(want) > 400\n"
+            "                    OR want !~ '^https://[^[:space:][:cntrl:]<>\"]+$') THEN\n"
+            "                RETURN jsonb_build_object('status', 'bad_document');\n"
+            "            END IF;\n"
+            "            IF act = 'typed' THEN\n"
+            "                -- the form as one JSON object with exactly its four fields, each in\n"
+            "                -- the limits Discord's form has "
+            "(class and species 60, level 1 to 20,\n"
+            "                -- names 1500); the bot checks the words again\n"
+            "                body := want;\n"
+            "                want := '';\n"
+            "                BEGIN\n"
+            "                    pj := body::jsonb;\n"
+            "                EXCEPTION WHEN others THEN\n"
+            "                    RETURN jsonb_build_object('status', 'bad_typed');\n"
+            "                END;\n"
+            "                IF char_length(body) > 4000 OR jsonb_typeof(pj) <> 'object'\n"
+            "                   OR (SELECT count(*) FROM jsonb_object_keys(pj)) <> 4\n"
+            "                   OR NOT (pj ?& ARRAY['className', 'level', 'species', 'names'])\n"
+            "                   OR jsonb_typeof(pj->'className') <> 'string'\n"
+            "                   OR char_length(btrim(pj->>'className')) NOT BETWEEN 1 AND 60\n"
+            "                   OR jsonb_typeof(pj->'level') <> 'number'\n"
+            "                   OR (pj->>'level') !~ '^([1-9]|1[0-9]|20)$'\n"
+            "                   OR jsonb_typeof(pj->'species') <> 'string'\n"
+            "                   OR char_length(pj->>'species') > 60\n"
+            "                   OR jsonb_typeof(pj->'names') <> 'string'\n"
+            "                   OR char_length(pj->>'names') > 1500 THEN\n"
+            "                    RETURN jsonb_build_object('status', 'bad_typed');\n"
+            "                END IF;\n"
+            "            END IF;\n"
+            "            IF act = 'forget' THEN\n                want := '';",
+        ),
+        (
+            "AND a.entity_id = who AND a.action = act AND a.url = want\n",
+            "AND a.entity_id = who AND a.action = act AND a.url = want\n"
+            "              AND a.payload = body\n",
+        ),
+        (
+            "        IF act = 'link' AND EXISTS (SELECT 1 FROM web_sheet_actions a\n"
+            "            WHERE a.guild_id = g AND a.campaign_id = c "
+            "AND a.user_id = dmbot_current_user()\n"
+            "              AND a.action = 'link' AND a.created_at > now_s - 20) THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_soon');\n"
+            "        END IF;\n",
+            "        IF act IN ('link', 'typed') AND EXISTS (SELECT 1 FROM web_sheet_actions a\n"
+            "            WHERE a.guild_id = g AND a.campaign_id = c "
+            "AND a.user_id = dmbot_current_user()\n"
+            "              AND a.action IN ('link', 'typed') AND a.created_at > now_s - 20) THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_soon');\n"
+            "        END IF;\n"
+            "        IF act = 'document' AND EXISTS (SELECT 1 FROM web_sheet_actions a\n"
+            "            WHERE a.guild_id = g AND a.campaign_id = c "
+            "AND a.user_id = dmbot_current_user()\n"
+            "              AND a.action = 'document' AND a.created_at > now_s - 60) THEN\n"
+            "            RETURN jsonb_build_object('status', 'too_soon');\n"
+            "        END IF;\n",
+        ),
+        (
+            "INSERT INTO web_sheet_actions (guild_id, campaign_id, "
+            "id, user_id, entity_id, action, url,\n"
+            "                                       created_at, updated_at)\n"
+            "            VALUES (g, c, rid, dmbot_current_user(), who, act, want, now_s, now_s);",
+            "INSERT INTO web_sheet_actions (guild_id, campaign_id, "
+            "id, user_id, entity_id, action, url,\n"
+            "                                       payload, created_at, updated_at)\n"
+            "            VALUES (g, c, rid, dmbot_current_user(), "
+            "who, act, want, body, now_s, now_s);",
+        ),
+    ),
+)
+WEB_SHEET_TYPED_DOCUMENT = (
+    r"""
+    ALTER TABLE web_sheet_actions DROP CONSTRAINT web_sheet_actions_action_check;
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_action_check
+        CHECK (action IN ('link', 'forget', 'read_again', 'typed', 'document'));
+    -- A document link is longer than a character link (Discord's field holds 400).
+    ALTER TABLE web_sheet_actions DROP CONSTRAINT web_sheet_actions_url_check;
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_url_check
+        CHECK (char_length(url) <= 400);
+    -- The typed form as JSON text (class, level, species, names); empty for every other choice.
+    ALTER TABLE web_sheet_actions
+        ADD COLUMN payload TEXT NOT NULL DEFAULT '' CHECK (char_length(payload) <= 4000);
+    -- While a choice waits, the columns agree with it: only a typed sheet has a payload (so a link
+    -- or a document can never carry stray text), and only a document or a link has an address. A
+    -- finished row (done or failed) may be blanked by the bot, which keeps no link or words.
+    ALTER TABLE web_sheet_actions ADD CONSTRAINT web_sheet_actions_shape_check CHECK (
+        state IN ('done', 'failed')
+        OR (((action = 'typed') = (payload <> ''))
+            AND ((action IN ('link', 'document')) = (url <> ''))));
+    COMMENT ON TABLE web_sheet_actions IS
+        'A website choice about a character sheet waiting for the bot: link, forget, read_again, '
+        'typed (payload: the form as JSON) or document (url: a public https link). Rows hold the '
+        'link or the typed words only until the bot finishes the row.';
+"""
+    + _SHEET_DOOR
+    + r"""
+    DO $do$
+    BEGIN
+        EXECUTE format(
+            'ALTER FUNCTION dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT)'
+            ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
+    END
+    $do$;
+    REVOKE ALL ON FUNCTION dmbot_web_sheet_action_add(BIGINT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+"""
+)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     ("0001_initial", INITIAL),
     ("0002_active_sessions", ACTIVE_SESSIONS),
@@ -18161,8 +18421,11 @@ MIGRATIONS: tuple[Migration, ...] = (
         "0269_report_fixed_remind",
         REPORT_FIXED_REMIND,
     ),  # Undo of a fix gives a reminder back (#2661)
+    ("0270_web_pronoun_which", WEB_PRONOUN_WHICH),  # pronoun questions on the website (#2811)
     ("0271_web_restores", WEB_RESTORES),  # a backup loaded from the website (#2745)
     ("0272_web_line_deletions", WEB_LINE_DELETIONS),  # Delete my transcripts on the website (#2781)
+    ("0273_restore_guilds", WEB_RESTORE_GUILDS),  # servers with restore rows, for the sweep (#2746)
+    ("0274_web_sheet_typed_document", WEB_SHEET_TYPED_DOCUMENT),  # typed and document (#2818)
 )
 
 # Tables that must have row-level security. A test checks every table in the schema
@@ -18309,7 +18572,7 @@ USER_ISOLATED_TABLES = (
 # administrator (#665).
 WRITE_ONLY_TABLES = ("feedback",)
 # Hold only server IDs (see the rules at the top of this file).
-ROUTING_TABLES = ("live_session_guilds", "campaign_guilds")
+ROUTING_TABLES = ("live_session_guilds", "campaign_guilds", "web_restore_guilds")
 UNSCOPED_TABLES = (
     "schema_migrations",
     "ontology_predicate_versions",

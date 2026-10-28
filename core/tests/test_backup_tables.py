@@ -346,5 +346,29 @@ class EveryClaimedTableComesBack(DatabaseTest):
         after = {t: await self.count(OTHER, restored.id, t) for t in claimed}
         self.assertEqual(after, before)
 
+    async def test_a_restore_with_no_transcripts_files_tells_a_plain_progress_nothing(self) -> None:
+        """Discord's waiting message hears only the transcripts files: nothing at all when a copy
+        has none (not a 0 of 0, and not the sections), as before #2746."""
+        data, _parts = await self.store.export_set(GUILD, self.campaign.id)
+        told: list[tuple[int, int]] = []
+        steps: list[int] = []
+        await self.store.import_backup(
+            OTHER, data, DM, parts=(), progress=lambda d, t: told.append((d, t)),
+            step=lambda: steps.append(1),
+        )  # fmt: skip
+        self.assertEqual(told, [])
+        self.assertTrue(steps)  # the website's "still moving" is told as the sections are written
+
+    async def test_a_plain_progress_hears_zero_then_each_transcripts_file(self) -> None:
+        for statement, args in self.seeds().values():  # (a row in every table, transcripts too)
+            await self.sql(statement, *args)
+        data, parts = await self.store.export_set(GUILD, self.campaign.id)
+        self.assertTrue(parts)
+        told: list[tuple[int, int]] = []
+        await self.store.import_backup(
+            OTHER, data, DM, parts=parts, progress=lambda d, t: told.append((d, t))
+        )
+        self.assertEqual(told, [(i, len(parts)) for i in range(len(parts) + 1)])
+
     async def test_the_sections_listed_are_the_registered_ones(self) -> None:
         self.assertEqual(set(self.store._sections), set(SECTION_TABLES))

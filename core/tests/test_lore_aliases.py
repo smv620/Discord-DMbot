@@ -13,9 +13,10 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.memory import background as bg
+from dmbot.memory.end_match import usable_alias
 from dmbot.memory.lookup import LookupData
 from dmbot.memory.models import Alias
-from dmbot.ui.name_background import confirmed_aliases, usable_alias
+from dmbot.ui.name_background import confirmed_aliases
 from tests.test_transcript_cleaner import alias, entity
 
 ALDRIC, MIRA, VALE = "a" * 32, "b" * 32, "c" * 32

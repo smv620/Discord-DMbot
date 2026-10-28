@@ -1732,6 +1732,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.action === "link" && !/^https:\/\/www\.dndbeyond\.com\/characters\/[0-9]{1,12}$/.test(choice.url)) {
         throw new ApiError("bad-link");
       }
+      if (choice.action === "document" && !/^https:\/\/[^\s/]+/i.test(choice.url)) throw new ApiError("bad-document-link");
       if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
       return "sheet-answer";
     },
