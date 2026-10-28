@@ -50,6 +50,7 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    line_fixes,
     names_smart,
     npc_pages,
     offers,
@@ -2446,6 +2447,73 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    line_fix_refusals = {
+        "bad_text": (400, "bad_text"),
+        "same": (400, "same"),
+        "bad_choice": (422, "bad_choice"),
+        "not_yours": (403, "not_yours"),
+        "not_recorded": (403, "not_recorded"),
+        "not_found": (404, "not_found"),
+        "open": (409, "open"),  # this line already has a fix waiting for the DM
+        "many": (409, "many"),  # three of this person's fixes are waiting
+        "no_dm_screen": (409, "no_dm_screen"),
+        "queue_full": (429, "queue_full"),  # twenty waiting in the campaign: a flood guard only
+        "too_big": (413, "too_big"),
+    }
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/fix", status_code=202)
+    async def me_transcript_fix(
+        ref: str, number: int, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """Fix one spoken line (#2858): the line's own speaker suggests new words for the DM to
+        check, a DM of the campaign rewrites any spoken line. `{answer, mode}`; poll
+        `.../fix/{answer}`. 404 while DMBOT_WEB_LINE_FIX is off."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        body = await small_json(request)
+        speaker, started, text = body.get("speaker"), body.get("startedMs"), body.get("text")
+        if not isinstance(speaker, str) or type(started) is not int or not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            made = await line_fixes.request(
+                db,
+                session,
+                ref,
+                number,
+                speaker,
+                started,
+                text,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = line_fix_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": made["id"], "mode": made["mode"]}
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/fix/{answer}")
+    async def me_transcript_fix_status(
+        ref: str, number: int, answer: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where the person's own fix stands, in the shared progress shape (#2858), with `result`
+        ("sent" or "changed") once it is done."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await line_fixes.status(
+                db,
+                session,
+                ref,
+                number,
+                answer,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
     async def me_transcript_download(

@@ -2939,6 +2939,23 @@ edit has no Undo and no list. A line with a name fix, an answer or an open "Did 
 not edited until that is settled. Nothing goes to the player and nothing is public;
 the DM is checked on every press.
 
+**The same two fixes from the website (decided 2026-10-28, #2858).** On a session's Transcripts page
+(Cleaned version), **Fix this line** is offered on the viewer's own spoken lines, and on every spoken
+line for a DM of the campaign (never a sidebar, typed or skipped line). One route decides which path
+from who asks: the line's speaker who is not a DM **suggests** (it waits for the DM exactly as
+Discord's does, one waiting per line, three per person, the campaign needs a DM screen); a DM
+**rewrites** at once, as `submit_dm` does (a DM who is also the speaker takes this path). The website
+queues the request (`web_line_fixes`, migration 0276) and the bot does what Discord does; the secret
+names, consent and "the line is still as shown" (a hash of the line's cleaned words taken when the
+person asked) are checked by the bot again when it acts. The person's words (200 characters, tidied
+as Discord tidies them) are blanked from the queue row the moment it finishes. The raw transcript
+and what was heard are never touched by the website. A flood guard of 20 waiting fixes per campaign
+answers "Too many fixes are waiting in this campaign. Try again in a few minutes." The outcome is
+"Sent to your DM to check." for a suggestion and "Changed." for a rewrite, with "You can undo it from
+the fix notes in Discord." only while that session still runs (Discord's Undo stops with it). There
+is no Undo on the website. Behind `DMBOT_WEB_LINE_FIX` (routes answer 404 while off) and the site
+switch `FIX_LINE_LIVE`.
+
 **Transcript Cleaner step 3: built (2026-10-16, #127): earlier lines are re-checked after an
 answer.** When the DM answers "Did they mean…?" (by picking a name or by Type it…), the
 spelling they chose is also written into the **earlier lines of the running session** that
