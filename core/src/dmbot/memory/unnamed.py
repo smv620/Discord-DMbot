@@ -16,7 +16,10 @@ from collections.abc import Mapping
 from dmbot.memory.models import name_key
 
 SUFFIX = "(name unknown)"
-GROUP = "Not named yet"  # the heading on the name list
+NAME_FIRST = "Give them a name first: DMbot doesn't know who they are yet."
+STORED_MAX = 100  # the name column's limit
+ANCHOR_MAX = 40  # a long anchor name is cut in the label, never the suffix
+GROUP = "Not named yet"  # the heading on the name list (slice 4b)
 MAX_WHAT = 100
 MAX_ROLE = 40
 _ARTICLE = re.compile(r"^(?:a|an|the)\s+", re.IGNORECASE)
@@ -36,8 +39,19 @@ def label(what: str, anchor_name: str | None = None) -> str:
     them off."""
     word = tidy(what)
     if anchor_name:
-        return f"{possessive(anchor_name)} {_ARTICLE.sub('', word)} {SUFFIX}"
+        whose = possessive(anchor_name[:ANCHOR_MAX].rstrip())
+        return f"{whose} {_ARTICLE.sub('', word)} {SUFFIX}"
     return f"{word} {SUFFIX}"
+
+
+def stored(what: str, anchor_name: str | None = None) -> str:
+    """The copy kept in the name column (it must fit 100 characters and still end in the suffix,
+    so the word is shortened, never the suffix): lists that show the stored name stay right."""
+    full = label(what, anchor_name)
+    if len(full) <= STORED_MAX:
+        return full
+    room = STORED_MAX - len(label("", anchor_name)) - 1
+    return label(tidy(what)[: max(room, 1)].rstrip(), anchor_name)
 
 
 def same_person_key(what: str, role: str | None) -> str:

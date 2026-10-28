@@ -43,6 +43,17 @@ class TheLabel(unittest.TestCase):
         self.assertNotEqual(key("king", "liege"), key("king", None))
 
 
+class TheStoredCopy(unittest.TestCase):
+    def test_the_stored_label_fits_and_still_ends_in_the_suffix(self) -> None:
+        long_anchor = "A" * 100
+        for what in ("sister", "w" * 100):
+            got = unnamed.stored(what, long_anchor)
+            with self.subTest(what=what[:5]):
+                self.assertLessEqual(len(got), 100)
+                self.assertTrue(got.endswith(unnamed.SUFFIX))
+        self.assertEqual(unnamed.stored("sister", "Ken"), "Ken's sister (name unknown)")
+
+
 class MakingThem(MemoryTest):
     async def ken(self) -> str:
         return await self.add("Ken", status=CONFIRMED)
@@ -115,6 +126,26 @@ class MakingThem(MemoryTest):
         [(_, shown)] = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual(shown, "Kenneth's sister (name unknown)")
 
+    async def test_the_stored_name_follows_a_rename_and_a_merge_in_the_same_change(self) -> None:
+        ken = await self.ken()
+        made = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="sister", anchor_id=ken, role="sibling"
+        )
+        renamed = await self.memory.rename_entity(GUILD_A, self.c, ken, "Kenneth", source="dm")
+        stored = {e.id: e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertEqual(stored[made.entity.id], "Kenneth's sister (name unknown)")
+        assert renamed.batch is not None
+        await self.memory.undo(GUILD_A, self.c, renamed.batch, source="dm")  # one undo, both back
+        stored = {e.id: e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertEqual(stored[made.entity.id], "Ken's sister (name unknown)")
+
+    async def test_one_unnamed_person_may_hang_off_another(self) -> None:
+        ken = await self.ken()
+        sis = await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken)
+        kid = await self.memory.add_unnamed(GUILD_A, self.c, what="son", anchor_id=sis.entity.id)
+        shown = {e.id: label for e, label in await self.memory.unnamed(GUILD_A, self.c)}
+        self.assertEqual(shown[kid.entity.id], "Ken's sister (name unknown)'s son (name unknown)")
+
     async def test_she_follows_the_anchor_when_two_entries_are_one(self) -> None:
         ken = await self.ken()
         kenneth = await self.add("Kenneth", status=CONFIRMED)
@@ -125,6 +156,72 @@ class MakingThem(MemoryTest):
         [(entity, shown)] = await self.memory.unnamed(GUILD_A, self.c)
         self.assertEqual((entity.id, entity.unnamed_anchor), (made.entity.id, ken))
         self.assertEqual(shown, "Ken's sister (name unknown)")
+
+
+class MoreRules(MemoryTest):
+    async def pair(self) -> tuple[str, str]:
+        ken = await self.add("Ken", status=CONFIRMED)
+        made = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="sister", anchor_id=ken, role="sibling"
+        )
+        return ken, made.entity.id
+
+    async def test_an_unnamed_person_is_not_retyped_or_bulk_confirmed(self) -> None:
+        _ken, sis = await self.pair()
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.set_entity_type(GUILD_A, self.c, sis, "place", source="dm")
+        done = await self.memory.confirm_kinds(GUILD_A, self.c, [sis], "place", source="dm")
+        self.assertEqual(done.value, 0)
+        [(e, _)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual((e.type, e.status), ("character", PROPOSED))
+
+    async def test_undo_of_a_merge_puts_the_anchor_and_the_label_back(self) -> None:
+        ken, _sis = await self.pair()
+        kenneth = await self.add("Kenneth", status=CONFIRMED)
+        other = await self.memory.add_unnamed(GUILD_A, self.c, what="aunt", anchor_id=kenneth)
+        merged = await self.memory.merge(
+            GUILD_A, self.c, ken, kenneth, source="dm", dm_said_same=True
+        )
+        rows = {e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertEqual(
+            (rows[other.entity.id].unnamed_anchor, rows[other.entity.id].name),
+            (ken, "Ken's aunt (name unknown)"),
+        )
+        assert merged.batch is not None
+        await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
+        rows = {e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+        self.assertEqual(
+            (rows[other.entity.id].unnamed_anchor, rows[other.entity.id].name),
+            (kenneth, "Kenneth's aunt (name unknown)"),
+        )
+
+    async def test_undo_of_giving_a_name_makes_them_unnamed_again_with_no_alias(self) -> None:
+        _ken, sis = await self.pair()
+        done = await self.memory.rename_entity(GUILD_A, self.c, sis, "Mira", source="dm")
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
+        [(e, shown)] = await self.memory.unnamed(GUILD_A, self.c)
+        self.assertEqual(
+            (e.id, e.unnamed_what, shown), (sis, "sister", "Ken's sister (name unknown)")
+        )
+        self.assertEqual(await self.memory.aliases(GUILD_A, self.c, entity_id=sis), [])
+
+    async def test_merge_many_keeps_the_named_one_even_when_the_first_pick_was_unnamed(
+        self,
+    ) -> None:
+        _ken, sis = await self.pair()
+        mira = await self.add("Mira", status=CONFIRMED)
+        lia = await self.add("Lia", status=CONFIRMED)
+        done = await self.memory.merge_many(GUILD_A, self.c, sis, [mira, lia], source="dm")
+        self.assertFalse(done.value.unnamed)
+        self.assertIn(done.value.name, {"Mira", "Lia"})
+
+    async def test_an_unnamed_entry_merged_with_what_it_hangs_off_keeps_a_valid_anchor(
+        self,
+    ) -> None:
+        ken, sis = await self.pair()
+        done = await self.memory.merge(GUILD_A, self.c, sis, ken, source="dm", dm_said_same=True)
+        self.assertEqual(done.value.id, ken)  # the named one is kept
 
 
 class EveryMatchingPathSkipsThem(MemoryTest):
@@ -261,6 +358,29 @@ class InABackup(MemoryTest):
         copied = await self.snapshot(GUILD_B, restored.id)
         self.assertTrue(copied["memory_entities"])
         self.assertFalse(any(r["unnamed"] for r in copied["memory_entities"]))
+
+    async def test_other_damaged_files_are_refused_too(self) -> None:
+        ken = await self.add("Ken", status=CONFIRMED)
+        await self.memory.add_unnamed(GUILD_A, self.c, what="sister", anchor_id=ken, role="sibling")
+        await self.add("Mira", status=CONFIRMED)
+        spoilers = (
+            {"unnamed_anchor": "f" * 32},  # not in the file
+            {"unnamed_role": "r" * 41},
+            {"unnamed": False},  # still has a word
+        )
+        for spoil in spoilers:
+            data = await self.campaigns.export(GUILD_A, self.c)
+            for row in data["sections"]["memory"]:
+                if row.get("table") == "entity" and row.get("unnamed"):
+                    row.update(spoil)
+            with self.subTest(spoil=spoil), self.assertRaises(CampaignError):
+                await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(data)), DM)
+        data = await self.campaigns.export(GUILD_A, self.c)
+        for row in data["sections"]["memory"]:
+            if row.get("table") == "entity" and row["name"] == "Mira":
+                row["unnamed_anchor"] = ken  # an anchor on a named entry
+        with self.assertRaises(CampaignError):
+            await self.campaigns.import_backup(GUILD_B, decode_backup(encode_backup(data)), DM)
 
     async def test_a_damaged_file_is_refused_not_half_loaded(self) -> None:
         ken = await self.add("Ken", status=CONFIRMED)

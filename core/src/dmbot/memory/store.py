@@ -1427,7 +1427,7 @@ class MemoryStore:
                 {
                     "id": new_id(),
                     "type": "character",
-                    "name": unnamed_mod.label(word, anchor_name)[:100],
+                    "name": unnamed_mod.stored(word, anchor_name),
                     "description": details.strip(),
                     "status": PROPOSED,
                     "merged_into": None,
@@ -1460,10 +1460,13 @@ class MemoryStore:
                 str(r["id"]): str(r["name"])
                 for r in await scope.select(ENTITIES, " AND status IN ('proposed', 'confirmed')")
             }
-        return [
-            (_entity(r), unnamed_mod.shown(r["unnamed_what"], r["unnamed_anchor"], names))
-            for r in rows
-        ]
+        # one unnamed person may hang off another ("the king's sister"): built from the parts
+        for _ in range(2):
+            for r in rows:
+                names[str(r["id"])] = unnamed_mod.shown(
+                    r["unnamed_what"], r["unnamed_anchor"], names
+                )
+        return [(_entity(r), names[str(r["id"])]) for r in rows]
 
     # ---- a clue only some people know (#1649) ----
 
@@ -1924,6 +1927,8 @@ class MemoryStore:
             current = await _entity_row(w, entity_id)
             if current["type"] == PERSON:
                 raise MemoryRuleError(PERSON_NOT_LISTED)
+            if current["unnamed"]:
+                raise MemoryRuleError(unnamed_mod.NAME_FIRST)
             check_named(asked, current["name"])
             if role is None and type == current["type"]:
                 role = current["role"]  # same kind, no new role said: it keeps its role
@@ -2073,6 +2078,11 @@ class MemoryStore:
                 }
                 keep_old = False
             row = await w.update(ENTITIES, entity_id, changes)
+            await _relabel_unnamed(
+                w,
+                name,
+                await w.select(ENTITIES, " AND unnamed AND unnamed_anchor = %s", [entity_id]),
+            )
             if own and (not clash or clash[0]["id"] == own[0]["id"]):
                 # The same name, spelled right (listened for, and never secret).
                 await w.update(
@@ -2278,7 +2288,8 @@ class MemoryStore:
                 confirmed += await w.update_where(
                     ENTITIES,
                     {**fields, **extra},
-                    " AND status = 'proposed' AND id = ANY(%s)",
+                    # (a person the story never named is not retyped in bulk: #2790)
+                    " AND status = 'proposed' AND NOT unnamed AND id = ANY(%s)",
                     [group],
                 )
             ids = [row["id"] for row in confirmed]
@@ -2868,12 +2879,22 @@ class MemoryStore:
         # sister" follows Ken when two Kens are one. One statement, because a merge is counted in
         # statements; an unnamed entry that hung off the one it was merged with just keeps pointing
         # at the merged-away entry (still there), and its label leaves the anchor out.
-        await w.update_where(
-            ENTITIES,
-            {"unnamed_anchor": keep_id},
-            " AND unnamed_anchor = %s AND id <> %s",
-            [gone_id, keep_id],
+        # (the new anchor and the new stored label in ONE update of each row: a second change to
+        # the same entry in one batch could not be undone)
+        hanging = await w.select(
+            ENTITIES, " AND unnamed_anchor = %s AND id <> %s", [gone_id, keep_id]
         )
+        if hanging:
+            await w.update_rows(
+                ENTITIES,
+                {
+                    str(r["id"]): {
+                        "unnamed_anchor": keep_id,
+                        "name": unnamed_mod.stored(r["unnamed_what"], kept["name"]),
+                    }
+                    for r in hanging
+                },
+            )
         # Older merges pointing at gone_id now chain to keep_id; `resolve` follows it.
         await w.update(
             ENTITIES,
@@ -4672,6 +4693,19 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
     before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
     changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
     return bool(changed_keys) and changed_keys <= {"secret", "unrevealed"}
+
+
+async def _relabel_unnamed(w: Changes, anchor_name: str, rows: Sequence[dict[str, Any]]) -> None:
+    """The stored label of people who hang off an entry whose name just changed or that others
+    were merged into (#2790), in the same change: lists that show the stored name stay right, and
+    one Undo takes it back. (The label shown is always built from the parts; this is the copy.)"""
+    changed = {
+        str(r["id"]): {"name": unnamed_mod.stored(r["unnamed_what"], anchor_name)}
+        for r in rows
+        if r["unnamed"] and r["name"] != unnamed_mod.stored(r["unnamed_what"], anchor_name)
+    }
+    if changed:
+        await w.update_rows(ENTITIES, changed)
 
 
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
