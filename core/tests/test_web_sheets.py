@@ -249,6 +249,7 @@ class TheQueue(Sheets):
         for bad in (
             "",
             "ftp://example.org/a",
+            "http://example.org/a",  # the bot's fetch is https only
             "javascript:alert(1)",
             "https://",
             "https://example.org/a b",

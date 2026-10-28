@@ -17681,13 +17681,14 @@ WEB_RESTORES = (
 
 # The website's character sheets take two more choices (#2818): `typed` (the form Discord's "Type in
 # my character" has: class, level, species and names, kept as one small JSON text in `payload`) and
-# `document` (a public web page or PDF link in `url`, which the bot fetches and reads; the website
-# never does). The door gets the same fifth argument as for a link (`lnk`): the link for `document`,
-# the JSON text for `typed`. It refuses a shape the bot would not read (`bad_document`,
-# `bad_typed`) and the bot checks the rest again. A document read costs an AI call, so a person may
-# queue one a minute, where a link or typed sheet may be queued every 20 seconds. The link stays in
-# this row only; no door gives it back (the answer door returns the state and the plain error word).
-# The door is cut from its text in 0268 by guarded replacement, so a drift fails loudly.
+# `document` (a public https web page or PDF link in `url`, which the bot fetches and reads; the
+# website never does, and the bot's fetch is https only, so an http link is refused here too). The
+# door gets the same fifth argument as for a link (`lnk`): the link for `document`, the JSON text
+# for `typed`. It refuses a shape the bot would not read (`bad_document`, `bad_typed`) and the bot
+# checks the rest again. A document read costs an AI call, so a person may queue one a minute,
+# where a link or typed sheet may be queued every 20 seconds. The link stays in this row only; no
+# door gives it back (the answer door returns the state and the plain error word). The door is cut
+# from its text in 0268 by guarded replacement, so a drift fails loudly.
 _SHEET_DOOR = WEB_SHEET_ACTIONS[
     WEB_SHEET_ACTIONS.index("    CREATE FUNCTION dmbot_web_sheet_action_add(") :
 ]
@@ -17713,7 +17714,7 @@ _SHEET_DOOR = _swap(
             "            IF act = 'forget' THEN\n                want := '';",
             "            IF act = 'document'\n"
             "               AND (char_length(want) > 400\n"
-            "                    OR want !~ '^https?://[^[:space:][:cntrl:]<>\"]+$') THEN\n"
+            "                    OR want !~ '^https://[^[:space:][:cntrl:]<>\"]+$') THEN\n"
             "                RETURN jsonb_build_object('status', 'bad_document');\n"
             "            END IF;\n"
             "            IF act = 'typed' THEN\n"

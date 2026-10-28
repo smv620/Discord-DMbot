@@ -36,8 +36,9 @@ DOCUMENT_LINK_MAX = 400
 TYPED_NAME_MAX = 60
 TYPED_NAMES_TEXT_MAX = 1500
 TYPED_PAYLOAD_MAX = 2000
-# A link the bot may fetch: a web address and nothing that could end the line or the address early.
-DOCUMENT_LINK = re.compile(r"^https?://[^\s\x00-\x1f\x7f<>\"]+$")
+# A link the bot may fetch (its fetch is https only, `dmbot.fetch`): a web address and nothing that
+# could end the line or the address early.
+DOCUMENT_LINK = re.compile(r"^https://[^\s\x00-\x1f\x7f<>\"]+$")
 
 
 def shape(got: dict[str, Any]) -> dict[str, Any]:
