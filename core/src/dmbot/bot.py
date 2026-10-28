@@ -1186,6 +1186,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # press can't start another, and so the tasks aren't garbage collected mid-read.
         self.plan_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self.plan_waiting: set[tuple[int, str]] = set()  # asked for, waiting for one of the slots
+        # When each going read was asked for and last moved forward (monotonic seconds), for the
+        # card's "running for" and "last change" (#2564). Memory only, like the read itself.
+        self.plan_clocks: dict[tuple[int, str], plan_reader.ReadClock] = {}
         self._plan_slots = asyncio.Semaphore(PLAN_READS_AT_ONCE)
         # "Did they mean…?" questions left unanswered at a session's end (#1572).
         self.heard_questions = heard_questions
@@ -8578,21 +8581,41 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
         key = (guild_id, document_id)
+        now = time.monotonic()
+        clock = self.plan_clocks[key] = plan_reader.ReadClock(now, now, now)
+
+        async def moved(_position: int) -> None:
+            clock.moved = time.monotonic()  # a call came back (stored, or cut and read in halves)
+
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
             try:
                 self.plan_waiting.add(key)
                 async with self._plan_slots:
                     self.plan_waiting.discard(key)
-                    report = await plan_reader.run(
-                        ai,
-                        plan,
-                        guild_id=guild_id,
-                        campaign_id=campaign_id,
-                        document_id=document_id,
-                        start_chunk=start,
-                        model=lambda: ai.model,
-                        allowed=plan_allowed,
-                    )
+                    clock.began = clock.moved = time.monotonic()  # the turn has come
+                    report = plan_reader.Report()  # the caller's: a cut-off run keeps its counts
+                    # The whole read ends within MAX_RUN_S, a call in progress included (the
+                    # reader checks the time only between calls), so the card's "stops by itself
+                    # after" is true (#2564).
+                    limit = asyncio.timeout(plan_reader.MAX_RUN_S)
+                    try:
+                        async with limit:
+                            report = await plan_reader.run(
+                                ai,
+                                plan,
+                                guild_id=guild_id,
+                                campaign_id=campaign_id,
+                                document_id=document_id,
+                                start_chunk=start,
+                                model=lambda: ai.model,
+                                allowed=plan_allowed,
+                                progress=moved,
+                                report=report,
+                            )
+                    except TimeoutError:
+                        if not limit.expired():
+                            raise  # a store's or a call's own timeout: the generic handler
+                        report.stopped = plan_reader.STOP_TIME
                 log.info("%s", report.line())
                 if report.stopped:
                     await plan.finish(guild_id, campaign_id, document_id, "stopped", report.stopped)
@@ -8610,6 +8633,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await self._plan_read_notice(guild_id, campaign_id, document_id)
             finally:
                 self.plan_waiting.discard(key)
+                self.plan_clocks.pop(key, None)
 
     async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
         """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
