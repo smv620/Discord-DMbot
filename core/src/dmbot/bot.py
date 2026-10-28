@@ -1639,6 +1639,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
             post=self.post,  # the #dm-screen note on an accept made on the website
+            owner_mail=self._email_hand_over_owner,  # the owner also hears by email (#2532)
             # a hand-over to another server: its audio files go with it, and the caches that are
             # kept by campaign id alone are dropped
             mover=HandoverMover(
@@ -10301,6 +10302,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def export_campaign(self, guild_id: int, campaign_id: str) -> Any:
         """A campaign's complete copy, as Discord's Download makes it (#2554)."""
         return await self.campaigns.export(guild_id, campaign_id)
+
+    async def _email_hand_over_owner(
+        self, owner_id: int, kind: str, subject: str, body: str
+    ) -> None:
+        """An owner's email about their hand-over offer (#2532, slice D): to the address DMbot has
+        for their account, if any. Once for each `kind` (the mail log); never raises, never logs the
+        address or the text."""
+        if self.mailer is None or self.meter is None:
+            return
+        to = await accounts.account_email(self.meter.db, owner_id)
+        if not to:
+            return
+        result = await self.mailer.send(
+            user_id=owner_id, kind=kind, to=to, subject=subject, body=body
+        )
+        log.info("Hand-over email to an owner: %s", result)
 
     async def run_web_backups(self) -> None:
         """Build the copies the website asked for (#2554, part 1b): every server that ever held a

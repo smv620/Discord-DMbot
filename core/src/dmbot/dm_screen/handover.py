@@ -164,6 +164,43 @@ TOLD_EXPIRED_UNSENT = (
     "DMbot couldn't get your offer of **{campaign}** to **{name}** within {days} days, so "
     "it ended. " + _OFFER_AGAIN
 )
+
+
+def owner_email(
+    kind: str, *, name: str, campaign: str, server: str = "", days: int = HANDOVER_DAYS
+) -> tuple[str, str]:
+    """(subject, body) of the email to the owner about their offer (#2532, slice D; PLAN: "The
+    owner is told ... by email when DMbot has one"). Plain text, the same facts as the private
+    message. `kind` is accepted, declined, expired or moved. The address the offer went to is never
+    in it (the owner typed it, and never learns more about it than that), and an offer made by
+    email has no name, so `name` is then "The person you emailed"."""
+    if kind == "accepted":
+        return (
+            f'Your offer of "{campaign}" was accepted',
+            f'{name} accepted your offer of "{campaign}": it uses their plan now. You are still '
+            "one of its DMs; nothing else changes.",
+        )
+    if kind == "declined":
+        return (
+            f'Your offer of "{campaign}" was turned down',
+            f'{name} said no thanks to your offer of "{campaign}". It stays yours.',
+        )
+    if kind == "expired":
+        return (
+            f'Your offer of "{campaign}" ended',
+            f"They didn't answer within {days} days, so the offer ended. The campaign is still "
+            "yours. You can offer it again from Settings > Campaign management > Hand over in "
+            "Discord, or from your account page on the DMbot website.",
+        )
+    if kind == "moved":
+        return (
+            f'"{campaign}" now runs on another server',
+            f'{name} took over "{campaign}" on the Discord server "{server}", so it is gone from '
+            "the old server. You are still one of its DMs.",
+        )
+    raise ValueError(f"no email for {kind!r}")
+
+
 WITHDRAWN = "Offer taken back. **{campaign}** stays yours."
 TOLD_WITHDRAWN = "**{owner}** took back the offer of **{campaign}**. Nothing changed for you."
 NOT_YOUR_OFFER = "Only **{owner}**, who made this offer, can take it back."
