@@ -26,5 +26,6 @@ export function checkDocumentLink(text: string): DocumentLinkCheck {
   if (parsed.protocol !== "https:" || parsed.host === "" || /\s/.test(url) || CONTROL.test(url)) {
     return { ok: false, problem: "not-web" };
   }
-  return { ok: true, url };
+  // The door accepts only a lower-case scheme, so what is sent always matches it; the rest of the text is kept (#2862).
+  return { ok: true, url: "https:" + url.slice("https:".length) };
 }
