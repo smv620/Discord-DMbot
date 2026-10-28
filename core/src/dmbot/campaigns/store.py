@@ -1649,8 +1649,12 @@ class CampaignStore:
         replace_campaign_id: str | None = None,
         parts: Sequence[bytes] = (),
         left_out: LeftOut | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> Campaign:
         """Restore a backup into this server, as a new campaign or replacing one.
+
+        `progress(done, total)` is told as each transcripts file is loaded, so the DM's waiting
+        message can show "file 3 of 9" (#2564).
 
         `left_out` counts the lines not brought back because their speaker erased them after the
         copy was made (#2605).
@@ -1813,7 +1817,9 @@ class CampaignStore:
             if order:
                 if replace_campaign_id is not None:  # the copy's transcripts replace the old ones
                     await TranscriptParts().clear(conn, guild_id, campaign_id)
-                for index in order:
+                if progress is not None:
+                    progress(0, len(order))
+                for done, index in enumerate(order, 1):
                     # (unpacked again here, one at a time: nothing but the part in hand is held)
                     part = await asyncio.to_thread(decode_part, parts[index])
                     try:
@@ -1821,6 +1827,8 @@ class CampaignStore:
                     except (pg_errors.DataError, pg_errors.IntegrityError) as exc:
                         # (the tables' own types and CHECKs refused a value in the file)
                         raise CampaignError(TRANSCRIPTS_DAMAGED) from exc
+                    if progress is not None:
+                        progress(done, len(order))
             # The importer, and the owner when replacing (who stays the owner, #609), are
             # DMs whatever the copy's DM list says: the owner must stay one (#437).
             await conn.execute(

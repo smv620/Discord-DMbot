@@ -56,9 +56,11 @@ TIMED_OUT = "This menu timed out. Run the command again."
 Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 
-RESTORING = (
-    "Restoring… a big copy can take a few minutes. If it fails, nothing is changed, so you can "
-    "wait for it."
+RESTORING = "Restoring… a big copy can take a few minutes. If it fails, nothing is changed."
+RESTORE_STALL_S = 600.0  # one transcripts file loads far faster than this
+RESTORE_STALL_NOTE = (
+    "DMbot may be stuck on it. Ask whoever runs DMbot to look: starting a session in this "
+    "server waits until the restore ends."
 )
 RESTORED_TIDY_FAILED = (
     "\n(The copy is restored, but tidying up afterwards didn't finish. That does not change "
@@ -719,6 +721,8 @@ class BackupPicker(_Menu):
 
 
 class RestoreChoice(_Menu):
+    _landed: str | None = None  # the result, once the copy is in, for a cancel to still tell
+
     def __init__(
         self,
         data: object,
@@ -793,28 +797,49 @@ class RestoreChoice(_Menu):
         async def show(text: str) -> None:
             await _replace(interaction, text, None)
 
-        # The wait keeps itself current (#2564): the step and how long. The restore is one
-        # transaction with no count to show and no limit of its own, so no stall line is claimed
-        # ("last change" is true; "stuck" would not be). Its result is written after the wait ends,
-        # so nothing overwrites the last word.
-        async with WaitingMessage(
-            show, RESTORING, gone=message_is_gone, started=pressed
-        ) as waiting:
-            try:
-                done = await self._restore_steps(interaction, guild, replace_id, waiting)
-            except Exception:
-                log.exception("Restoring a backup failed")
-                done = RESTORE_FAILED
+        # The wait keeps itself current (#2564): the step, the transcripts file it is on, how long,
+        # and a stall line (a hung restore holds the server's session lock). Its result is written
+        # after the wait ends, so nothing overwrites the last word.
+        self._landed = None
+        done = RESTORE_FAILED
         try:
-            await _replace(interaction, done, None)
-        except discord.HTTPException as exc:
-            # The message ran out (Discord's 15 minutes) or was dismissed: the result still goes
-            # to the person, privately, so a restore that landed is never left unknown.
-            if not message_is_gone(exc):
-                raise
-            log.info("The restore message is gone; telling the person privately")
-            with contextlib.suppress(discord.HTTPException):
-                await interaction.user.send(done, allowed_mentions=NO_PINGS)
+            async with WaitingMessage(
+                show,
+                RESTORING,
+                stall_after_s=RESTORE_STALL_S,
+                stall_note=RESTORE_STALL_NOTE,
+                gone=message_is_gone,
+                started=pressed,
+            ) as waiting:
+                try:
+                    done = await self._restore_steps(interaction, guild, replace_id, waiting)
+                except Exception:
+                    log.exception("Restoring a backup failed")
+        except asyncio.CancelledError:
+            if self._landed is not None:  # the copy is in: the person is told, whatever stopped us
+                await asyncio.shield(
+                    self._deliver(interaction, self._landed + RESTORED_TIDY_FAILED)
+                )
+            raise
+        await self._deliver(interaction, done)
+
+    @staticmethod
+    async def _deliver(interaction: discord.Interaction, done: str) -> None:
+        """The result, in the message; if that fails, once more; if that fails (the message ran
+        out, was dismissed, or Discord is struggling), privately. A restore that landed is never
+        left unknown (#2564). Never raises."""
+        for attempt in range(2):
+            try:
+                await _replace(interaction, done, None)
+                return
+            except discord.HTTPException as exc:
+                if message_is_gone(exc):
+                    break
+                log.warning("The restore result could not be shown (try %d)", attempt + 1)
+                await asyncio.sleep(1.0)
+        log.info("Telling the person the restore result privately")
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.user.send(done, allowed_mentions=NO_PINGS)
 
     async def _restore_steps(
         self,
@@ -860,30 +885,15 @@ class RestoreChoice(_Menu):
                     replace_campaign_id=replace_id,
                     parts=self.parts,
                     left_out=erased_lines,
+                    progress=lambda done, total: waiting.step(
+                        "Step 2 of 3: restoring the copy, transcripts files", done, total
+                    ),
                 )
             except CampaignError as exc:
                 return str(exc)
             except Exception:
                 log.exception("Restoring a backup failed")
                 return RESTORE_FAILED
-        waiting.step("Step 3 of 3: tidying up")
-        # The restore has landed; from here a problem must never be told as "nothing was
-        # restored" (running `/dmbot restore` again would make a second copy).
-        tidy_failed = False
-        try:
-            # A big restore adds thousands of rows at once: refresh the planner's statistics
-            # (#2376).
-            memory = getattr(bot, "memory", None)
-            if memory is not None:
-                await memory.analyze(guild.id)
-            # The restored (or replaced) campaign's rules channel, if it has one, shows the new
-            # rules.
-            changed = getattr(bot, "_rules_archive_changed", None)
-            if changed is not None and replace_id is not None:
-                changed(guild.id, campaign.id)
-        except Exception:
-            log.exception("Tidying up after a restore failed")
-            tidy_failed = True
         if replace_id is None:
             done = f"✅ Restored **{campaign.name}**."
         else:
@@ -902,8 +912,28 @@ class RestoreChoice(_Menu):
             if erased_lines.lines
             else ""
         )
-        tidy = RESTORED_TIDY_FAILED if tidy_failed else ""
-        return f"{done}{erased} Use `/dmbot start` to play it.{left_out}{tidy}"
+        result = f"{done}{erased} Use `/dmbot start` to play it.{left_out}"
+        self._landed = result  # from here the person is always told it landed, even on a cancel
+        waiting.step("Step 3 of 3: tidying up")
+        # The restore has landed; from here a problem must never be told as "nothing was
+        # restored" (running `/dmbot restore` again would make a second copy). Each tidy-up step
+        # on its own, so one failing doesn't skip the other.
+        tidy_failed = False
+        memory = getattr(bot, "memory", None)
+        if memory is not None:
+            try:  # a big restore adds thousands of rows at once: refresh the planner (#2376)
+                await memory.analyze(guild.id)
+            except Exception:
+                log.exception("Refreshing statistics after a restore failed")
+                tidy_failed = True
+        changed = getattr(bot, "_rules_archive_changed", None)
+        if changed is not None and replace_id is not None:
+            try:  # the restored campaign's rules channel shows the new rules
+                changed(guild.id, campaign.id)
+            except Exception:
+                log.exception("Refreshing the rules channel after a restore failed")
+                tidy_failed = True
+        return result + (RESTORED_TIDY_FAILED if tidy_failed else "")
 
 
 class ConfirmReplace(_Menu):
