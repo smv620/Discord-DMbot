@@ -905,6 +905,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._rule_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server
         self._report_tasks: dict[int, asyncio.Task[None]] = {}  # one running report a server
         self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
+        self._sheet_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server (#2817)
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
@@ -10695,7 +10696,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.web_sheets
         if store is None or self.sheets is None:
             return
-        running: dict[int, asyncio.Task[None]] = self.__dict__.setdefault("_sheet_tasks", {})
+        running = self._sheet_tasks
         for guild in list(self.guilds):
             task = running.get(guild.id)
             if task is not None and not task.done():
@@ -10704,7 +10705,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if item is None:
                 continue
             gid = guild.id
-            task = asyncio.create_task(self._run_sheet_choice(store, gid, item))
+            task = self._track(self._run_sheet_choice(store, gid, item), "web-sheet-choice")
+            if task is None:
+                continue  # shutting down: the row is retaken after the door's ten minutes
             running[gid] = task
 
             def forget(done: asyncio.Task[None], gid: int = gid) -> None:
