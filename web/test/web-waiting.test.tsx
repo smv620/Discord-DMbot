@@ -221,6 +221,112 @@ describe("Which Mara?", () => {
   });
 });
 
+describe("Who is she?", () => {
+  const PRONOUN_REF = "100.cmp1.pronoun";
+  async function openPronouns(api = mockApi("table")) {
+    render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    return api;
+  }
+
+  it("asks a pronoun question under its own heading, with its one name and Someone else", async () => {
+    await openPronouns();
+    expect(screen.getByRole("heading", { name: w.pronounHeading })).toBeTruthy();
+    const card = screen.getByText(w.pronounQuestion("she")).closest(".panel") as HTMLElement;
+    expect(within(card).getByText("She grew up with Rook")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Mara Ashgrove" })).toBeTruthy();
+    expect(within(card).getByRole("button", { name: `${w.someoneElse} for she` })).toBeTruthy();
+  });
+
+  it("a pronoun question with no name offers only Someone else", async () => {
+    await openPronouns();
+    const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
+    expect(within(card).getByText(w.pronounNoName)).toBeTruthy();
+    const buttons = within(card).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual([w.someoneElse]);
+    // The note is read with the button, so a screen reader user hears why there is no name.
+    const note = within(card).getByText(w.pronounNoName);
+    const someoneElse = within(card).getByRole("button", { name: `${w.someoneElse} for he` });
+    expect(someoneElse.getAttribute("aria-describedby")?.split(" ")).toContain(note.id);
+    expect(document.getElementById(note.id)).toBe(note);
+  });
+
+  it("Someone else sends the neither answer and says it kept the connection", async () => {
+    const api = await openPronouns();
+    const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: `${w.someoneElse} for he` }));
+    expect(await screen.findByText(w.done.someoneElse)).toBeTruthy();
+    expect(api.calls).toContain(`answerWaiting:${PRONOUN_REF}:which:neither:w3`);
+    await settled();
+  });
+
+  it("the mock refuses a second Someone else for the same question as gone, and keeps the other question", async () => {
+    const api = mockApi("table");
+    await expect(api.answerWaiting!(PRONOUN_REF, { kind: "which", action: "neither", id: "w3" })).resolves.toBeDefined();
+    await expect(api.answerWaiting!(PRONOUN_REF, { kind: "which", action: "neither", id: "w3" })).rejects.toMatchObject({ kind: "gone" });
+    await expect(api.webWaiting!(PRONOUN_REF).then((l) => l.which.some((q) => q.id === "w2"))).resolves.toBe(true);
+  });
+
+  it("a Someone else the API answers as gone shows the gone words, and the other pronoun card still works", async () => {
+    const api = mockApi("table");
+    api.answerWaiting = async () => {
+      throw new ApiError("gone");
+    };
+    render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    const card = screen.getByText(w.pronounQuestion("he")).closest(".panel") as HTMLElement;
+    press(`${w.someoneElse} for he`, card);
+    expect(await screen.findByText(w.errors.gone!)).toBeTruthy();
+    await settled();
+    const other = screen.getByText(w.pronounQuestion("she")).closest(".panel") as HTMLElement;
+    expect((within(other).getByRole("button", { name: "Mara Ashgrove" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a list with both kinds draws both groups, each under its own heading", async () => {
+    const pronounList = mockApi("table");
+    const nameList = mockApi("table");
+    const api = mockApi("table");
+    api.webWaiting = async (ref) => {
+      const pron = await pronounList.webWaiting!(ref);
+      const named = await nameList.webWaiting!(REF);
+      const which = [...named.which, ...pron.which];
+      return { ...pron, which, counts: { ...pron.counts, which: which.length, all: which.length } };
+    };
+    render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect(screen.getByText(w.count(3))).toBeTruthy();
+    // Each question sits under its own heading, not just somewhere on the page.
+    const nameGroup = screen.getByRole("heading", { name: w.whichHeading }).parentElement as HTMLElement;
+    const pronounGroup = screen.getByRole("heading", { name: w.pronounHeading }).parentElement as HTMLElement;
+    expect(within(nameGroup).getByText(w.whichQuestion("Mara"))).toBeTruthy();
+    expect(within(pronounGroup).getByText(w.pronounQuestion("she"))).toBeTruthy();
+    expect(within(pronounGroup).getByText(w.pronounQuestion("he"))).toBeTruthy();
+    expect(within(nameGroup).queryByText(w.pronounQuestion("she"))).toBeNull();
+  });
+
+  it("a pick of the one name sends that name's id", async () => {
+    const api = await openPronouns();
+    press("Mara Ashgrove");
+    expect(await screen.findByText(w.done.pick)).toBeTruthy();
+    expect(api.calls).toContain(`answerWaiting:${PRONOUN_REF}:which:pick:w2:e3`);
+    await settled();
+  });
+
+  it("a question with no pronoun key (an older API) is drawn as a name question, with Neither", async () => {
+    await open();
+    const card = screen.getByText(w.whichQuestion("Mara")).closest(".panel") as HTMLElement;
+    // A question with no pronoun key is a name question: it offers Neither, not Someone else.
+    expect(within(card).getByRole("button", { name: w.neither })).toBeTruthy();
+  });
+
+  it("a name question is drawn as before", async () => {
+    await open();
+    expect(screen.getByText(w.whichHeading)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: w.pronounHeading })).toBeNull();
+    expect(screen.getByRole("button", { name: w.neither })).toBeTruthy();
+  });
+});
+
 describe("after an answer", () => {
   it("keeps the buttons waiting until the list has been read again, so nobody answers what is gone", async () => {
     const api = mockApi("table");

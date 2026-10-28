@@ -4,7 +4,7 @@
 // a backup offered first, and the campaign's name typed to confirm. Only the plan holder is offered the
 // button; the API checks it again. Shown only while CAMPAIGN_DELETE_LIVE is true; it moves with the
 // What's new entry "Delete a campaign from the website".
-export const CAMPAIGN_DELETE_LIVE = false;
+export const CAMPAIGN_DELETE_LIVE = true;
 
 /** Whether a backup holds a campaign's transcripts yet (core #2552). While it does not, the page says so
  * rather than let someone delete a campaign believing the copy is complete. */

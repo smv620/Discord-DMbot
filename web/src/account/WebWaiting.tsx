@@ -1,6 +1,7 @@
 /** @jsxImportSource preact */
 // What waits for the DM on the Story graph (#2635, #2652): facts PlotBot heard at the table, connections
-// found in a backstory (grouped by upload, with Keep all) and "Which Mara?" questions. The DM decides
+// found in a backstory (grouped by upload, with Keep all), "Which Mara?" questions and "Who is she?" pronoun
+// questions (#2831). The DM decides
 // everything: each answer is sent to DMbot, which makes the very calls the DM screen's buttons make, so
 // consent, secrets and Undo hold the same. Only a DM of the campaign gets the list from the API; a player
 // never sees this part. One answer at a time per item: its buttons wait while it is sent, and the list
@@ -14,6 +15,9 @@ import WorkProgress from "./WorkProgress";
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
 const sessionDay = (seconds: number): string =>
   new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+
+/** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
+const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
 
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
@@ -114,6 +118,10 @@ export default function WebWaiting({
   const busy = sending !== null;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
+  // A pronoun question can have one name or none, and its "Someone else" keeps the connection with a person
+  // who isn't named yet, so it gets its own group and words; a name question keeps the "Neither" words.
+  const names = list.which.filter((q) => !q.pronoun);
+  const pronouns = list.which.filter((q) => q.pronoun);
 
   // The backstory connections by upload, in the order the API sent them.
   const uploads: { label: string; items: Waiting["backstory"] }[] = [];
@@ -149,11 +157,11 @@ export default function WebWaiting({
         />
       )}
 
-      {list.which.length > 0 && (
+      {names.length > 0 && (
         <div class="stack">
           <h4>{w.whichHeading}</h4>
           <p class="small">{w.whichNote}</p>
-          {list.which.map((q) => (
+          {names.map((q) => (
             <div key={q.id} class="panel">
               <p>
                 <strong>{w.whichQuestion(q.word)}</strong>
@@ -191,6 +199,61 @@ export default function WebWaiting({
                   onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.neither)}
                 >
                   {w.neither}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {pronouns.length > 0 && (
+        <div class="stack">
+          <h4>{w.pronounHeading}</h4>
+          <p class="small">{w.pronounNote}</p>
+          {pronouns.map((q) => (
+            <div key={q.id} class="panel">
+              <p>
+                <strong>{w.pronounQuestion(q.word)}</strong>
+              </p>
+              <p id={`wq-${q.id}`}>{startCap(w.whichLine(q.other, q.how, q.word, q.otherIsSubject))}</p>
+              {q.quote && <p class="muted small">“{q.quote}”</p>}
+              {q.secret && <p class="small">{w.secretNote}</p>}
+              {q.candidates.some((c) => c.limited) && <p class="small">{w.hiddenNote}</p>}
+              {q.candidates.length === 0 && (
+                <p class="small" id={`wq-none-${q.id}`}>
+                  {w.pronounNoName}
+                </p>
+              )}
+              <div class="row">
+                {q.candidates.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    class="button"
+                    disabled={busy}
+                    aria-describedby={`wq-${q.id}`}
+                    onClick={() => void send({ kind: "which", action: "pick", id: q.id, entity: c.id }, w.done.pick)}
+                  >
+                    {c.limited ? (
+                      <>
+                        <span aria-hidden="true">{w.hiddenMark} </span>
+                        <span class="visually-hidden">{w.hiddenWord} </span>
+                        {c.name}
+                      </>
+                    ) : (
+                      c.name
+                    )}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={busy}
+                  aria-label={w.someoneElseFor(q.word)}
+                  aria-describedby={q.candidates.length === 0 ? `wq-${q.id} wq-none-${q.id}` : `wq-${q.id}`}
+                  onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.someoneElse)}
+                >
+                  {w.someoneElse}
                 </button>
               </div>
             </div>
