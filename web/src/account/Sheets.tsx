@@ -56,14 +56,10 @@ function CharacterSheetsInner({
   const [link, setLink] = useState<Record<string, string>>({});
   // What a player has typed in per character, so a re-render does not clear a half-typed form.
   const [typed, setTyped] = useState<Record<string, TypedValues>>({});
-  // The section is remounted per campaign (#2851), so a draft starts empty on a return to a campaign and never shows
-  // under another one. The key keeps each draft's own character apart within the campaign.
-  const typedKey = (entityId: string) => `${campaignRef}:${entityId}`;
-  // A document draft: empty again on a return to a campaign, like the others (#2851).
-  const documentKey = (entityId: string) => `${campaignRef}:${entityId}`;
+  // Every draft (typed, link, document) is keyed by campaign and character. The section is remounted per campaign
+  // (#2851), so a draft starts empty on a return to a campaign and never shows under another one.
+  const draftKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [documents, setDocuments] = useState<Record<string, string>>({});
-  // The link box's draft: empty again on a return to a campaign, like the others (#2851).
-  const linkKey = (entityId: string) => `${campaignRef}:${entityId}`;
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
@@ -218,16 +214,16 @@ function CharacterSheetsInner({
                 sheet={s}
                 shown={true}
                 busy={busy}
-                linkValue={link[linkKey(s.entityId)] ?? ""}
+                linkValue={link[draftKey(s.entityId)] ?? ""}
                 onLinkValue={(v) =>
-                  setLink((now) => ({ ...now, [linkKey(s.entityId)]: v }))
+                  setLink((now) => ({ ...now, [draftKey(s.entityId)]: v }))
                 }
                 onLink={() =>
                   void send(
                     s.entityId,
                     {
                       action: "link",
-                      url: (link[linkKey(s.entityId)] ?? "").trim(),
+                      url: (link[draftKey(s.entityId)] ?? "").trim(),
                     },
                     w.linkSaved,
                   )
@@ -235,22 +231,22 @@ function CharacterSheetsInner({
                 onForget={() =>
                   void send(s.entityId, { action: "forget" }, w.forgetDone)
                 }
-                typedValue={typed[typedKey(s.entityId)] ?? EMPTY_TYPED}
+                typedValue={typed[draftKey(s.entityId)] ?? EMPTY_TYPED}
                 onTypedValue={(patch) =>
                   setTyped((now) => ({
                     ...now,
-                    [typedKey(s.entityId)]: { ...(now[typedKey(s.entityId)] ?? EMPTY_TYPED), ...patch },
+                    [draftKey(s.entityId)]: { ...(now[draftKey(s.entityId)] ?? EMPTY_TYPED), ...patch },
                   }))
                 }
                 onTyped={(choice, done) => void send(s.entityId, choice, done)}
                 onProblem={(text) => setReport({ ok: false, text })}
-                documentValue={documents[documentKey(s.entityId)] ?? ""}
+                documentValue={documents[draftKey(s.entityId)] ?? ""}
                 onDocumentValue={(v) =>
-                  setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: v }))
+                  setDocuments((now) => ({ ...now, [draftKey(s.entityId)]: v }))
                 }
                 onDocument={(url) =>
                   void send(s.entityId, { action: "document", url }, w.documentSent, () =>
-                    setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: "" })),
+                    setDocuments((now) => ({ ...now, [draftKey(s.entityId)]: "" })),
                   )
                 }
               />
