@@ -291,18 +291,20 @@ describe("a campaign the page has left", () => {
     const answer = api.sheetAnswer!.bind(api);
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
+    let asked = false;
     api.sheetAnswer = async (ref, id) => {
       if (ref !== "100.sh") return answer(ref, id);
+      asked = true;
       await held;
       return answer(ref, id);
     };
     const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await screen.findByRole("heading", { name: w.heading });
     fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    // The old section has asked for its answer, and that answer is still held when the page leaves.
+    await waitFor(() => expect(asked).toBe(true), { timeout: 4000 });
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await screen.findByText(w.mine("Sorrel"));
-    // The old section stops asking once the page has left (#2851), so no answer is ever drawn here.
-    await new Promise((r) => setTimeout(r, 2000));
     release();
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(w.forgetDone)).toBeNull();
@@ -443,14 +445,25 @@ describe("Use a document link", () => {
 
   it("the old section stops asking about its choice once the page has left", async () => {
     const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref !== "100.sh") return answer(ref, id);
+      asked += 1;
+      await held;
+      return answer(ref, id);
+    };
     const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await screen.findByRole("heading", { name: w.heading });
     fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    const before = asked;
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await screen.findByText(w.mine("Sorrel"));
-    const asked = () => api.calls.filter((c) => c.startsWith("sheetAnswer:100.sh")).length;
-    const before = asked();
     await new Promise((r) => setTimeout(r, 2000));
-    expect(asked()).toBe(before);
+    expect(asked).toBe(before);
+    release();
   });
 });
