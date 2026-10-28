@@ -47,10 +47,12 @@ class CoDmBot(FakeBot):
 
         async def fetch(user_id: int) -> Any:
             if self.lookup_fails:
-                raise discord.HTTPException(SimpleNamespace(status=500, reason="x"), "boom")
+                raise discord.HTTPException(
+                    cast(Any, SimpleNamespace(status=500, reason="x")), "boom"
+                )
             found = self.people.get(user_id)
             if found is None:
-                raise discord.NotFound(SimpleNamespace(status=404, reason="x"), "gone")
+                raise discord.NotFound(cast(Any, SimpleNamespace(status=404, reason="x")), "gone")
             return SimpleNamespace(display_name=found.name, bot=found.bot)
 
         guild = SimpleNamespace(
@@ -319,7 +321,9 @@ class TheMessage(Settings):
         self.assertIn("allowed_mentions", sent[0][1])
         failing = SimpleNamespace(
             send=AsyncMock(
-                side_effect=discord.Forbidden(SimpleNamespace(status=403, reason="x"), "no")
+                side_effect=discord.Forbidden(
+                    cast(Any, SimpleNamespace(status=403, reason="x")), "no"
+                )
             )
         )
         guild.get_member = lambda uid: failing
