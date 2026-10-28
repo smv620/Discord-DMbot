@@ -139,8 +139,8 @@
    "Ken",
    "Bram"
   ],
-  "answer": "Ken",
-  "kind": "pronoun"
+  "answer": "ask",
+  "kind": "ambiguous"
  },
  {
   "id": "c14",
@@ -161,8 +161,8 @@
    "Mira Voss",
    "Orla"
   ],
-  "answer": "Mira Voss",
-  "kind": "pronoun"
+  "answer": "ask",
+  "kind": "ambiguous"
  },
  {
   "id": "c16",
@@ -205,8 +205,8 @@
    "Ilse",
    "Sunnia"
   ],
-  "answer": "Ilse",
-  "kind": "pronoun"
+  "answer": "ask",
+  "kind": "ambiguous"
  },
  {
   "id": "c20",
@@ -216,8 +216,8 @@
    "Garrick Tull",
    "Ken"
   ],
-  "answer": "Garrick Tull",
-  "kind": "pronoun"
+  "answer": "ask",
+  "kind": "ambiguous"
  },
  {
   "id": "c21",
@@ -249,8 +249,8 @@
    "Pell",
    "Dorn Hask"
   ],
-  "answer": "Pell",
-  "kind": "pronoun"
+  "answer": "ask",
+  "kind": "ambiguous"
  },
  {
   "id": "c24",
@@ -260,8 +260,8 @@
    "Yara",
    "Ilse"
   ],
-  "answer": "Ilse",
-  "kind": "pronoun"
+  "answer": "ask",
+  "kind": "ambiguous"
  },
  {
   "id": "c25",
@@ -309,7 +309,7 @@
  },
  {
   "id": "c29",
-  "text": "Kesh Arn swore an oath to his king. Aldous Reeve accepted it with a nod.",
+  "text": "Aldous Reeve sat on the high seat at the hall. Kesh Arn swore an oath to his king.",
   "phrase": "his king",
   "known": [
    "Kesh Arn",
@@ -342,7 +342,7 @@
  },
  {
   "id": "c32",
-  "text": "Garrick Tull and the baron argued all night. The baron, Hollis Crane, finally signed.",
+  "text": "Hollis Crane, the baron, argued with Garrick Tull all night. The baron finally signed.",
   "phrase": "the baron",
   "known": [
    "Garrick Tull",
@@ -552,5 +552,27 @@
   ],
   "answer": "Ken",
   "kind": "pronoun"
+ },
+ {
+  "id": "c51",
+  "text": "Orla and Yara waited by the stairs. She heard footsteps first.",
+  "phrase": "She",
+  "known": [
+   "Orla",
+   "Yara"
+  ],
+  "answer": "ask",
+  "kind": "ambiguous"
+ },
+ {
+  "id": "c52",
+  "text": "Bram passed Pell the torch at the cave mouth. He took the left tunnel.",
+  "phrase": "He",
+  "known": [
+   "Bram",
+   "Pell"
+  ],
+  "answer": "ask",
+  "kind": "ambiguous"
  }
 ]

@@ -17,6 +17,8 @@ from pathlib import Path
 
 from dmbot.memory.who_is_it import ACCEPT_AT, NOT_LISTED, Candidate, Verdict, decide
 
+ASK = "ask"  # the answer of an ambiguous passage: the text does not settle it
+
 
 @dataclass(frozen=True, slots=True)
 class Passage:
@@ -24,8 +26,8 @@ class Passage:
     text: str  # the passage, up to and including the sentence with the phrase
     phrase: str  # the pronoun or description to resolve
     known: tuple[str, ...]  # names DMbot already knows for the campaign
-    answer: str  # the right name, or NOT_LISTED
-    kind: str  # pronoun, description or unnamed
+    answer: str  # the right name, NOT_LISTED, or ASK when the text does not settle it
+    kind: str  # pronoun, description, unnamed or ambiguous
 
 
 @dataclass(slots=True)
@@ -45,6 +47,10 @@ class Report:
     accepted_band: Tally = field(default_factory=Tally)  # accepted by signal-to-noise (40-80%)
     asked: Tally = field(default_factory=Tally)  # "right" = the top pick was the answer
     unnamed: Tally = field(default_factory=Tally)  # "right" = the answer really was not listed
+    # Passages the text leaves open: "right" = the DM would be asked, wrong = a name was accepted
+    # (an overconfident accept) or the person was made unnamed. An accept here also counts as wrong
+    # in its accepted line above.
+    ambiguous: Tally = field(default_factory=Tally)
 
     def counts(self) -> dict[str, tuple[int, int]]:
         """(total, right) for each outcome: the only thing a GitHub post needs."""
@@ -53,6 +59,7 @@ class Report:
             "accepted_band": (self.accepted_band.total, self.accepted_band.right),
             "asked": (self.asked.total, self.asked.right),
             "unnamed": (self.unnamed.total, self.unnamed.right),
+            "ambiguous": (self.ambiguous.total, self.ambiguous.right),
         }
 
 
@@ -67,13 +74,17 @@ def score(passages: list[Passage], predict: Callable[[Passage], list[Candidate]]
         report.total += 1
         candidates = predict(passage)
         decision = decide(candidates)
-        top = max((c.confidence for c in candidates), default=0.0)
+        left_open = passage.answer == ASK
+        if left_open:
+            report.ambiguous.add(decision.verdict is Verdict.ASK)
         match decision.verdict:
             case Verdict.ACCEPT:
-                band = report.accepted_high if top >= ACCEPT_AT else report.accepted_band
+                band = report.accepted_high if decision.top >= ACCEPT_AT else report.accepted_band
                 band.add(decision.name == passage.answer)
             case Verdict.ASK:
-                report.asked.add(decision.name == passage.answer)
+                if not left_open:
+                    report.asked.add(decision.name == passage.answer)
             case Verdict.UNNAMED:
-                report.unnamed.add(passage.answer == NOT_LISTED)
+                if not left_open:
+                    report.unnamed.add(passage.answer == NOT_LISTED)
     return report
