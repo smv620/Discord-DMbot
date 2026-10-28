@@ -24,6 +24,10 @@ from typing import Any
 
 from psycopg.types.json import Jsonb
 
+# Re-exported with the `as` form, which mypy strict needs: the worker reads AUDIO_MAX_TRIES from
+# here, and the tests read both.
+from dmbot.audio_due import AUDIO_DUE_WHERE as AUDIO_DUE_WHERE
+from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
@@ -37,14 +41,6 @@ MAX_TRIES = 2  # "Try again" at most this many times for one session
 MAX_CORRECTIONS = 10  # corrections kept for one recap (#2076)
 MAX_STORED = 50  # recaps kept for one campaign in a backup
 LEASE_S = 15 * 60  # a worker that stops leaves a job free again after this long
-AUDIO_MAX_TRIES = 2  # starts: the first, and one more an hour later
-# A recap whose narration is waiting to be made and may start (placeholders: the tries limit, now).
-# One text for the worker's pick (`audio_due`), its lease (`audio_lease`) and the campaign move
-# (campaigns/moves.py), which must refuse exactly while the worker could start.
-AUDIO_DUE_WHERE = (
-    "state = 'ready' AND audio = 'queued' AND audio_tries < %s"
-    " AND status IN ('draft', 'posting', 'posted') AND audio_next_at <= %s"
-)
 STUCK = "The narration and music were never finished. The text is fine."
 AUDIO_AGAIN_WAIT_S = 600  # "Make it again" at most once in 10 minutes, as the website's door does
 _NOW_HASH = "encode(sha256(convert_to(title || E'\\n' || summary, 'UTF8')), 'hex')"

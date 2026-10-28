@@ -14,6 +14,7 @@ import { CAMPAIGN_DELETE_LIVE, campaignDeleteWords } from "../content/campaign-d
 import { HANDOVER_LIVE, handoverOwnerWords, handoverWords } from "../content/handover-words";
 import { handoverToken } from "./handover-token";
 import { DISCORD_ACCOUNTS_LIVE, discordAccountsWords } from "../content/discord-accounts";
+import { DELETE_MY_LINES_LIVE } from "../content/delete-my-lines-switch";
 import { keepFocus } from "./focus";
 import { hoursLeftLine, hoursUsedLine, planName, shortDateTime, text } from "../content/account";
 import { portalLoginUrl, portalWords } from "../content/billing-login";
@@ -1585,6 +1586,7 @@ function MoveSection() {
 /** Where DMbot may record you (#1151): each server with Stop recording me, the same one short
  * warning and one confirmation as the bot's Menu. Starting again stays in Discord. */
 function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
+  const { api } = useShared();
   const [done, setDone] = useState<string[]>([]);
   // The row goes with the refresh after a stop, so what was done is said here, above the list.
   if (entries.length === 0 && done.length === 0) return null;
@@ -1596,6 +1598,7 @@ function RecordingSection({ entries }: { entries: RecordingEntry[] }) {
           {line}
         </p>
       ))}
+      {DELETE_MY_LINES_LIVE && api.myLines && <p class="small muted">{text.recordingLeft}</p>}
       <ul class="campaigns">
         {entries.map((e) => (
           <RecordingRow
@@ -1613,10 +1616,15 @@ function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: 
   const { api, refresh } = useShared();
   const { busy, notice, run, clear } = useAction();
   const [asking, setAsking] = useState(false);
+  // "Delete my transcripts" (#2769), a lazy piece so My Account stays light: the lines stay when recording stops.
+  const deleteLines = DELETE_MY_LINES_LIVE && api.myLines && (
+    <LazyPanel load={() => import("./DeleteMyLines")} what="Delete my transcripts" props={{ api, serverId: entry.serverId, serverName: entry.serverName }} />
+  );
   if (!entry.on) {
     return (
       <li data-recording={entry.serverId}>
         <p>{text.recordingOld(entry.serverName)}</p>
+        {deleteLines}
       </li>
     );
   }
@@ -1658,6 +1666,7 @@ function RecordingRow({ entry, onStopped }: { entry: RecordingEntry; onStopped: 
           {text.stopRecording}
         </button>
       )}
+      {deleteLines}
     </li>
   );
 }
