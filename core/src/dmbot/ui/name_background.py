@@ -74,20 +74,13 @@ from dmbot.ui.names import (
     changed,
     start_review,
 )
-from dmbot.waiting import WaitingMessage
+from dmbot.waiting import WaitingMessage, message_is_gone
 
 log = logging.getLogger(__name__)
 
 # No change for this long is named as a stall in the waiting message (#2564): a pass-1 call may
 # take minutes (the careful model), so it is longer than the 10 s between edits by a good margin.
 STALL_AFTER_S = 240.0
-
-
-def message_is_gone(exc: BaseException) -> bool:
-    """The DM dismissed the message, or its 15 minutes ran out: it cannot be edited any more."""
-    return isinstance(exc, discord.NotFound) or (
-        isinstance(exc, discord.HTTPException) and exc.code == 50027  # invalid webhook token
-    )
 
 
 NOT_A_BOOK = "your own notes or background, not a published book"
