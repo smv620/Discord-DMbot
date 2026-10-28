@@ -32,7 +32,7 @@ export default function DocumentForm({
         <fieldset class="stack">
           <legend class="visually-hidden">{w.documentFor(sheet.name)}</legend>
           <label>
-            {w.documentLabel}
+            {w.documentLabel(sheet.name)}
             {/* No maxLength: a browser would cut a long paste to 400 characters without a word, and the too-long check
                 would never see it. The check gives the plain words instead. */}
             <input

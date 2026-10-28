@@ -1740,6 +1740,7 @@ export type ApiErrorKind =
   | "free-access" // free access: there's nothing to pay for
   | "slow-down" // too many tries from this address (the API limits sign-in, billing, delete)
   | "bad-link" // an emailed sign-in link that is wrong, used or ended (#1231)
+  | "bad-document-link" // a document link the bot can't read (#2843); not the D&D Beyond link's words
   | "not-ready" // the API has no move codes yet (#1231)
   | "no-email" // no payment email is stored yet, so a move code has nowhere to go (#1246)
   | "needs-approval" // "Make the audio again" on a text that is no longer approved (#2090)
@@ -2299,6 +2300,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   slow_down: "slow-down",
   busy: "slow-down",
   bad_link: "bad-link",
+  bad_document: "bad-document-link",
   move_off: "not-ready",
   not_paid: "no-paid-plan",
   no_email: "no-email",

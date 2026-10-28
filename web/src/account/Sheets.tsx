@@ -96,6 +96,7 @@ export default function CharacterSheetsSection({
     entity: string,
     choice: SheetChoice,
     done: string,
+    onDone?: () => void,
   ): Promise<void> => {
     if (flight.current || !api.chooseSheet || !api.sheetAnswer) return;
     flight.current = true;
@@ -130,6 +131,7 @@ export default function CharacterSheetsSection({
         if (got?.state === "done") {
           setStage(null);
           setReport({ ok: true, text: done });
+          onDone?.();
           await read();
           return;
         }
@@ -226,7 +228,9 @@ export default function CharacterSheetsSection({
                   setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: v }))
                 }
                 onDocument={(url) =>
-                  void send(s.entityId, { action: "document", url }, w.documentSent)
+                  void send(s.entityId, { action: "document", url }, w.documentSent, () =>
+                    setDocuments((now) => ({ ...now, [documentKey(s.entityId)]: "" })),
+                  )
                 }
               />
             </li>

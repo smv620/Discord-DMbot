@@ -22,6 +22,10 @@ describe("checkDocumentLink", () => {
     expect(checkDocumentLink("https://example.com/\tsheet")).toEqual({ ok: false, problem: "not-web" });
   });
 
+  it("refuses a link without a literal http:// or https:// prefix, even where the URL parser would read it", () => {
+    expect(checkDocumentLink("http:/example.com")).toEqual({ ok: false, problem: "not-web" });
+  });
+
   it("refuses a word with spaces, a link with another scheme, and a script link", () => {
     expect(checkDocumentLink("a word with spaces")).toEqual({ ok: false, problem: "not-web" });
     expect(checkDocumentLink("ftp://x")).toEqual({ ok: false, problem: "not-web" });

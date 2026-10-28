@@ -14,6 +14,9 @@ export function checkDocumentLink(text: string): DocumentLinkCheck {
   const url = text.trim();
   if (url === "") return { ok: false, problem: "empty" };
   if (url.length > DOCUMENT_LINK_MAX) return { ok: false, problem: "too-long" };
+  // The literal prefix comes first: the URL parser would read "http:/example.com" as a web address, and the words say
+  // the link must start with https:// or http://.
+  if (!/^https?:\/\//i.test(url)) return { ok: false, problem: "not-web" };
   let parsed: URL;
   try {
     parsed = new URL(url);

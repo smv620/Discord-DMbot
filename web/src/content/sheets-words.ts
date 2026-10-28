@@ -37,7 +37,7 @@ export const sheetWords = {
   typedBadLevel: "Nothing was saved: the level is a number from 1 to 20.",
   documentSummary: "Use a document link",
   documentFor: (name: string): string => `Use a document link for ${name}`,
-  documentLabel: "Link to your sheet",
+  documentLabel: (name: string): string => `Link to your sheet for ${name}`,
   documentHint: "Anyone with the link must be able to open it. DMbot keeps no document.",
   documentRead: "Read my sheet",
   documentReplaces: "You have a sheet already. Reading a document replaces it.",
@@ -59,6 +59,8 @@ export const sheetWords = {
   readAt: (when: string): string => `Read ${when}`,
   notYet: "Not read yet.",
   problems: {
+    "bad-document-link":
+      "That isn't a web address DMbot can read. Use a public link that starts with https:// or http://.",
     "bad-link":
       "That isn't a character link from dndbeyond.com. It looks like https://www.dndbeyond.com/characters/12345.",
     "not-allowed": "Only the player of this character can change its sheet.",
