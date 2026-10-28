@@ -48,6 +48,7 @@ export const waitingWords = {
   pronounQuestion: (word: string): string => `Who is ${word}?`,
   pronounNoName: "No name fits yet.",
   someoneElse: "Someone else",
+  someoneElseFor: (word: string): string => `Someone else for ${word}`,
   hiddenMark: "🤫",
   hiddenWord: "Hidden from players:",
   saidAt: (day: string): string => `Said in the session of ${day}.`,

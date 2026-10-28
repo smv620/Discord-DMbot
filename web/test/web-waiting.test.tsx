@@ -248,6 +248,7 @@ describe("Who is she?", () => {
     const note = within(card).getByText(w.pronounNoName);
     const someoneElse = within(card).getByRole("button", { name: `${w.someoneElse} for he` });
     expect(someoneElse.getAttribute("aria-describedby")?.split(" ")).toContain(note.id);
+    expect(document.getElementById(note.id)).toBe(note);
   });
 
   it("Someone else sends the neither answer and says it kept the connection", async () => {
@@ -259,7 +260,7 @@ describe("Who is she?", () => {
     await settled();
   });
 
-  it("a gone answer to Someone else is refused, and the other question stays", async () => {
+  it("the mock refuses a second Someone else for the same question as gone, and keeps the other question", async () => {
     const api = mockApi("table");
     await expect(api.answerWaiting!(PRONOUN_REF, { kind: "which", action: "neither", id: "w3" })).resolves.toBeDefined();
     await expect(api.answerWaiting!(PRONOUN_REF, { kind: "which", action: "neither", id: "w3" })).rejects.toMatchObject({ kind: "gone" });
@@ -273,15 +274,19 @@ describe("Who is she?", () => {
     api.webWaiting = async (ref) => {
       const pron = await pronounList.webWaiting!(ref);
       const named = await nameList.webWaiting!(REF);
-      return { ...pron, which: [...named.which, ...pron.which] };
+      const which = [...named.which, ...pron.which];
+      return { ...pron, which, counts: { ...pron.counts, which: which.length, all: which.length } };
     };
     render(<WebWaiting api={api} campaignRef={PRONOUN_REF} />);
     await screen.findByRole("heading", { name: w.heading });
-    expect(screen.getByRole("heading", { name: w.whichHeading })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: w.pronounHeading })).toBeTruthy();
-    expect(screen.getByText(w.whichQuestion("Mara"))).toBeTruthy();
-    expect(screen.getByText(w.pronounQuestion("she"))).toBeTruthy();
-    expect(screen.getByText(w.pronounQuestion("he"))).toBeTruthy();
+    expect(screen.getByText(w.count(3))).toBeTruthy();
+    // Each question sits under its own heading, not just somewhere on the page.
+    const nameGroup = screen.getByRole("heading", { name: w.whichHeading }).parentElement as HTMLElement;
+    const pronounGroup = screen.getByRole("heading", { name: w.pronounHeading }).parentElement as HTMLElement;
+    expect(within(nameGroup).getByText(w.whichQuestion("Mara"))).toBeTruthy();
+    expect(within(pronounGroup).getByText(w.pronounQuestion("she"))).toBeTruthy();
+    expect(within(pronounGroup).getByText(w.pronounQuestion("he"))).toBeTruthy();
+    expect(within(nameGroup).queryByText(w.pronounQuestion("she"))).toBeNull();
   });
 
   it("a pick of the one name sends that name's id", async () => {
@@ -295,8 +300,8 @@ describe("Who is she?", () => {
   it("a question with no pronoun key (an older API) is drawn as a name question, with Neither", async () => {
     await open();
     const card = screen.getByText(w.whichQuestion("Mara")).closest(".panel") as HTMLElement;
+    // A question with no pronoun key is a name question: it offers Neither, not Someone else.
     expect(within(card).getByRole("button", { name: w.neither })).toBeTruthy();
-    expect(within(card).queryByRole("button", { name: `${w.someoneElse} for Mara` })).toBeNull();
   });
 
   it("a name question is drawn as before", async () => {

@@ -249,7 +249,7 @@ export default function WebWaiting({
                   type="button"
                   class="button secondary"
                   disabled={busy}
-                  aria-label={`${w.someoneElse} for ${q.word}`}
+                  aria-label={w.someoneElseFor(q.word)}
                   aria-describedby={q.candidates.length === 0 ? `wq-${q.id} wq-none-${q.id}` : `wq-${q.id}`}
                   onClick={() => void send({ kind: "which", action: "neither", id: q.id }, w.done.someoneElse)}
                 >
