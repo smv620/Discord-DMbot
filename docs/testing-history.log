@@ -2709,3 +2709,11 @@ DEPLOY 6fe8344c (2026-10-28, dev1, owner's OK through the prompt "Deploy now"; S
 - Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
 - Live: 266 migration rows, last 0269_report_fixed_remind. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Co-DMs, rule sharing, sheets and report make stay off (their own switches, not on the features line).
 - web-api healthy. Not yet checked: /dmbot in the test server (owner), and the website routes behind the off switches (404).
+
+DEPLOY 6f29673f (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's third deploy handover 21:11 UTC on 2026-10-28). Live was 6fe8344c.
+- CI: every job green on 6f29673f before the start.
+- Dry run on a copy (restored from a backup taken 21:5x UTC): 4 migrations applied (0270 to 0274), 266 to 270 rows, 0.36 s, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 270 migration rows, last 0274_web_sheet_typed_document. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Website restore switch (DMBOT_WEB_RESTORE) stays 0.
+- web-api healthy. Not yet checked: /dmbot in the test server (owner), the lore re-read on #2757, and the website routes behind the off switches.
+- The bot logged two warnings at start-up: .env is missing 13 settings that .env.example has (optional, see the start-up warning), and .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used). Both are for the owner to tidy; no change made.
