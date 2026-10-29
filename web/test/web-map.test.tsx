@@ -3,6 +3,9 @@
 // they were dropped, the lines go quiet until a name is in focus, and the person's choices stay in this
 // browser. The layout is checked as pure code (no clock, no random numbers) and the map as a rendered page.
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/preact";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WebMap from "../src/account/WebMap";
@@ -487,5 +490,52 @@ describe("kinds of connection, edge cases", () => {
     expect(chip.textContent).not.toContain("(hidden)");
     fireEvent.click(chip);
     expect(chip.textContent).toContain(words.hiddenMark);
+  });
+});
+
+describe("full screen (#2981)", () => {
+  const button = (name: string) => [...document.querySelectorAll(".web-tools button")].find((b) => b.textContent === name) as HTMLButtonElement;
+
+  it("fills the window on request, says so, and is left by the button or Escape", () => {
+    draw();
+    const map = document.querySelector(".web-map")!;
+    expect(map.classList.contains("web-full")).toBe(false);
+    expect(button(words.fullScreen).getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(button(words.fullScreen));
+    expect(map.classList.contains("web-full")).toBe(true);
+    expect(button(words.leaveFullScreen).getAttribute("aria-pressed")).toBe("true");
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.click(button(words.leaveFullScreen));
+    expect(map.classList.contains("web-full")).toBe(false);
+    expect(document.body.style.overflow).toBe("");
+    fireEvent.click(button(words.fullScreen));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(map.classList.contains("web-full")).toBe(false);
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("draws the chosen line's panel inside the map, so full screen still shows it", () => {
+    draw({ children: <section class="web-line-panel">The line</section> });
+    fireEvent.click(button(words.fullScreen));
+    const map = document.querySelector(".web-map.web-full")!;
+    expect(map.querySelector(".web-line-panel")?.textContent).toBe("The line");
+  });
+
+  it("gives the page back its scrolling when the map goes away while full screen", () => {
+    const { unmount } = draw();
+    fireEvent.click(button(words.fullScreen));
+    unmount();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("keeps the wide page and the details under the map in the style sheet", () => {
+    // jsdom lays nothing out, so the width rules are read from the file that the page loads.
+    const css = readFileSync(resolve(process.cwd(), "src/styles/web-map.css"), "utf8");
+    expect(css).toMatch(/body:has\(\.account-wide\) \.wrap \{\s*max-width: 110rem/);
+    expect(css).toMatch(/\.account\.account-wide \{\s*max-width: none/);
+    // The details panel never goes beside the map: one column at every width (owner, #2984).
+    expect(css).not.toMatch(/grid-template-columns: minmax\(0, 1fr\) 19rem/);
+    const page = readFileSync(resolve(process.cwd(), "src/pages/account/web.astro"), "utf8");
+    expect(page).toContain("account account-wide");
   });
 });

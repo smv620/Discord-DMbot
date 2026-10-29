@@ -3,7 +3,7 @@
 // The relationship web's views (#2405): the DM's Full View / Players View, revealing a name or a
 // connection, theories drawn dotted, and the player's "Peek behind the DM screen" switch with its
 // warning, its greyed-out state when the DM turned it off, and the fall-back when they do meanwhile.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -26,6 +26,7 @@ const lastGraph = (api: ReturnType<typeof mockApi>) => calls(api, "webGraph").po
 describe("a DM's Full View and Players View", () => {
   it("starts in Full View: secrets, and what isn't revealed yet shown dimmed and said", async () => {
     await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     expect((screen.getByLabelText(w.fullView) as HTMLInputElement).checked).toBe(true);
     expect(notRevealed().length).toBeGreaterThan(0);
     expect(screen.getByText(w.legendNotRevealed)).toBeTruthy();
@@ -55,6 +56,7 @@ describe("a DM's Full View and Players View", () => {
 
   it("reveals a name to the players, then reads the web again", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const before = notRevealed().length;
     const button = screen.getAllByRole("button", { name: /^Reveal .* to the players$/ })[0] as HTMLElement;
     fireEvent.click(button);
@@ -66,6 +68,7 @@ describe("a DM's Full View and Players View", () => {
 
   it("says why a name could not be revealed, and keeps the button for another try", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     api.webReveal = async () => {
       throw new ApiError("not-allowed");
     };
@@ -77,6 +80,7 @@ describe("a DM's Full View and Players View", () => {
 
   it("greys a Reveal button while the bot is still working, so it can't be pressed twice", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     let finish: () => void = () => {};
     let asked = 0;
     api.webReveal = () => {
@@ -132,6 +136,58 @@ describe("what a player must never see", () => {
     api.webGraph = (ref, q) => new Promise((go) => setTimeout(() => go(slow(ref, q)), 50));
     fireEvent.click(screen.getByLabelText(w.playersView));
     expect(notRevealed()).toHaveLength(0); // before the new web arrives
+  });
+});
+
+describe("Find a name in the players' view (#2989)", () => {
+  const search = async (api: ReturnType<typeof mockApi>, word: string) => {
+    fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: word } });
+    await waitFor(() => expect(calls(api, "webFind").length + calls(api, "allNames").length).toBeGreaterThan(0));
+    await act(async () => {});
+  };
+  it("asks the graph's own door, never the whole list, once a DM is in Players View", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByLabelText(w.playersView));
+    await waitFor(() => expect(notRevealed()).toHaveLength(0));
+    await search(api, "a");
+    expect(calls(api, "webFind").pop()).toMatch(/:view=players$/);
+    expect(calls(api, "allNames")).toHaveLength(0);
+  });
+
+  it("never offers a name the players don't know yet, though a DM in Full View is", async () => {
+    const api = mockApi("table");
+    const graph = await api.webGraph!("100.cmp1", { center: null, hops: 8 });
+    const hidden = graph.nodes.find((n) => n.revealed === false)!.name;
+    render(<Web api={api} path={at()} />);
+    await screen.findByText(/names?, \d+ lines?/);
+    fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: hidden } });
+    expect(await screen.findByRole("button", { name: hidden })).toBeTruthy(); // Full View: offered
+    fireEvent.click(screen.getByLabelText(w.playersView));
+    await waitFor(() => expect(notRevealed()).toHaveLength(0));
+    fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: `${hidden} ` } });
+    expect(await screen.findByText(w.centreNone)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: hidden })).toBeNull();
+  });
+
+  it("offers a DM in Full View the whole list as before", async () => {
+    const api = await open();
+    await search(api, "a");
+    expect(calls(api, "allNames").length).toBeGreaterThan(0);
+    expect(calls(api, "webFind")).toHaveLength(0);
+  });
+
+  it("offers a player only what the players know, and nothing if the API cannot say", async () => {
+    const api = await open(".web-player");
+    await search(api, "a");
+    expect(calls(api, "webFind").length).toBeGreaterThan(0);
+    cleanup();
+    const old = mockApi("table");
+    delete (old as { webFind?: unknown }).webFind;
+    render(<Web api={old} path={at(".web-player")} />);
+    await screen.findByText(/names?, \d+ lines?/);
+    fireEvent.input(screen.getByLabelText(w.centreSearch), { target: { value: "a" } });
+    await act(async () => {});
+    expect(calls(old, "allNames")).toHaveLength(0);
   });
 });
 

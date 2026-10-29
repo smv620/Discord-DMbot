@@ -192,6 +192,8 @@ describe("the page", () => {
     };
     render(<CampaignPageView api={api} path={DM} />);
     expect(await screen.findByText(w.signedOut)).toBeTruthy();
+    // The link from Discord's Manage campaign button lands signed out: one press signs in and comes back here.
+    expect(screen.getByRole("link", { name: w.signIn }).getAttribute("href")).toBe(api.signInUrl());
   });
 
   it("treats an API without the route as a campaign that isn't there", async () => {
