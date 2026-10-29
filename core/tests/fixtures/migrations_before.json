@@ -103,8 +103,12 @@
   "web_backup_parts",
   "web_backups",
   "web_delete_notices",
+  "web_line_deletions",
+  "web_line_fixes",
   "web_peeks",
   "web_report_requests",
+  "web_restore_parts",
+  "web_restores",
   "web_rule_actions",
   "web_sheet_actions"
  ],
@@ -374,11 +378,19 @@
   "0266_web_name_unnamed",
   "0267_who_is_it_decided",
   "0268_web_sheet_actions",
-  "0269_report_fixed_remind"
+  "0269_report_fixed_remind",
+  "0270_web_pronoun_which",
+  "0271_web_restores",
+  "0272_web_line_deletions",
+  "0273_restore_guilds",
+  "0274_web_sheet_typed_document",
+  "0275_web_decided_note",
+  "0276_web_line_fixes"
  ],
  "routing": [
   "campaign_guilds",
-  "live_session_guilds"
+  "live_session_guilds",
+  "web_restore_guilds"
  ],
  "sha256": {
   "0001_initial": "e8ffdfe02b29f7b39e1c02176cb9668792bfa02e232a2f3387c5e681ddc5309d",
@@ -646,7 +658,14 @@
   "0266_web_name_unnamed": "9b6d27be5bc145f95d2f3c3b6a2f89b81206971ba64974b7442c7287b338b5fd",
   "0267_who_is_it_decided": "a7302258cf3c06a6c56e0983cb8496acfc658cabd88e80946a6ad9f62dea505f",
   "0268_web_sheet_actions": "42ad7e62a359600c8f5b57fcc7d5c23fbb8987635168860a7fe3c79df7803a5b",
-  "0269_report_fixed_remind": "485c539777d21f8a46f2d2dcc53c6bdc6e1ee08a99ddcdd79433fb7053785561"
+  "0269_report_fixed_remind": "485c539777d21f8a46f2d2dcc53c6bdc6e1ee08a99ddcdd79433fb7053785561",
+  "0270_web_pronoun_which": "a615a431400f23b5f40e0a3f17e34878712ea4ba94d306c92ccd9ebba5257f7d",
+  "0271_web_restores": "395d3b6254f955f636a22d25ab60a3c06ed10cc203ebf9827cc4063ab90c1a58",
+  "0272_web_line_deletions": "105d7662633db30606cb8ecf599740ed5736213d4b28a2be4bf2bfec562c5b8f",
+  "0273_restore_guilds": "ac40733e8f1e0b7cde74bff1bd3f33c54dac51a8968e956fd120b227f7e3bc5f",
+  "0274_web_sheet_typed_document": "c3e1710c5cf1f3d6d483bcc55c77dd7f6d736d7b6977827529d65d5efb8d3344",
+  "0275_web_decided_note": "4e675f692a6c04a4b0e34571a133ff05be72a036d5c33f97def191a0735f2e26",
+  "0276_web_line_fixes": "dd22173dc149d026115fcdf8d7db722310ad33704d7e9d1c491cfb9d9f18708e"
  },
  "user_isolated": [
   "access_grants",
@@ -1006,8 +1025,28 @@
    "dmbot_web_house_rules_campaigns(BIGINT)"
   ],
   [
+   "dmbot_web_line_fix_add",
+   "dmbot_web_line_fix_add(BIGINT, TEXT, TEXT, BIGINT, BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_line_fix_read",
+   "dmbot_web_line_fix_read(BIGINT, TEXT, TEXT)"
+  ],
+  [
    "dmbot_web_move_code",
    "dmbot_web_move_code(BIGINT, TEXT, BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_my_lines",
+   "dmbot_web_my_lines(BIGINT)"
+  ],
+  [
+   "dmbot_web_my_lines_delete",
+   "dmbot_web_my_lines_delete(BIGINT)"
+  ],
+  [
+   "dmbot_web_my_lines_read",
+   "dmbot_web_my_lines_read(BIGINT, TEXT)"
   ],
   [
    "dmbot_web_name_action_add",
@@ -1088,6 +1127,34 @@
   [
    "dmbot_web_report_request",
    "dmbot_web_report_request(BIGINT, TEXT, BIGINT)"
+  ],
+  [
+   "dmbot_web_restore_add",
+   "dmbot_web_restore_add(BIGINT, TEXT, TEXT, INT, BYTEA)"
+  ],
+  [
+   "dmbot_web_restore_cancel",
+   "dmbot_web_restore_cancel(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_restore_go",
+   "dmbot_web_restore_go(BIGINT, TEXT, BOOLEAN)"
+  ],
+  [
+   "dmbot_web_restore_part",
+   "dmbot_web_restore_part(BIGINT, TEXT, INT, BYTEA)"
+  ],
+  [
+   "dmbot_web_restore_pending",
+   "dmbot_web_restore_pending(BIGINT)"
+  ],
+  [
+   "dmbot_web_restore_read",
+   "dmbot_web_restore_read(BIGINT, TEXT)"
+  ],
+  [
+   "dmbot_web_restore_target",
+   "dmbot_web_restore_target(BIGINT, TEXT)"
   ],
   [
    "dmbot_web_rule_action_add",

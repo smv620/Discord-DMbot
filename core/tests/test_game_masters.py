@@ -16,7 +16,7 @@ import aiohttp
 import discord
 
 from dmbot.audio.segmenter import Segmenter
-from dmbot.bot import DMBot, Table
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, OWNER_STAYS, TOO_MANY_DMS
 from dmbot.config import Settings
@@ -25,6 +25,7 @@ from dmbot.dm_screen import game_masters as gm
 from dmbot.dm_screen.channel import DMScreenError
 from dmbot.dm_screen.settings import management_view
 from dmbot.sessions import SessionStore
+from dmbot.table import Table
 from tests.pg import DatabaseTest
 
 GUILD, OWNER, CO, NEWBIE, MANAGER, PLAYER = 1, 7, 8, 9, 10, 11

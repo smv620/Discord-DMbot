@@ -23,12 +23,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from dmbot.campaigns.backup_names import backup_filename
 from dmbot.campaigns.models import Campaign
 from dmbot.campaigns.parts import TOO_MANY_PARTS
 from dmbot.campaigns.store import BackupTooBig, encode_backup
 from dmbot.db import Database
 from dmbot.plan_rules import Action
-from dmbot.ui.logic import backup_filename
 
 log = logging.getLogger(__name__)
 

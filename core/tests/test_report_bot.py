@@ -185,6 +185,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
             return self.queue[guild_id].pop(0) if self.queue[guild_id] else None
 
         b.report_requests = SimpleNamespace(claim_next=claim)
+        b._report_tasks = {}  # declared in DMBot.__init__
+        b._closing = False
+        b._asking = set()
         return b
 
     async def test_the_sweep_returns_while_a_report_is_still_being_made(self) -> None:
@@ -214,6 +217,30 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*b._report_tasks.values())
         await asyncio.sleep(0)
         self.assertEqual(b._report_tasks, {})  # forgotten when done
+
+    async def test_while_closing_no_report_is_started(self) -> None:
+        from unittest.mock import PropertyMock
+
+        b = self.bare([SimpleNamespace(campaign_id="c")])
+        b._closing = True
+        ran: list[int] = []
+
+        async def never(self: Any, store: Any, guild_id: int, r: Any) -> None:
+            ran.append(guild_id)
+
+        guilds = PropertyMock(return_value=[SimpleNamespace(id=1)])
+        with (
+            patch.object(DMBot, "guilds", guilds),
+            patch.object(DMBot, "_run_report_request", never),
+        ):
+            await b.run_web_report_requests()
+        import asyncio
+
+        await asyncio.sleep(0)  # a started task would run now, so `ran` below means something
+        self.assertEqual(b._report_tasks, {})
+        self.assertEqual(ran, [])
+        # claim_next was never awaited: the row is untouched.
+        self.assertEqual(len(self.queue[1]), 1)
 
     async def test_without_a_store_nothing_happens(self) -> None:
         b: Any = DMBot.__new__(DMBot)

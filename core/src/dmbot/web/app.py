@@ -50,6 +50,8 @@ from dmbot.web import (
     handover_accept,
     handover_offer,
     imports,
+    line_fixes,
+    my_lines,
     names_smart,
     npc_pages,
     offers,
@@ -57,6 +59,7 @@ from dmbot.web import (
     past_sessions,
     relationships,
     report,
+    restores,
     rule_sharing,
     sessions,
     shared_recaps,
@@ -965,6 +968,10 @@ def create_app(
     # What the DM types on the recap page (#2113): queued for the bot to sort (no AI key here),
     # polled by the page. The words are never logged.
     instructions_limit = RateLimit(60, count=12)
+    RESTORE_READ_S = 120  # the most a file may take to arrive (a phone on a poor line, 25 MB)
+    restore_reading = asyncio.Semaphore(2)  # files being read and checked at once (#2745)
+    restore_part_limit = RateLimit(3600, count=120)  # up to 24 files a copy, a few copies an hour
+    restore_limit = RateLimit(3600, count=10)  # copies loaded on the page: big, so few (#2745)
     upload_limit = RateLimit(60, count=6)  # recaps written by the table, added on the page (#2609)
     name_answer_limit = RateLimit(60, count=60)  # a page of names answered one after another
     request_status = STATUS
@@ -1796,6 +1803,11 @@ def create_app(
         "unknown_person": (400, "unknown_person"),
     }
 
+    line_delete_refusals = {
+        "nothing_to_delete": (409, "nothing_to_delete"),  # no lines of theirs in that server
+        "too_soon": (429, "too_soon"),
+    }
+
     delete_refusals = {
         "not_found": (404, "not_found"),
         "not_the_owner": (403, "not_the_owner"),
@@ -1866,6 +1878,165 @@ def create_app(
                 "Cache-Control": "no-store",
             },
         )
+
+    restore_refusals: dict[str, tuple[int, str]] = {
+        "not_found": (404, "not_found"),
+        "too_big": (413, "too_big"),
+        "not_a_backup": (422, "not_a_backup"),
+        "too_many_parts": (422, "too_many_parts"),
+        "bad_part": (422, "bad_part"),
+        "too_soon": (429, "too_soon"),
+        "busy": (409, "busy"),
+        "missing": (409, "missing"),
+        "not_receiving": (409, "not_receiving"),
+        "working": (409, "working"),
+        "plan": (402, "plan"),
+    }
+
+    def restore_refusal(err: RecapError) -> HTTPException:
+        status, detail = restore_refusals.get(err.code, (404, "not_found"))
+        return HTTPException(status_code=status, detail=detail)
+
+    async def restore_enabled() -> None:
+        """Off until the bot applies and sweeps staged restores (#2746): the routes say 404."""
+        if not settings.web_restore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+
+    async def bounded_bytes(request: Request, limit: int) -> bytes:
+        """A file's bytes, read with a running cap (a declared length is not trusted)."""
+        length = request.headers.get("content-length", "")
+        if length.isdecimal() and int(length) > limit:
+            raise HTTPException(status_code=413, detail="too_big")
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                raise HTTPException(status_code=413, detail="too_big")
+        return bytes(data)
+
+    async def read_restore_body(request: Request) -> bytes:
+        """A file's bytes with a running cap and a time limit, so one slow sender cannot hold the
+        two places for everyone else."""
+        try:
+            async with asyncio.timeout(RESTORE_READ_S):
+                return await bounded_bytes(request, restores.MAX_BODY_BYTES)
+        except TimeoutError:
+            raise HTTPException(status_code=408, detail="too_slow") from None
+
+    @app.post("/me/restores/{server_id}", status_code=202, dependencies=[Depends(restore_enabled)])
+    async def me_restore_stage(
+        server_id: int, signed: Signed, request: Request, replace: str | None = None
+    ) -> Any:
+        """Load a backup from the website (#2745). The body is the copy itself (the file from
+        `/dmbot backup`, as bytes); `?replace=<server>.<campaign>` swaps one of the person's own
+        campaigns for it, otherwise it becomes a new campaign. Staged for the bot, which checks
+        the plan, the free slot and the rights again when it applies it. Answers `{id, name,
+        partsWanted, state}`. 413 `too_big`, 422 `not_a_backup` or `too_many_parts`, 409 `busy`
+        (with the id of the one pending), 429 `too_soon`, 404 `not_found`."""
+        session, _token = signed
+        if restore_limit.take(f"restore:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        # What the address alone can say (the server has DMbot, the campaign is theirs to replace,
+        # the plan allows it) is judged before any of a body of up to 25 MB is read. At most two
+        # files are read and decoded at once, and a slow sender gives up after RESTORE_READ_S, so
+        # memory and the two places stay free.
+        try:
+            await restores.authorize(
+                db,
+                session,
+                server_id,
+                replace,
+                now=int(clock()),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        async with restore_reading:
+            raw = await read_restore_body(request)
+            try:
+                return await restores.stage(db, session, server_id, replace, raw)
+            except RecapError as err:
+                if err.code == "busy" and err.problems:
+                    # Says which one is pending, so the page can show that one instead.
+                    return JSONResponse(
+                        {"error": "busy", "id": err.problems[0].get("id")}, status_code=409
+                    )
+                raise restore_refusal(err) from None
+
+    @app.put(
+        "/me/restores/{server_id}/{restore_id}/parts/{number}",
+        dependencies=[Depends(restore_enabled)],
+    )
+    async def me_restore_part(
+        server_id: int, restore_id: str, number: int, signed: Signed, request: Request
+    ) -> dict[str, Any]:
+        """One transcripts file of a staged copy (numbers 1 to the count it asked for; sending
+        a number again replaces it). Answers `{received}`."""
+        session, _token = signed
+        if restore_part_limit.take(f"restore-part:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        if not any(g.id == server_id for g in session.guilds):
+            raise HTTPException(status_code=404, detail="not_found")
+        async with restore_reading:
+            raw = await read_restore_body(request)
+            try:
+                return await restores.add_part(db, session, server_id, restore_id, number, raw)
+            except RecapError as err:
+                raise restore_refusal(err) from None
+
+    @app.post(
+        "/me/restores/{server_id}/{restore_id}/go",
+        status_code=202,
+        dependencies=[Depends(restore_enabled)],
+    )
+    async def me_restore_go(
+        server_id: int, restore_id: str, signed: Signed, request: Request
+    ) -> dict[str, str]:
+        """Send the staged copy to the bot. `{"without": true}` restores without the transcripts
+        files (all of them or none, as in Discord). 409 `missing` while files are still to come."""
+        session, _token = signed
+        body = await bounded_json(request)
+        without = bool(body.get("without")) if isinstance(body, dict) else False
+        try:
+            await restores.go(db, session, server_id, restore_id, without=without)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        return {"id": restore_id}
+
+    @app.get("/me/restores/{server_id}", dependencies=[Depends(restore_enabled)])
+    async def me_restore_latest(server_id: int, signed: Signed) -> dict[str, Any]:
+        """The person's latest restore in that server (so a closed page finds its way back), in
+        the shape of `GET /me/restores/{server_id}/{id}`. 404 when there is none."""
+        session, _token = signed
+        try:
+            return await restores.status(db, session, server_id, None)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.get("/me/restores/{server_id}/{restore_id}", dependencies=[Depends(restore_enabled)])
+    async def me_restore_status(server_id: int, restore_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own restore stands, in the shared progress shape (stage, startedAt,
+        updatedAt, serverNow, state, reason, done/total for the writing), with `name`, `replacing`,
+        `partsWanted`, `partsReceived`, `campaign` (once it is made), `leftOut`, `expiresAt`."""
+        session, _token = signed
+        try:
+            return await restores.status(db, session, server_id, restore_id)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+
+    @app.delete(
+        "/me/restores/{server_id}/{restore_id}",
+        status_code=204,
+        dependencies=[Depends(restore_enabled)],
+    )
+    async def me_restore_cancel(server_id: int, restore_id: str, signed: Signed) -> Response:
+        """Take a restore back before the bot starts it, or clear one that has ended."""
+        session, _token = signed
+        try:
+            await restores.cancel(db, session, server_id, restore_id)
+        except RecapError as err:
+            raise restore_refusal(err) from None
+        return Response(status_code=204)
 
     @app.get("/me/campaigns/{ref}/backup/{backup_id}/file/{n}")
     async def me_campaign_backup_part(ref: str, backup_id: str, n: int, signed: Signed) -> Response:
@@ -2283,6 +2454,72 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    line_fix_refusals = {
+        "bad_text": (400, "bad_text"),
+        "same": (400, "same"),
+        "bad_choice": (422, "bad_choice"),
+        "not_yours": (403, "not_yours"),
+        "not_recorded": (403, "not_recorded"),
+        "not_found": (404, "not_found"),
+        "open": (409, "open"),  # this line already has a fix waiting for the DM
+        "many": (409, "many"),  # three of this person's fixes are waiting
+        "no_dm_screen": (409, "no_dm_screen"),
+        "queue_full": (429, "queue_full"),  # twenty waiting in the campaign: a flood guard only
+    }
+
+    @app.post("/me/campaigns/{ref}/transcripts/{number}/fix", status_code=202)
+    async def me_transcript_fix(
+        ref: str, number: int, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """Fix one spoken line (#2858): the line's own speaker suggests new words for the DM to
+        check, a DM of the campaign rewrites any spoken line. `{answer, mode}`; poll
+        `.../fix/{answer}`. 404 while DMBOT_WEB_LINE_FIX is off."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        body = await small_json(request)
+        speaker, started, text = body.get("speaker"), body.get("startedMs"), body.get("text")
+        if not isinstance(speaker, str) or type(started) is not int or not isinstance(text, str):
+            raise HTTPException(status_code=422, detail="bad_choice")
+        try:
+            made = await line_fixes.request(
+                db,
+                session,
+                ref,
+                number,
+                speaker,
+                started,
+                text,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError as err:
+            status, detail = line_fix_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": made["id"], "mode": made["mode"]}
+
+    @app.get("/me/campaigns/{ref}/transcripts/{number}/fix/{answer}")
+    async def me_transcript_fix_status(
+        ref: str, number: int, answer: str, signed: Signed
+    ) -> dict[str, Any]:
+        """Where the person's own fix stands, in the shared progress shape (#2858), with `result`
+        ("sent" or "changed") once it is done."""
+        session, _token = signed
+        if not settings.line_fix_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await line_fixes.status(
+                db,
+                session,
+                ref,
+                number,
+                answer,
+                now=clock(),
+                enforce_plans=settings.enforce_plans,
+            )
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
     async def me_transcript_download(
         ref: str, number: int, signed: Signed, version: str = "cleaned"
@@ -2383,6 +2620,8 @@ def create_app(
         **setting_refusals,
         "bad_action": (400, "bad_action"),
         "bad_link": (400, "bad_link"),
+        "bad_document": (400, "bad_document"),
+        "bad_typed": (400, "bad_typed"),
         "not_allowed": (403, "not_allowed"),
         "too_soon": (429, "too_soon"),
         "read_too_soon": (429, "read_too_soon"),
@@ -2582,6 +2821,45 @@ def create_app(
                 )
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/mine")
+    async def my_lines_counts(server_id: str, signed: Signed) -> dict[str, Any]:
+        """How many lines the signed-in person has in one of their servers, in how many sessions,
+        and their "Delete my transcripts" that is open, if any (#2769). Their own lines only;
+        counts, never words. 404 while DMBOT_WEB_LINE_DELETE is off."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.counts(db, session, server_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/transcripts/{server_id}/delete", status_code=202)
+    async def my_lines_delete(server_id: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to delete the signed-in person's own lines in one of their servers, as
+        Discord's 🗑 button does (#2769): `{id}`, the same one again while a request is open.
+        409 `nothing` when they have no lines there, 429 `too_soon` past ten requests an hour."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"id": await my_lines.request(db, session, server_id)}
+        except RecapError as err:
+            status, detail = line_delete_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/transcripts/{server_id}/delete/{deletion_id}")
+    async def my_lines_status(server_id: str, deletion_id: str, signed: Signed) -> dict[str, Any]:
+        """Where the person's own deletion stands, in the shared progress shape, with the counts it
+        removed once done (#2769)."""
+        session, _token = signed
+        if not settings.line_delete_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await my_lines.status(db, session, server_id, deletion_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.post("/me/recording/{server_id}/stop", status_code=204)
     async def stop_recording(server_id: str, signed: Signed) -> Response:

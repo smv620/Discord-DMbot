@@ -30,7 +30,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "account",
     whatsNew: "Delete a campaign from the website",
-    text: "On My Account, open the campaign's card and press Delete this campaign. Only the person whose plan the campaign uses sees it. It says what goes and that it can't be undone. To keep a copy, download a backup first. Then type the campaign's name and press Delete it. You can't delete while a session is running. A campaign on a server DMbot can't reach any more still shows in your list; you can back it up or delete it there, and its Discord channels stay until a server admin removes them.",
+    text: "Open the campaign's page from My Account and scroll to the bottom. Press Delete this campaign. Only the person whose plan the campaign uses sees it. It says what goes and that it can't be undone. To keep a copy, download a backup first. Then type the campaign's name and press Delete it. You can't delete while a session is running. A campaign on a server DMbot can't reach any more still shows in your list with its own Delete button, and you can back it up or delete it there; its Discord channels stay until a server admin removes them.",
   },
   {
     audience: "account",
@@ -100,7 +100,7 @@ export const featureSteps: FeatureStep[] = [
   {
     audience: "gameMaster",
     whatsNew: "Change a campaign's settings on the website",
-    text: "On a campaign's Settings tab, game masters can change who can see the DM screen, how much DMbot says, and how long transcripts are kept. The page says it is saving, then that it is saved. If you pick a shorter time for keeping transcripts, you see a warning first, and nothing is deleted until you say yes on the page. Changes need DMbot to be online. If it is away, your change waits for up to an hour. If DMbot is not back by then, the change is dropped and you can choose again. Hand over, pause and delete are still done in Discord, and only the campaign's owner sees them.",
+    text: "On a campaign's Settings tab, game masters can change who can see the DM screen, how much DMbot says, and how long transcripts are kept. The page says it is saving, then that it is saved. If you pick a shorter time for keeping transcripts, you see a warning first, and nothing is deleted until you say yes on the page. Changes need DMbot to be online. If it is away, your change waits for up to an hour. If DMbot is not back by then, the change is dropped and you can choose again. Hand over and pause are still done in Discord, and only the campaign's owner sees them.",
   },
   {
     audience: "gameMaster",

@@ -5,23 +5,9 @@
 
 from __future__ import annotations
 
-
-# "Not named yet" on the website (#2803): a DM's Names page lists the people the story described and
-# never named (0263), and gives them a name through the queue the other name actions use. Three
-# new actions: `name` (a new name for them: the bot renames, or answers `known_name` with the one
-# DMbot already knows, or `ambiguous` / `gone`), `name-join` (the DM said "same person": the bot
-# joins them into the named one, keeping it) and `name-undo` (the done one of those two, undone
-# with the batch the bot kept in `result_other`). The two doors and the action list are read back
-# from the database as they are now and widened, one place at a time, each of which must be found
-# exactly once: a door whose text changed under this migration stops it instead of passing
-# silently. A confirmed unnamed person never takes the other actions (a spelling, a kind, a secret):
-# those are for named entries.
-def _swaps(var: str, pairs: tuple[tuple[str, str], ...]) -> str:
-    return "\n".join(
-        f"        {var} := pg_temp.swap_once({var}, $o${old}$o$, $n${new}$n$);"
-        for old, new in pairs
-    )
-
+from dmbot.migrations._shared import (
+    _swaps,
+)
 
 _NAME_DOOR_SWAPS = (
     (

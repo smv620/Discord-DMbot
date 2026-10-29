@@ -50,13 +50,16 @@ from dmbot.recaps.text import (
     words,
 )
 
+# Re-exported with the `as` form, which mypy strict needs, so that
+# `draft.SPOKEN_WORDS_PER_HOUR` still resolves.
+from dmbot.transcript.import_plan import SPOKEN_WORDS_PER_HOUR as SPOKEN_WORDS_PER_HOUR
+
 log = logging.getLogger(__name__)
 
 BASE_WORDS = 75  # the recap's length: this many words, and 75 more for each hour played (#2368)
 WORDS_PER_HOUR = 75
 WORDS_CEILING = 450  # a 5-hour session or longer
 ROOM_TIMES = 2.5  # the output room is sized for a draft this many times the target (a ceiling)
-SPOKEN_WORDS_PER_HOUR = 7000  # a table's talk, to estimate the hours of a file with no times
 MIN_SPAN_S = 60  # lines closer in time than this have no real times to measure
 # The recap text the database holds (`recap_jobs.summary`, backups) and the web editor takes: the
 # story, the fixed opening and closing lines and their gap. A draft longer than the story's share is

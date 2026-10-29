@@ -1,5 +1,6 @@
 // The Story graph's list of what waits for the DM (#2635, #2652): facts DMbot heard at the table,
-// connections found in a backstory (grouped by the upload each came from) and "Which Mara?" questions.
+// connections found in a backstory (grouped by the upload each came from), "Which Mara?" questions and
+// "Who is she?" pronoun questions (#2831).
 // Plain words; the DM decides everything here, DMbot only asks. Nothing is shown to players: the API
 // answers only a DM of the campaign. WEB_WAITING_LIVE moves with the What's new entry "What is waiting
 // for you, on the Story graph"; it needs CloudDev's #2638 and #2654 deployed and dev1 to have seen one fact
@@ -39,9 +40,16 @@ export const waitingWords = {
   whichHeading: "Same name, which one?",
   whichNote: "A name in your backstory matches more than one entry.",
   whichQuestion: (word: string): string => `Which ${word} is this?`,
+  checkLine: (check: string): string => `DMbot's check: ${check}`,
   whichLine: (other: string, how: string, word: string, otherIsSubject: boolean): string =>
     otherIsSubject ? `${other} ${how} ${word}` : `${word} ${how} ${other}`,
   neither: "Neither",
+  pronounHeading: "Who is this?",
+  pronounNote: "DMbot isn't sure who a word like \"she\" means.",
+  pronounQuestion: (word: string): string => `Who is ${word}?`,
+  pronounNoName: "No name fits yet.",
+  someoneElse: "Someone else",
+  someoneElseFor: (word: string): string => `Someone else for ${word}`,
   hiddenMark: "🤫",
   hiddenWord: "Hidden from players:",
   saidAt: (day: string): string => `Said in the session of ${day}.`,
@@ -58,6 +66,7 @@ export const waitingWords = {
     skip: "Skipped.",
     pick: "Picked. It now shows under From your backstory.",
     neither: "Neither. No connection was made.",
+    someoneElse: "Someone else. DMbot kept the connection with a person who isn't named yet.",
   },
   kept: (n?: number): string =>
     n === undefined ? "Done. The list shows what is left." : n === 0 ? "Nothing was ready to keep." : n === 1 ? "Kept 1 connection." : `Kept ${n} connections.`,

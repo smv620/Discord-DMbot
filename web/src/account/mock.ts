@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
+import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -593,6 +593,7 @@ interface WebState {
     revealed?: boolean;
     belief?: WebLink["belief"];
     pinned?: boolean;
+    check?: string;
   }[];
   nextLink: number;
 }
@@ -625,6 +626,9 @@ function startWeb(big: boolean, lonely = false): WebState {
   // One connection the DM pinned as 100% truth (#2448).
   const l2 = byId("l2");
   if (l2) l2.pinned = true;
+  // DMbot's check on one connection (#2859): the DM's full view only.
+  const l3 = byId("l3");
+  if (l3) l3.check = "DMbot matched this name from your text.";
   const l4 = byId("l4");
   if (l4) l4.revealed = false;
   // Theories the party holds: one it is unsure of, one it is wrong about (full view marks that).
@@ -688,7 +692,7 @@ function pretendWaiting(): Waiting {
     ],
     backstory: [
       { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
-      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [] },
+      { id: "b2", subject: "Rook", object: "Mira Voss", how: "grew up with", secret: true, upload: "Lore, 24 Oct", ready: true, waitingOn: [], check: "DMbot wasn't sure who the text means. Please check." },
       { id: "b3", subject: "Rook", object: "Newcomer", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: false, waitingOn: ["Newcomer"] },
       { id: "b4", subject: "Mira Voss", object: "Harrow's Keep", how: "grew up in", secret: false, upload: "", ready: true, waitingOn: [] },
     ],
@@ -705,6 +709,25 @@ function pretendWaiting(): Waiting {
     counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
   };
 }
+/** A campaign ref ending `.pronoun` has only pronoun questions (#2831): one with a name, one with none. */
+function pronounWaiting(): Waiting {
+  return {
+    claims: [],
+    backstory: [],
+    which: [
+      {
+        id: "w2", word: "she", pronoun: true, other: "Rook", otherIsSubject: false, how: "grew up with", secret: false, upload: "Lore, 24 Oct",
+        candidates: [{ id: "e3", name: "Mara Ashgrove", limited: false }],
+        quote: "She grew up with Rook",
+        check: "You chose someone else for this one.",
+      },
+      { id: "w3", word: "he", pronoun: true, other: "Rook", otherIsSubject: true, how: "knows", secret: false, upload: "Lore, 24 Oct", candidates: [] },
+    ],
+    counts: { claims: 0, backstory: 0, ready: 0, which: 0, all: 0 },
+  };
+}
+/** The pretend "Fix this line" answers' modes, by answer (#2858). */
+const fixes = new Map<string, FixMode>();
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
@@ -720,6 +743,23 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     pending: null,
   };
   const memory = startNames();
+  // The pretend restores of a backup loaded from the website (#2745), by server.
+  interface PretendRestore {
+    id: string;
+    name: string;
+    replacing: boolean;
+    wanted: number;
+    got: Set<number>;
+    without: boolean;
+    /** -1 until Load it; then how many looks it has moved on. */
+    stageNo: number;
+    state: "running" | "done" | "failed";
+    failing: boolean;
+    campaign: string;
+    moved?: number;
+  }
+  const restores = new Map<string, PretendRestore>();
+  let restoreCount = 0;
   // People the story never named (#2803), shown only for a campaign ref ending `.not-named`; what each name/join
   // step changed is kept by the answer id, so an Undo can put it back.
   const unnamedPeople: NameRow[] = [
@@ -770,6 +810,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ...(full ? { revealed: l.revealed !== false } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
+          // DMbot's check is the DM's alone, like a pin: never to a player or a peeker (#2859).
+          ...(pins && l.check ? { check: l.check } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
         })),
       };
@@ -836,6 +878,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   const lateLooks = new Map<string, number>();
+  const lineDeletions: { id: string; serverId: string; looks: number }[] = [];
+  const deletedLines = new Set<string>();
   // The pretend rule sharing's memory, per campaign ref (#2783).
 const sharingState = new Map<string, RuleSharing>();
 const sharingChoices = new Map<string, { ref: string; choice: RuleSharingChoice; looks: number }>();
@@ -1501,7 +1545,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
       return structuredClone({
         ...waiting,
         counts: {
@@ -1520,7 +1564,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= pretendWaiting());
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : pretendWaiting()));
       const ids = "ids" in answer ? answer.ids : [answer.id];
       if (answer.kind === "which" && answer.action === "pick") {
         const q = waiting.which.find((x) => x.id === answer.id);
@@ -1697,8 +1741,28 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.action === "link" && !/^https:\/\/www\.dndbeyond\.com\/characters\/[0-9]{1,12}$/.test(choice.url)) {
         throw new ApiError("bad-link");
       }
+      if (choice.action === "document" && !/^https:\/\/[^\s/]+/i.test(choice.url)) throw new ApiError("bad-document-link");
       if (/\.sheets-slow(\.|$)/.test(ref)) throw new ApiError("too-soon");
       return "sheet-answer";
+    },
+    async fixTranscriptLine(ref, number, line, text) {
+      calls.push(`fixTranscriptLine:${ref}:${number}:${line.speaker}:${line.startedMs}:${text}`);
+      await reachable();
+      signedIn();
+      if (!text.trim() || [...text].length > 200) throw new ApiError("bad-text");
+      // The mock's own rule: a fix ending in "!" is a rewrite made at once, any other is a suggestion to the DM.
+      const mode: FixMode = text.endsWith("!") ? "rewrite" : "suggest";
+      const answer = `fix-${number}-${line.startedMs}-${fixes.size + 1}`;
+      fixes.set(answer, mode);
+      return { answer, mode };
+    },
+    async fixAnswer(ref, number, answer): Promise<FixAnswer> {
+      calls.push(`fixAnswer:${ref}:${number}:${answer}`);
+      await reachable();
+      signedIn();
+      const mode: FixMode = fixes.get(answer) ?? "suggest";
+      if (mode === "rewrite") return { stage: "done", state: "done", mode, result: "changed", undo: true, reason: null };
+      return { stage: "done", state: "done", mode, result: "sent", undo: false, reason: null };
     },
     async sheetAnswer(ref, answer): Promise<SheetAnswer> {
       calls.push(`sheetAnswer:${ref}:${answer}`);
@@ -2679,6 +2743,108 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       me = { ...me!, campaigns: me!.campaigns.filter((x) => x.ref !== ref) };
       return { channelsLeft: found.serverReachable === false };
     },
+    // A backup loaded from the website (#2745): one pretend restore per server. The file's name says how many
+    // transcripts files it "asks for" (`name-parts-3.dmbot.json.gz`); one called `bad-...` is not a backup. After
+    // Load it the pretend DMbot moves one stage on each look: waiting, checking, writing (part by part), done. A
+    // server whose id ends in 9 refuses with "plan" at the end, to show a failure.
+    async restoreStage(serverId, file, replaceRef) {
+      calls.push(`restoreStage:${serverId}:${replaceRef ?? "new"}`);
+      await reachable();
+      signedIn();
+      const fileName = file instanceof File ? file.name : "";
+      if (/^bad/i.test(fileName)) throw new ApiError("not-a-backup");
+      const current = restores.get(serverId);
+      if (current && current.state === "running") throw new ApiError("slow-down");
+      const wanted = Number(/parts-(\d+)/.exec(fileName)?.[1] ?? 0);
+      const name = fileName.replace(/(-parts-\d+)?\.dmbot.*$/i, "").replace(/\.[a-z]+$/i, "") || "Your campaign";
+      const made: PretendRestore = {
+        id: `rs${++restoreCount}`,
+        name,
+        replacing: replaceRef !== undefined,
+        wanted,
+        got: new Set(),
+        without: false,
+        stageNo: -1,
+        state: "running",
+        failing: serverId.endsWith("9"),
+        campaign: replaceRef ?? `${serverId}.restored`,
+      };
+      restores.set(serverId, made);
+      return { id: made.id, name, partsWanted: wanted };
+    },
+    async restorePart(serverId, id, number, file) {
+      calls.push(`restorePart:${serverId}:${id}:${number}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || found.id !== id) throw new ApiError("not-found");
+      if (found.stageNo >= 0) throw new ApiError("not-receiving");
+      if (number < 1 || number > found.wanted || file.size === 0) throw new ApiError("bad-part");
+      found.got.add(number);
+    },
+    async restoreGo(serverId, id, without) {
+      calls.push(`restoreGo:${serverId}:${id}:${without ? "without" : "with"}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || found.id !== id) throw new ApiError("not-found");
+      if (found.stageNo >= 0) throw new ApiError("not-receiving");
+      if (!without && found.got.size !== found.wanted) throw new ApiError("files-missing");
+      found.without = without;
+      found.stageNo = 0;
+    },
+    async restoreStatus(serverId, id) {
+      calls.push(`restoreStatus:${serverId}:${id ?? "latest"}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || (id !== undefined && found.id !== id)) return null;
+      const now = Math.floor(Date.now() / 1000);
+      if (found.stageNo >= 0 && found.state === "running") {
+        found.stageNo += 1;
+        found.moved = now;
+      }
+      const writing = found.wanted > 0 && !found.without ? found.wanted : 1;
+      const order = ["restore_waiting", "restore_reading", ...Array.from({ length: writing }, () => "restore_writing")];
+      let stage = "restore_receiving";
+      let done: number | undefined;
+      if (found.stageNo >= 0) {
+        if (found.stageNo >= order.length) {
+          found.state = found.failing ? "failed" : "done";
+          stage = found.failing ? "failed" : "done";
+        } else {
+          stage = order[found.stageNo]!;
+          if (stage === "restore_writing") done = found.stageNo - 2;
+        }
+      }
+      return {
+        id: found.id,
+        name: found.name,
+        replacing: found.replacing,
+        replaceRef: found.replacing ? found.campaign : null,
+        partsWanted: found.wanted,
+        partsReceived: found.got.size,
+        withoutParts: found.without,
+        campaign: found.state === "done" ? found.campaign : null,
+        leftOut: found.state === "done" && found.wanted > 0 ? 2 : 0,
+        expiresAt: now + 86400,
+        stage,
+        state: found.state,
+        reason: found.state === "failed" ? "plan" : null,
+        startedAt: now - 5,
+        updatedAt: found.moved ?? now - 5,
+        serverNow: now,
+        ...(done !== undefined ? { done, total: writing, unit: "parts" } : {}),
+      };
+    },
+    async restoreCancel(serverId, id) {
+      calls.push(`restoreCancel:${serverId}:${id}`);
+      await reachable();
+      signedIn();
+      const found = restores.get(serverId);
+      if (!found || found.id !== id || (found.stageNo >= 0 && found.state === "running")) throw new ApiError("not-found");
+      restores.delete(serverId);
+    },
     async campaignBackup(ref, onProgress, onFile) {
       calls.push(`campaignBackup:${ref}`);
       await reachable();
@@ -2965,6 +3131,46 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
       };
     },
+    // The pretend "Delete my transcripts" (#2769): "srv-thursday" has 12 lines in 3 sessions, "srv-gorrak" none. The bot
+    // answers on the second look; `.myLinesFail` is set by a test that wants a failure. Deleted lines stay deleted.
+    async myLines(serverId: string) {
+      calls.push(`myLines:${serverId}`);
+      await reachable();
+      signedIn();
+      if (!(me?.recording ?? []).some((r) => r.serverId === serverId)) throw new ApiError("not-found");
+      const open = lineDeletions.find((d) => d.serverId === serverId && d.looks < 3);
+      const gone = deletedLines.has(serverId);
+      return {
+        lines: serverId === "srv-thursday" && !gone ? 12 : 0,
+        sessions: serverId === "srv-thursday" && !gone ? 3 : 0,
+        open: open ? { id: open.id, state: "waiting" as const } : null,
+      };
+    },
+    async deleteMyLines(serverId: string) {
+      calls.push(`deleteMyLines:${serverId}`);
+      await reachable();
+      signedIn();
+      if (serverId !== "srv-thursday" || deletedLines.has(serverId)) throw new ApiError("nothing-to-delete");
+      const open = lineDeletions.find((d) => d.serverId === serverId && d.looks < 3);
+      if (open) return open.id;
+      const id = `d${lineDeletions.length + 1}`.padEnd(32, "0");
+      lineDeletions.push({ id, serverId, looks: 0 });
+      return id;
+    },
+    async myLinesStatus(serverId: string, id: string) {
+      calls.push(`myLinesStatus:${serverId}:${id}`);
+      await reachable();
+      signedIn();
+      const found = lineDeletions.find((d) => d.id === id && d.serverId === serverId);
+      if (!found) throw new ApiError("not-found");
+      found.looks += 1;
+      const now = Math.floor(Date.now() / 1000);
+      const base = { startedAt: now, updatedAt: now, serverNow: now, reason: null };
+      if (found.looks === 1) return { ...base, stage: "waiting", state: "running" as const, lines: null, sessions: null };
+      if (found.looks === 2) return { ...base, stage: "deleting", state: "running" as const, lines: null, sessions: null };
+      deletedLines.add(serverId);
+      return { ...base, stage: "done", state: "done" as const, lines: 12, sessions: 3 };
+    },
     async stopRecording(serverId: string) {
       calls.push(`stop-recording:${serverId}`);
       const now = signedIn();
@@ -3023,6 +3229,9 @@ function mockTranscript(number: number, version: TranscriptVersion, putBack = fa
       ...(skipped && putBack ? ["[0:01:02] (Speaker 1): did you see the match"] : []),
     ],
     ...(skipped ? { skips: [{ ...MOCK_SKIP, putBack }], filter: { kept: 412, leftOut: putBack ? 6 : 9, putBack: putBack ? 3 : 0 } } : {}),
+    // The DM may fix any spoken line of the cleaned reading (#2858); the as-heard reading has no fixes.
+    // (only the spoken line; the off-topic marker has no words to fix)
+    ...(heard ? {} : { viewer: { id: "pretend-dm", isDm: true }, fixable: [{ line: 1, speaker: "Speaker 2", startedMs: 40_000 }] }),
   };
 }
 

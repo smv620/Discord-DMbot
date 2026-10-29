@@ -12,7 +12,7 @@ import facts from "../src/content/plans.json";
 import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
-import { initiativeLine, peopleListLine, storyStatesLine } from "../src/content/privacy-channels";
+import { initiativeLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -123,8 +123,7 @@ describe("the facts #433 asks for", () => {
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
     expect(privacy()).toContain("Names at the table.");
-    // The people list and initiative lines show only while their features are live (#1810).
-    expect(privacy().includes(peopleListLine.lead)).toBe(peopleListLine.live);
+    // The initiative and story-state lines show only while their features are live (#1810).
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
     expect(privacy()).toContain("only from people who said yes to being recorded");
@@ -540,7 +539,6 @@ describe("privacy lines for new features (#1810)", () => {
     expect(initiativeLine.text).toContain("uses no AI");
     expect(initiativeLine.text).toContain("only people who said yes");
     expect(initiativeLine.text).toContain("not tied to any person");
-    expect(peopleListLine.text).toContain("never shows secrets, notes");
-    for (const line of [initiativeLine, peopleListLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
+    for (const line of [initiativeLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
 });

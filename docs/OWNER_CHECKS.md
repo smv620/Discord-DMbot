@@ -26,16 +26,8 @@ lines on. A check that didn't work is just as useful: say what you saw.
 
 ## Group A. Right after you start listening
 
-### 1. The people-and-groups channel
-**You'll do:**
-1. Look in your server's channel list for one called **dmb-npcs** (it has a short name after it).
-2. Type `/dmbot names` and pick it from the list that pops up. That is the Names list. Press ➕ Add a name and add one made-up person, for example "Captain Rook". Confirm them.
-3. Look at dmb-npcs again.
-
-**It worked if:** the channel is there, Captain Rook is listed with the other names and groups you gave them,
-and you cannot type in the channel.
-
-Unlocks: #1761
+### 1. (retired)
+The people-and-groups channel is gone (#2875), so there is nothing to check. Numbers stay as they are.
 
 ### 2. Initiative: FightBot hears how your table runs it
 **You'll do:**
@@ -60,15 +52,8 @@ screen shows only notes, alerts and ⏹ Stop listening.
 
 Unlocks: #1666
 
-### 4. The house rules channel
-**You'll do:**
-1. Press ⚙️ Settings and add one made-up house rule, for example "Rope takes a full turn to tie".
-2. Look for the channel **dmb-rules**.
-
-**It worked if:** the channel is there, your rule appears as its own message, and you cannot type in the
-channel.
-
-Unlocks: #1752
+### 4. (retired)
+The house rules channel is gone (#2875), so there is nothing to check. Numbers stay as they are.
 
 ---
 

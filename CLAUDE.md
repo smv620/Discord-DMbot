@@ -85,6 +85,14 @@ CI runs all of the above on every pull request. Never merge red CI.
   shows the PR's **own commits** unchanged and every line that left the diff is in the merged
   PR's diff. RepoManager notes "approval carried over from <sha> (stacked base merged)".
   Anything else in the range-diff needs a fresh "approved".
+  **A hand-resolved merge that changes nothing of the PR's own** (owner, 2026-10-28, to stop a
+  fresh review for every resolved conflict): RepoManager carries the approval over itself when the
+  head has no commits of its own since the approved one (`git log --no-merges OLD..NEW
+  ^origin/development` is empty) and the PR's own +/- lines against `development` are identical to
+  the approved head's (`git diff $(git merge-base OLD origin/development) OLD` against `git diff
+  origin/development...NEW`, both sorted). It notes "approval carried over from <sha> (net diff
+  identical)". Any difference, a renumbered migration included, goes to Supervisor for a fresh
+  review.
   **Merging a batch** (2026-10-13, Supervisor, to stop one merge per CI cycle): RepoManager
   may merge up to four approved PRs back to back when one CI run is green on a single branch
   of `development` plus all of them merged in the planned order, and each PR's own patch is
@@ -139,7 +147,7 @@ CI runs all of the above on every pull request. Never merge red CI.
 ## Claude sessions and who does what (owner decision, 2026-10-05, updated 2026-10-12)
 DMbot runs on the cloud test server (VPS), not on the owner's PC. Several Claude
 sessions work on this repo. **Each one has a name, and its name is its issue label:**
-`session: dev1`, `session: CloudDev`, `session: WebDev`,
+`session: dev1`, `session: CloudDev` (CloudDev-lead), `session: CloudDev-assistant`, `session: WebDev` (WebDev-lead), `session: WebDev-assistant`,
 `session: RepoManager`, `session: Supervisor` (and `session: pycharm` when the owner's PC is used;
 **pycharm is offline from 2026-10-08 until the owner says otherwise: assign nothing to it**). **Assignments come from the issue
 list:** an open issue labelled with your name is yours; take them lowest number first
@@ -165,12 +173,23 @@ dev1 as a note on the issue.
   no live server. Cloud limits: no server access at all, GitHub only through `gh api`
   (REST; GraphQL is blocked), no deleting branches, and CI is its test runner
   (discord.py, psycopg and pytest aren't installed locally).
+  **Split in two (owner, 2026-10-28, to cut costs):** **CloudDev-lead** (the existing session,
+  still labelled `session: CloudDev`, on the larger model) keeps the design and every judgement
+  call, and hands simple, fully specified building work to **CloudDev-assistant**
+  (`session: CloudDev-assistant`, a cloud session on the smaller model). See "Leads hand off to
+  assistants" below.
 - **WebDev** (Claude Code, its own clone or worktree): the customer website in `web/` and the
   web API in `core/src/dmbot/web/`. Same rules as the other coding sessions: PRs into
   `development`, never deploys the bot, never touches the live server; dev1 deploys the
   API container. It owns the site's words with the ux-critic, never the plan prices or
   rules: those are owner decisions recorded in docs/PLAN.md, and a change to them is a
   question on the issue, not a commit.
+  **Split in two (owner, 2026-10-28, to cut costs):** **WebDev-lead** (the existing session,
+  still labelled `session: WebDev`, on the larger model) keeps everything above: design, words,
+  the web API's SQL doors and migrations, merge conflicts, and specifying tests. It hands simple,
+  fully specified building work to **WebDev-assistant** (`session: WebDev-assistant`, a cloud
+  session on the smaller model). See "Leads hand off to assistants" below.
+
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
   contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
@@ -211,28 +230,98 @@ dev1 as a note on the issue.
   check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
   records it in `docs/testing-history.log`. The log is the queue; nobody waits in chat.
 
+### Leads hand off to assistants (owner, 2026-10-28)
+To cut costs, each coding role is two sessions: a **lead** on the larger model and an **assistant**
+on the smaller one. **WebDev-lead** (label `session: WebDev`) hands off to **WebDev-assistant**
+(`session: WebDev-assistant`). **CloudDev-lead** (label `session: CloudDev`) hands off to
+**CloudDev-assistant** (`session: CloudDev-assistant`). The assistant builds; it never decides. The
+lead decides everything before handing off, so the assistant never has to guess.
+- **What may go to WebDev-assistant:** a change to `web/` that follows a pattern already in the code
+  (a page section like an existing one, a button wired to an API call that already exists, its
+  `mock.ts` entry, `api.ts` types), tests whose cases the lead lists, words the lead gives exactly,
+  What's new entries, renames, and small follow-ups from a review.
+- **What may go to CloudDev-assistant:** a change in `core/` that copies a pattern already in the
+  code, with the pattern named: a loop or sweep wired like its neighbours (`_track`, its own `try`,
+  counts-only logs), a store method like an existing one in the same file, a type-only import moved
+  under `TYPE_CHECKING` or to the module the lead names (#2827), a setting read like the others,
+  tests whose cases the lead lists (including adding cases to an existing test file), docstrings and
+  comments the lead words, What's new entries, renames, and small follow-ups from a review (an
+  optional finding, a plainly correct nit).
+- **What stays with the lead:** design and choosing words. Anything that needs a judgement:
+  - migrations, `schema.py`, SQL, row-level security and the web doors;
+  - consent, privacy, campaign isolation, plan rules, keys and sign-in;
+  - the ears ↔ core protocol, AI prompts and AI output handling;
+  - async and concurrency design (locks, leases, retries, what runs once);
+  - a new feature or flow with no pattern yet;
+  - resolving merge conflicts.
+- **How to hand off:** the lead opens one issue per task, labelled with the assistant's name,
+  linking the parent issue, with these sections:
+  1. **Goal:** one sentence.
+  2. **Files:** each file to change, and the existing code to copy the pattern from (path and
+     function).
+  3. **Exact behaviour:** what the user sees and does, or what the code does, every word given in
+     quotes, and what each error or failure does.
+  4. **Tests:** the test file, and each test by name with what it checks.
+  5. **Commands:** the checks to run before pushing (web: `cd web && npm ci && npm run typecheck &&
+     npm test`; core: `cd core && ruff check . && ruff format --check . && mypy && pytest <the test
+     files>`, with CI's core job as the proof for database tests).
+  6. **Out of scope:** what not to touch.
+  7. **Done when:** the PR is open into `development` with `Fixes #N`, those checks pass, and CI is green.
+
+  A task the lead can't write down this way isn't ready to hand off: the lead does it or splits it.
+- **The assistant's rules:** work only from its own issues, lowest number first, exactly as
+  written. If anything is unclear, missing or contradicts the code, ask on the issue (one comment,
+  starting "Question for <lead>", for example "Question for CloudDev-lead") and take the next issue;
+  never guess. Run the `reviewer` agent on the diff before opening the PR. Never add a migration,
+  touch `schema.py` or SQL, resolve a merge conflict, or push to anyone else's branch;
+  WebDev-assistant also never changes `core/`. Merging `development` into its own branch is fine
+  when it merges cleanly; a conflict goes to the lead as a comment on the PR.
+- **Review:** the lead checks each assistant PR against the issue's spec and posts one comment
+  starting "<lead> check: matches the spec" or "<lead> check: changes needed" with a numbered list
+  (for example "CloudDev-lead check: matches the spec"). Supervisor's design review and
+  RepoManager's merge follow as for any PR, and Supervisor reviews only after the lead's check says
+  it matches. A PR sent back twice goes to the lead to finish.
+
 Only one copy of DMbot may be logged in to Discord at a time: they share the bot token.
 On the server that copy is the one in Docker Compose, run by dev1.
 
 ## Rounds: how every session finds work and wakes up (owner, 2026-10-16)
 Tasks live only in GitHub: an open issue labelled with your session's name is yours, lowest number
 first; a PR comment or review on your own PR is yours too. Nothing waits on chat memory, so a new
-session of a role works from this file and GitHub alone. **Each session is woken four times an hour (Supervisor once and dev1 twice, owner 2026-10-24)
-by scheduled tasks** (a scheduled task fires at most hourly, so four make the 15 minutes). The minutes
-are staggered so each role finds the others' work done:
+session of a role works from this file and GitHub alone. **Messages move the work; one scheduled
+round an hour is the safety net** (owner, 2026-10-28, to cut costs; it was four an hour from 2026-10-16).
+Each role is woken once an hour by a scheduled task (dev1 twice), at staggered minutes:
 
 | Role | Minutes past the hour | Kind |
 |---|---|---|
-| CloudDev | :01 (hourly check), :16, :31, :46 | long-lived cloud session |
-| WebDev | :02 (hourly check), :17, :32, :47 | long-lived cloud session |
-| Supervisor | :04 (hourly summary; once an hour, owner 2026-10-24) | long-lived cloud session |
-| RepoManager | :09, :24, :39, :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
+| CloudDev (CloudDev-lead) | :01 (hourly check) | long-lived cloud session |
+| WebDev (WebDev-lead) | :02 (hourly check) | long-lived cloud session |
+| Supervisor | :04 (hourly summary) | long-lived cloud session |
+| WebDev-assistant | :06 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| CloudDev-assistant | :07 (hourly check) | long-lived cloud session (smaller model, from 2026-10-28) |
+| RepoManager | :54 (hourly check) | long-lived cloud session (moved off the owner's computer, 2026-10-16) |
 | dev1 | :12 (hourly check), :42 (twice an hour, owner 2026-10-24) | long-lived, on the server |
+
+**Messages between sessions** (owner, 2026-10-28): every message wakes the session it goes to, so a
+message is sent only when the other session has something to do now. Each handoff sends one:
+- a developer who pushes a PR, or a fix to one, tells Supervisor (an assistant tells its lead);
+- a lead who files a handoff issue tells its assistant, and its check on an assistant PR tells
+  Supervisor when it matches;
+- Supervisor's approval or send-back tells RepoManager or the author;
+- RepoManager's send-back tells the author.
+
+Message with the session's id (`send_message`); the ids are in the latest "<role> online" notes on
+#516. **No acknowledgements** ("noted", "checked", "confirmed") unless Supervisor asks for one in
+that message. Reports still go on #516 or the issue, where nobody is woken by them.
 
 **Every round, whatever the role:** read your open issues and your PRs (send-backs first), read #516's
 last comments, act on what is yours, and stop. A round that finds nothing to do ends in one line.
-- **Developers (CloudDev, WebDev):** fix send-backs and red CI on your PRs first; then the next issue.
-  If your queue is empty, say so to Supervisor once.
+- **Developers (CloudDev-lead, CloudDev-assistant, WebDev-lead, WebDev-assistant):** fix send-backs
+  and red CI on your PRs first; then the next issue. If your queue is empty, say so to Supervisor
+  once (an assistant tells its lead instead).
+- **Leads (CloudDev-lead, WebDev-lead), every round:** first answer any "Question for <lead>" and
+  check any assistant PR waiting for its check, then hand off what is ready, so the assistant always
+  has two issues; then its own work.
 - **dev1:** deploy what Supervisor handed over (dry run, backup, bot before web-api), check it, write the
   testing logs; then live checks.
 - **RepoManager:** for every open PR, check compliance and the approval record, refresh stale bases,
@@ -240,7 +329,7 @@ last comments, act on what is yours, and stop. A round that finds nothing to do 
   report on #516. **Supervisor's merge lists on #516 are standing instructions**: act on them without
   asking the owner again, within the rules in "Workflow".
 - **Supervisor:** reviews, queues, #516, the owner's questions; on the :04 round, also check that every
-  role above has its four scheduled tasks bound to a live session, and rebind any that died.
+  role above has its scheduled task bound to a live session, and rebind any that died.
 
 **The hourly check** (the first minute in the table): even mid-task, stop at a safe point and post one
 status line on the issue you are working on (done, next, blocked on whom), then carry on.
