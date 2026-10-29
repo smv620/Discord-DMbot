@@ -1,11 +1,11 @@
-// The words of the relationship web page (#2324; docs/PLAN.md, "The relationship web on the website"):
+// The words of the Story Graph page (#2324; docs/PLAN.md, "The Story Graph on the website"):
 // the names of a campaign as dots, the connections between them as lines. Plain words. DMbot never
 // decides: a DM changes what DMbot remembers, and Undo is on the name's card in Discord.
 /** Over this many names the page asks before drawing (PLAN: "about 300"). */
 export const BIG_WEB = 300;
 
 export const webPage = {
-  heading: "Relationship web",
+  heading: "Story Graph",
   lead: "How the names in this campaign are connected. Tap a name to put it in the middle. Tap a line to read its connections.",
   loading: "Loading…",
   signedOut: "You were signed out. Sign in again.",

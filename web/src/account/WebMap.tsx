@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// The relationship web's map (#2324, #2934): names as shapes, connections as lines, drawn as plain SVG.
+// The Story Graph's map (#2324, #2934): names as shapes, connections as lines, drawn as plain SVG.
 // Names settle apart by themselves (webForce.ts) and can be dragged; a name that was moved stays where it
 // was dropped, remembered in this browser only (webPrefs.ts). Lines say their words only for the name
 // the pointer or the keyboard is on, so a crowded map stays readable. Pan by dragging the background, zoom
@@ -19,9 +19,9 @@ import {
   extentOf,
   forceStep,
   LINK_KINDS,
-  connectionGroups,
   edgeKind,
   kindAnchors,
+  orderedKinds,
   linkPairs,
   settle,
   startNodes,
@@ -190,8 +190,7 @@ export default function WebMap({
   useEffect(() => {
     setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
-    const groups = connectionGroups(edges, center);
-    const next = startNodes(nodes, edges, center, places.current, groups);
+    const next = startNodes(nodes, edges, center, places.current);
     for (const n of next) {
       const old = before.get(n.id);
       if (old && !n.pinned) {
@@ -201,7 +200,7 @@ export default function WebMap({
     }
     sim.current = next;
     linksRef.current = linkPairs(next, edges);
-    anchorsRef.current = kindAnchors([...new Set(next.filter((n) => n.id !== center).map((n) => n.group))].sort());
+    anchorsRef.current = kindAnchors(orderedKinds(next.filter((n) => n.id !== center).map((n) => n.group)));
     if (loop.current) cancelAnimationFrame(loop.current);
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
@@ -458,17 +457,17 @@ export default function WebMap({
       >
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
           {mode === "groups" &&
-            LINK_KINDS.map((k) => {
+            orderedKinds(sim.current.filter((n) => n.id !== center).map((n) => n.group)).map((k) => {
               const members = sim.current.filter((n) => n.group === k && n.id !== center);
               if (members.length === 0) return null;
               const cx = members.reduce((t, n) => t + n.x, 0) / members.length;
               const cy = members.reduce((t, n) => t + n.y, 0) / members.length;
               const r = members.reduce((t, n) => Math.max(t, Math.hypot(n.x - cx, n.y - cy) + 60), 64);
               return (
-                <g key={k} class={`web-area web-link-${k}`} aria-hidden="true">
+                <g key={k} class="web-area" aria-hidden="true">
                   <circle cx={cx} cy={cy} r={r} />
                   <text x={cx} y={cy - r - 6} text-anchor="middle" class="web-area-text">
-                    {words.linkKind[k]}
+                    {kindWords(k)}
                   </text>
                 </g>
               );
