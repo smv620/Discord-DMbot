@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// The Story graph's overview (#2632): the owner's campaign had 51 names and the page drew 2. The page now says how
+// The Story Graph's overview (#2632): the owner's campaign had 51 names and the page drew 2. The page now says how
 // many names there are, lists the ones with no connection yet beside the map, and offers every other group
 // of linked names; a player sees none of what is hidden from them, and an older API leaves the page as it was.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";

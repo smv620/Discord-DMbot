@@ -1,9 +1,9 @@
-// The Story graph's list of what waits for the DM (#2635, #2652): facts DMbot heard at the table,
+// The Story Graph's list of what waits for the DM (#2635, #2652): facts DMbot heard at the table,
 // connections found in a backstory (grouped by the upload each came from), "Which Mara?" questions and
 // "Who is she?" pronoun questions (#2831).
 // Plain words; the DM decides everything here, DMbot only asks. Nothing is shown to players: the API
 // answers only a DM of the campaign. WEB_WAITING_LIVE moves with the What's new entry "What is waiting
-// for you, on the Story graph"; it needs CloudDev's #2638 and #2654 deployed and dev1 to have seen one fact
+// for you, on the Story Graph"; it needs CloudDev's #2638 and #2654 deployed and dev1 to have seen one fact
 // confirmed and one "Which Mara?" answered from the site.
 export const WEB_WAITING_LIVE = false;
 

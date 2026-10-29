@@ -576,7 +576,7 @@ function namesView(ref: string): "dm" | "manager" | "none" {
   return "dm";
 }
 
-/** The pretend campaign behind the relationship web (#2324): the Names page's names joined by a few
+/** The pretend campaign behind the Story Graph (#2324): the Names page's names joined by a few
  * made-up connections, so every ring has something in it. `.web-big` makes a campaign of 350 names
  * (the page warns before drawing it), `.web-manager` a server manager who isn't a DM (no secrets, no
  * editing) and `.web-none` someone who may not see it (not found). */
@@ -1481,7 +1481,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       choices[which] = on;
       return { ...choices };
     },
-    // The relationship web (#2324): rings out from a name, the way the real API counts hops.
+    // The Story Graph (#2324): rings out from a name, the way the real API counts hops.
     async webGraph(ref, query: WebQuery): Promise<WebGraph> {
       calls.push(`webGraph:${ref}:center=${query.center ?? ""}:hops=${query.hops}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();

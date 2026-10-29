@@ -50,7 +50,7 @@ export const campaignPage = {
   pages: {
     recaps: "Recaps",
     timeline: "Story timeline",
-    graph: "Story graph",
+    graph: "Story Graph",
     names: "Names and NPCs",
     transcripts: "Transcripts",
     import: "Import a past session",
