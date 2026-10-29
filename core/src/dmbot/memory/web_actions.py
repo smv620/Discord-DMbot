@@ -59,7 +59,8 @@ NOT_FOUND = "not_found"  # the name (or the other name) is gone, or no longer co
 BAD_NAME = "bad_name"  # a spelling or another name the rules refuse
 BAD_KIND = "bad_kind"  # a kind the rules do not take
 NOT_MEMBER = "not_member"  # the player's Discord ID is not in this server
-BAD_PLAYER = "bad_player"  # the ID is a bot, or not one the rules take
+BAD_PLAYER = "bad_player"  # not an ID the rules take
+BOT_PLAYER = "bot_player"  # the ID is a bot's: a bot cannot play a character
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
@@ -456,7 +457,7 @@ async def _player_character(
     if found is None:
         return _failed(NOT_MEMBER)
     if found is False:
-        return _failed(BAD_PLAYER)
+        return _failed(BOT_PLAYER)
     await memory.confirm_entity(
         guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM, played_by=int(a.text)
     )

@@ -117,7 +117,7 @@ class TheActions(Acting):
         self.assertEqual(entity.played_by, 123456789012345678)
 
     async def test_a_discord_id_of_someone_not_in_the_server_or_a_bot_is_refused(self) -> None:
-        for found, error in ((None, "not_member"), (False, "bad_player")):
+        for found, error in ((None, "not_member"), (False, "bot_player")):
 
             async def member_of(_user_id: int, found: bool | None = found) -> bool | None:
                 return found

@@ -284,7 +284,8 @@ describe("what a DM can do", () => {
 
     it("sends the Discord ID with it", async () => {
       const { api, row } = await pick();
-      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: ` ${PLAYER_ID} ` } });
+      // A pasted mention and stray spaces are tidied before it is sent.
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: ` <@${PLAYER_ID}> ` } });
       await act(async () => {});
       fireEvent.click(row.getByRole("button", { name: w.saveKind }));
       await waitFor(() =>
@@ -294,8 +295,9 @@ describe("what a DM can do", () => {
 
     it("has an (i) that opens and closes the hint on how to find an ID", async () => {
       const { row } = await pick();
-      const hint = () => row.getByText(w.playerInfo);
+      const hint = () => row.getByRole("note", { hidden: true });
       expect(hint().hasAttribute("hidden")).toBe(true);
+      expect(hint().querySelectorAll("li")).toHaveLength(3);
       const button = row.getByRole("button", { name: w.playerInfoLabel });
       expect(button.getAttribute("aria-expanded")).toBe("false");
       fireEvent.click(button);
@@ -313,6 +315,9 @@ describe("what a DM can do", () => {
       fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "123456789012340000" } });
       fireEvent.click(row.getByRole("button", { name: w.saveKind }));
       expect(await row.findByText(w.errors["not-member"] ?? "")).toBeTruthy();
+      fireEvent.input(row.getByLabelText(w.playerLabel), { target: { value: "123456789012349999" } });
+      fireEvent.click(row.getByRole("button", { name: w.saveKind }));
+      expect(await row.findByText(w.errors["bot-player"] ?? "")).toBeTruthy();
     });
   });
 

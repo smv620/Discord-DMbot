@@ -25,10 +25,14 @@ export function InfoButton({
   );
 }
 
-export function InfoText({ id, open, children }: { id: string; open: boolean; children: string }) {
+export function InfoText({ id, open, steps }: { id: string; open: boolean; steps: readonly string[] }) {
   return (
-    <span id={id} class="info-tip-text small muted" role="note" hidden={!open}>
-      {children}
-    </span>
+    <div id={id} class="info-tip-text small muted" role="note" hidden={!open}>
+      <ol>
+        {steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
+      </ol>
+    </div>
   );
 }

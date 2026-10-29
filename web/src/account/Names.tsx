@@ -763,7 +763,7 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
   const [playerInfo, setPlayerInfo] = useState(false);
   const [other, setOther] = useState("");
   // Saving is for a new kind, or (for a player character already) a Discord ID to attach.
-  const kindChanged = kindKey !== row.kind || (kindKey === PLAYER && player.trim() !== "");
+  const kindChanged = kindKey !== row.kind || (kindKey === PLAYER && player.replace(/[<@!>\s]/g, "") !== "");
   const [mergeQ, setMergeQ] = useState("");
   const [mergeFound, setMergeFound] = useState<NameRow[] | null>(null);
   // The search itself failed (not "nothing matches"), or has more matches than the first page.
@@ -952,8 +952,11 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         onSubmit={(e) => {
           e.preventDefault();
           if (!kindChanged) return;
-          const id = kindKey === PLAYER ? player.trim() : "";
-          void run(id === "" ? { action: "kind", kind: kindKey } : { action: "kind", kind: kindKey, player: id }, words.saved);
+          // A pasted mention (<@123…>) or stray spaces are tidied, so a real ID is not refused for them.
+          const id = kindKey === PLAYER ? player.replace(/[<@!>\s]/g, "") : "";
+          void run(id === "" ? { action: "kind", kind: kindKey } : { action: "kind", kind: kindKey, player: id }, words.saved).then((done) => {
+            if (done) setPlayer(""); // saved: the box is empty again, so Save does not offer the same ID twice
+          });
         }}
       >
         <label class="field">
@@ -987,9 +990,7 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
                 onToggle={() => setPlayerInfo(!playerInfo)}
               />
             </span>
-            <InfoText id={`${id}-player-info`} open={playerInfo}>
-              {words.playerInfo}
-            </InfoText>
+            <InfoText id={`${id}-player-info`} open={playerInfo} steps={words.playerInfoSteps} />
             <span id={`${id}-player-note`} class="small muted">
               {words.playerNote}
             </span>

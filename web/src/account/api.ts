@@ -1847,7 +1847,8 @@ export type ApiErrorKind =
   | "bad-email" // an address that is not an email address (#2349)
   | "bad-name" // a name that is empty or has a letter DMbot can't keep (#2295)
   | "bad-kind" // a kind the campaign doesn't have (#2295)
-  | "bad-player" // a Discord ID that is not an ID, or is a bot's (#2985)
+  | "bad-player" // a Discord ID that is not an ID (#2985)
+  | "bot-player" // that ID is a bot, which cannot play a character (#2985)
   | "not-member" // that person is not in this Discord server (#2985)
   | "name-exists" // another name already goes by that (#2295)
   | "needs-confirm" // a removal sent without its confirmation (#2295)
@@ -2479,6 +2480,7 @@ const errorKinds: Record<string, ApiErrorKind> = {
   bad_kind: "bad-kind",
   bad_player: "bad-player",
   not_member: "not-member",
+  bot_player: "bot-player",
   exists: "name-exists",
   needs_confirm: "needs-confirm",
   bad_page: "bad-page",
