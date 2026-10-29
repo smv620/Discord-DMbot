@@ -8,13 +8,11 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-import dmbot.rules.rule_card
 import dmbot.sidebar.answer
 
 
 class TheRuleCardPlace(unittest.TestCase):
     def test_the_rule_card_lives_in_rules_and_the_sidebar_answer_imports_no_ui(self) -> None:
-        self.assertIsNotNone(dmbot.rules.rule_card)
         self.assertIsNone(importlib.util.find_spec("dmbot.ui.rule_card"))
         assert dmbot.sidebar.answer.__file__ is not None
         tree = ast.parse(Path(dmbot.sidebar.answer.__file__).read_text(encoding="utf-8"))

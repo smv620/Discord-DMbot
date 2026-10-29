@@ -50,7 +50,7 @@ def _place(hit: Hit) -> str:
 
 def of(ctx: Context, srd: Index) -> tuple[Looked, ...]:
     """The house rules, then the entries, that the answer was built from, in the order the
-    prompt had them. Lazy imports: the UI modules import the sidebar."""
+    prompt had them. A lazy import: the UI modules import the sidebar."""
     from dmbot.ui.rule_lookup import choice_value
 
     items = [Looked(f"House rule {rule.number}", "your table") for rule in ctx.house_rules]
