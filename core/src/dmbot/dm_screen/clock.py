@@ -3,8 +3,8 @@
 Rests & time… and Start a timer. Short rest, Long rest and Skip to dawn are in the private
 panel that **Rests & time…** opens (rests are rare buttons, because DMbot hears them, and
 players who peek behind the DM screen could take them for D&D Beyond sheet links). The players
-see only the day and a rough time of day, "🕰️ Day 4, afternoon", in their own game-time
-channel (#1116).
+see only the day and a rough time of day, a small "-# 🕰️ Day 4, afternoon" line in the campaign's
+DMbot chat channel (#2877; before it, a pinned message in a game-time channel, #1116).
 Only the campaign's DMs can press the buttons (checked on every press, in the database
 transaction that changes the clock), and the buttons keep working after a restart (their
 IDs carry the campaign).
@@ -371,81 +371,120 @@ async def show(client: Any, campaign: Campaign, stored: Stored) -> discord.Messa
 
 
 def players_see(campaign: Campaign, what: str = "the day and ") -> str:
-    """Where the players see the clock: said only when that channel exists. While splitting,
+    """Where the players see the clock: said only when the chat channel exists. While splitting,
     `what` also tells the DM the players read the group names."""
-    if campaign.gametime_channel_id is None:
+    if campaign.dmbchat_channel_id is None:
         return ""
-    return PLAYERS_SEE.format(channel=campaign.gametime_channel_id, what=what)
+    return PLAYERS_SEE.format(channel=campaign.dmbchat_channel_id, what=what)
 
 
-def players_text(clock: Clock) -> str:
-    """The players' clock: the day and a rough time of day, nothing else (no exact time, no
-    timer, no button; those are the DM's)."""
-    head = f"🕰️ **{game.short_label(clock.minute)}**"
-    fight = game.combat_label(clock)  # the players see the round, nothing else of the fight
-    return head if fight is None else f"{head}\n{fight}"
+# ---- the players' clock: a small line in the DMbot chat channel (#2877) -------------------------
+
+MARK = "🕰️"
+SMALL = "-# "  # Discord's small text
+SCAN = 50  # recent messages looked at for DMbot's last clock line (a busier chat may post it again)
+SPLIT_HEAD = "The party is split"
+_VIEW = re.compile(r"Day \d+, [a-z -]+")
 
 
-def players_text_for(stored: Stored) -> str:
-    """The players' clock: `players_text`, or while the party is split one line per group in
-    the same words as the DM's (the day and a rough time, no exact time)."""
+def players_view(stored: Stored) -> list[str]:
+    """What the players are told of the clock, as lines: the day and a rough time of day, nothing
+    else (no exact time, no timer, no button, no fight: those are the DM's), or while the party is
+    split one line per group in the same words."""
     if not stored.split:
-        return players_text(stored.clock)
-    return "\n".join(["🕰️ **The party is split**", *split.players_lines(stored.groups)])
+        return [game.short_label(stored.clock.minute)]
+    return [SPLIT_HEAD, *split.players_lines(stored.groups)]
+
+
+def small(lines: list[str]) -> str:
+    """The lines as Discord's small text, the clock mark on the first."""
+    return "\n".join(
+        f"{SMALL}{MARK} {line}" if i == 0 else f"{SMALL}{line}" for i, line in enumerate(lines)
+    )
+
+
+def _body(content: str) -> str:
+    return "\n".join(
+        line.removeprefix(SMALL).removeprefix(f"{MARK} ") for line in content.splitlines()
+    )
+
+
+def view_of(content: str) -> str:
+    """The clock view a line of DMbot's holds: "Day 5, morning" (also inside "Long rest done.
+    Day 6, dawn."), or the whole split text."""
+    body = _body(content)
+    if body.startswith(SPLIT_HEAD):
+        return body
+    found = _VIEW.search(body)
+    return found.group(0).strip() if found else body
+
+
+def is_plain(content: str) -> bool:
+    """A plain clock line (the day and the word, or the split text), as opposed to a rest, a new
+    day or a correction, which are kept when the next change comes."""
+    body = _body(content)
+    return body.startswith(SPLIT_HEAD) or _VIEW.fullmatch(body) is not None
+
+
+async def put_line(
+    client: Any, campaign: Campaign, lines: list[str], view: str, *, plain: bool
+) -> None:
+    """Say it in the campaign's chat channel as a small line. A plain line says nothing if
+    DMbot's last clock line there already holds this view; if that last line is still the newest
+    message in the channel and a plain one, it is edited, so quick changes stay one line;
+    otherwise a new line is posted. No chat channel, or DMbot cannot read or post there: nothing
+    is said (a counts-only note) and nothing is held up."""
+    channel_id = campaign.dmbchat_channel_id
+    if channel_id is None:
+        log.info("A clock line was not posted: the campaign has no chat channel")
+        return
+    channel = client.get_channel(channel_id)
+    me = getattr(client.user, "id", None)
+    text = small(lines)
+    try:
+        if channel is None and hasattr(client, "fetch_channel"):
+            channel = await client.fetch_channel(
+                channel_id
+            )  # (a new channel may not be cached yet)
+        if not isinstance(channel, discord.abc.Messageable) or me is None:
+            log.info("A clock line was not posted: the chat channel is not available")
+            return
+        recent = [m async for m in channel.history(limit=SCAN)]  # newest first
+        last = next(
+            (m for m in recent if m.author.id == me and m.content.startswith(SMALL + MARK)), None
+        )
+        if plain and last is not None and view_of(last.content) == view:
+            return  # nothing the players see has changed
+        if last is not None and recent[0].id == last.id and is_plain(last.content):
+            await last.edit(content=text, allowed_mentions=NO_PINGS)
+        else:
+            await client.post_message(channel_id, text)
+    except discord.HTTPException:
+        log.info("A clock line was not posted: Discord refused")
 
 
 _players_locks: dict[str, asyncio.Lock] = {}  # one players' clock update at a time per campaign
 
 
 async def show_players(client: Any, campaign: Campaign, stored: Stored | None = None) -> None:
-    """Keep the players' pinned clock in the game-time channel in step: edited in place,
-    posted (and pinned) if it is missing. One at a time per campaign, and the clock is read
-    again inside the lock, so two updates (a press, a spoken rest, the start) can neither
-    post two clocks nor leave older words over newer ones. Never raises and never holds
-    anything up: the DM's clock is the one that matters at the table."""
+    """Tell the players the clock when what they see of it has changed. One at a time per
+    campaign, and the clock is read again inside the lock, so two updates (a press, a spoken rest,
+    the start) can never leave older words over newer ones. Never raises and never holds anything
+    up: the DM's clock is the one that matters at the table."""
     try:
         async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
             current = await client.clocks.get(campaign.guild_id, campaign.id)
             if current is not None:
-                await _show_players(client, campaign, current)
+                lines = players_view(current)
+                await put_line(
+                    client,
+                    campaign,
+                    lines,
+                    "\n".join(lines) if current.split else lines[0],
+                    plain=True,
+                )
     except Exception:
         log.exception("Couldn't update the players' clock")
-
-
-async def _show_players(client: Any, campaign: Campaign, stored: Stored) -> None:
-    channel_id = campaign.gametime_channel_id
-    if channel_id is None:
-        return
-    text = players_text_for(stored)
-    if stored.players_channel_id == channel_id and stored.players_message_id:
-        channel = client.get_channel(channel_id)
-        if not isinstance(channel, discord.abc.Messageable):
-            # Not in the cache (just after a restart or a new channel): that is not "the
-            # message is gone", so post nothing rather than a second clock.
-            log.warning("The game-time channel isn't available to DMbot right now")
-            return
-        try:
-            message = await channel.fetch_message(stored.players_message_id)
-            if message.content != text:
-                await message.edit(content=text, allowed_mentions=NO_PINGS)
-            return
-        except discord.NotFound:
-            pass  # deleted: post a new one below
-        except discord.HTTPException:
-            log.warning("Couldn't edit the players' clock message")
-            return  # a hiccup: don't pile a second clock beside it
-    message = await client.post_message(channel_id, text)
-    if message is None:
-        return
-    with contextlib.suppress(discord.HTTPException):  # pinning needs a permission DMbot may lack
-        await message.pin()
-    try:
-        await client.clocks.set_players_message(
-            campaign.guild_id, campaign.id, message.channel.id, message.id
-        )
-    except Exception:
-        # Posted but not remembered: the next update would post another, so say so.
-        log.exception("Couldn't remember the players' clock message")
 
 
 def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
@@ -465,22 +504,34 @@ def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
 async def update_players(
     client: Any, campaign: Campaign, action: str, result: Result, *, announce: bool = True
 ) -> None:
-    """After a change: redraw the players' clock and, once, say a finished rest or a new
-    day there. Best effort."""
+    """After a change: a finished rest or a new day is said once (it holds the day and the word
+    too, so it stands in for the plain line); otherwise the plain line, if what the players see
+    changed. Best effort."""
     try:
         stored = await client.clocks.get(campaign.guild_id, campaign.id)
         if stored is None:
             return
         fresh = await client.campaigns.get(campaign.guild_id, campaign.id) or campaign
-        await show_players(client, fresh, stored)
         after = result.after or stored.clock
         line = players_line(action, result.before, after) if announce else None
-        if line is not None and result.group is not None:
+        if line is None:
+            await show_players(client, fresh, stored)
+            return
+        if result.group is not None:
             line = f"{result.group.name}: {line}"  # (#1607) which part of the party
-        if line is not None and fresh.gametime_channel_id is not None:
-            await client.post_message(fresh.gametime_channel_id, line)
+        async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
+            await put_line(client, fresh, [line], game.short_label(after.minute), plain=False)
     except Exception:
         log.exception("Couldn't tell the players about the clock")
+
+
+async def correct_players(client: Any, campaign: Campaign, line: str) -> None:
+    """An Undo: the players may have been told a rest finished, so say it was taken back."""
+    try:
+        async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
+            await put_line(client, campaign, [f"Correction: {line}"], view_of(line), plain=False)
+    except Exception:
+        log.exception("Couldn't tell the players about a correction")
 
 
 async def say(
@@ -603,7 +654,8 @@ async def _run_press(
             SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url)
             + players_see(campaign),
         )
-    # The game-time channel (#1116): the players get the round, no extra line about a new day.
+    # The players hear a finished rest or a new day in the chat channel (#2877); a fight's rounds
+    # are the DM's, so a combat action says nothing to them.
     await update_players(client, campaign, action, result, announce=action not in COMBAT_ACTIONS)
     if action in COMBAT_ACTIONS and result.before is not None:
         await say(  # one line with Undo, like what is heard at the table (#1127)
@@ -1417,15 +1469,9 @@ class ClockUndoButton(
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:
             await show(client, campaign, stored)
-            await show_players(client, campaign, stored)
             fresh = await client.campaigns.get(guild.id, campaign.id) or campaign
-            if fresh.gametime_channel_id is not None:
-                # The players may have been told a rest finished: say it was taken back.
-                who = f"{acted.name}: " if acted is not None else ""
-                await client.post_message(
-                    fresh.gametime_channel_id,
-                    f"Correction: {who}{game.short_label(after.minute)}.",
-                )
+            who = f"{acted.name} is" if acted is not None else "it is"
+            await correct_players(client, fresh, f"{who} back to {game.short_label(after.minute)}.")
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=f"↩️ Undone. Back to {game.short_label(self.before)}.", view=None

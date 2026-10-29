@@ -9,7 +9,9 @@ import re
 import unittest
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+import discord
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.db import Database, drop_schema
@@ -186,6 +188,20 @@ class Fake(base.Fake):
         super().__init__(clocks, campaigns, {})
         self.effects = effects
         self.posted: list[tuple[int, str, Any]] = []
+        self.user = SimpleNamespace(id=1)
+        self.channels: dict[int, Any] = {}
+
+    def channel(self, channel_id: int) -> Any:
+        """A channel with nothing said in it yet (the players' line looks at its recent history)."""
+
+        async def history(*, limit: int = 100) -> Any:
+            return
+            yield
+
+        found = MagicMock(spec=discord.TextChannel)
+        found.id, found.history = channel_id, history
+        self.channels[channel_id] = found
+        return found
 
     async def post_message(self, channel_id: int, text: str, view: Any = None, **_: Any) -> Any:
         self.posted.append((channel_id, text, view))
@@ -196,8 +212,8 @@ class Fake(base.Fake):
             jump_url="https://discord.example/x",
         )
 
-    def get_channel(self, channel_id: int) -> None:
-        return None
+    def get_channel(self, channel_id: int) -> Any:
+        return self.channels.get(channel_id)  # (none unless a test made one)
 
 
 class Party(DatabaseTest):
@@ -723,10 +739,10 @@ class OnTheScreen(Party):
     async def test_the_players_see_one_line_per_group_and_no_exact_time(self) -> None:
         await self.split_up()
         await self.press("h1")
-        text = ui.players_text_for(await self.stored())
+        text = ui.small(ui.players_view(await self.stored()))
         self.assertEqual(
             text,
-            "🕰️ **The party is split**\nTower: Day 4, afternoon\nCamp: Day 4, about noon",
+            "-# 🕰️ The party is split\n-# Tower: Day 4, afternoon\n-# Camp: Day 4, about noon",
         )
         self.assertIsNone(re.search(r"\d:\d\d", text))
 
@@ -736,12 +752,13 @@ class OnTheScreen(Party):
         assert campaign is not None
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
-                "UPDATE campaigns SET gametime_channel_id = 777 WHERE id = %s", (self.a.id,)
+                "UPDATE campaigns SET dmbchat_channel_id = 777 WHERE id = %s", (self.a.id,)
             )
+        self.fake.channel(777)  # the campaign's chat channel
         result = await self.press("long")
         await ui.update_players(self.fake, campaign, "long", result)
         said = [text for channel, text, _ in self.fake.posted if channel == 777]
-        self.assertIn("Tower: Long rest done. Day 4, evening.", said)
+        self.assertIn("-# 🕰️ Tower: Long rest done. Day 4, evening.", said)
 
 
 class SpokenPhrases(Party):

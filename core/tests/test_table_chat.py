@@ -589,7 +589,7 @@ class Panel(unittest.IsolatedAsyncioTestCase):
         )
         it = self.interaction(store)
         await panel.TableChatPanel(campaign).save(it, channel_id=EXTRA)
-        self.assertIn("won't read the DM screen", it.response.send_message.await_args.args[0])
+        self.assertIn("can't be table chat", it.response.send_message.await_args.args[0])
         store.set_table_chat.assert_not_awaited()
 
     async def test_a_store_that_fails_is_told_not_crashed(self) -> None:
