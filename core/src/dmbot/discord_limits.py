@@ -29,7 +29,7 @@ CHOICE_VALUE_MAX = 100  # for a text choice
 TOTAL_MAX = 4000  # name, description and every option's name, description and choices, summed
 # What a phone shows of a button or menu choice before cutting it off (#112). Labels
 # DMbot writes itself stay within this. Names people chose (a campaign's) are cut to
-# NAME_LABEL_MAX, only in menu lists, which open full-width; never in buttons.
+# NAME_LABEL_MAX (in dmbot.ui.logic), only in menu lists, which open full-width; never in buttons.
 PHONE_LABEL_MAX = 25
 # Lowercase letters, digits, "-" and "_" (Discord also allows some other scripts' letters; \w is
 # the closest plain pattern, and a capital is checked apart).
