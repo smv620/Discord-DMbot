@@ -2757,3 +2757,12 @@ DEPLOY a8805996 (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; S
 - web-api healthy.
 - Brings: #2978 (the "Check new names" buttons from the DM's private message), #2983 and #2984 (Story graph layout and full screen), #2988 (sign-in button on a signed-out campaign page), #1404 (privacy page names Resend).
 - Not yet checked: the "Check new names" buttons (owner, in the DM), the Story graph full screen, the sign-in button, and the privacy page.
+
+DEPLOY fb1b148a (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's seventh deploy handover on #516, 23:05 UTC, a small deploy). Live was a8805996.
+- CI: all 11 checks green on fb1b148a (the merge of #2998).
+- No migrations: live stays at 277 rows (0280_link_known_by). No dry run needed.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Bot connected to 2 servers, 0 errors since start.
+- web-api healthy.
+- Brings: #2998, the four-button Discord menu (DMbot Main Menu for a DM, player and guest; Help card; Manage DMbot; My character sheet).
+- Not yet checked (owner, in the test server's DM Bot channel): the main menu's four buttons for a DM, Manage campaign, Manage DMbot with the Discord-live settings at the top, a player seeing only My data and Help, My character sheet opening its form, and an old Settings button opening the new card.
