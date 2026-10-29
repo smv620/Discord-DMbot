@@ -620,6 +620,25 @@ class TheEdits(Editing):
         )
         self.assertEqual(len(await self.knows_hall()), 3)
 
+    async def test_a_refused_connection_still_moves_the_count_on(self) -> None:
+        answer = await self.keep_all_answer()
+        real = self.memory.add_relation
+        calls = 0
+
+        async def refuse_the_second(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise MemoryRuleError("refused")
+            return await real(*args, **kwargs)
+
+        seen: list[Any] = []
+        with patch.object(self.memory, "add_relation", refuse_the_second):
+            await self.apply_all(waiting=self.counting(answer, seen))
+        self.assertEqual([step for step, _ in seen], [(n, 3) for n in range(4)])  # to 3 of 3
+        self.assertEqual(len(await self.knows_hall()), 2)  # the refused one stays waiting
+        self.assertEqual(await self.backstory.count(self.g, self.one.id), 1)
+
     async def test_a_count_that_cannot_be_written_does_not_stop_the_keep(self) -> None:
         answer = await self.keep_all_answer()
         done = await self.apply_all(waiting=self.counting(answer, [], fail=True))
