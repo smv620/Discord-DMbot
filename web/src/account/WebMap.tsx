@@ -343,6 +343,21 @@ export default function WebMap({
   const otherKinds = [...new Set(nodes.map((n) => n.kind))].filter((k) => !KIND_ORDER.includes(k));
   const anyPinned = sim.current.some((n) => n.pinned);
   const tooBig = nodes.length > MAX_SIM_NAMES;
+  // The side panel: the name in focus, or the middle name, with its connections in words.
+  const detail = byId.get(focus ?? center) ?? null;
+  const detailPinned = detail ? (at.get(detail.id)?.pinned ?? false) : false;
+  const sideLines = detail
+    ? edges
+        .filter((x) => x.a === detail.id || x.b === detail.id)
+        .flatMap((x) =>
+          x.links.map((l) => ({
+            id: l.id,
+            secret: l.secret,
+            belief: l.belief,
+            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction),
+          })),
+        )
+    : [];
   void frame; // each frame of the settle re-draws the map from the names' new places
 
   return (
@@ -370,6 +385,7 @@ export default function WebMap({
         </button>
       </div>
       <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
+      <div class="web-stage">
       <svg
         ref={svg}
         class="web-svg"
@@ -505,6 +521,46 @@ export default function WebMap({
           })}
         </g>
       </svg>
+      {detail && (
+        <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
+          <h3 id="web-side-h">{detail.name}</h3>
+          <p class="small muted">{kindWords(detail.kind)}</p>
+          {sideLines.length === 0 ? (
+            <p class="small">{words.sideNone}</p>
+          ) : (
+            <ul class="stack small">
+              {sideLines.map((l) => (
+                <li key={l.id}>
+                  {l.secret && <span aria-hidden="true">{words.secretMark} </span>}
+                  {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
+                  {l.text}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            class="button secondary"
+            aria-pressed={detailPinned}
+            onClick={() => {
+              const n = sim.current.find((q) => q.id === detail.id);
+              if (!n) return;
+              n.pinned = !n.pinned;
+              if (!n.pinned) {
+                const rest = { ...places.current };
+                delete rest[n.id];
+                places.current = rest;
+                savePlaces(refId, rest);
+                reheat(0.6);
+              } else remember();
+              setFrame((f) => f + 1);
+            }}
+          >
+            {detailPinned ? words.letMove : words.keepHere}
+          </button>
+        </aside>
+      )}
+      </div>
       <section aria-labelledby="web-legend" class="web-legend">
         <h3 id="web-legend" class="small">
           {words.legendHeading}

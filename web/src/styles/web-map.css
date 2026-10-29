@@ -68,3 +68,33 @@
   background: var(--accent, currentColor);
   color: var(--bg, #fff);
 }
+
+/* The map with the chosen name's details beside it; one column on a phone. */
+.account .web-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 17rem;
+  gap: var(--space-3, 0.75rem);
+  align-items: start;
+}
+
+.account .web-side {
+  min-width: 0;
+}
+
+@media (max-width: 52rem) {
+  .account .web-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.account .web-sides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4, 1rem);
+}
+
+@media (max-width: 40rem) {
+  .account .web-sides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

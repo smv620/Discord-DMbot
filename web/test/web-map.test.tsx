@@ -355,3 +355,33 @@ describe("keeping the map calm", () => {
   });
 });
 
+
+describe("the details beside the map", () => {
+  it("shows the middle name's connections in words, then the name in focus's, and a secret is marked", () => {
+    const withSecret: WebEdge[] = [{ ...edges[0]!, links: [link("l1", "serves"), { ...link("l2", "owes"), secret: true }] }, ...edges.slice(1)];
+    render(<WebMap nodes={nodes} edges={withSecret} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const side = () => document.querySelector(".web-side")!;
+    expect(side().querySelector("h3")?.textContent).toBe("Mira Voss");
+    expect(side().textContent).toContain("Mira Voss serves Garrick");
+    expect(side().textContent).toContain("Mira Voss lives at Far Hall");
+    expect(side().textContent).toContain(words.secretMark);
+    fireEvent.pointerEnter(nodeOf("The Order"));
+    expect(side().querySelector("h3")?.textContent).toBe("The Order");
+    expect(side().textContent).toContain("Garrick leads The Order");
+    expect(side().textContent).not.toContain("serves");
+  });
+
+  it("keeps a name in place and lets it go again, from a button, for the keyboard", () => {
+    draw();
+    fireEvent.pointerEnter(nodeOf("Garrick"));
+    const button = () => document.querySelector(".web-side button") as HTMLButtonElement;
+    expect(button().textContent).toBe(words.keepHere);
+    fireEvent.click(button());
+    expect(nodeOf("Garrick").querySelector(".web-pin")).not.toBeNull();
+    expect(readPlaces("1.a").g).toBeDefined();
+    expect(button().textContent).toBe(words.letMove);
+    fireEvent.click(button());
+    expect(nodeOf("Garrick").querySelector(".web-pin")).toBeNull();
+    expect(readPlaces("1.a").g).toBeUndefined();
+  });
+});
