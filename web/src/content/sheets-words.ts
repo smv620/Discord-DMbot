@@ -82,6 +82,7 @@ export const sheetWords = {
     reading: "DMbot is reading the sheet.",
     done: "Done.",
   } as Record<string, string>,
+  stillOnItsWay: "A change is still on its way.",
   quiet:
     "No answer yet. It may still go through: look at the list before you try again.",
 } as const;

@@ -15,6 +15,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from dmbot.discord_limits import PHONE_LABEL_MAX, shorten
 from dmbot.rules import rule_card
 from dmbot.rules.index import Hit, Index
 from dmbot.sidebar.context import Context
@@ -76,13 +77,11 @@ def button_labels(items: Sequence[Looked]) -> list[str]:
     """What each line's button says: the name alone, cut to what a phone shows (25), and with its
     kind in front of the cut when two lines share a name ("Shield (spell)", "Shield (armor)").
     The full label is in the line above the button."""
-    from dmbot.ui import logic  # (the UI imports the sidebar: late)
-
     names = [item.label.split(" (", 1)[0] for item in items]
     out = []
     for item, name in zip(items, names, strict=True):
         shown = item.label.split(":", 1)[0].rstrip(")") + ")" if names.count(name) > 1 else name
-        out.append(logic.shorten(shown, logic.PHONE_LABEL_MAX))
+        out.append(shorten(shown, PHONE_LABEL_MAX))
     return out
 
 
