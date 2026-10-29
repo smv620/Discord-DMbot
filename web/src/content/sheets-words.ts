@@ -25,7 +25,7 @@ export const sheetWords = {
   typedClassHint: "For example: Wizard",
   typedLevel: "Level",
   typedLevelHint: "1 to 20",
-  typedSpecies: "Species (optional)",
+  typedSpecies: "Lineage (optional)",
   typedSpeciesHint: "For example: Elf",
   typedNames: "Spell, feature and item names",
   typedNamesHint: "Separate with commas, up to 20. For example: Misty Step, Shield",

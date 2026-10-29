@@ -21,6 +21,7 @@ from typing import Any
 from dmbot.db import Conn
 from dmbot.memory import evidence as evidence_links
 from dmbot.memory._changes import (
+    ALIAS_KNOWERS,
     BELIEFS,
     ENTITIES,
     PERSPECTIVES,
@@ -168,6 +169,15 @@ async def _add(
             session_started_at=session_at, trusted=True,
         )  # fmt: skip
     return row
+
+
+async def add_belief(
+    w: Changes, perspective_id: str, relation_id: str, confidence: float, status: str
+) -> None:
+    """A belief of a character's point of view, written by the DM's "Who knows this?" (#2935)
+    through `memory.knowers`: the one place that writes a player character's certain belief. A
+    new row, so the history stays and Undo works; The truth and The party are not written here."""
+    await _add(w, perspective_id, relation_id, confidence, status)
 
 
 async def set_pin(w: Changes, relation_id: str, pinned: bool) -> Belief:
@@ -512,4 +522,14 @@ async def fold_perspective(w: Changes, keep_id: str, gone_id: str) -> None:
         )
     await w.update_where(
         BELIEFS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
+    )
+    # Who knows an other name moves too (#2935); a name both knew keeps one row.
+    have = {
+        r["alias_id"] for r in await w.select(ALIAS_KNOWERS, " AND perspective_id = %s", [target])
+    }
+    for row in await w.select(ALIAS_KNOWERS, " AND perspective_id = %s", [gone_p[0]["id"]]):
+        if row["alias_id"] in have:
+            await w.delete(ALIAS_KNOWERS, row["id"])
+    await w.update_where(
+        ALIAS_KNOWERS, {"perspective_id": target}, " AND perspective_id = %s", [gone_p[0]["id"]]
     )

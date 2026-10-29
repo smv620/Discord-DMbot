@@ -20,6 +20,7 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
 from dmbot.memory import beliefs, evidence, notify, sheets
 from dmbot.memory._changes import (
+    ALIAS_KNOWERS,
     ALIASES,
     ATTITUDES,
     BELIEFS,
@@ -96,6 +97,7 @@ _TAGS: dict[str, Table] = {
     "alias": ALIASES,
     "relation": RELATIONS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
+    "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
     "belief": BELIEFS,
     "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
     "impression": IMPRESSIONS,
@@ -153,7 +155,7 @@ _CHOICES: dict[str, Sequence[str]] = {
 }
 _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "object_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
-        "perspective_id", "manipulated_by", "unnamed_anchor"}  # fmt: skip
+        "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "max_per_subject", "closed_at", "session_at", "recorded_at", "seq"}  # fmt: skip
@@ -398,6 +400,19 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     if any(b["confidence"] >= 1.0 and rel in secret for rel, b in newest.items()):
         raise CampaignError(DAMAGED)  # the players would hold a secret connection as fact now
     # (an older belief of theirs in one that is hidden again is history, and is kept)
+    # Who knows an other name (#2935): a row for a name or a character the file does not hold is
+    # damage; one for a name that is no longer secret, or a point of view that is not a player
+    # character's, is history and dropped (a backup must always be loadable).
+    aliases = {r["id"]: r for r in by_tag["alias"]}
+    views = {r["id"]: r for r in by_tag["perspective"]}
+    if any(k["alias_id"] not in aliases or k["perspective_id"] not in views
+           for k in by_tag["alias_knower"]):  # fmt: skip
+        raise CampaignError(DAMAGED)
+    by_tag["alias_knower"] = [
+        k
+        for k in by_tag["alias_knower"]
+        if aliases[k["alias_id"]]["secret"] and views[k["perspective_id"]]["kind"] == "pc"
+    ]
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)

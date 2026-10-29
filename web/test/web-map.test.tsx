@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WebMap from "../src/account/WebMap";
 import type { WebEdge, WebNode } from "../src/account/api";
-import { MAX_SIM_NAMES, MAX_SIM_STEPS, forceStep, kindAnchors, linkPairs, settle, startNodes } from "../src/account/webForce";
+import { MAX_SIM_NAMES, MAX_SIM_STEPS, connectionGroups, edgeKind, forceStep, kindAnchors, linkPairs, settle, startNodes } from "../src/account/webForce";
 import { readMode, readPlaces, saveMode, savePlaces } from "../src/account/webPrefs";
 import { webPage as words } from "../src/content/web-words";
 
@@ -88,28 +88,42 @@ describe("the free layout", () => {
     expect(list.map((n) => [n.x, n.y])).toEqual(before);
   });
 
-  it("pulls names of one kind together in the grouped layout", () => {
+  it("pulls names that share a kind of connection together in the grouped layout", () => {
     const many = [
       ...Array.from({ length: 4 }, (_, i) => ({ id: `p${i}`, name: `P${i}`, kind: "npc" })),
-      ...Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, name: `Q${i}`, kind: "place" })),
+      ...Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, name: `Q${i}`, kind: "npc" })),
       { id: "c", name: "Centre", kind: "npc" },
     ];
-    const some: WebEdge[] = many.slice(0, 8).map((n) => ({ a: "c", b: n.id, label: "knows", more: 0, links: [] }));
-    const list = startNodes(many, some, "c");
+    const some: WebEdge[] = many.slice(0, 8).map((n, i) => ({ a: "c", b: n.id, label: "x", more: 0, links: [{ ...link(`k${i}`, "x"), kind: i < 4 ? ("family" as const) : ("work" as const) }] }));
+    const groups = connectionGroups(some, "c");
+    const list = startNodes(many, some, "c", {}, groups);
     const links = linkPairs(list, some);
-    settle(list, links, list.findIndex((n) => n.id === "c"), "groups", kindAnchors(["npc", "place"]));
-    const mean = (kind: string) => {
-      const m = list.filter((n) => n.kind === kind && n.id !== "c");
+    settle(list, links, list.findIndex((n) => n.id === "c"), "groups", kindAnchors(["family", "work"]));
+    const mean = (g: string) => {
+      const m = list.filter((n) => n.group === g);
       return { x: m.reduce((t, n) => t + n.x, 0) / m.length, y: m.reduce((t, n) => t + n.y, 0) / m.length };
     };
-    const within = (kind: string) => {
-      const c = mean(kind);
-      const m = list.filter((n) => n.kind === kind && n.id !== "c");
+    const within = (g: string) => {
+      const c = mean(g);
+      const m = list.filter((n) => n.group === g);
       return m.reduce((t, n) => t + Math.hypot(n.x - c.x, n.y - c.y), 0) / m.length;
     };
-    const apart = Math.hypot(mean("npc").x - mean("place").x, mean("npc").y - mean("place").y);
-    expect(apart).toBeGreaterThan(within("npc"));
-    expect(apart).toBeGreaterThan(within("place"));
+    const apart = Math.hypot(mean("family").x - mean("work").x, mean("family").y - mean("work").y);
+    expect(apart).toBeGreaterThan(within("family"));
+    expect(apart).toBeGreaterThan(within("work"));
+  });
+
+  it("works out a line's kind and each name's group from the lines out of the middle", () => {
+    const e = (a: string, b: string, ...kinds: (string | undefined)[]) => ({ a, b, links: kinds.map((kind) => ({ kind })) });
+    expect(edgeKind(e("a", "b", "family"))).toBe("family");
+    expect(edgeKind(e("a", "b", "family", "family"))).toBe("family");
+    expect(edgeKind(e("a", "b", "family", "work"))).toBe("other");
+    expect(edgeKind(e("a", "b", undefined))).toBe("other");
+    const groups = connectionGroups([e("m", "a", "family"), e("m", "b", "work"), e("a", "c", "ally"), e("b", "c", "ally")], "m");
+    expect(groups.get("a")).toBe("family");
+    expect(groups.get("b")).toBe("work");
+    expect(groups.get("c")).toBe("family"); // reached through a first, so it follows a
+    expect(groups.has("m")).toBe(false);
   });
 
   it("starts a name at its saved place, pinned, and ignores a line to a name that is not here", () => {
@@ -224,7 +238,7 @@ describe("the map", () => {
     expect(nodeOf("Far Hall").getAttribute("transform")).not.toBe("translate(300.0 200.0)");
   });
 
-  it("switches the layout, remembers it, and labels the areas by kind", () => {
+  it("switches the layout, remembers it, and labels the areas by kind of connection", () => {
     draw();
     expect(document.querySelector(".web-area")).toBeNull();
     const group = document.querySelector(`[role="group"][aria-label="${words.layoutLabel}"]`)!;
@@ -383,5 +397,95 @@ describe("the details beside the map", () => {
     fireEvent.click(button());
     expect(nodeOf("Garrick").querySelector(".web-pin")).toBeNull();
     expect(readPlaces("1.a").g).toBeUndefined();
+  });
+});
+
+const kinded: WebEdge[] = [
+  { a: "m", b: "g", label: "serves", more: 0, links: [{ ...link("l1", "serves"), kind: "work" }] },
+  { a: "m", b: "h", label: "kin of", more: 0, links: [{ ...link("l3", "kin of"), kind: "family" }] },
+  { a: "g", b: "o", label: "leads", more: 0, links: [{ ...link("l4", "leads"), kind: "group" }] },
+];
+const drawKinded = () => render(<WebMap nodes={nodes} edges={kinded} center="m" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+
+describe("kinds of connection", () => {
+  it("gives each line the class of its kind, and mixed or missing kinds the neutral one", () => {
+    drawKinded();
+    const kinds = [...document.querySelectorAll(".web-edge")].map((l) => [...l.classList].find((c) => c.startsWith("web-link-")));
+    expect(kinds).toEqual(["web-link-work", "web-link-family", "web-link-group"]);
+    cleanup();
+    draw();
+    expect([...document.querySelectorAll(".web-edge")].every((l) => l.classList.contains("web-link-other"))).toBe(true);
+  });
+
+  it("has a chip for each kind that is there, on by default, and no chips without kinds", () => {
+    drawKinded();
+    const chips = [...document.querySelectorAll(".web-chip")] as HTMLButtonElement[];
+    expect(chips.map((c) => c.textContent?.trim())).toEqual(["Family", "Clubs and groups", "Work"]);
+    expect(chips.every((c) => c.getAttribute("aria-pressed") === "true")).toBe(true);
+  });
+
+  it("hides the lines of a kind when its chip is turned off, and brings them back", () => {
+    drawKinded();
+    const chip = (label: string) => [...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes(label)) as HTMLButtonElement;
+    fireEvent.click(chip("Work"));
+    expect(chip("Work").getAttribute("aria-pressed")).toBe("false");
+    expect(document.querySelectorAll(".web-edge.web-link-work")).toHaveLength(0);
+    expect(document.querySelectorAll(".web-edge")).toHaveLength(2);
+    fireEvent.click(chip("Work"));
+    expect(document.querySelectorAll(".web-edge.web-link-work")).toHaveLength(1);
+  });
+
+  it("marks each connection with its kind's word and a dot, not by colour alone", () => {
+    drawKinded();
+    const side = document.querySelector(".web-side")!;
+    expect(side.textContent).toContain("Work: ");
+    expect(side.textContent).toContain("Family: ");
+    expect(side.querySelectorAll(".web-dot")).toHaveLength(2);
+    expect(document.querySelector(".web-legend")!.textContent).toContain("Work");
+  });
+
+  it("labels the grouped areas with the kinds of connection", () => {
+    saveMode("groups");
+    drawKinded();
+    const labels = [...document.querySelectorAll(".web-area-text")].map((t) => t.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["Family", "Work"]));
+  });
+});
+
+describe("kinds of connection, edge cases", () => {
+  it("treats a kind this page does not know as the neutral one", () => {
+    expect(edgeKind({ links: [{ kind: "rival" }] })).toBe("other");
+    expect(edgeKind({ links: [{ kind: "rival" }, { kind: "work" }] })).toBe("other");
+  });
+
+  it("lights no name through a line that is hidden", () => {
+    drawKinded();
+    fireEvent.click([...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes("Work")) as HTMLButtonElement);
+    fireEvent.pointerEnter(nodeOf("Mira"));
+    // Garrick is joined to Mira only by the hidden work line, so he fades with the rest.
+    expect(nodeOf("Garrick").classList.contains("web-faded")).toBe(true);
+    expect(nodeOf("Far Hall").classList.contains("web-faded")).toBe(false);
+    expect(document.querySelector(".web-side")!.textContent).not.toContain("serves");
+  });
+
+  it("settles again when a connection's kind changes with the same number of lines", () => {
+    setup(false);
+    const ask = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", ask);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const props = { center: "m", refId: "1.a", selected: null, onCenter: () => {}, onLine: () => {} };
+    const { rerender } = render(<WebMap nodes={nodes} edges={kinded} {...props} />);
+    const first = ask.mock.calls.length;
+    const changed = kinded.map((e, i) => (i === 0 ? { ...e, links: [{ ...e.links[0]!, kind: "family" as const }] } : e));
+    rerender(<WebMap nodes={nodes} edges={changed} {...props} />);
+    expect(ask.mock.calls.length).toBeGreaterThan(first);
+  });
+
+  it("says a hidden kind is hidden to a screen reader", () => {
+    drawKinded();
+    const chip = [...document.querySelectorAll(".web-chip")].find((c) => c.textContent?.includes("Work")) as HTMLButtonElement;
+    expect(chip.textContent).not.toContain("(hidden)");
+    fireEvent.click(chip);
+    expect(chip.textContent).toContain(words.hiddenMark);
   });
 });

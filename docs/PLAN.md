@@ -2300,6 +2300,25 @@ names panel nor the speech-to-text hints can be a fixed list.
   from before it restores as false) and in the website's door; no row is updated. With no role,
   or any detail that is not one of these words, it reads "is family of" both ways. The lore read's
   pass 2 is not changed (follow-up).
+  **What a lore or backstory read keeps** (owner, 2026-10-29, the five lore questions after the lore test,
+  #2757; built in #2959, the import side in #2960):
+  1. **Two names for one person** ("X is now Y", "X is really Y"): one entry, the other name kept on it.
+     That other name is **secret only when the document was uploaded as containing spoilers**; otherwise
+     everyone at the table knows it. (The DM can still narrow it to some characters, #2935.)
+  2. **Family, and what follows from it:** every family role the text states (parent, child, sibling,
+     uncle or aunt, and the rest of `memory/kin.py`) is kept, and DMbot works out, from confirmed family links, the ones that follow
+     ("a mother has a son, and he has a sister, so she is the mother's daughter too"). A worked-out link
+     says which two it came from, goes when either of them goes, and is never more open than they are:
+     secret if either is, and known only by the characters who know both.
+  3. **Class and lineage are properties of a character**, not connections. The word the users see is
+     **lineage** (owner's choice over race or species), everywhere DMbot says it.
+  4. **Unnamed people and things get entries** ("Torvin's tome (name unknown)", "the ringmaster"), so
+     their connections are kept; the DM can rename one later.
+  5. **Obvious inferences are included**, each marked as worked out by DMbot and offered to the DM like
+     every other suggestion, never kept without the DM's press. This is the one place a read goes past
+     what the text states outright: it still never adds an event, and the DM decides.
+  **Relationship mining from imported and live sessions** (same day): family connections only, by the same
+  rules; allies, enemies and other kinds are not mined from sessions yet.
 - **Hints follow the scene** (replacing the fixed order). Hints go with every piece of
   speech sent to speech-to-text, so they can change clip by clip. Up to 50 per clip
   for Deepgram (fewer when names are long; local Whisper keeps about 600 characters),
@@ -4535,6 +4554,31 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
   answer is retried. The same holds for every AI write-up in DMbot (house-rule notes, support replies,
   the DM sidebar's answers): limits are in the instructions, and only a platform's hard limit (Discord's
   2,000 characters a message) splits an answer into parts, never cuts it.
+  **A recap is a short story someone who missed the session can follow** (owner, 2026-10-29, after
+  reading a live recap that was accurate but thin: things with no introduction, no goal, one character
+  carrying it; #2950, #2952, #2954). This replaces the "write only from the beat sheet" rule and the
+  shorter-recap length above:
+  - **The beat sheet is the foundation, not the only source.** The beats still decide *what happened*
+    and in what order. The writer also gets the cleaned transcript of the session, the players'-view
+    "who and what" sheet from confirmed story memory (#2950), the open story threads and the story so
+    far (every accepted recap). It uses them for *context*: who someone is, what a thing does, where a
+    scene is, what the party wants. DMbot still never invents story (CLAUDE.md): no event, person,
+    place, motive or plan that none of these gives. The fact check counts a sentence as supported when
+    any of them says it.
+  - **Names are less rigid.** The writer uses names as `<names>` spells them, and may also use one the
+    sheet or the transcript gives; such a name goes to the DM's name check as today (#2027). A secret
+    name, or an `<apart>` link, is never used.
+  - **Only an overall length target.** No paragraph count and no words per beat. The target is
+    **150 words, plus 100 for every hour played**, rounded to the nearest 10, **at most 600** (1 hour
+    250, 3 hours 450; about four minutes read aloud at most). It stays a target, never a check (#2597).
+  - **What the writer is asked for**, in its instructions: a self-contained short story, not a teaser;
+    each scene opens by saying where it is, and a change of place is said in the first sentence of the
+    new scene; anything new is introduced from the sheet, and left out only when nothing given explains
+    it; where the party is going and why, from a beat or an open thread; every player character who was
+    there gets a moment.
+  - **A final careful-tier pass** edits the result for continuity, balance, context and clear scene
+    changes, reading the draft, the story so far and the transcript; code holds it to the same checks
+    and keeps the earlier draft if it fails one (#2952).
   **Every claim is checked against the beats** (Supervisor, 2026-10-19, after the owner read recap
   test 10: it passed every check yet said the party travelled south (never said at the table) and
   had its weapons taken at the tavern, when that happened later at the keep's gate and one weapon

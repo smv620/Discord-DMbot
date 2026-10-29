@@ -43,7 +43,7 @@ export const text = {
     item: "Items",
     feat: "Feats",
     condition: "Conditions",
-    species: "Species",
+    species: "Lineages",
     subclass: "Subclasses",
     background: "Backgrounds",
     other: "Other",

@@ -125,6 +125,18 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " WHERE p.guild_id = %s AND p.campaign_id = %s",
                 (g, c, REL, g, c),
             ),
+            "memory_alias_knowers": (
+                # a secret name, a character's point of view, and the row that joins them (#2935)
+                "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"
+                " text, key, kind, secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Zz', 'zz', 'title', true, 'confirmed', '{}', 'dm', 1)"
+                " RETURNING id),"
+                " p AS (INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind,"
+                " entity_id, created_at) VALUES (%s, %s, %s, 'pc', %s, 1) RETURNING id)"
+                " INSERT INTO memory_alias_knowers (guild_id, campaign_id, id, alias_id,"
+                " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
+                (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
+            ),
             "memory_evidence": (
                 "INSERT INTO memory_evidence (guild_id, campaign_id, id, relation_id, kind,"
                 " target_id, session_started_at, added_at) VALUES (%s, %s, %s, %s, 'clue', %s, 1, 1)",
