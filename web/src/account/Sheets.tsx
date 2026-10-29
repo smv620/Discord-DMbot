@@ -74,7 +74,6 @@ function CharacterSheetsInner({
   // What the server last said moved: its stage and update time. The wait counts as quiet only when these stop
   // changing (not every poll), so a bot that has gone quiet shows as stalled (#2564).
   const [moved, setMoved] = useState("");
-  const flight = useRef(false);
   const live = useRef(true);
   // The campaign on screen now. An answer for a campaign the page has left is not drawn (#2845).
   const current = useRef(campaignRef);
@@ -99,6 +98,8 @@ function CharacterSheetsInner({
       setBusy(false);
       setStage(null);
       setReport(null);
+      // The choice may have changed the list, and this copy read it before that: read it again.
+      void read();
     }, POLL_MS[0]);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,25 +130,25 @@ function CharacterSheetsInner({
     onDone?: () => void,
   ): Promise<void> => {
     if (!api.chooseSheet || !api.sheetAnswer) return;
-    if (flight.current || onItsWay(campaignRef)) {
+    // The busy gate in each control is what usually stops a second press; this check is the backstop for a press that
+    // gets through before the copy has re-rendered.
+    if (onItsWay(campaignRef)) {
       setReport({ ok: true, text: w.stillOnItsWay });
       return;
     }
     // What this choice was made for: its answer is drawn only while the page still shows that campaign (#2845).
     const asked = campaignRef;
-    flight.current = true;
+    // Set before the send, not after it returns: a copy that mounts during a slow send must already see it going.
+    const started = Date.now();
+    inFlight.set(asked, started);
     setBusy(true);
     setReport(null);
     setMoved("");
     setStage(w.stage.waiting as string);
-    let since: number | undefined;
     try {
       const id = await api.chooseSheet(campaignRef, entity, choice);
       // Kept going after this copy has left the page: the answer is still waited for, and only drawn while the
       // campaign is the one on screen (drawnFor). It ends at the answer or the give-up time, whichever comes first.
-      const started = Date.now();
-      since = started;
-      inFlight.set(asked, started);
       for (let i = 0; ; i += 1) {
         await new Promise((r) =>
           setTimeout(
@@ -196,10 +197,9 @@ function CharacterSheetsInner({
           text: problem(error instanceof ApiError ? error.kind : "server"),
         });
     } finally {
-      flight.current = false;
       // Only this choice's own entry is removed: an old copy finishing late must not clear a newer choice's.
-      if (inFlight.get(asked) === since) inFlight.delete(asked);
-      // Not checked against the campaign on purpose: a new choice cannot start while flight is set, so this cannot
+      if (inFlight.get(asked) === started) inFlight.delete(asked);
+      // Not checked against the campaign on purpose: a new choice cannot start while one is on its way, so this cannot
       // re-enable a button over a choice that is still going (#2845).
       if (live.current) {
         setBusy(false);

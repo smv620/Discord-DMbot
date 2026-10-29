@@ -469,7 +469,10 @@ describe("Use a document link", () => {
     release();
   });
 });
+
 describe("one choice at a time per campaign", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("a choice held on A, then B, then A: the second press on A sends nothing and says \"A change is still on its way.\"", async () => {
     const api = mockApi("table");
     const answer = api.sheetAnswer!.bind(api);
