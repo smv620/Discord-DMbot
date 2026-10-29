@@ -1,4 +1,4 @@
-"""0284_knowers_confidence
+"""0286_knowers_confidence
 
 Each point of view's certainty in a statement (#2995; STORY_MEMORY §9b item 2).
 """
