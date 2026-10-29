@@ -4,7 +4,8 @@
 // same names and lines always settle in the same places, which keeps the tests exact and a redraw calm.
 import { radialLayout } from "./webLayout";
 
-/** "free": names settle anywhere. "groups": names of one kind (people, places ...) gather together. */
+/** "free": names settle anywhere. "groups": names gather by the kind of connection that joins them to the
+ * middle name (family, friends and allies, groups, work). */
 export type LayoutMode = "free" | "groups";
 
 /** More names than this keep their rings and are only movable by hand: pushing every pair apart is
@@ -16,6 +17,8 @@ export const MAX_SIM_STEPS = 300;
 export interface SimNode {
   id: string;
   kind: string;
+  /** The group it gathers with in the grouped layout (see `connectionGroups`). */
+  group: string;
   x: number;
   y: number;
   vx: number;
@@ -45,6 +48,7 @@ export function startNodes(
   edges: { a: string; b: string }[],
   center: string,
   saved: SavedPlaces = {},
+  groups: Map<string, string> = new Map(),
 ): SimNode[] {
   const rings = radialLayout(nodes, edges, center);
   return nodes.map((n) => {
@@ -53,6 +57,7 @@ export function startNodes(
     return {
       id: n.id,
       kind: n.kind,
+      group: groups.get(n.id) ?? "other",
       x: kept ? kept[0] : (at?.x ?? 0),
       y: kept ? kept[1] : (at?.y ?? 0),
       vx: 0,
@@ -62,7 +67,44 @@ export function startNodes(
   });
 }
 
-/** Where each kind gathers in the grouped layout: the kinds spread evenly around the middle. */
+/** The kinds of connection, in the order they are shown. */
+export const LINK_KINDS = ["family", "ally", "group", "work", "other"];
+
+/** The kind a line has: the kind its connections share, else "other" (a mixed line has no one colour). */
+export function edgeKind(edge: { links: { kind?: string | undefined }[] }): string {
+  // A kind this page does not know (a newer API) is "other", so it always has a colour, a chip and an area.
+  const kinds = new Set(edge.links.map((l) => (l.kind !== undefined && LINK_KINDS.includes(l.kind) ? l.kind : "other")));
+  return kinds.size === 1 ? [...kinds][0]! : "other";
+}
+
+/** Which group each name gathers with: the kind of the line it is reached by, walking out from the middle
+ * name, so a name two steps out follows the one it hangs from. The middle name has none. */
+export function connectionGroups(
+  edges: { a: string; b: string; links: { kind?: string | undefined }[] }[],
+  center: string,
+): Map<string, string> {
+  const next = new Map<string, { to: string; kind: string }[]>();
+  for (const e of edges) {
+    const kind = edgeKind(e);
+    (next.get(e.a) ?? next.set(e.a, []).get(e.a)!).push({ to: e.b, kind });
+    (next.get(e.b) ?? next.set(e.b, []).get(e.b)!).push({ to: e.a, kind });
+  }
+  const out = new Map<string, string>();
+  const seen = new Set([center]);
+  const queue = [center];
+  for (let i = 0; i < queue.length; i += 1) {
+    const here = queue[i]!;
+    for (const step of next.get(here) ?? []) {
+      if (seen.has(step.to)) continue;
+      seen.add(step.to);
+      out.set(step.to, here === center ? step.kind : (out.get(here) ?? step.kind));
+      queue.push(step.to);
+    }
+  }
+  return out;
+}
+
+/** Where each group gathers in the grouped layout: the groups spread evenly around the middle. */
 export function kindAnchors(kinds: string[]): Map<string, { x: number; y: number }> {
   const out = new Map<string, { x: number; y: number }>();
   const radius = 190 + 25 * kinds.length;
@@ -140,7 +182,7 @@ export function forceStep(
     const home = i === centreIndex ? CENTRE_HOME : HOME;
     n.vx -= n.x * home;
     n.vy -= n.y * home;
-    const anchor = mode === "groups" && i !== centreIndex ? anchors.get(n.kind) : undefined;
+    const anchor = mode === "groups" && i !== centreIndex ? anchors.get(n.group) : undefined;
     if (anchor) {
       n.vx += (anchor.x - n.x) * 0.022;
       n.vy += (anchor.y - n.y) * 0.022;

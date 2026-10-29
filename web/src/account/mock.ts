@@ -62,7 +62,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import { ApiError, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
+import { ApiError, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -598,6 +598,15 @@ interface WebState {
   nextLink: number;
 }
 
+/** The kind of a pretend connection, from its words: family, friends and allies, groups, work, other. */
+function pretendKind(words: string): WebLinkKind {
+  if (/grew up with|kin|family/.test(words)) return "family";
+  if (/trusts|works with|friend/.test(words)) return "ally";
+  if (/member|guild|order/.test(words)) return "group";
+  if (/serves|guards|owes/.test(words)) return "work";
+  return "other";
+}
+
 function startWeb(big: boolean, lonely = false): WebState {
   const base = startNames();
   const nodes: WebNode[] = base.map((n) => ({ id: n.id, name: n.name, kind: n.kind, secret: n.secret }));
@@ -807,6 +816,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           words: l.words,
           secret: l.secret,
           direction: l.direction,
+          // What the real API works out from the relationship type (core #2942), here from the pretend words.
+          kind: pretendKind(l.words),
           ...(full ? { revealed: l.revealed !== false } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),

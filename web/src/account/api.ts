@@ -1330,11 +1330,16 @@ export interface WebBelief {
 
 /** One connection between two names, for the edge panel. `direction` says who does it to whom, from
  * the edge's `a` and `b`: "a-b" (a does it to b), "b-a", or "both". */
+/** What sort of connection it is, worked out from its relationship type (core #2942). */
+export type WebLinkKind = "family" | "ally" | "group" | "work" | "other";
+
 export interface WebLink {
   id: string;
   words: string;
   secret: boolean;
   direction: "a-b" | "b-a" | "both";
+  /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
+  kind?: WebLinkKind;
   /** How it reads from the second name when that differs ("has as a member"); null or missing
    * when it reads the same either way or has no fixed reading back (#2666). */
   back?: string | null;
