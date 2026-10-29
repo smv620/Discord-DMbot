@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Collection
 from typing import Any
 
 from dmbot.db import Database
@@ -154,12 +155,24 @@ async def _door(
             (guild_id, campaign_id, center, hops, MAX_NODES, size_only),
         )
         found = await cur.fetchone()
+        pages = set() if size_only else await _page_ids(conn, guild_id, campaign_id)
     got = found["r"] if found else None
     if got is not None and got["status"] == "peek_off":
         raise RecapError("peek_off")  # a peek the DM screen does not allow
     if got is None or got["status"] != "ok":
         raise RecapError("not_found")
-    return dict(got)
+    return {**got, "pageIds": pages}
+
+
+async def _page_ids(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
+    """The entries that have an NPC page, from the same source as the page's own door (#2887):
+    ids only. Empty when the door does not answer."""
+    cur = await conn.execute(
+        "SELECT dmbot_web_npc_page_ids(%s, %s) AS ids", (guild_id, campaign_id)
+    )
+    row = await cur.fetchone()
+    ids = row["ids"] if row else None
+    return {str(i) for i in ids} if isinstance(ids, list) else set()
 
 
 async def read_web(
@@ -177,7 +190,14 @@ async def read_web(
     player's peek, refused with `peek_off` unless the campaign's DM screen lets players peek);
     none means the person's own. `visibility` and `canPeek` let the page grey out the switch."""
     got = await _door(db, session, ref, center, hops, size_only=False, view=view)
-    nodes = [{k: v for k, v in n.items() if k != "secret" or v is not None} for n in got["nodes"]]
+    pages: set[str] = got["pageIds"]
+    nodes = [
+        {
+            **{k: v for k, v in n.items() if k != "secret" or v is not None},
+            "page": str(n["id"]) in pages,
+        }
+        for n in got["nodes"]
+    ]
     return {
         "center": got["center"],
         "nodes": nodes,
@@ -209,7 +229,7 @@ async def read_size(
 TRAY_KIND_ORDER = {"place": 0, "npc": 1, "player_character": 2, "character": 3, "organization": 4}
 
 
-def overview_of(got: dict[str, Any]) -> dict[str, Any]:
+def overview_of(got: dict[str, Any], pages: Collection[str] = ()) -> dict[str, Any]:
     """The door's names and pairs shaped for the page (#2632): the counts for the line at the top,
     the names with no connection yet (the tray, by kind then name), and every group of two or more
     linked names with the name to centre it on (its most connected one, counting the names it is
@@ -217,7 +237,11 @@ def overview_of(got: dict[str, Any]) -> dict[str, Any]:
     groups are found here, so the door stays a plain read. The tray lists names only, so it is not
     drawn and does not count against `MAX_NODES`."""
     names: list[dict[str, Any]] = [
-        {k: v for k, v in n.items() if k != "secret" or v is not None} for n in got["names"]
+        {
+            **{k: v for k, v in n.items() if k != "secret" or v is not None},
+            "page": str(n["id"]) in pages,  # an NPC page exists for it (#2887)
+        }
+        for n in got["names"]
     ]
     by_id = {str(n["id"]): n for n in names}
     parent = {i: i for i in by_id}
@@ -246,7 +270,14 @@ def overview_of(got: dict[str, Any]) -> dict[str, Any]:
     groups = []
     for ids in members.values():
         centre = min(ids, key=order)
-        groups.append({"center": centre, "centerName": by_id[centre]["name"], "size": len(ids)})
+        groups.append(
+            {
+                "center": centre,
+                "centerName": by_id[centre]["name"],
+                "size": len(ids),
+                "page": centre in pages,  # the centre name has a page
+            }
+        )
     groups.sort(key=lambda g: (-int(g["size"]), str(g["centerName"]).lower(), str(g["center"])))
     tray = sorted(
         (n for n in names if not degree[str(n["id"])]),
@@ -303,12 +334,13 @@ async def read_overview(
             (guild_id, campaign_id, max_names, max_pairs),
         )
         found = await cur.fetchone()
+        pages = await _page_ids(conn, guild_id, campaign_id)
     got = found["r"] if found else None
     if got is not None and got["status"] in ("peek_off", "bad_visit"):
         raise RecapError(str(got["status"]))
     if got is None or got["status"] != "ok":
         raise RecapError("not_found")
-    return overview_of(dict(got))
+    return overview_of(dict(got), pages)
 
 
 async def peek(db: Database, session: Session, ref: str) -> dict[str, Any]:
