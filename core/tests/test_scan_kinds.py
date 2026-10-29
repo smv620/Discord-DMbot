@@ -15,7 +15,6 @@ from dmbot.ai import AIError, Reply
 from dmbot.memory import scan_kinds
 from dmbot.memory.models import PROPOSED, Entity
 from dmbot.ui import names as ui
-from dmbot.ui.name_background import BulkConfirm, scan_view
 
 
 def suggestion(name: str, type_: str = "concept", role: str | None = None) -> Entity:
@@ -78,6 +77,20 @@ class TheAsk(unittest.IsolatedAsyncioTestCase):
         sent = ai.complete.await_args.args[1]
         self.assertIn("Greyfen | we rode to Greyfen", sent)
 
+    async def test_a_cut_answer_is_asked_again_in_smaller_parts(self) -> None:
+        names = ["Greyfen", "Oakvale", "Oskar", "Kaz"]
+        replies = [
+            Reply('{"kinds": [{"name": "Grey', True),  # cut off
+            Reply(answer(("Greyfen", "place"), ("Oakvale", "place")), False),
+            Reply(answer(("Oskar", "person"), ("Kaz", "person")), False),
+        ]
+        ai = SimpleNamespace(complete=AsyncMock(side_effect=replies))
+        got = await host(ai)(1, "c", names, [])
+        self.assertEqual(
+            got, {"Greyfen": "place", "Oakvale": "place", "Oskar": "npc", "Kaz": "npc"}
+        )
+        self.assertEqual(ai.complete.await_args.kwargs["max_tokens"], 16_000)  # (the floor)
+
     async def test_no_ai_a_plan_without_it_or_a_failed_call_means_no_kinds(self) -> None:
         self.assertEqual(await host(None)(1, "c", ["Greyfen"], []), {})
         ai = SimpleNamespace(complete=AsyncMock())
@@ -114,16 +127,6 @@ class TheCard(unittest.IsolatedAsyncioTestCase):
         self.assertIn("🔗 Same as a known name…", labels)
         self.assertIn("🚫 Not a name", labels)
         self.assertIn("⏳ Later", labels)
-
-    async def test_add_all_groups_the_scans_suggestions_by_kind(self) -> None:
-        one = scan_view(
-            "c" * 32,
-            [suggestion("Greyfen", "place"), suggestion("Oakvale", "place"), suggestion("Kaz")],
-        )
-        self.assertIsInstance(one, BulkConfirm)
-        self.assertIn("✅ Add all 2 places", self.labels(one))
-        plain = scan_view("c" * 32, [suggestion("Kaz")])
-        self.assertNotIsInstance(plain, BulkConfirm)  # just the one-by-one check
 
 
 if __name__ == "__main__":

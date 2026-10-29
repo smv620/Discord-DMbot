@@ -47,7 +47,6 @@ from dmbot.memory.models import (
     DESCRIPTION_MAX,
     DM,
     PROPOSED,
-    Entity,
     MemoryRuleError,
     NewName,
     name_key,
@@ -76,9 +75,7 @@ from dmbot.ui.names import (
     _campaign_for,
     _md,
     _memory,
-    background_kind,
     changed,
-    review_view,
     start_review,
 )
 from dmbot.waiting import WaitingMessage, message_is_gone
@@ -1644,7 +1641,7 @@ class BulkConfirm(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()
         await interaction.response.edit_message(view=None)
-        await start_review(interaction, self.campaign_id)
+        await start_review(interaction, self.campaign_id, bulk=False)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         await ask_connections(interaction, self.campaign_id)
@@ -1714,17 +1711,3 @@ class BulkConfirm(_Menu):
                 ephemeral=True,
                 allowed_mentions=NO_PINGS,
             )
-
-
-def scan_view(campaign_id: str, suggestions: Sequence[Entity]) -> discord.ui.View:
-    """What goes under "new names to check" after a session or an import (#2937): the lore
-    review's "Add all 4 places" buttons for the suggestions the scan gave a kind, with the
-    one-by-one check beside them; just the check when none has a kind."""
-    by_kind: dict[str, list[str]] = {}
-    for entity in suggestions:
-        kind = background_kind(entity)
-        if kind:
-            by_kind.setdefault(kind, []).append(entity.id)
-    if not by_kind:
-        return review_view(campaign_id)
-    return BulkConfirm(campaign_id, by_kind)
