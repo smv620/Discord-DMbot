@@ -24,6 +24,7 @@ BEATS = "recap_beats"  # the beats it found are checked against the transcript
 WRITING = "recap_writing"  # the recap is written from the beats
 CHECKING = "recap_checking"  # the critics read the draft
 CHECK_WAITING = "recap_check_waiting"  # written, and waiting to be checked: tried again later
+FINAL_READ = "recap_final_read"  # the last editing pass over the finished draft (#2952)
 FINISHING = "recap_finishing"  # the title and the housekeeping notes
 READY = "recap_ready"
 FAILED = "recap_failed"
@@ -71,6 +72,8 @@ def stage_of(row: Mapping[str, Any], *, now: int) -> str:
         if row["last_error"] == critics.CHECK_WAIT:
             return CHECK_WAITING
         loop = critics.loop_from_json(row.get("critics"))
+        if loop.done and loop.final == "reading":
+            return FINAL_READ
         return FINISHING if loop.done else CHECKING
     return FINISHING
 

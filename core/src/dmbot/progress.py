@@ -51,6 +51,7 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "recap_writing": 30 * 60,
     "recap_checking": 30 * 60,
     "recap_check_waiting": None,  # written, and tried again later by design (hours, not minutes)
+    "recap_final_read": 30 * 60,  # one call of the careful tier, up to its long answer
     "recap_finishing": 10 * 60,
     # The audio being made on the recap page (#2630): a part of the voice, the music call (up to
     # 7 minutes), the mix.
