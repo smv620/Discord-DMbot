@@ -11,7 +11,8 @@ from dmbot.migrations._shared import _swaps
 # connected to directly. A quest can sit outside the steps the page asked for, so the door says it
 # for each name it sends: `quests`, each `{id, name, links}` (how many connections join the name to
 # that quest), the most-connected first. It is worked out from the viewer's own view only: a DM in
-# Full View gets it; anyone else (a player, a player who peeks without being a DM, a DM in Players
+# Full View gets it; anyone else (a player, a player who peeks without being a DM, a DM in
+# Players
 # View) gets no `quests` key at all and so never learns of a quest or of a name's tie to one (the
 # players' graph holds no story thread; #2989). Confirmed entries only, never a merged-away one. The
 # door is read back from the database as it is and widened, its anchor found exactly once (a drift
@@ -19,7 +20,7 @@ from dmbot.migrations._shared import _swaps
 _NODE_QUEST_SWAPS = (
     (
         "'secret', CASE WHEN sees_all THEN EXISTS (",
-        "'quests', CASE WHEN sees_all THEN COALESCE((\n"
+        "'quests', CASE WHEN is_dm AND sees_all THEN COALESCE((\n"
         "                        SELECT jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name,\n"
         "                                                            'links', t.links)\n"
         "                                         ORDER BY t.links DESC, lower(t.name), t.id)\n"
@@ -30,9 +31,10 @@ _NODE_QUEST_SWAPS = (
         "                              ON q.guild_id = g AND q.campaign_id = c\n"
         "                             AND q.id = CASE WHEN r.subject_id = e.id THEN r.object_id\n"
         "                                             ELSE r.subject_id END\n"
-        "                             AND q.type IN ('thread', 'quest', 'mystery', 'hook', 'goal',\n"
-        "                                            'promise')\n"
-        "                             AND q.status = 'confirmed' AND q.merged_into IS NULL\n"
+        "                             AND q.type IN ('thread', 'quest', 'mystery', 'hook',\n"
+        "                                            'goal', 'promise')\n"
+        "                             AND q.status = 'confirmed'\n"
+        "                             AND q.merged_into IS NULL\n"
         "                            WHERE r.guild_id = g AND r.campaign_id = c\n"
         "                              AND r.status = 'confirmed'\n"
         "                              AND (r.subject_id = e.id OR r.object_id = e.id)\n"
