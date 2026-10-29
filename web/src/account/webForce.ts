@@ -2,6 +2,7 @@
 // together, and the names settle by themselves so a crowded spot opens up. Written in plain code so the page
 // needs no graph library (the site's weight budget, #1947). Pure, with no clock and no random numbers: the
 // same names and lines always settle in the same places, which keeps the tests exact and a redraw calm.
+import { KIND_STYLES, kindStyle } from "./webKinds";
 import { radialLayout } from "./webLayout";
 
 /** "free": names settle anywhere. "groups": names gather by what each one is (player characters, NPCs, places,
@@ -76,15 +77,10 @@ export function edgeKind(edge: { links: { kind?: string | undefined }[] }): stri
   return kinds.size === 1 ? [...kinds][0]! : "other";
 }
 
-/** The kinds of name in the order their areas are given: the people first, then places and things. A kind this
- * page has no place for follows, by its key, so a new kind still gets an area. */
-const AREA_ORDER = ["player_character", "npc", "deity", "character", "creature", "faction", "group", "place", "item", "event"];
-
+/** The kinds of name in the order their areas and the legend give them: the people first, then the places and
+ * things, each style's kinds together by key (#2992). */
 export function orderedKinds(kinds: Iterable<string>): string[] {
-  const rank = (k: string): number => {
-    const i = AREA_ORDER.indexOf(k);
-    return i === -1 ? AREA_ORDER.length : i;
-  };
+  const rank = (k: string): number => KIND_STYLES.indexOf(kindStyle(k));
   return [...new Set(kinds)].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 }
 

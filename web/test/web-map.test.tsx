@@ -551,3 +551,52 @@ describe("full screen (#2981)", () => {
     expect(page).toContain("account account-wide");
   });
 });
+
+describe("each kind of name has its own colour, shape and word (#2992)", () => {
+  const kinds = ["npc", "player_character", "place", "faction", "item", "event", "creature", "quest", "concept"];
+  const many: WebNode[] = [
+    { id: "c0", name: "Centre", kind: "npc" },
+    ...kinds.slice(1).map((kind, i) => ({ id: `k${i}`, name: `Name ${kind}`, kind })),
+  ];
+  const wired: WebEdge[] = many.slice(1).map((n, i) => ({ a: "c0", b: n.id, label: "x", more: 0, links: [link(`w${i}`, "x")] }));
+  const css = () => readFileSync(resolve(process.cwd(), "src/styles/web-map.css"), "utf8");
+
+  it("draws every style as its own class and its own shape", () => {
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const style = (name: string) => [...nodeOf(name).classList].find((c) => c.startsWith("web-kind-"));
+    expect(kinds.map((k) => style(k === "npc" ? "Centre" : `Name ${k}`))).toEqual([
+      "web-kind-npc", "web-kind-player_character", "web-kind-place", "web-kind-group", "web-kind-item",
+      "web-kind-event", "web-kind-creature", "web-kind-quest", "web-kind-other",
+    ]);
+    const shape = (name: string) => {
+      const el = nodeOf(name).querySelector("circle:not(.web-hit), rect, polygon")!;
+      return `${el.tagName}:${el.getAttribute("points")?.split(" ").length ?? ""}:${el.getAttribute("stroke-dasharray") ?? ""}:${nodeOf(name).querySelectorAll(".web-pc-ring").length}`;
+    };
+    const shapes = kinds.map((k) => shape(k === "npc" ? "Centre" : `Name ${k}`));
+    expect(new Set(shapes).size).toBe(kinds.length); // colour is never the only signal
+  });
+
+  it("gives each kind a colour token for light and dark, and its legend a word, a shape and a colour", () => {
+    for (const style of ["npc", "player_character", "place", "group", "item", "event", "creature", "quest", "other"]) {
+      expect(css().match(new RegExp(`--kind-${style}:`, "g"))).toHaveLength(3); // light, dark by system, dark by choice
+      expect(css()).toContain(`.web-kind-${style} { --kind: var(--kind-${style}); }`);
+    }
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const legend = document.querySelector(".web-legend")!;
+    for (const word of ["NPCs", "PCs", "Places", "Groups", "Items", "Events", "Creatures", "Quests", "Ideas"]) expect(legend.textContent).toContain(word);
+    expect(legend.querySelectorAll('svg[class^="web-kind-"]').length).toBe(kinds.length);
+  });
+
+  it("tints each kind's area with the colour of its names", () => {
+    saveMode("groups");
+    render(<WebMap nodes={many} edges={wired} center="c0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const areas = [...document.querySelectorAll(".web-area")];
+    expect(areas.length).toBeGreaterThan(0);
+    for (const area of areas) {
+      const label = area.querySelector(".web-area-text")!.textContent!;
+      const names = [...document.querySelectorAll(".web-node")].filter((n) => n.classList.contains([...area.classList].find((c) => c.startsWith("web-kind-"))!));
+      expect(names.length, label).toBeGreaterThan(0); // the wash is the colour of names that are there
+    }
+    expect(css()).toMatch(/\.web-area\[class\*="web-kind-"\] circle \{\s*fill: var\(--kind\);\s*fill-opacity: 0\.14/);
+  });
+});
