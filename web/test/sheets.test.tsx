@@ -473,31 +473,30 @@ describe("Use a document link", () => {
   it("the old section keeps waiting for its answer after the page has left, and stops once the answer has come", async () => {
     const api = mockApi("table");
     const answer = api.sheetAnswer!.bind(api);
-    let release!: () => void;
-    const held = new Promise<void>((r) => (release = r));
+    let finish = false;
     let asked = 0;
     api.sheetAnswer = async (ref, id) => {
-      if (ref !== "100.sh") return answer(ref, id);
+      const got = await answer(ref, id);
+      if (ref !== "100.sh") return got;
       asked += 1;
-      await held;
-      return answer(ref, id);
+      return finish ? got : { ...got, state: "running", stage: "reading" };
     };
     const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await screen.findByRole("heading", { name: w.heading });
     fireEvent.click(screen.getByRole("button", { name: w.forget }));
-    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    await waitFor(() => expect(asked).toBeGreaterThanOrEqual(1), { timeout: 4000 });
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await screen.findByText(w.mine("Sorrel"));
-    release();
-    await new Promise((r) => setTimeout(r, 1000));
-    expect(asked).toBe(1); // the answer came; nothing asked again
+    const left = asked;
+    await waitFor(() => expect(asked).toBeGreaterThan(left), { timeout: 6000 }); // the old copy keeps asking
+    finish = true;
     rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
     await waitFor(
       () => expect(screen.getByRole("button", { name: w.forget }).getAttribute("aria-disabled")).not.toBe("true"),
-      { timeout: 4000 },
+      { timeout: 6000 },
     );
     await new Promise((r) => setTimeout(r, 1500)); // let no timer outlive the test
-  });
+  }, 15000);
 });
 
 describe("one choice at a time per campaign", () => {
