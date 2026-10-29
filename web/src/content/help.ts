@@ -1063,7 +1063,7 @@ export const emailSteps: Step[] = [
 ];
 
 /** Said under the list: it is not a step. */
-export const emailNote = "For now, emails are sent from DMbot's own Gmail mailbox.";
+export const emailNote = "Emails are sent through Resend, a company that sends email for us.";
 
 /** Not a step to do: what players may notice at the table. */
 export const playerNote = GAMETIME_IN_CHAT_LIVE

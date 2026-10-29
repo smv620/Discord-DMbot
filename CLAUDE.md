@@ -229,6 +229,13 @@ dev1 as a note on the issue.
   one line under "Ready to deploy" in `docs/testing-status.log` (what to deploy, what to
   check) or comments on the PR, then takes its next issue. dev1 deploys, checks, and
   records it in `docs/testing-history.log`. The log is the queue; nobody waits in chat.
+  **Small deploys, several a day** (owner, 2026-10-29, after a 25-PR deploy): a big batch is
+  harder to check, to pin a fault on and to roll back. Supervisor hands over a deploy on #516
+  whenever `development` holds merged work that users will notice and CI is green on that exact
+  commit, aiming for a few PRs each and no more than about half a day between them. Each handover
+  names the exact commit, its migrations and what to check. dev1 deploys it after the owner's OK
+  in dev1's own session (one OK for each deploy, as before), never during a live session at the
+  table. A later deploy waits until the earlier one has been checked.
 
 ### Leads hand off to assistants (owner, 2026-10-28)
 To cut costs, each coding role is two sessions: a **lead** on the larger model and an **assistant**

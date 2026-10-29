@@ -243,8 +243,8 @@ import {
       were sent. All your notes are deleted when you delete your account.
     </li>
     <li>
-      <strong>Who sends them.</strong> For now the emails go out through DMbot's own Gmail mailbox,
-      so Google carries them. Every Try It email ends with a link to stop emails like it and the sender's mailing address.
+      <strong>Who sends them.</strong> The emails go out through Resend, a company that sends email
+      for us. It gets the address an email goes to and the words in it, nothing else. Every Try It email ends with a link to stop emails like it and the sender's mailing address.
     </li>
   </ul>
 
@@ -290,6 +290,10 @@ import {
       text, or the campaign, is deleted.
     </li>
     <li><strong>{paymentProvider}</strong>: takes payments.</li>
+    <li>
+      <strong>Resend</strong>: sends DMbot's emails. It gets the address an email goes to and the
+      words in it, nothing else.
+    </li>
     <li><strong>GitHub</strong>: where messages from the Say hello page are posted, for anyone to read.</li>
     <li>
       <strong>Cloudflare</strong>: delivers this website, and checks that a person (not a
@@ -301,7 +305,7 @@ import {
     </li>
   </ul>
   <p>
-    Deepgram, Anthropic, ElevenLabs, Voyage AI (MongoDB), OVH US, Cloudflare, GitHub and {paymentProvider} are companies in the
+    Deepgram, Anthropic, ElevenLabs, Voyage AI (MongoDB), OVH US, Cloudflare, GitHub, Resend and {paymentProvider} are companies in the
     United States, so if you are in the EU or the UK, your information goes there when you use
     DMbot. {paymentProvider} is the seller of record and handles withdrawal rights, invoices and
     tax.
