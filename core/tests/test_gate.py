@@ -170,6 +170,7 @@ class Stored(MemoryTest):
         done = await self.memory.set_statement_knowers(
             GUILD_A, self.c, ENTRY, ids["sword"], [ids["mara"]], source="dm"
         )
+        assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
         self.assertEqual(
             await self.memory.statement_knowers(GUILD_A, self.c, ENTRY, [ids["sword"]]), {}
