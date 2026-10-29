@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, PropertyMock, patch
 import aiohttp
 
 from dmbot import fetch, plan_rules
-from dmbot.ai import AIError, Reply
+from dmbot.ai import BUSY, FAILED, OUT_OF_FUNDS, AIError, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.memory import sheet_document, sheet_import, sheets
@@ -519,12 +519,23 @@ class Documents(Base):
                           "Belleros", "Secret Spell Name", "Wood Elf"):  # fmt: skip
             self.assertNotIn(forbidden, text)
 
-    async def test_an_ai_failure_ends_as_no_ai_and_a_bug_as_server(self) -> None:
-        self.host.sheet_ai.complete = AsyncMock(side_effect=AIError("The AI is busy."))
-        first = await self.put(ws.DOCUMENT, url=DOC)
-        with self.opened():
-            await self.take_and_run()
-        self.assertEqual(await self.state_of(first), ("failed", ws.NO_AI))
+    async def test_busy_and_failed_ai_calls_end_as_server_but_a_refused_key_and_no_funds_stay_no_ai(
+        self,
+    ) -> None:
+        cases = [
+            (AIError(BUSY), ws.SERVER),
+            (AIError(FAILED), ws.SERVER),
+            (AIError("The AI service didn't accept DMbot's key."), ws.NO_AI),
+            (AIOutOfFunds(OUT_OF_FUNDS), ws.NO_AI),
+        ]
+        for error, word in cases:
+            with self.subTest(error=str(error)):
+                self.host.too_soon_document = False
+                self.host.sheet_ai.complete = AsyncMock(side_effect=error)
+                rid = await self.put(ws.DOCUMENT, url=DOC)
+                with self.opened():
+                    await self.take_and_run()
+                self.assertEqual(await self.state_of(rid), ("failed", word))
         self.host.too_soon_document = False
         self.host.sheet_ai.complete = AsyncMock(side_effect=RuntimeError("boom"))
         second = await self.put(ws.DOCUMENT, url=DOC)

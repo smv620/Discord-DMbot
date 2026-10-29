@@ -36,7 +36,9 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from dmbot import fetch, plan_rules
-from dmbot.ai import AIError
+from dmbot.ai import BUSY as AI_BUSY
+from dmbot.ai import FAILED as AI_FAILED
+from dmbot.ai import AIError, AIOutOfFunds
 from dmbot.campaigns import Campaign
 from dmbot.db import Database
 from dmbot.discord_limits import shorten
@@ -413,8 +415,12 @@ async def _document(
         spent = True
         try:
             snapshot, _ = await sheet_document.read_snapshot(ai, text)
-        except AIError:
-            return NO_AI
+        except AIOutOfFunds:
+            return NO_AI  # sustained: the account needs topping up
+        except AIError as exc:
+            # BUSY and FAILED are the passing problems (nothing saved; the page offers a retry);
+            # any other AIError (a refused key) is a setup problem and keeps the "not set up" word.
+            return SERVER if str(exc) in (AI_BUSY, AI_FAILED) else NO_AI
         except TimeoutError:
             return SERVER  # nothing saved; the page offers a retry
         await moved()
