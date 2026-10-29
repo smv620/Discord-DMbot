@@ -918,9 +918,18 @@ def parse_finish(raw: str) -> tuple[str, list[str]] | None:
 
 
 def _known(
-    beats: Sequence[Beat], allowed_names: Collection[str], previous: str, setting: str | None
+    beats: Sequence[Beat],
+    allowed_names: Collection[str],
+    previous: str,
+    setting: str | None,
+    who_and_what: Sequence[str] = (),
+    story: Sequence[str] = (),
 ) -> set[str]:
+    """Every word the writer was given as fact: the beats, the names, the bridge, and (#2954) the
+    who-and-what sheet and the earlier recaps, so a name only they give is not refused."""
     known = set(words(previous)) | set(words(setting or ""))
+    for text in (*who_and_what, *story):
+        known |= set(words(text))
     for b in beats:
         known |= set(words(b.what))
         for w in b.who:
@@ -961,14 +970,18 @@ def respelled(
             ordinary_words=plain,
             sound_names=[*aliases.values()],
         )
-    done = respell(
+    plain_words = _english() | set(_LOWER_WORD.findall(transcript))
+    # Only a word too like a secret is refused here, so the sheet and the earlier recaps change
+    # nothing: their words are deliberately not counted as "known" (`respell` skips a known word,
+    # and a misspelling of a secret held in one of them must still be refused, #2954).
+    strict = respell(
         summary,
         names=sorted(names),
         secret_names=secret_names,
         known_words=_known(beats, allowed_names, previous, setting),
-        ordinary_words=_english() | set(_LOWER_WORD.findall(transcript)),
+        ordinary_words=plain_words,
     )
-    return Prose(summary, prose.music), done.refused  # (done.text is not used: no respelling)
+    return Prose(summary, prose.music), strict.refused  # (the text is not used: no respelling)
 
 
 def kept_names(
@@ -1462,6 +1475,8 @@ def check_finish(
     name_counts: dict[str, int] | None = None,
     pcs: Collection[str] = (),
     aliases: Mapping[str, str] | None = None,
+    who_and_what: Sequence[str] = (),
+    story: Sequence[str] = (),
 ) -> tuple[Finish | None, list[str]]:
     """The title and bullets if they pass (bullets with their beat numbers taken off), and what
     was wrong. Every bullet names a real beat; names come from the beats or the summary. The title
@@ -1481,7 +1496,9 @@ def check_finish(
         bullets.append(at_word_end(match.group(2).strip(), BULLET_HARD))
     del bullets[HOUSEKEEPING_HARD:]
     known = (
-        _known(beats, allowed_names, previous, None) | set(words(summary)) | set(words(transcript))
+        _known(beats, allowed_names, previous, None, who_and_what, story)
+        | set(words(summary))
+        | set(words(transcript))
     )
     title_nouns = proper_nouns(title, sentence_starts=True)
     spared = [

@@ -2129,7 +2129,6 @@ class RecapWorker:
             if rd.check_prose(
                 revised, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
-**self._given_args(gid, cid, job),
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=refused, style=inputs.style, corrections=inputs.corrections,
                 pcs=inputs.pcs,
@@ -2417,6 +2416,7 @@ class RecapWorker:
             name_counts=title_names,
             pcs=inputs.pcs,
             aliases=inputs.aliases,
+            **self._given_args(gid, cid, job),
         )
         if title_names:
             log.info("Recap: names outside the beat sheet, by kind: %s", _kinds_line(title_names))

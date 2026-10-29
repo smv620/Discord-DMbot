@@ -109,6 +109,36 @@ class TheContext(unittest.TestCase):
     def test_an_earlier_recap_naming_a_secret_is_not_given(self) -> None:
         self.assertTrue(names_a_secret("Lord Varek rode on.", ["Lord Varek"], ["Mira"]))
 
+    def test_the_prompt_has_no_paragraph_or_per_beat_counts(self) -> None:
+        self.assertNotIn("{paragraphs}", rd.PROSE_SYSTEM)
+        self.assertNotIn("{per_beat}", rd.PROSE_SYSTEM)
+
+    def test_a_name_only_the_sheet_or_an_earlier_recap_gives_passes_the_finish_check(self) -> None:
+        def run(**given: Any) -> list[str]:
+            _, problems = rd.check_finish(
+                ("Gate of Kel-Marrow", ["[2] Mira reached Kel-Marrow."]),
+                beats=[TheMessage.BEAT, Beat(2, "Mira arrived.", ("Mira",), (2,), "event")],
+                summary="Mira arrived.",
+                allowed_names=["Mira"],
+                secret_names=[],
+                **given,
+            )
+            return problems
+
+        self.assertTrue(run())  # no one gave the name: refused as before
+        self.assertEqual(run(who_and_what=("Kel-Marrow: a gate the party met",)), [])
+        self.assertEqual(run(story=("Earlier the party saw Kel-Marrow.",)), [])
+
+    def test_a_name_close_to_a_secret_is_still_refused(self) -> None:
+        prose = rd.Prose("《Tense》 Mira met Silas Vane at the gate.", ())
+        _, refused = rd.respelled(
+            prose,
+            beats=[TheMessage.BEAT],
+            allowed_names=["Mira", "Greywater Keep"],
+            secret_names=["Silas Vain"],
+        )
+        self.assertTrue(refused)
+
     def test_the_sheet_holds_only_what_the_players_know(self) -> None:
         got = rd.sheet_lines(
             [
