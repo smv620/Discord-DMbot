@@ -10538,6 +10538,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         return batch_of
 
+    def _player_lookup(self, guild_id: int) -> Callable[[int], Awaitable[bool | None]]:
+        """For a player character made on the website with a Discord ID: True for a person of this
+        server, False for a bot, None for someone who is not in it. A failed lookup raises, so the
+        action is marked failed (and can be sent again), never read as "not in the server"."""
+
+        async def member_of(user_id: int) -> bool | None:
+            found = await self.find_member(guild_id, user_id)
+            return None if found is None else not found.bot
+
+        return member_of
+
     async def run_name_actions(self) -> None:
         """What DMs did on the website's All names page (#2294), applied through the same memory
         paths as Discord's name card, so a change on either shows on both and Undo works. Each
@@ -10567,6 +10578,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 action,
                                 self._waiting_answers(guild.id),
                                 named_batch=self._named_batch_for(guild.id),
+                                member_of=self._player_lookup(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
