@@ -103,7 +103,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "After a session, DMbot can write a short story-style recap of what happened, to read at the start of next time. Recaps are for paid plans.",
   },
   {
-    text: "A recap's length follows your session: about 150 words for a one-hour game, about 300 for three hours. A game of five hours or more gets about 450 words, the longest.",
+    text: "A recap's length follows your session: about 250 words for a one-hour game, about 450 for three hours. A game of four and a half hours or more gets about 600 words, the longest.",
   },
   {
     text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks the sentences against what was said, has it written again once if one doesn't match, and cuts any that still don't. If too little is left, there is no recap. It also takes out compass directions. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",

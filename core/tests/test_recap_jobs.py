@@ -446,12 +446,14 @@ class Working(WorkerHarness):
         assert again is None or again.finished
         self.assertEqual(len(self.told.jobs), 1)
 
-    async def test_the_prose_is_written_from_the_beats_not_the_transcript(self) -> None:
+    async def test_the_prose_is_written_from_the_beats_with_the_transcript_beside_them(
+        self,
+    ) -> None:
         await self.setUpWorker(self.happy())
         await self.go()
         prose_message = self.fast.sent[1]
-        self.assertIn("<beats>", prose_message)
-        self.assertNotIn("Greywater Keep at dusk and the gate stands open", prose_message)
+        self.assertIn("<beats>", prose_message)  # the foundation (#2954)
+        self.assertIn("<transcript>", prose_message)  # context, to explain who and what
         self.assertIn("<transcript>", self.fast.sent[0])
 
     async def test_a_restart_resumes_at_the_stage_it_stopped_in(self) -> None:
@@ -468,7 +470,6 @@ class Working(WorkerHarness):
         job = await self.go()
         self.assertEqual(job.state, "ready")
         self.assertEqual(len(self.fast.sent), 3)
-        self.assertNotIn("<transcript>", self.fast.sent[0])
 
     async def setUpWorkerAgain(self, fast: fx.Canned) -> None:
         told = self.told

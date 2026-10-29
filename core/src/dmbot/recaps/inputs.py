@@ -253,6 +253,26 @@ async def load_inputs(
         return None
 
 
+STORY_RECAPS = 24  # the latest earlier recaps the writer can be given (#2954)
+
+
+async def story_so_far(
+    accepted: Any, guild_id: int, campaign_id: str, session_at: int
+) -> tuple[str, ...]:
+    """The campaign's earlier accepted recaps for the writer (#2954): the newest accepted version
+    of each session before this one, oldest first, without their cues and fixed opening and
+    closing lines (so the writer has nothing to copy). Empty when there are none or they cannot
+    be read: the bridge then stands in. Players-facing text only: an accepted recap is what the DM
+    approved to read aloud."""
+    try:
+        found = await accepted.newest(guild_id, campaign_id, before=session_at, last=STORY_RECAPS)
+    except Exception as exc:  # optional context: the type, never the text
+        log.warning("Recap: couldn't read the accepted recaps (%s)", type(exc).__name__)
+        return ()
+    texts = (fixed_lines.without(strip_cues(a.summary)) for a in found if a.session_at < session_at)
+    return tuple(t for t in texts if t.strip())
+
+
 async def load_inputs_or_why(
     *,
     campaigns: Any,

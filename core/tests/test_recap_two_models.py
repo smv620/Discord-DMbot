@@ -121,7 +121,7 @@ class TheWritersRoom(unittest.IsolatedAsyncioTestCase):
         for hours in (0.5, 1.0, 1.8, 3.0, 6.0):
             length = rd.length_for(hours)
             self.assertGreater(rd.write_room(length), length.max_tokens)
-        self.assertEqual(rd.length_for(1.8).target, 210)
+        self.assertEqual(rd.length_for(1.8).target, 330)
         self.assertGreater(rd.write_room(rd.length_for(1.8)), 1556)  # run 12's cut-off limit
 
     async def test_the_writer_is_given_it_and_the_formatter_keeps_the_old_room(self) -> None:
