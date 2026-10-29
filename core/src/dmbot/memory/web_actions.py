@@ -14,6 +14,7 @@ whatever happened, and a claimed row that stalled is picked up again.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, replace
@@ -46,6 +47,8 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.store import PERSON, MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
+
+log = logging.getLogger(__name__)
 
 RETAKE_AFTER_S = 120  # a claim this old belongs to a bot that stopped
 KEEP_FOR_S = 3600  # nothing waits on a row longer than this
@@ -129,7 +132,10 @@ class ActionStore:
         now = int(self._now() * 1000)  # milliseconds, so two claims of one row never match
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "UPDATE name_actions SET state = 'working', claimed_at = %s WHERE (guild_id, id)"
+                # (a retaken row starts its count again: a dead worker's "12 of 50" is not the new
+                # worker's)
+                "UPDATE name_actions SET state = 'working', claimed_at = %s, progress_done = 0,"
+                " progress_total = 0, progress_at = 0 WHERE (guild_id, id)"
                 " = (SELECT guild_id, id FROM name_actions WHERE guild_id = %s AND"
                 " (state = 'waiting' OR (state = 'working' AND claimed_at < %s))"
                 # Never past an earlier open action of the campaign: waiting (it may be locked by
@@ -185,6 +191,21 @@ class ActionStore:
                     action.id,
                     action.claimed_at,
                 ),
+            )
+            return bool(cur.rowcount)
+
+    async def progress(self, guild_id: int, action: Action, done: int, total: int) -> bool:
+        """How far a Keep all has got, for the page's "12 of 50" (#2924): both counts and the time
+        in ONE update (the table refuses a done above its total), and only from the worker that
+        holds the claim. Counts and times only. False: not its row any more."""
+        total = max(total, 0)
+        done = min(max(done, 0), total)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE name_actions SET progress_done = %s, progress_total = %s,"
+                " progress_at = %s"  # (Unix seconds; claimed_at is milliseconds)
+                " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                (done, total, int(self._now()), guild_id, action.id, action.claimed_at),
             )
             return bool(cur.rowcount)
 
@@ -270,6 +291,9 @@ class Waiting:
     # Put a name-pass fix back (campaign, Undo number): how many lines went back, 0 when nothing
     # could (#2684). The Discord Undo makes the same calls.
     name_pass_undo: Callable[[str, int], Awaitable[int | None]] | None = None
+    # Tell the page how far a Keep all has got: (the action, done, total). Never needed for the
+    # work itself, so a failure to write it must not fail the keep (#2924).
+    progress: Callable[[Action, int, int], Awaitable[object]] | None = None
 
 
 async def apply(
@@ -638,7 +662,9 @@ async def _answer_waiting(
         todo = [x for x in ready if x.id in shown]
         if not todo:
             return _failed(NOT_FOUND)
-        done_all = await keep.keep_all(memory, w.backstory, guild_id, cid, todo)
+        done_all = await keep.keep_all(
+            memory, w.backstory, guild_id, cid, todo, progress=_progress_for(w, a)
+        )
         return Outcome(result_id=str(len(done_all.kept))) if done_all.kept else _failed(BAD_TARGET)
     if a.action == "backstory-skip":
         # Skipping writes no fact, so a link may be dismissed while it still waits on a name that
@@ -654,6 +680,22 @@ async def _answer_waiting(
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one])
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
+
+
+def _progress_for(w: Waiting, a: Action) -> Callable[[int, int], Awaitable[None]] | None:
+    """The count for this Keep all, or None when the host keeps none. A failed write is logged
+    (the count only) and skipped: the connections are kept all the same."""
+    report = w.progress
+    if report is None:
+        return None
+
+    async def tell(done: int, total: int) -> None:
+        try:
+            await report(a, done, total)
+        except Exception as exc:
+            log.info("A Keep all count could not be written: %s", type(exc).__name__)
+
+    return tell
 
 
 def reading_error(why: str) -> str:
