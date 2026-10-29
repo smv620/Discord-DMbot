@@ -487,16 +487,26 @@ describe("Use a document link", () => {
     await waitFor(() => expect(asked).toBeGreaterThanOrEqual(1), { timeout: 4000 });
     rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
     await screen.findByText(w.mine("Sorrel"));
-    const left = asked;
-    await waitFor(() => expect(asked).toBeGreaterThan(left), { timeout: 6000 }); // the old copy keeps asking
-    finish = true;
-    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
-    await waitFor(
-      () => expect(screen.getByRole("button", { name: w.forget }).getAttribute("aria-disabled")).not.toBe("true"),
-      { timeout: 6000 },
-    );
-    await new Promise((r) => setTimeout(r, 1500)); // let no timer outlive the test
-  }, 15000);
+    try {
+      const left = asked;
+      // Two more asks, not one: a loop that makes one last ask and then stops must fail here.
+      await waitFor(() => expect(asked).toBeGreaterThanOrEqual(left + 2), { timeout: 6000 });
+      finish = true;
+      rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+      expect((await screen.findByRole("button", { name: w.forget })).getAttribute("aria-disabled")).toBe("true");
+      await waitFor(
+        () => expect(screen.getByRole("button", { name: w.forget }).getAttribute("aria-disabled")).not.toBe("true"),
+        { timeout: 6000 },
+      );
+      // The done answer has come: nothing is asked again, beyond the poll that was already due.
+      const settled = asked;
+      await new Promise((r) => setTimeout(r, 3000));
+      expect(asked).toBe(settled);
+    } finally {
+      finish = true; // on a failure too, so the old loop ends at its next poll instead of running for an hour
+      await new Promise((r) => setTimeout(r, 1500)); // let no timer outlive the test
+    }
+  }, 20000);
 });
 
 describe("one choice at a time per campaign", () => {
