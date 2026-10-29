@@ -113,7 +113,7 @@ class Flow(NamesTest):
         return str(written.value.id)
 
     async def review(self) -> tuple[Any, Any]:
-        from tests.test_memory_names import ui
+        from dmbot.ui import names as ui
 
         it = self.it()
         await ui.start_review(it, self.campaign.id)
@@ -199,13 +199,13 @@ class Flow(NamesTest):
     async def asking(self, name: str, *later: str) -> tuple[Any, Any]:
         """The review at "Who plays <name>?" (with `later` suggestions waiting behind it): its
         view and the ⌨️ button."""
-        from tests.test_memory_names import ui
+        from dmbot.ui import names as ui
 
         for waiting in (name, *later):
             await self.suggest(waiting)
         view, _ = await self.review()
         await view._yes(self.it())
-        view.kind = SimpleNamespace(values=[ui.PC])  # type: ignore[assignment]
+        view.kind = SimpleNamespace(values=[ui.PC])
         await view._kind_picked(self.it())
         labels = [getattr(c, "label", "") for c in view.children]
         self.assertIn(pid.TYPE_ID_LABEL, labels)  # beside the people menu
@@ -240,7 +240,7 @@ class Flow(NamesTest):
         self.assertIn("That one's already done.", sent)
 
     async def test_a_suggestion_is_linked_to_a_typed_id_and_only_the_id_is_stored(self) -> None:
-        from tests.test_memory_names import ui
+        from dmbot.ui import names as ui
 
         _view, button = await self.asking("Cerric")
         form_press = self.it()
