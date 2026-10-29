@@ -1,6 +1,6 @@
 // The legal drafts (#433): each has the short version, the draft notice, and facts that
 // match the plan file, so the pages and the pricing never disagree.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { AstroComponentFactory } from "astro/runtime/server/index.js";
@@ -12,7 +12,7 @@ import facts from "../src/content/plans.json";
 import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
-import { initiativeLine, peopleListLine, storyStatesLine } from "../src/content/privacy-channels";
+import { initiativeLine, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -123,8 +123,7 @@ describe("the facts #433 asks for", () => {
 
   it("says DMbot learns the names people are called, from people who said yes, and what stop removes (#1210)", () => {
     expect(privacy()).toContain("Names at the table.");
-    // The people list and initiative lines show only while their features are live (#1810).
-    expect(privacy().includes(peopleListLine.lead)).toBe(peopleListLine.live);
+    // The initiative and story-state lines show only while their features are live (#1810).
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
     expect(privacy()).toContain("only from people who said yes to being recorded");
@@ -394,7 +393,12 @@ describe("shared house rules (#1254)", () => {
     expect(t).toContain("keeps no record of the sender");
   });
   it("is true: the publisher's table of suggestions has no column for who sent one (#1313)", () => {
-    const schema = readFileSync(new URL("../../core/src/dmbot/schema.py", import.meta.url), "utf8");
+    // (the migrations are one file each since #2127: read them all)
+    const dir = new URL("../../core/src/dmbot/migrations/", import.meta.url);
+    const schema = readdirSync(dir)
+      .filter((f) => f.endsWith(".py"))
+      .map((f) => readFileSync(new URL(f, dir), "utf8"))
+      .join("\n");
     const table = /CREATE TABLE rule_set_suggestions \(([\s\S]*?)\n    \);/.exec(schema)?.[1] ?? "";
     expect(table).toContain("set_id");
     expect(table).not.toMatch(/sent_by|follower|sender|from_guild|from_campaign/);
@@ -535,7 +539,6 @@ describe("privacy lines for new features (#1810)", () => {
     expect(initiativeLine.text).toContain("uses no AI");
     expect(initiativeLine.text).toContain("only people who said yes");
     expect(initiativeLine.text).toContain("not tied to any person");
-    expect(peopleListLine.text).toContain("never shows secrets, notes");
-    for (const line of [initiativeLine, peopleListLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
+    for (const line of [initiativeLine, storyStatesLine]) expect(line.text).not.toMatch(/\bNPC\b|\bAPI\b|database/i);
   });
 });

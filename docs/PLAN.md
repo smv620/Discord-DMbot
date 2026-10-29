@@ -273,6 +273,7 @@ database.
     registered-buttons test, which also reads each feature's `setup`. The bot's fields and methods the moved code reads are declared on
     `RecapFeatures` under `if TYPE_CHECKING:`, so it is type-checked as before, until the Cog pass gives it a real bot to hold.
 - **One migration per file** (`core/src/dmbot/migrations/NNNN_name.py`), so parallel features stop colliding in `schema.py`'s list. The number claiming on issues stays.
+  - *Built (CloudDev-lead, 2026-10-28, #2127):* each file holds its migration's `SQL` and the registrations it adds (`WEB_ROLE_FUNCTIONS`, `ISOLATED_TABLES`, `USER_ISOLATED_TABLES`, `ROUTING_TABLES`); the package builds the lists in name order, and `schema.py` keeps the shared rules, the grants and the loader. What more than one migration builds from (`_isolate` and the like) is in `migrations/_shared.py`. The old names stay importable from `schema.py`. The move was made by `scripts/split_migrations.py` and checked against `tests/fixtures/migrations_before.json` (every old name, its SQL's SHA-256, and each registration); `tests/test_migration_files.py` keeps shipped migrations unchanged and two files from sharing a number. The grants (`WEB_ROLE_GRANTS`) and `UNSCOPED_TABLES` are still lists in `schema.py`.
 - **Boundaries checked in CI** (import-linter): a feature uses another only through its public module, never its internals.
   - *Built, first piece (CloudDev, 2026-10-28, #2130):* `lint-imports` runs in the core job (config in `core/pyproject.toml`). Three contracts: features never import `bot.py`; domain packages never import the Discord screens in `ui`; and lower packages (memory, rules, transcript, campaigns, names, timebot, audio) never import `recaps` or `web`. The 13 imports that break them today are listed as ignored, each citing #2827, which removes them. A new forbidden import fails CI (`tests/test_import_boundaries.py` shows it on a throwaway package). `recaps` and `dm_screen` are not yet sources of the `ui` contract (they import it widely, late); the first contract does cover them. Features reaching into each other's other internals is not yet checked: that needs each feature's public module named first.
 - **Order:** this starts after the current recap wave (#2096, #2112, #2118, #2113, #2105, #2106). First the migration split (mechanical), then the worker with leases and the outbox, then the extensions one by one, then the CI boundary check.
@@ -1346,10 +1347,10 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
-| Rules archive (house rules, overrides, rulings) | `dmb-rules-rmfthfrstmdn` | House rules: #1752 (overrides and rulings: Phase 3, with the AI rules alerts) |
-| Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
+| ~~Rules archive~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-rules-rmfthfrstmdn`~~ | Was #1752; see "Two channels removed" below |
+| ~~Game time~~ (removed, owner 2026-10-28, #2877: the clock is a small 🕰️ line in `dmb-chat`) | ~~`dmb-gametime-rmfthfrstmdn`~~ | Was #1116 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
-| NPCs (roster, relationships, factions) | `dmb-npcs-rmfthfrstmdn` | Roster: #1761 (standing and relationships beyond the roster: Phase 5) |
+| ~~NPCs~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-npcs-rmfthfrstmdn`~~ | Was #1761; see "Two channels removed" below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
 - **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
@@ -1386,8 +1387,8 @@ so the docs always show names the way Discord does. For the campaign
 
 | Kind | Channels | Players see it |
 |---|---|---|
-| **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
-| **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
+| **Controlled** | DM screen, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
+| **Unrestricted** | Live transcript, DMbot chat | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
 - Players can **read but never post** in any DMbot channel (no threads or reactions
   either), the same read-only access as a DM-screen peek. **Slash commands are never
@@ -1399,6 +1400,16 @@ so the docs always show names the way Discord does. For the campaign
   Peeking opens all controlled channels for that player; hiding closes them all. Once
   there's more than one controlled channel, the peek warning must name every channel a
   peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
+- **Two channels removed (owner, 2026-10-28, #2874 core, #2875 website): `dmb-rules-<short name>` and
+  `dmb-npcs-<short name>`.** The owner found the channel list messy. Rules: anyone asks DMbot in the
+  `dmb-chat` channel, the DM has them in the 🗂️ Menu, and everyone in the server can read the House rules
+  page on the website. NPCs: players look up the people tied to the characters they know on the website's
+  story graph, with the same players' view. DMbot stops making both channels and, at each campaign's next
+  start, deletes its own (stored id and DMbot's name both match; a renamed one is left alone), then forgets
+  the ids. **NPC pages and My notes stay**: `npc_pages` keeps being written from `RecallService.roster` by
+  its own pass, so no NPC is marked "no longer listed" because the channel went, and the story graph links to
+  each NPC's page. Neither channel was ever announced (`RULES_CHANNEL_LIVE`, `NPCS_CHANNEL_LIVE` off). The two
+  paragraphs below record what was built and are history.
 - **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
   is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
   pinned "What's this channel?" card. It is controlled: its overwrites are the DM screen's, the
@@ -2939,6 +2950,23 @@ edit has no Undo and no list. A line with a name fix, an answer or an open "Did 
 not edited until that is settled. Nothing goes to the player and nothing is public;
 the DM is checked on every press.
 
+**The same two fixes from the website (decided 2026-10-28, #2858).** On a session's Transcripts page
+(Cleaned version), **Fix this line** is offered on the viewer's own spoken lines, and on every spoken
+line for a DM of the campaign (never a sidebar, typed or skipped line). One route decides which path
+from who asks: the line's speaker who is not a DM **suggests** (it waits for the DM exactly as
+Discord's does, one waiting per line, three per person, the campaign needs a DM screen); a DM
+**rewrites** at once, as `submit_dm` does (a DM who is also the speaker takes this path). The website
+queues the request (`web_line_fixes`, migration 0276) and the bot does what Discord does; the secret
+names, consent and "the line is still as shown" (a hash of the line's cleaned words taken when the
+person asked) are checked by the bot again when it acts. The person's words (200 characters, tidied
+as Discord tidies them) are blanked from the queue row the moment it finishes. The raw transcript
+and what was heard are never touched by the website. A flood guard of 20 waiting fixes per campaign
+answers "Too many fixes are waiting in this campaign. Try again in a few minutes." The outcome is
+"Sent to your DM to check." for a suggestion and "Changed." for a rewrite, with "You can undo it from
+the fix notes in Discord." only while that session still runs (Discord's Undo stops with it). There
+is no Undo on the website. Behind `DMBOT_WEB_LINE_FIX` (routes answer 404 while off) and the site
+switch `FIX_LINE_LIVE`.
+
 **Transcript Cleaner step 3: built (2026-10-16, #127): earlier lines are re-checked after an
 answer.** When the DM answers "Did they mean…?" (by picking a name or by Type it…), the
 spelling they chose is also written into the **earlier lines of the running session** that
@@ -3194,6 +3222,11 @@ is wrong for half the table, so the DM can split it.
   Undo needs); `game_effects.group_position` says which group a timer counts on. Backups carry the groups
   (`ClockSection`, validated) and each timer's group. Deleting the campaign deletes them.
 *The game-time channel (owner, 2026-10-13, after Test F):*
+- **Replaced (owner, 2026-10-28, #2877):** there is no game-time channel any more. Whenever the players' view of the
+  clock changes (the day and its approximate word, never the exact time), DMbot posts one small line in the campaign's
+  `dmb-chat` channel, `-# 🕰️ Day 5, morning`, and the rest and new-day lines go there the same way. If its last 🕰️ line
+  is still the newest message there, it is edited instead, so quick changes stay one line. DMbot deletes its own old
+  game-time channel once, as for #2874. What follows is the history of the channel.
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
   `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
   can read it and only the bot posts in it. `/dmbot start` creates or repairs it, and a failure

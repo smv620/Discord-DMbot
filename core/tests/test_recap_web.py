@@ -59,11 +59,13 @@ NOW = int(time.time())
 def callers(needle: str) -> set[str]:
     """Which source files mention this: a new caller of a door fails here and must be looked at."""
     root = Path(__file__).resolve().parents[1] / "src" / "dmbot"
-    return {
+    found = {
         str(f.relative_to(root))
         for f in root.rglob("*.py")
         if needle in f.read_text(encoding="utf-8")
     }
+    # The migrations are files of their own since #2127; they stand where schema.py stood.
+    return {"schema.py" if name.startswith("migrations/") else name for name in found}
 
 
 class Base(DatabaseTest):

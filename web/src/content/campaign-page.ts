@@ -78,7 +78,6 @@ export const campaignPage = {
     gameMasters: "Game masters",
     handOver: "Hand over",
     pause: "Pause",
-    delete: "Delete",
   },
   visibility: {
     // Discord's own button names (dm_screen/messages.py VISIBILITY_BUTTONS).
@@ -95,7 +94,6 @@ export const campaignPage = {
   pausedYes: "Paused",
   pausedNo: "Not paused",
   doThisInDiscord: (path: string): string => `Do this in Discord: ${path}`,
-  deleteWarning: "This cannot be undone. Discord asks you to confirm first.",
   paths: {
     visibility: "⚙️ Settings → 👁️ Who can see the DM screen",
     level: "⚙️ Settings → the Quiet and Normal buttons",
@@ -147,5 +145,6 @@ export const campaignPage = {
     `Sessions older than ${label} will be deleted every night, with their downloads on the website. The first clean-up is tonight. Recaps and the facts you confirmed stay. Nobody can get the deleted transcripts back.`,
   deleteAfter: (label: string): string => `Delete after ${label}`,
   keepAsIs: "Keep current",
-  ownerOnlyNote: "Hand over, pause and delete are done in Discord by the campaign's owner.",
+  ownerOnlyNote: "Hand over and pause are done in Discord by the campaign's owner.",
+  deleteInDiscord: (path: string): string => `You can also delete it in Discord: ${path}`,
 };

@@ -109,7 +109,6 @@ forbidden_modules = ["dmbot.ui"]
 allow_indirect_imports = true
 ignore_imports = [  # all #2827
     "dmbot.sidebar.answer -> dmbot.ui.rule_card",
-    "dmbot.sidebar.looked -> dmbot.ui.logic",
     "dmbot.sidebar.looked -> dmbot.ui.rule_card",
     "dmbot.sidebar.looked -> dmbot.ui.rule_lookup",
     "dmbot.sidebar.service -> dmbot.ui.looked_at",
@@ -125,11 +124,6 @@ source_modules = [
 ]
 forbidden_modules = ["dmbot.recaps", "dmbot.web"]
 allow_indirect_imports = true
-ignore_imports = [  # all #2827
-    "dmbot.campaigns.moves -> dmbot.recaps.store",
-    "dmbot.memory.plot_talk -> dmbot.recaps.feedback",
-    "dmbot.transcript.respell -> dmbot.recaps.store",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

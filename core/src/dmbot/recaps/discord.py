@@ -110,7 +110,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot import plan_rules
     from dmbot.ai import TierClient
     from dmbot.bot import DMBot
-    from dmbot.campaigns import web_backup, web_restore
+    from dmbot.campaigns import web_backup, web_line_delete, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
     from dmbot.config import Settings
@@ -136,6 +136,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.transcript.import_job import ImportJob
     from dmbot.transcript.store import TranscriptStore
     from dmbot.transcript.waiting_questions import WaitingQuestionStore
+    from dmbot.transcript.web_line_fixes import ActionStore as LineFixStore
     from dmbot.transcription.pipeline import TranscriptionPipeline
     from dmbot.ui.decision_lines import DecisionLines
     from dmbot.usage import Meter
@@ -249,11 +250,13 @@ class RecapFeatures:
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
         web_backups: web_backup.WebBackups | None
+        web_line_deletions: web_line_delete.WebLineDeletions | None
         web_restores: web_restore.WebRestores | None
         web_delete_notices: WebDeleteNotices | None
         web_settings: SettingStore | None
         web_rule_actions: RuleActionStore | None
         web_sheets: SheetActionStore | None
+        web_line_fixes: LineFixStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -271,6 +274,7 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def run_web_line_deletions(self) -> None: ...
         async def run_web_delete_notices(self) -> None: ...
         @staticmethod
         def _watched(work: Coroutine[Any, Any, None], name: str) -> asyncio.Task[None]: ...
@@ -310,6 +314,7 @@ class RecapFeatures:
         async def read_put_back_lines(self, guild_id: int) -> None: ...
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
+        async def run_web_line_fixes(self) -> None: ...
         async def run_web_restores(self) -> None: ...
         async def tidy_web_restores(self) -> None: ...
         async def keep_web_restores_alive(self) -> None: ...
@@ -1929,6 +1934,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website sheet choices failed: %s", type(exc).__name__)
             try:
+                await self.run_web_line_fixes()
+            except Exception as exc:
+                log.warning("The website line fixes failed: %s", type(exc).__name__)
+            try:
                 await self.run_peek_notices()
             except Exception as exc:
                 log.warning("The peek notices failed: %s", type(exc).__name__)
@@ -1944,9 +1953,18 @@ class RecapFeatures:
                 await self.run_web_report_requests()
             except Exception as exc:
                 log.warning("The website report requests failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_line_deletions()
+            except Exception as exc:
+                log.warning("The website line deletions failed: %s", type(exc).__name__)
             sweeps += 1  # counted whatever happened, so the sweep below can't be starved
             if sweeps % 300 == 0 and self.recap_requests is not None:  # about every 10 minutes
                 for guild in list(self.guilds):
+                    if self.web_line_fixes is not None:
+                        try:  # its own try: it carries the promise that words go within a day
+                            await self.web_line_fixes.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The line fix sweep failed: %s", type(exc).__name__)
                     try:
                         await self.recap_requests.sweep(guild.id)
                         if self.name_answers is not None:
@@ -1957,6 +1975,8 @@ class RecapFeatures:
                             await self.web_settings.sweep(guild.id)
                         if self.web_rule_actions is not None:
                             await self.web_rule_actions.sweep(guild.id)
+                        if self.web_line_deletions is not None:
+                            await self.web_line_deletions.sweep(guild.id)
                         if self.web_sheets is not None:
                             await self.web_sheets.sweep(guild.id)
                         # Lines a DM put back after their session (#2587): read once.
