@@ -18,6 +18,8 @@ from dmbot.transcript.models import (
     SIDEBAR_TABLE_QUESTION,
     Line,
 )
+from dmbot.ui import looked_at
+from dmbot.ui.rule_clash import ClashView
 from tests.test_sidebar_memo import ogg_opus
 
 GUILD, OTHER_GUILD, DM, CO_DM, PLAYER, STARTER = 1, 2, 7, 70, 8, 99
@@ -146,6 +148,16 @@ class FakeHost:
 
     async def sidebar_record_win(self, campaign: Any, winner: Any, loser: Any, by: int) -> bool:
         return True
+
+    def sidebar_clash_view(self, campaign: Any, clash: Any, retry: Any) -> Any:
+        # (what the bot builds: the sidebar itself imports nothing from `ui`, #2827)
+        async def record(winner: Any, loser: Any, by: int) -> bool:
+            return await self.sidebar_record_win(campaign, winner, loser, by)
+
+        return ClashView(clash, dm_ids=campaign.dm_user_ids, record=record, retry=retry)
+
+    def sidebar_looked_view(self, key: str) -> Any:
+        return looked_at.view(key)
 
     def sidebar_house_rule(self, table: Any, user_id: int, text: str) -> str:
         self.house_rules.append((table.guild_id, user_id, text))

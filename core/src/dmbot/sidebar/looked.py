@@ -51,12 +51,12 @@ def _place(hit: Hit) -> str:
 
 def of(ctx: Context, srd: Index) -> tuple[Looked, ...]:
     """The house rules, then the entries, that the answer was built from, in the order the
-    prompt had them. A lazy import: the UI modules import the sidebar."""
-    from dmbot.ui.rule_lookup import choice_value
-
+    prompt had them."""
     items = [Looked(f"House rule {rule.number}", "your table") for rule in ctx.house_rules]
     items += [
-        Looked(rule_card.choice_label(hit.entry), _place(hit), choice_value(srd, hit.entry))
+        Looked(
+            rule_card.choice_label(hit.entry), _place(hit), rule_card.choice_value(srd, hit.entry)
+        )
         for hit in ctx.hits
     ]
     return tuple(items[:LIST_MAX])
