@@ -139,13 +139,19 @@ def canonical(
     Dawnbringer") is left alone. Pure."""
     # `names` holds every spelling the recap may use, the other spellings among them: a spelling
     # that is another name's alias is not a name of its own to match against.
+    # An alias that is a part of its own name (the first name, the surname) is the familiar form of
+    # it, not a misheard one: the writer is told to use it (#2627), so that spelling itself is
+    # never rewritten (#2949). A spelling that only sounds like it still is, as before.
+    familiar = {
+        _letters(a) for a, c in aliases.items() if words(a) and set(words(a)) <= set(words(c))
+    }
     alias_letters = {_letters(a) for a in aliases}
     targets = {_letters(n): n for n in names if _letters(n) and _letters(n) not in alias_letters}
     real = set(targets.values())
     exact = {
         _letters(a): c
         for a, c in aliases.items()
-        if len(_letters(a)) >= MIN_ALIAS_LETTERS and c in real
+        if len(_letters(a)) >= MIN_ALIAS_LETTERS and c in real and _letters(a) not in familiar
     }
     sounds: dict[str, set[tuple[str, str]]] = {}
     starts: dict[str, set[tuple[str, str]]] = {}  # by the first sound, for a close spelling
@@ -181,7 +187,13 @@ def canonical(
                 found = run.group()[tokens[i][0] : tokens[i + size - 1][1]]
                 bare = _POSSESSIVE.sub("", found).strip(".,;:!?")
                 joined = _letters(bare)
-                if len(words(bare)) != size or not joined or bare in seen or joined in targets:
+                if (
+                    len(words(bare)) != size
+                    or not joined
+                    or bare in seen
+                    or joined in targets
+                    or joined in familiar
+                ):
                     continue
                 target = exact.get(joined)
                 if target is None and size == 1 and len(joined) >= MIN_LETTERS:
@@ -206,7 +218,23 @@ def canonical(
                     seen.add(bare)
                     flexible = r"\s+".join(re.escape(w) for w in bare.split())
                     out = re.sub(rf"(?<![\w'’-]){flexible}(?![\w-])", _put(target), out)
-    return out
+    return _undoubled(text, out)
+
+
+_DOUBLED = re.compile(r"(?<![\w'’-])([^\W\d_][\w'’-]*)([ ]+)\1(?![\w'’-])")
+
+
+def _undoubled(before: str, after: str) -> str:
+    """A rewrite must never leave a name followed by its own last word ("Doran Ashvale
+    Ashvale", #2949): a capitalised word doubled in the result that was not doubled in the text it
+    came from is put back to one. A doubling the writer made itself ("Bora Bora") is left alone."""
+    if after == before:
+        return after
+
+    def fix(m: re.Match[str]) -> str:
+        return m.group(1) if m.group(1)[0].isupper() and m.group(0) not in before else m.group(0)
+
+    return _DOUBLED.sub(fix, after)
 
 
 def to_confirm(*groups: Sequence[str]) -> list[str]:
