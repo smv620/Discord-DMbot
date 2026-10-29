@@ -141,6 +141,25 @@ class Criticising(WorkerHarness):
         loop = cr.loop_from_json(job.critics)
         self.assertEqual((loop.done, loop.round, loop.notes), (True, 2, ()))
 
+    async def test_the_revision_is_checked_with_the_sheet_and_the_earlier_recaps(self) -> None:
+        # the revise path once lost them (#2964): every draft check reads what the writer read
+        from dmbot.recaps import draft as rd_mod
+
+        seen: list[bool] = []
+        real = rd_mod.check_prose
+
+        def spy(*args: Any, **kw: Any) -> Any:
+            seen.append("who_and_what" in kw and "story" in kw)
+            return real(*args, **kw)
+
+        fast = self.fast_for(fx.SUMMARY, grades=2)
+        careful = fx.Canned(fx.prose_answer(CLEAN))  # the one revision
+        await self.setUpWorker(fast, careful, critics=True)
+        with patch.object(rd_mod, "check_prose", spy):
+            await self.go()
+        self.assertGreaterEqual(len(seen), 2)  # the first draft's and the revision's
+        self.assertTrue(all(seen))
+
     async def test_what_the_writer_leaves_unexplained_becomes_a_note_for_the_dm_never_a_round(
         self,
     ) -> None:

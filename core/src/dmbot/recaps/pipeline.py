@@ -2129,6 +2129,7 @@ class RecapWorker:
             if rd.check_prose(
                 revised, beats=sheet, transcript=transcript,
                 allowed_names=inputs.allowed_names, secret_names=inputs.secret_names,
+**self._given_args(gid, cid, job),
                 previous=inputs.previous, setting=inputs.setting, length=length, last=True,
                 refused=refused, style=inputs.style, corrections=inputs.corrections,
                 pcs=inputs.pcs,
