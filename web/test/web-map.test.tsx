@@ -514,6 +514,13 @@ describe("full screen (#2981)", () => {
     expect(document.body.style.overflow).toBe("");
   });
 
+  it("draws the chosen line's panel inside the map, so full screen still shows it", () => {
+    draw({ children: <section class="web-line-panel">The line</section> });
+    fireEvent.click(button(words.fullScreen));
+    const map = document.querySelector(".web-map.web-full")!;
+    expect(map.querySelector(".web-line-panel")?.textContent).toBe("The line");
+  });
+
   it("gives the page back its scrolling when the map goes away while full screen", () => {
     const { unmount } = draw();
     fireEvent.click(button(words.fullScreen));

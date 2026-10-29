@@ -6,6 +6,7 @@
 // by wheel, pinch or the buttons. The same names and connections are listed under the map for screen
 // readers. For the keyboard each name is a stop (Enter puts it in the middle, arrow keys move it), and
 // the lines of the name in focus become stops too, so a map of hundreds of lines is not hundreds of Tabs.
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindWords, webPage as words } from "../content/web-words";
@@ -75,6 +76,7 @@ export default function WebMap({
   selected,
   onCenter,
   onLine,
+  children,
 }: {
   nodes: WebNode[];
   edges: WebEdge[];
@@ -85,6 +87,8 @@ export default function WebMap({
   selected: { a: string; b: string } | null;
   onCenter: (id: string) => void;
   onLine: (a: string, b: string) => void;
+  /** The chosen line's panel: drawn inside the map so it stays visible in full screen. */
+  children?: ComponentChildren;
 }) {
   const [mode, setMode] = useState<LayoutMode>(readMode);
   // Full screen (#2981): the map fills the window, for a campaign too big for the page's own space.
@@ -621,6 +625,7 @@ export default function WebMap({
         </aside>
       )}
       </div>
+      {children}
       <section aria-labelledby="web-legend" class="web-legend">
         <h3 id="web-legend" class="small">
           {words.legendHeading}
