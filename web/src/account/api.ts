@@ -2138,6 +2138,9 @@ export interface AccountApi {
   /** The Story Graph's overview: counts, names with no connection yet, groups (#2632). Missing from an API
    * older than that: then the page is the graph alone. */
   webOverview?(ref: string, query: { view?: WebView }): Promise<WebOverview>;
+  /** The names to offer under "Find a name" in this view: only what the caller may see there, so a DM in
+   * Players View is never offered a name the players don't know (#2989). Missing from an older API. */
+  webFind?(ref: string, query: { q: string; view?: WebView }): Promise<{ id: string; name: string; kind: string }[]>;
   /** What waits for the DM, and one answer to it (#2635, #2652). `answerWaiting` resolves with how many
    * connections a Keep all kept, when the API says. Missing from an API older than that. */
   webWaiting?(ref: string): Promise<Waiting>;
@@ -3352,15 +3355,10 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
       )) as { names: number };
     },
-    webOverview: async (ref, q) => {
-      const params = new URLSearchParams();
-      if (q.view) params.set("view", q.view);
-      const tail = params.toString();
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web/overview${tail ? `?${tail}` : ""}`,
-      )) as WebOverview;
-    },
+    webOverview: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
+    webFind: async (ref, q) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
     webWaiting: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/waiting`)) as Waiting,
     // The answer is queued for the bot (202 {answer}) like every other edit; this waits for it.

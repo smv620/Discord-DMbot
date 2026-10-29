@@ -1489,6 +1489,20 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return webGraphOf(ref, query);
     },
     // The overview (#2632): every visible name, the ones with no connection yet, and the groups.
+    async webFind(ref, query) {
+      calls.push(`webFind:${ref}:${query.q}${query.view ? `:view=${query.view}` : ""}`);
+      await reachable();
+      signedIn();
+      const view = webView(ref);
+      if (view === "none") throw new ApiError("not-found");
+      const all = view === "dm" ? query.view !== "players" : query.view === "full";
+      const needle = query.q.trim().toLowerCase();
+      if (needle === "") return [];
+      return web(ref)
+        .nodes.filter((n) => (all || (!n.secret && n.revealed !== false)) && n.name.toLowerCase().includes(needle))
+        .slice(0, 8)
+        .map((n) => ({ id: n.id, name: n.name, kind: n.kind }));
+    },
     async webOverview(ref, query) {
       calls.push(`webOverview:${ref}${query.view ? `:view=${query.view}` : ""}`);
       await reachable();
