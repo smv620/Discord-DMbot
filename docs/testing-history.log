@@ -2728,3 +2728,13 @@ LORE TEST (2026-10-29, dev1, owner's live test on the new test campaign, build 6
 - Re-run (03:09 UTC): 40 relationship lines found (25 from pass 1 alone), 9 not_in_text, 4 same_pair, 1 word_not_allowed; 26 kept in the background line (the pass-2 line reports 30); names kept 48 in both runs.
 - The owner's verdict: "vastly improved". The owner's next need (middle knowledge, names known only by some characters) is #2935.
 - Open for the code side: the 26 vs 30 kept-connection difference between the background line and the pass-2 line (#2757).
+
+DEPLOY 88dbce2b (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; Supervisor's fourth deploy handover, 03:35 UTC on #516). Live was 6f29673f.
+- CI: every job green on 88dbce2b before the start (the merge of #2922).
+- Dry run on a copy (restored from a backup taken before the dry run): 270 to 275 migration rows, no error. Second run applied nothing.
+- Backup before the stop (chmod 600, private folder). Bot stopped with web-api, bot started first, web-api after.
+- Live: 275 migration rows, last 0278_web_waiting_progress. Bot connected to 2 servers, ears connected, 0 errors since start.
+- Start-up channel sweep: 3 old rules, NPC and game-time channels deleted, 0 kept, 0 failed.
+- Features line: handover email off, time suggestions on, recaps on, plot checks off, meaning search off, recap audio on, structured split and beats on, sidebar on, secret reveal on, who is he off, importing sessions on, billing link on, email on. Test recordings on: the owner confirmed (2026-10-29, through Supervisor) that this is deliberate, for reuse across test rounds; they save voice only for people who opted in.
+- web-api healthy.
+- Not yet checked: /dmbot start in the test server (owner; the three old channels should be gone), the game-time line, and the Delete row at the bottom of a campaign page on the website.
