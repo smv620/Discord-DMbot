@@ -262,6 +262,9 @@ def best_from_json(raw: object) -> Best | None:
     )
 
 
+FINAL_STATES = ("", "reading", "edited", "kept")
+
+
 @dataclass(frozen=True, slots=True)
 class Loop:
     """Where the loop is, saved after each step. `pending` is None until the current draft has been
@@ -288,6 +291,10 @@ class Loop:
     # door together with `done`, so the worker goes on to the title step and the recap is ready.
     approved_by: int = 0
     approved_at: int = 0
+    # The final read (#2952), after the loop is done: "" not begun, "reading" while its call is
+    # being made (the recap page's "Final read" stage), "edited" when its text was used, "kept"
+    # when the draft stands as it was (the pass failed a check or could not be made).
+    final: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -303,6 +310,7 @@ class Loop:
             "told": self.told,
             "approved_by": self.approved_by,
             "approved_at": self.approved_at,
+            "final": self.final,
         }
 
 
@@ -332,6 +340,7 @@ def loop_from_json(raw: object) -> Loop:
         raw.get("told") is True,
         raw["approved_by"] if type(raw.get("approved_by")) is int and raw["approved_by"] > 0 else 0,
         raw["approved_at"] if type(raw.get("approved_at")) is int and raw["approved_at"] > 0 else 0,
+        raw["final"] if raw.get("final") in FINAL_STATES else "",
     )
 
 

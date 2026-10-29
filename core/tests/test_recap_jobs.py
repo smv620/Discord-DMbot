@@ -293,6 +293,7 @@ class WorkerHarness(Base):
         previous: str = "",
         story: Any = None,
         critics: bool = False,
+        final_read: bool = False,
     ) -> None:
         self.fast = fast
         self.careful = careful or fx.Canned()
@@ -332,6 +333,7 @@ class WorkerHarness(Base):
             clock=self.clock,
             story=story,
             critics=critics,
+            final_read=final_read,
         )
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
 
