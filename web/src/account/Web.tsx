@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// The relationship web page (#2324): a campaign's names as a map, with the same names and connections
+// The Story Graph page (#2324): a campaign's names as a map, with the same names and connections
 // as lists under it. Pick a name for the middle, choose how many steps out, tap a line to read its
 // connections. A campaign's DMs can also change the words of a connection, make it secret, remove it or
 // add one (the same actions as in Discord, so ↩️ Undo there still works). Who sees what is the API's
@@ -393,7 +393,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       {peeking && <p class="note" role="note">{words.peeking}</p>}
 
       <div class="web-tools-form">
-        <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} />
+        <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} asPlayers={!canEdit} view={asked} />
         <div class="field">
           <label for="web-hops">{words.hopsLabel}</label>
           <div class="row web-spinner">
@@ -650,29 +650,50 @@ function WebLines({ lines, onOpen }: { lines: WebLine[]; onOpen: (a: string, b: 
 }
 
 /** Find a name by typing; choosing one puts it in the middle. */
-function CentrePicker({ api, refId, current, onPick }: { api: AccountApi; refId: string; current: string; onPick: (id: string) => void }) {
+function CentrePicker({
+  api,
+  refId,
+  current,
+  onPick,
+  asPlayers,
+  view,
+}: {
+  api: AccountApi;
+  refId: string;
+  current: string;
+  onPick: (id: string) => void;
+  /** Looking as the players do (a player, or a DM in Players View): offered only what the players know. */
+  asPlayers: boolean;
+  view: WebView | undefined;
+}) {
   const [q, setQ] = useState("");
   const [found, setFound] = useState<NameRow[] | null>(null);
   const latest = useRef(0);
 
   useEffect(() => {
-    if (q.trim() === "" || !api.allNames) {
+    // The All names list is the DM's whole list: it holds names the players don't know, so anyone looking
+    // as the players do is offered names from the Story graph's own door instead (#2989). With an API
+    // that cannot do that, they are offered nothing rather than the whole list.
+    const search = asPlayers ? api.webFind : api.allNames;
+    if (q.trim() === "" || !search) {
       setFound(null);
       return;
     }
     const mine = ++latest.current;
     const timer = setTimeout(() => {
-      void api
-        .allNames?.(refId, { q, kind: "", sort: "name", page: 1 })
-        .then((page) => {
-          if (mine === latest.current) setFound(page.names.slice(0, 8));
+      const asked: Promise<{ id: string; name: string }[]> = asPlayers
+        ? api.webFind!(refId, view ? { q, view } : { q })
+        : api.allNames!(refId, { q, kind: "", sort: "name", page: 1 }).then((page) => page.names.slice(0, 8));
+      void asked
+        .then((names) => {
+          if (mine === latest.current) setFound(names.slice(0, 8) as NameRow[]);
         })
         .catch(() => {
           if (mine === latest.current) setFound([]);
         });
     }, 250);
     return () => clearTimeout(timer);
-  }, [api, refId, q]);
+  }, [api, refId, q, asPlayers, view]);
 
   return (
     <div class="field">

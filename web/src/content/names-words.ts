@@ -23,7 +23,7 @@ export const namesPage = {
   signIn: "Sign in with Discord",
   // Someone who may not see the list gets the same line as a campaign that isn't there.
   notYours:
-    "We can't show that list. Players can read about NPCs on the story graph.",
+    "We can't show that list. Players can read about NPCs on the Story Graph.",
   down: "We couldn't reach DMbot. Check your connection and try again.",
   tryAgain: "Try again",
   searchLabel: "Find a name",
@@ -44,7 +44,7 @@ export const namesPage = {
   secretWords: "Secret (DM only)",
   alsoCalled: "Also called",
   npcLink: "NPC page",
-  webLink: "Open the relationship web",
+  webLink: "Open the Story Graph",
   npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
   readOnly: "Only this campaign's DM can change names.",
   undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",
@@ -88,7 +88,7 @@ export const namesPage = {
   removeShort: "Remove",
   removeOther: (other: string): string => `Remove the other name ${other}`,
   hideCheck: "🙈 Hide from players",
-  hideHint: "Players don't know this one yet, so it stays off the story graph for players, and out of answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
+  hideHint: "Players don't know this one yet, so it stays off the Story Graph for players, and out of answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
   waiting: "Waiting for DMbot…",
   mergeHeading: "Same as another name",
   mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",

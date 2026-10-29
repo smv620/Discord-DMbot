@@ -1,6 +1,6 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
-// What waits for the DM on the Story graph (#2635, #2652): facts heard at the table, connections from a backstory
+// What waits for the DM on the Story Graph (#2635, #2652): facts heard at the table, connections from a backstory
 // (grouped by upload, with Keep all) and "Which Mara?" questions. Shown only while WEB_WAITING_LIVE is true
 // (false today), so these tests switch it on. The DM decides each one; the page sends the answer and reads the
 // list again. A player never gets the list.
@@ -43,7 +43,7 @@ async function open(api = mockApi("table")) {
   return api;
 }
 
-describe("on the Story graph", () => {
+describe("on the Story Graph", () => {
   it("is not there while it is off", async () => {
     live.on = false;
     render(<Web api={mockApi("table")} path={`/account/web/${REF}`} />);
