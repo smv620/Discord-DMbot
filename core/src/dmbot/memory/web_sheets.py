@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from dmbot import fetch, plan_rules
-from dmbot.ai import BUSY as AI_BUSY
+from dmbot.ai import BUSY as AI_BUSY  # aliased: this module has its own BUSY (a read is running)
 from dmbot.ai import FAILED as AI_FAILED
 from dmbot.ai import AIError, AIOutOfFunds
 from dmbot.campaigns import Campaign
@@ -418,8 +418,9 @@ async def _document(
         except AIOutOfFunds:
             return NO_AI  # sustained: the account needs topping up
         except AIError as exc:
-            # BUSY and FAILED are the passing problems (nothing saved; the page offers a retry);
-            # any other AIError (a refused key) is a setup problem and keeps the "not set up" word.
+            # BUSY and FAILED are the passing problems (nothing saved; the page offers a retry).
+            # Any other AIError keeps the "not set up" word as before: a refused key, and also an
+            # answer that could not be read (UNCLEAR), which the lead has yet to decide on (#2918).
             return SERVER if str(exc) in (AI_BUSY, AI_FAILED) else NO_AI
         except TimeoutError:
             return SERVER  # nothing saved; the page offers a retry
