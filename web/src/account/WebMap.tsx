@@ -87,6 +87,8 @@ export default function WebMap({
   onLine: (a: string, b: string) => void;
 }) {
   const [mode, setMode] = useState<LayoutMode>(readMode);
+  // Full screen (#2981): the map fills the window, for a campaign too big for the page's own space.
+  const [full, setFull] = useState(false);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
   const [frame, setFrame] = useState(0);
   const [extent, setExtent] = useState(260);
@@ -308,6 +310,21 @@ export default function WebMap({
     }
   };
 
+  // Escape leaves full screen, and the page behind does not scroll while it is on.
+  useEffect(() => {
+    if (!full) return undefined;
+    const leave = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setFull(false);
+    };
+    const before = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", leave);
+    return () => {
+      window.removeEventListener("keydown", leave);
+      document.body.style.overflow = before;
+    };
+  }, [full]);
+
   const chooseMode = (next: LayoutMode): void => {
     if (next === mode) return;
     saveMode(next);
@@ -370,7 +387,7 @@ export default function WebMap({
   void frame; // each frame of the settle re-draws the map from the names' new places
 
   return (
-    <div class="web-map">
+    <div class={`web-map${full ? " web-full" : ""}`}>
       <div class="row web-tools">
         <button type="button" class="button secondary" onClick={() => zoom(1.4)} aria-label={words.zoomIn}>
           +
@@ -389,6 +406,9 @@ export default function WebMap({
             {words.layoutGroups}
           </button>
         </div>
+        <button type="button" class="button secondary" aria-pressed={full} onClick={() => setFull((f) => !f)}>
+          {full ? words.leaveFullScreen : words.fullScreen}
+        </button>
         <button type="button" class="button secondary" disabled={!anyPinned} onClick={letGo}>
           {words.letGo}
         </button>

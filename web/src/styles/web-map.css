@@ -69,10 +69,32 @@
   color: var(--bg, #fff);
 }
 
-/* The map with the chosen name's details beside it; one column on a phone. */
+/* A wide page and a tall map (#2981). The signed-in pages are one text column; this page is a picture, so
+   it takes the room there is (up to a sane limit) and the map is as tall as the screen allows. */
+body:has(.account-wide) .wrap {
+  max-width: 110rem;
+}
+
+.account.account-wide {
+  max-width: none;
+}
+
+.account .web-map {
+  container-type: inline-size;
+}
+
+.account .web-svg {
+  aspect-ratio: auto;
+  height: 72vh;
+  min-height: 22rem;
+  max-height: none;
+}
+
+/* The chosen name's details go under the map, and beside it only when the page is wide enough
+   for the map to stay big. */
 .account .web-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 17rem;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3, 0.75rem);
   align-items: start;
 }
@@ -81,10 +103,43 @@
   min-width: 0;
 }
 
-@media (max-width: 52rem) {
+@container (min-width: 64rem) {
   .account .web-stage {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 19rem;
   }
+
+  .account .web-svg {
+    height: 78vh;
+  }
+}
+
+/* Full screen: the map and its tools fill the window (no browser API, so it works on every phone);
+   the details sit beside the map if the window is wide, and under it, scrolling, if it is not. */
+.account .web-map.web-full {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 0.5rem);
+  padding: var(--space-3, 0.75rem);
+  overflow: auto;
+  background: var(--bg, #fff);
+}
+
+.account .web-map.web-full .web-stage {
+  flex: 1;
+  min-height: 0;
+}
+
+.account .web-map.web-full .web-svg {
+  height: 100%;
+  min-height: 18rem;
+}
+
+.account .web-map.web-full .web-side {
+  max-height: 100%;
+  overflow: auto;
 }
 
 .account .web-sides {
@@ -182,4 +237,50 @@
 
 .account .web-kindmark {
   color: inherit;
+}
+
+/* The steps box is a - [n] + row (the page's wide boxes had pushed the buttons onto their own lines), and
+   the search and the steps share a row on a wide page, so the map is near the top of the screen. */
+.account .web-spinner {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.account .web-spinner input {
+  flex: none;
+  width: 5rem;
+  text-align: center;
+}
+
+@media (min-width: 48rem) {
+  .account .web-tools-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+/* In full screen the two hint lines make way for the map. */
+.account .web-map.web-full > p.small {
+  display: none;
+}
+
+/* The view choice sits in one row on a wide page so the map starts higher up. */
+@media (min-width: 48rem) {
+  .account .web-view {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-4, 1.25rem);
+    padding-block: var(--space-2, 0.5rem);
+  }
+
+  .account .web-view .choice {
+    width: auto;
+    margin: 0;
+    justify-content: flex-start;
+  }
+
+  .account .web-view > p {
+    flex-basis: 100%;
+    margin: 0;
+  }
 }
