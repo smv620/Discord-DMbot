@@ -133,3 +133,11 @@ class OverHttp(TheRoute):
         async with await self.client(self.player) as client:
             no = await client.get(f"/me/campaigns/{self.cref}/web/characters")
             self.assertEqual((no.status_code, no.json()["error"]), (404, "not_found"))
+
+
+class AfterTheCharacterChanges(WhoKnowsOnTheWeb):
+    async def test_a_character_who_is_no_longer_a_player_character_is_not_listed(self) -> None:
+        await self.knowers(self.secret_link, self.rook, self.tavin)
+        await self.sql("UPDATE memory_entities SET role = 'npc' WHERE id = %s", self.tavin)
+        some = self.link_of(await self.graph(hops=2), "mira-heir")
+        self.assertEqual([k["name"] for k in some["knownBy"]], ["Rook"])

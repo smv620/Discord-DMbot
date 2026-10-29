@@ -17,11 +17,16 @@ from dmbot.migrations._shared import (
 # the newest belief of a point of view, at 1.0, on a connection that is still held back. A
 # connection everyone knows has no knowers, so the page says "Everyone"; one with none says "Only
 # the DM". The door is read back from the database as it is and widened, its anchor found exactly
-# once (a drift stops the migration), as 0275 does. No table changes, no rows change.
+# once (a drift stops the migration), as 0275 does. `held` is the door's own word for "secret or not
+# yet revealed" (the rule `knowers.py` uses), so the page never guesses it from other flags. Only
+# confirmed player characters are listed, as the tick list is (the tick list holds at most 25; a
+# table's party is smaller). No table changes, no rows change.
 _KNOWN_BY_EDGE_SWAPS = (
     (
         "'decided', CASE WHEN is_dm AND sees_all THEN r.decided END,",
         "'decided', CASE WHEN is_dm AND sees_all THEN r.decided END,\n"
+        "                    'held', CASE WHEN is_dm AND sees_all\n"
+        "                                 THEN (r.secret OR r.unrevealed) END,\n"
         "                    'knownBy', CASE WHEN is_dm AND sees_all\n"
         "                                    AND (r.secret OR r.unrevealed) THEN COALESCE((\n"
         "                        SELECT jsonb_agg(jsonb_build_object('id', pe.entity_id,\n"
@@ -31,6 +36,10 @@ _KNOWN_BY_EDGE_SWAPS = (
         "                        JOIN memory_entities en ON en.guild_id = g\n"
         "                                               AND en.campaign_id = c\n"
         "                                               AND en.id = pe.entity_id\n"
+        "                                               AND en.type = 'character'\n"
+        "                                               AND en.role = 'player_character'\n"
+        "                                               AND en.status = 'confirmed'\n"
+        "                                               AND en.merged_into IS NULL\n"
         "                        WHERE pe.guild_id = g AND pe.campaign_id = c AND pe.kind = 'pc'\n"
         "                          AND (SELECT b.confidence FROM memory_beliefs b\n"
         "                               WHERE b.guild_id = g AND b.campaign_id = c\n"
