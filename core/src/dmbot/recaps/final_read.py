@@ -58,8 +58,8 @@ listener could lose track of who it is.
 You may reorder sentences, add a short introduction or a transition (a sentence or two, \
 every fact in it taken from the material), bring forward something a character did that the \
 draft left out, and rewrite for flow. All of it only from what the beat sheet, the transcript, \
-the who-and-what sheet, the open threads and the story so far say. When none of them says it, leave the detail out; \
-if a fix would need a fact you do not have, leave that line as it is.
+the who-and-what sheet, the open threads and the story so far say. When none of them says it, \
+leave the detail out; if a fix would need a fact you do not have, leave that line as it is.
 
 You may not: add an event, a person, a place, a name, a motive or a plan; change where the \
 session ends (the last section's last sentence stays set at the moment of the <ending> block and \
