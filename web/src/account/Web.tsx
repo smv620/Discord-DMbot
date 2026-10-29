@@ -432,6 +432,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
       {overview && (
         <WebOverviewPanel
           overview={overview}
+          refId={ref}
           center={center}
           alone={alone}
           onCentre={(id) => void load(id, Math.max(hops, graph?.maxHops ?? hops))}
@@ -490,6 +491,14 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               {n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}{" "}
               {n.revealed === false && <span class="small muted">({words.notRevealed}) </span>}
               <span class="tag">{kindWords(n.kind)}</span>
+              {n.page === true && (
+                <>
+                  {" "}
+                  <a class="small" href={`/account/npc/${encodeURIComponent(ref)}/${encodeURIComponent(n.id)}`} aria-label={words.openItsPageFor(n.name)}>
+                    {words.openItsPage}
+                  </a>
+                </>
+              )}
               {n.id === center ? (
                 <span class="small muted"> {words.inMiddle}</span>
               ) : (

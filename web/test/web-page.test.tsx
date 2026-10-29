@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BIG_WEB } from "../src/content/web-words";
+import { BIG_WEB, webPage as w } from "../src/content/web-words";
 import type { WebGraph } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web, { webRefFromPath } from "../src/account/Web";
@@ -297,5 +297,42 @@ describe("how many more connections a line has", () => {
     expect(screen.getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
+  });
+});
+
+describe("the Open its page link", () => {
+  it("a name marked page true has the Open its page link, pointing at the NPC page address", async () => {
+    await open();
+    const links = screen.getAllByRole("link", { name: /^Open the page for / });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) expect(link.textContent).toBe(w.openItsPage);
+    expect(links[0]!.getAttribute("href")).toMatch(/^\/account\/npc\/100\.cmp1\/[^/]+$/);
+  });
+
+  it("a name without page, or with page false, has no link", async () => {
+    const api = mockApi("table");
+    const real = api.webGraph!.bind(api);
+    api.webGraph = async (...args) => {
+      const got = await real(...args);
+      return { ...got, nodes: got.nodes.map((n) => ({ ...n, page: false })) };
+    };
+    render(<Web api={api} path={at()} />);
+    await screen.findByText(/names?, \d+ lines?/);
+    expect(screen.queryAllByRole("link", { name: /^Open the page for / })).toHaveLength(0);
+    expect(screen.queryByText(w.openItsPage)).toBeNull();
+  });
+
+  it("the link's accessible name names the person", async () => {
+    await open();
+    const link = screen.getAllByRole("link", { name: /^Open the page for / })[0]!;
+    const name = link.getAttribute("aria-label")!.replace(/^Open the page for /, "");
+    expect(name.length).toBeGreaterThan(0);
+    expect(link.getAttribute("aria-label")).toBe(w.openItsPageFor(name));
+  });
+
+  it("the players' graph view shows no other new text", async () => {
+    await open();
+    const shown = (document.body.textContent ?? "").split(w.openItsPage).length - 1;
+    expect(shown).toBe(screen.getAllByRole("link", { name: /^Open the page for / }).length);
   });
 });
