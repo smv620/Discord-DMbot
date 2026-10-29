@@ -560,14 +560,21 @@ async def _ask_paragraph(
     gate: AbstractAsyncContextManager[Any],
     paragraph: str,
     names: list[str],
-) -> Reply:
-    reply: Reply = await _call(
-        gate,
-        ai,
-        second_look_instructions(own),
-        second_look_request(paragraph, names[:SECOND_LOOK_NAMES]),
-        min(OUTPUT_FLOOR, max_output(str(getattr(ai, "model", ""))) or OUTPUT_FLOOR),
-    )
+) -> Reply | None:
+    """One paragraph's answer, or None when the AI had a busy or failed call for it: this
+    paragraph keeps what pass 1 had and the others still run (#2948). Out of funds is raised."""
+    try:
+        reply: Reply = await _call(
+            gate,
+            ai,
+            second_look_instructions(own),
+            second_look_request(paragraph, names[:SECOND_LOOK_NAMES]),
+            min(OUTPUT_FLOOR, max_output(str(getattr(ai, "model", ""))) or OUTPUT_FLOOR),
+        )
+    except AIOutOfFunds:
+        raise
+    except AIError:
+        return None
     return reply
 
 
@@ -629,11 +636,11 @@ async def _second_look(
         failure = task.exception()
         if isinstance(failure, AIOutOfFunds):
             raise failure
-        if isinstance(failure, AIError):  # (this paragraph keeps what pass 1 had)
-            continue
         if failure is not None:
             raise failure  # (a bug is not swallowed as if the AI had failed)
         reply = task.result()
+        if reply is None:  # a busy or failed call for this paragraph: nothing added (#2948)
+            continue
         stats.second_calls += 1
         if reply.cut:
             # Counted like any cut read. The lines before the cut are used; the second look is
