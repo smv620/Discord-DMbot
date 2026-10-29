@@ -1757,6 +1757,7 @@ def create_app(
         "bad_action": (400, "bad_action"),
         "bad_name": (400, "bad_name"),
         "bad_kind": (400, "bad_kind"),
+        "bad_player": (400, "bad_player"),
         "too_long": (400, "too_long"),
         "needs_confirm": (400, "needs_confirm"),
         "bad_target": (400, "bad_target"),

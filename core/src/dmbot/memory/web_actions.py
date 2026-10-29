@@ -45,7 +45,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
-from dmbot.memory.store import PERSON, MemoryStore
+from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -58,6 +58,8 @@ NOT_ALLOWED = "not_allowed"  # the sender is not a DM of the campaign any more
 NOT_FOUND = "not_found"  # the name (or the other name) is gone, or no longer confirmed
 BAD_NAME = "bad_name"  # a spelling or another name the rules refuse
 BAD_KIND = "bad_kind"  # a kind the rules do not take
+NOT_MEMBER = "not_member"  # the player's Discord ID is not in this server
+BAD_PLAYER = "bad_player"  # the ID is a bot, or not one the rules take
 EXISTS = "exists"  # the spelling is already another name's
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 FAILED = "failed"  # anything unexpected; the action can be sent again
@@ -303,6 +305,7 @@ async def apply(
     action: Action,
     waiting: Waiting | None = None,
     named_batch: Callable[[str, int, str], Awaitable[int | None]] | None = None,
+    member_of: Callable[[int], Awaitable[bool | None]] | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.user_id not in dm_user_ids:
@@ -335,7 +338,7 @@ async def apply(
     if entity is None or entity.status != CONFIRMED or entity.type == PERSON:
         return _failed(NOT_FOUND)
     try:
-        return await _do(memory, guild_id, cid, entity.id, entity.name, action)
+        return await _do(memory, guild_id, cid, entity.id, entity.name, action, member_of)
     except MemoryRuleError:
         return _failed(NOT_FOUND)  # the name changed under us (another DM, or Discord)
 
@@ -431,8 +434,43 @@ async def _other(
     return None
 
 
+async def _player_character(
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity_id: str,
+    a: Action,
+    member_of: Callable[[int], Awaitable[bool | None]] | None,
+) -> Outcome:
+    """Make a name a player character, as Discord's "What it is" does. With a Discord ID the
+    player is attached too (Discord's "Who plays it?"), once the person is known to be in this
+    server and not a bot; without one the character waits for a player."""
+    if not a.text:
+        await memory.set_entity_type(guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM)
+        return Outcome(result_id=entity_id)
+    if not (a.text.isascii() and a.text.isdigit()) or not 0 < int(a.text) <= INT64_MAX:
+        return _failed(BAD_PLAYER)
+    if member_of is None:
+        return _failed(FAILED)  # no way to look the person up: nothing is guessed
+    found = await member_of(int(a.text))  # True: a person; False: a bot; None: not in the server
+    if found is None:
+        return _failed(NOT_MEMBER)
+    if found is False:
+        return _failed(BAD_PLAYER)
+    await memory.confirm_entity(
+        guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM, played_by=int(a.text)
+    )
+    return Outcome(result_id=entity_id)
+
+
 async def _do(
-    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, name: str, a: Action
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity_id: str,
+    name: str,
+    a: Action,
+    member_of: Callable[[int], Awaitable[bool | None]] | None = None,
 ) -> Outcome:
     if a.action == "spell":
         new = " ".join(a.text.split())
@@ -449,7 +487,7 @@ async def _do(
         return Outcome(result_id=entity_id)
     if a.action == "kind":
         if a.kind == PLAYER_CHARACTER:
-            return _failed(BAD_KIND)  # who plays them is asked in Discord
+            return await _player_character(memory, guild_id, cid, entity_id, a, member_of)
         try:
             await memory.set_entity_type(guild_id, cid, entity_id, a.kind, source=DM)
         except MemoryRuleError:
