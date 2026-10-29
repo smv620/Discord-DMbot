@@ -60,14 +60,25 @@ async def set_who_knows(
     if who == SOME_CHARACTERS and not characters:
         raise MemoryRuleError(PICK_ONE)
     if who == EVERYONE:
-        if link.secret or link.unrevealed:
-            if await memory.connection_knowers(guild_id, campaign_id, [link.id]):
-                await memory.set_connection_knowers(guild_id, campaign_id, link.id, [], source=DM)
+        if not (link.secret or link.unrevealed):
+            return Written(None, None)  # already everyone's: nothing to write
+        before = (await memory.connection_knowers(guild_id, campaign_id, [link.id])).get(
+            link.id, []
+        )
+        if before:
+            await memory.set_connection_knowers(guild_id, campaign_id, link.id, [], source=DM)
+        try:
             return await set_secret(memory, guild_id, campaign_id, link, False)
-        return Written(None, None)  # already everyone's: nothing to write
+        except MemoryRuleError:  # (refused until its names are shown): put who knew it back
+            if before:
+                await memory.set_connection_knowers(
+                    guild_id, campaign_id, link.id, before, source=DM
+                )
+            raise
+    chosen = list(characters) if who == SOME_CHARACTERS else []
+    await memory.check_knowers(guild_id, campaign_id, chosen)  # nothing is hidden on a bad pick
     if not (link.secret or link.unrevealed):
         await set_secret(memory, guild_id, campaign_id, link, True)
-    chosen = list(characters) if who == SOME_CHARACTERS else []
     return await memory.set_connection_knowers(guild_id, campaign_id, link.id, chosen, source=DM)
 
 

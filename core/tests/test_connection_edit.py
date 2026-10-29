@@ -322,11 +322,11 @@ class Cards(base.NamesTest):
         self.assertIn(connection_edit.WHO_BUTTON, self.labels(page))
         self.assertNotIn("🤫 Hide from players", self.labels(page))
         text, view = await self.who_page()
-        self.assertIn("Everyone at the table knows this.", text)
+        self.assertIn("Players can see this connection.", text)
         # only me: the old "Hide from players"
         it = self.it()
         await view._only_me(it)
-        self.assertIn("Only you know it now", it.response.edited[0][0])
+        self.assertIn("Only you can see it now", it.response.edited[0][0])
         (hidden,) = await self.relations()
         self.assertTrue(hidden.secret)
         self.assertEqual(
@@ -334,10 +334,10 @@ class Cards(base.NamesTest):
         )
         # everyone: the old "Show to players", with the usual Undo
         text, view = await self.who_page()
-        self.assertIn("Only you know this.", text)
+        self.assertIn("Only you can see it.", text)
         it = self.it()
         await view._everyone(it)
-        self.assertIn("Everyone at the table can see it now", it.response.edited[0][0])
+        self.assertIn("Players can see it now", it.response.edited[0][0])
         (shown,) = await self.relations()
         self.assertEqual((shown.secret, shown.unrevealed), (False, False))
 
@@ -353,7 +353,7 @@ class Cards(base.NamesTest):
         await view._picked(self.it())
         it = self.it()
         await view._some(it)
-        self.assertIn("Only Mara know it now", it.response.edited[0][0])
+        self.assertIn("Only Mara knows it now (besides you)", it.response.edited[0][0])
         (link,) = await self.relations()
         self.assertTrue(link.secret)  # hidden from the party, and:
         self.assertEqual(
@@ -361,17 +361,18 @@ class Cards(base.NamesTest):
             {link.id: [mara.id]},
         )
         text, again = await self.who_page()  # the page shows who knows it now
-        self.assertIn("Only Mara know this", text)
+        self.assertIn("Only Mara knows it (besides you)", text)
         self.assertEqual([o.default for o in again.pick.options if o.label == "Mara"], [True])
 
     async def test_some_with_nobody_picked_is_refused_and_changes_nothing(self) -> None:
         await self.know("Kesh")
         await self.pc("Mara", 1001)
         _, view = await self.who_page()
+        self.assertTrue(view.some.disabled)  # nothing to save until someone is picked
         it = self.it()
         await view._some(it)
         self.assertIn(
-            "Pick at least one character", str(it.response.sent or it.followup.send.await_args)
+            "Choose at least one character", str(it.response.sent or it.followup.send.await_args)
         )
         (link,) = await self.relations()
         self.assertFalse(link.secret)
@@ -391,6 +392,75 @@ class Cards(base.NamesTest):
             await self.memory.connection_knowers(GUILD, self.campaign.id, [link.id]), {}
         )
 
+    async def test_the_names_read_right_for_one_or_several_and_the_state_is_first(self) -> None:
+        self.assertEqual(connection_edit.called(["Mara"]), "Mara")
+        self.assertEqual(connection_edit.called(["Mara", "Tavin"]), "Mara and Tavin")
+        self.assertEqual(connection_edit.called(["A", "B", "C"]), "A, B and C")
+        names = {"1": "Mara", "2": "Tavin"}
+        text = connection_edit.who_text("Kesh", "some", ["1", "2"], names, has_characters=True)
+        self.assertTrue(text.startswith("**Hidden from the party. Only Mara and Tavin know it"))
+        lost = connection_edit.who_text("Kesh", "some", ["9"], names, has_characters=True)
+        self.assertIn("Only some characters know it", lost)  # a knower the menu cannot name
+        bare = connection_edit.who_text("Kesh", "dm", [], {}, has_characters=False)
+        self.assertIn("no player characters yet", bare)
+
+    async def test_the_answer_it_is_already_at_changes_nothing_and_is_marked(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        self.assertEqual(
+            [
+                c.label
+                for c in view.children
+                if getattr(c, "style", None) == discord.ButtonStyle.success
+            ],
+            ["🤫 Only me"],
+        )
+        it = self.it()
+        await view._only_me(it)
+        self.assertIn("Already like that", str(it.response.sent or it.followup.send.await_args))
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)
+
+    async def test_a_bad_pick_changes_nothing_not_even_the_hiding(self) -> None:
+        await self.know("Kesh")  # (public)
+        npc = await ui.save_name(self.memory, self.campaign, "Old Smith", "npc", [], [])
+        _, view = await self.who_page()
+        view.picked = [npc.id]  # forged: not a player character
+        it = self.it()
+        await view._some(it)
+        self.assertIn("Couldn't change that", str(it.response.sent or it.followup.send.await_args))
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)  # still public: the check came before the hiding
+
+    async def test_undo_is_offered_only_for_showing_it_and_works(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._everyone(it)
+        _, card = it.response.edited[0]
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        await undo.callback(self.it())
+        (again,) = await self.relations()
+        self.assertTrue(again.secret)  # showing it was undone
+        _, view = await self.who_page()
+        it = self.it()
+        await view._only_me(it)  # already only the DM's: nothing to undo or write
+        self.assertIn("Already like that", str(it.response.sent or it.followup.send.await_args))
+
+    async def test_the_menu_holds_no_more_than_the_server_accepts(self) -> None:
+        await self.know("Kesh")
+        for k in range(14):
+            await self.pc(f"Hero {k:02}", 2000 + k)
+        _, view = await self.who_page()
+        self.assertEqual(view.pick.max_values, 12)
+
+    async def test_a_manager_cannot_press_the_who_knows_page(self) -> None:
+        await self.know("Kesh")
+        _, view = await self.who_page()
+        await view._only_me(self.it(MANAGER))
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+
     async def test_a_backstory_connection_is_held_back_until_everyone(self) -> None:
         """#2404: kept from a backstory it waits unrevealed; the DM's Everyone shows it."""
         other = await ui.save_name(self.memory, self.campaign, "Kesh", "npc", [], [])
@@ -400,7 +470,7 @@ class Cards(base.NamesTest):
         )  # fmt: skip
         self.fresh()
         text, view = await self.who_page()
-        self.assertIn("Only you know this.", text)
+        self.assertIn("Only you can see it.", text)
         it = self.it()
         await view._everyone(it)
         (shown,) = await self.relations()
@@ -447,7 +517,7 @@ class Cards(base.NamesTest):
         it = self.it()
         await view._everyone(it)
         note, card = it.response.edited[0]
-        self.assertIn("Everyone at the table can see it now", note)
+        self.assertIn("Players can see it now", note)
         (shown,) = await self.relations()
         self.assertEqual((shown.secret, shown.unrevealed), (False, False))
         (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]

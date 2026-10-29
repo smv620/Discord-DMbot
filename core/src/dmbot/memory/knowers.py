@@ -342,3 +342,10 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
         connections=tuple(connections),
         names=tuple(names),
     )
+
+
+async def check_characters(scope: Scope, character_ids: Sequence[str]) -> None:
+    """Refuse, before anything is written, a pick that `set_connection_knowers` would refuse: too
+    many, or anything but this campaign's confirmed player characters. A multi-step edit calls it
+    first so a bad pick cannot leave it half done."""
+    await _characters(scope, character_ids)

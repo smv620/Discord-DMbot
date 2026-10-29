@@ -16,7 +16,7 @@ from dataclasses import dataclass
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import link_edits
+from dmbot.memory import knowers, link_edits
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError, Relation
@@ -302,8 +302,19 @@ class OneConnection(_Menu):
         view = WhoKnows(
             self.campaign_id, self.entity_id, found.relation.id, pcs,
             chosen=[c for c in knowing.get(found.relation.id, []) if c in names],
+            now=who,
         )  # fmt: skip
-        await _replace(interaction, who_text(_said(found), who, knowing, names), view)
+        await _replace(
+            interaction,
+            who_text(
+                _said(found),
+                who,
+                knowing.get(found.relation.id, []),
+                names,
+                has_characters=bool(names),
+            ),
+            view,
+        )
 
     async def _pin(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -412,6 +423,9 @@ class OtherWords(discord.ui.Modal, title="Other words"):
         await self.page._new_words(interaction, predicate, detail)
 
 
+MAX_PICK = 25  # one Discord menu holds this many; a table's characters are far fewer
+
+
 async def player_characters(memory: MemoryStore, campaign: Campaign) -> list[tuple[str, str]]:
     """The campaign's confirmed player characters (id, name), by name, at most one menu's worth:
     the only ones the DM may say know something (#2935)."""
@@ -425,19 +439,36 @@ async def player_characters(memory: MemoryStore, campaign: Campaign) -> list[tup
     return ordered[:MAX_PICK]
 
 
-MAX_PICK = 25  # one Discord menu holds this many; a table's characters are far fewer
+def called(names: Sequence[str]) -> str:
+    """ "Mara", "Mara and Tavin", "Mara, Tavin and Brann", escaped for Discord."""
+    shown = [_md(n) for n in names]
+    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
 
 
-def who_text(said: str, who: str, knowing: dict[str, list[str]], names: dict[str, str]) -> str:
-    """The page for "Who knows this?": the connection, who knows it now, and the three answers."""
+def who_text(
+    said: str, who: str, knowing: Sequence[str], names: dict[str, str], *, has_characters: bool
+) -> str:
+    """The page for "Who knows this?" (#2935): where the connection stands now, first, then the
+    connection and how to change it. Players only ever see it if they can see the connection
+    (Everyone); "known" here is about what the DM lets players see, not what the story says."""
     if who == link_edits.EVERYONE:
-        now = "Everyone at the table knows this."
+        now = "**Players can see this connection.**"
     elif who == link_edits.SOME_CHARACTERS:
-        called = sorted(names.get(c, "") for ids in knowing.values() for c in ids if c in names)
-        now = "Only " + ", ".join(_md(n) for n in called) + " know this (and you)."
+        mine = sorted(names[c] for c in knowing if c in names)
+        now = (
+            f"**Hidden from the party. Only {called(mine)} {'knows' if len(mine) == 1 else 'know'}"
+            " it (besides you).**"
+            if mine
+            else "**Hidden from the party. Only some characters know it (besides you).**"
+        )
     else:
-        now = "Only you know this."
-    return f"**{said}**\n{now}\nWho should know it?"
+        now = "**Hidden from players. Only you can see it.**"
+    how = (
+        "To pick characters, choose them in the list, then press 👥 Some characters."
+        if has_characters
+        else "There are no player characters yet, so only 🤫 and 👁️ are offered."
+    )
+    return f"{now}\n{said}\nWho should see it? 🤫 Only me · 👁️ Everyone. {how}"
 
 
 class WhoKnows(_Menu):
@@ -453,18 +484,21 @@ class WhoKnows(_Menu):
         pcs: Sequence[tuple[str, str]],
         *,
         chosen: Sequence[str] = (),
+        now: str = "",
     ) -> None:
         super().__init__()
         self.campaign_id, self.entity_id, self.relation_id = campaign_id, entity_id, relation_id
+        self.now = now
+        self.opened_with = sorted(chosen)  # who knew it when this page opened
         self.names = dict(pcs)
         self.picked: list[str] = list(chosen)
         grey = discord.ButtonStyle.secondary
         if self.names:
             self.pick = _Select(
                 self._picked,
-                placeholder="Pick the characters who know it…",
+                placeholder="Pick who knows it…",
                 min_values=1,
-                max_values=len(self.names),
+                max_values=min(len(self.names), knowers.MAX_KNOWERS),
                 options=[
                     discord.SelectOption(
                         label=logic.shorten(name, logic.OPTION_LABEL_MAX),
@@ -476,16 +510,33 @@ class WhoKnows(_Menu):
                 row=0,
             )
             self.add_item(self.pick)
-        self.add_item(_Button(self._only_me, label="🤫 Only me", style=grey, row=1))
+        green = discord.ButtonStyle.success  # where it stands now
+        self.add_item(
+            _Button(
+                self._only_me, label="🤫 Only me", row=1,
+                style=green if now == link_edits.ONLY_THE_DM else grey,
+            )
+        )  # fmt: skip
         if self.names:
-            self.add_item(_Button(self._some, label="👥 Only these characters", style=grey, row=1))
-        self.add_item(_Button(self._everyone, label="👁️ Everyone", style=grey, row=1))
+            self.some = _Button(
+                self._some, label="👥 Some characters", row=1,
+                style=green if now == link_edits.SOME_CHARACTERS else grey,
+            )  # fmt: skip
+            self.some.disabled = not self.picked  # nothing to save until someone is picked
+            self.add_item(self.some)
+        self.add_item(
+            _Button(
+                self._everyone, label="👁️ Everyone", row=1,
+                style=green if now == link_edits.EVERYONE else grey,
+            )
+        )  # fmt: skip
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.picked = list(self.pick.values)
-        for option in self.pick.options:  # the page shows what is picked until Save
+        for option in self.pick.options:  # the page shows what is picked until 👥 is pressed
             option.default = option.value in self.picked
+        self.some.disabled = not self.picked
         await interaction.response.edit_message(view=self)
 
     async def _only_me(self, interaction: discord.Interaction) -> None:
@@ -514,24 +565,48 @@ class WhoKnows(_Menu):
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
         c = found.campaign
+        # from what the page showed: a double press, or the answer it is already at, writes nothing
+        if who == self.now and (
+            who != link_edits.SOME_CHARACTERS or sorted(self.picked) == self.opened_with
+        ):
+            await _tell(
+                interaction, "Already like that. Nothing changed. Press Back to see the card."
+            )
+            return
         try:
             written = await link_edits.set_who_knows(
                 found.memory, c.guild_id, c.id, found.relation, who, self.picked
             )
         except MemoryRuleError as exc:
-            await _tell(interaction, f"Couldn't change that. {exc}")
+            if str(exc) == link_edits.PICK_ONE:
+                await _tell(
+                    interaction,
+                    "Nothing changed. Choose at least one character in the list, "
+                    "then press 👥 Some characters.",
+                )
+            else:
+                await _tell(interaction, f"Couldn't change that. {exc}")
             return
         said = _said(found)
+        undo: int | None = None
         if who == link_edits.EVERYONE:
-            note = f"👁️ Everyone at the table can see it now: {said}. {UNDO_NOTE}"
+            note = f"👁️ Players can see it now: {said}. {UNDO_NOTE}"
+            undo = written.batch  # (only showing it can be undone; who knew it is set again)
         elif who == link_edits.SOME_CHARACTERS:
-            called = ", ".join(_md(self.names[x]) for x in self.picked if x in self.names)
-            note = f"👥 Only {called} know it now (and you): {said}. {UNDO_NOTE}"
+            mine = [self.names[x] for x in self.picked if x in self.names]
+            verb = "knows" if len(mine) == 1 else "know"
+            note = (
+                f"👥 Only {called(mine)} {verb} it now (besides you): {said}. "
+                "Not right? Change it again."
+            )
         else:
-            note = f"🤫 Only you know it now: {said}. {UNDO_NOTE}"
+            note = (
+                f"🤫 Hidden from players. Only you can see it now: {said}. "
+                "Not right? Change it again."
+            )
         changed(interaction, c)
         self.stop()
         await show_card(
             interaction, c.id, self.entity_id, replace=True, note=note,
-            undo_connection=written.batch,
+            undo_connection=undo,
         )  # fmt: skip
