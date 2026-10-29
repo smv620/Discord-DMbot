@@ -13,6 +13,7 @@ character knows) are separate and ask `characters_of` for who a viewer plays.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import beliefs
@@ -148,11 +149,19 @@ async def connection_knowers(scope: Scope, relation_ids: Sequence[str]) -> dict[
     }
     if not views:
         return out
+    held_back = {
+        r["id"]
+        for r in await scope.select(
+            RELATIONS,
+            " AND id = ANY(%s) AND status = %s AND (secret OR unrevealed)",
+            [list(relation_ids), CONFIRMED],
+        )
+    }  # (a connection everyone now knows, or one turned down, has no knowers: it is public)
     newest: dict[tuple[str, str], dict[str, Any]] = {}
     for row in await scope.select(
         BELIEFS,
         " AND relation_id = ANY(%s) AND perspective_id = ANY(%s) ORDER BY seq",
-        [list(relation_ids), list(views)],
+        [list(held_back), list(views)],
     ):
         newest[(row["relation_id"], row["perspective_id"])] = row
     for (relation_id, view_id), row in newest.items():
@@ -191,3 +200,145 @@ async def characters_of(scope: Scope, user_id: int) -> list[str]:
         [PLAYER_CHARACTER, CONFIRMED, user_id],
     )
     return [str(r["id"]) for r in rows]
+
+
+@dataclass(frozen=True, slots=True)
+class MineConnection:
+    """A hidden connection one of this player's characters knows: the two names and the words
+    between them as stored (the display layer turns them into the card's words), and the other
+    characters who know it, for "You and Mara know this"."""
+
+    relation_id: str
+    subject: str
+    predicate: str
+    detail: str
+    object: str
+    directional: bool
+    also: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MineName:
+    """A secret other name one of this player's characters knows, whose it is, who else knows."""
+
+    alias_id: str
+    text: str
+    of: str
+    also: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Mine:
+    """What a player's own characters know that the table does not (#2935): their view and nobody
+    else's. Empty for someone who plays no character here."""
+
+    characters: tuple[str, ...] = ()
+    connections: tuple[MineConnection, ...] = ()
+    names: tuple[MineName, ...] = ()
+
+
+async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
+    """The hidden connections and secret other names that the characters this person plays know,
+    and nothing else. Started from this person's own characters' points of view, so it reads
+    nothing of anyone else's. Only confirmed items show: a connection or name everyone now knows
+    is public (not here), one the DM took back is gone, one still only proposed, rejected or ended
+    is not shown, and neither is one whose names are not confirmed entries. Another campaign's
+    never shows. `user_id` must be the signed-in person's own (never a command option or a request
+    parameter): this trusts it. The other characters who know an item are named by their entry so
+    the page can say "You and Mara's player"; only confirmed player characters are named."""
+    mine = await characters_of(scope, user_id)
+    if not mine:
+        return Mine()
+    views = {
+        r["id"]: r["entity_id"]
+        for r in await scope.select(
+            PERSPECTIVES, " AND kind = %s AND entity_id = ANY(%s)", [PC_VIEW, mine]
+        )
+    }
+    knows: set[str] = set()
+    if views:
+        newest: dict[tuple[str, str], float] = {}
+        for row in await scope.select(
+            BELIEFS, " AND perspective_id = ANY(%s) ORDER BY seq", [list(views)]
+        ):
+            newest[(row["relation_id"], row["perspective_id"])] = row["confidence"]
+        knows = {rel for (rel, _), c in newest.items() if c >= KNOWN}
+    hidden = (
+        await scope.select(
+            RELATIONS,
+            " AND id = ANY(%s) AND status = %s AND (secret OR unrevealed)"
+            " AND to_session_at IS NULL ORDER BY id",
+            [sorted(knows), CONFIRMED],
+        )
+        if knows
+        else []
+    )
+    alias_ids = (
+        sorted(
+            {
+                r["alias_id"]
+                for r in await scope.select(
+                    ALIAS_KNOWERS, " AND perspective_id = ANY(%s)", [list(views)]
+                )
+            }
+        )
+        if views
+        else []
+    )
+    aliases = (
+        await scope.select(
+            ALIASES,
+            " AND id = ANY(%s) AND secret AND status = %s ORDER BY id",
+            [alias_ids, CONFIRMED],
+        )
+        if alias_ids
+        else []
+    )
+    who = await connection_knowers(scope, [r["id"] for r in hidden])
+    a_who = await alias_knowers(scope, [a["id"] for a in aliases])
+    wanted = {*mine}
+    for r in hidden:
+        wanted |= {r["subject_id"], r["object_id"], *who.get(r["id"], [])}
+    for a in aliases:
+        wanted |= {a["entity_id"], *a_who.get(a["id"], [])}
+    entries = {
+        r["id"]: r
+        for r in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(wanted)])
+        if r["status"] == CONFIRMED
+    }
+    mine_set = set(mine)
+
+    def others(knowing: Sequence[str]) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                str(entries[c]["name"])
+                for c in knowing
+                if c not in mine_set and c in entries and entries[c]["role"] == PLAYER_CHARACTER
+            )
+        )
+
+    def name(entity_id: str) -> str | None:
+        found = entries.get(entity_id)
+        return None if found is None else str(found["name"])
+
+    connections = []
+    for r in hidden:
+        subject, target = name(r["subject_id"]), name(r["object_id"])
+        if subject is None or target is None:
+            continue
+        connections.append(
+            MineConnection(
+                r["id"], subject, r["predicate"], r["detail"] or "", target,
+                bool(r.get("directional")), others(who.get(r["id"], [])),
+            )
+        )  # fmt: skip
+    names = []
+    for a in aliases:
+        owner = name(a["entity_id"])
+        if owner is not None:
+            names.append(MineName(a["id"], a["text"], owner, others(a_who.get(a["id"], []))))
+    return Mine(
+        characters=tuple(sorted(str(entries[c]["name"]) for c in mine if c in entries)),
+        connections=tuple(connections),
+        names=tuple(names),
+    )

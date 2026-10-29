@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup, encode_backup
-from dmbot.memory.models import CONFIRMED, MemoryRuleError
+from dmbot.memory.models import CONFIRMED, MemoryRuleError, spelling_key
 from tests.test_memory_store import DM as DM_USER
 from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
 
@@ -131,7 +131,7 @@ class WhoKnows(MemoryTest):
 
     async def secret_name(self, entity: str, text: str = "Rook") -> str:
         made = await self.memory.add_alias(
-            GUILD_A, self.c, entity, text, kind="title", secret=True, source=DM
+            GUILD_A, self.c, entity, text, kind="title", secret=True, source=DM, status=CONFIRMED
         )
         return str(made.value.id)
 
@@ -280,6 +280,101 @@ class WhoKnows(MemoryTest):
             await self.memory.characters_of(GUILD_A, self.c, TAVIN_PLAYER), [ids["tavin"]]
         )
         self.assertEqual(await self.memory.characters_of(GUILD_A, self.c, 4242), [])
+
+    # ---- a player's own view (slice B) ----
+
+    async def mine(self, user: int, campaign: str | None = None, guild: int = GUILD_A) -> Any:
+        return await self.memory.what_my_characters_know(guild, campaign or self.c, user)
+
+    async def test_a_player_sees_what_their_character_knows_and_who_else_does(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        alias = await self.secret_name(ids["tavin"], "Rook")
+        both = [ids["tavin"], ids["mara"]]
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, both, source=DM)
+        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        tavin = await self.mine(TAVIN_PLAYER)
+        self.assertEqual(tavin.characters, ("Tavin",))
+        (connection,) = tavin.connections
+        self.assertEqual(
+            (connection.subject, connection.object, connection.also),
+            ("Voss", "Lantern Council", ("Mara",)),
+        )
+        (name,) = tavin.names
+        self.assertEqual((name.text, name.of, name.also), ("Rook", "Tavin", ()))
+        mara = await self.mine(MARA_PLAYER)
+        self.assertEqual(len(mara.connections), 1)
+        self.assertEqual(mara.names, ())  # the name is Tavin's alone
+
+    async def test_another_player_a_stranger_and_another_campaign_see_nothing(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        alias = await self.secret_name(ids["tavin"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        for user in (MARA_PLAYER, 4242):  # a player whose character does not know it; no character
+            seen = await self.mine(user)
+            self.assertEqual((seen.connections, seen.names), ((), ()), user)
+        # this campaign asked for through another server is not found at all
+        with self.assertRaises(MemoryRuleError):
+            await self.mine(TAVIN_PLAYER, guild=GUILD_B, campaign=self.c)
+
+    async def test_a_connection_everyone_now_knows_is_public_and_no_longer_listed(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.reveal_exposed(GUILD_A, self.c, spellings=[], relation_ids=[link])
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
+        self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
+
+    async def test_a_name_the_table_said_is_public_and_no_longer_listed(self) -> None:
+        ids = await self.setup_table()
+        made = await self.memory.add_alias(
+            GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM,
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        alias = str(made.value.id)
+        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.reveal_exposed(
+            GUILD_A, self.c, spellings=[spelling_key("Rook")], relation_ids=[]
+        )
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).names, ())
+
+    async def test_a_proposed_name_a_merged_owner_and_a_proposed_link_never_show(self) -> None:
+        ids = await self.setup_table()
+        made = await self.memory.add_alias(
+            GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM, secret=True
+        )  # (not confirmed: it is still only proposed)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, str(made.value.id), [ids["tavin"]], source=DM
+        )
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).names, ())
+        # a character who knows nothing still gets their name in the line
+        seen = await self.mine(MARA_PLAYER)
+        self.assertEqual(seen.characters, ("Mara",))
+
+    async def test_a_player_with_two_characters_sees_what_either_knows(self) -> None:
+        ids = await self.setup_table()
+        second = await self.pc("Brann", TAVIN_PLAYER)
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [second], source=DM)
+        seen = await self.mine(TAVIN_PLAYER)
+        self.assertEqual(seen.characters, ("Brann", "Tavin"))
+        self.assertEqual(len(seen.connections), 1)
+
+    async def test_an_ended_connection_is_not_shown(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.update_relation(GUILD_A, self.c, link, source=DM, status="rejected")
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
+
+    async def test_what_the_dm_took_back_is_gone_from_the_players_view(self) -> None:
+        ids = await self.setup_table()
+        link = await self.hidden_link(ids["voss"], ids["council"])
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [], source=DM)
+        self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
 
     # ---- backups ----
 
