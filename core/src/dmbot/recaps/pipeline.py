@@ -307,6 +307,15 @@ class _Counted:
         return reply
 
 
+def _touched(threads: Sequence[str], sheet: Sequence[bt.Beat]) -> tuple[str, ...]:
+    """The open threads the shown beats touch: one that shares a word of four letters or more with
+    a beat or its names. A session that never went near a thread is not asked to state its goal."""
+    have = {
+        w for b in sheet for w in words(" ".join([b.what, b.where or "", *b.who])) if len(w) >= 4
+    }
+    return tuple(t for t in threads if have & {w for w in words(t) if len(w) >= 4})
+
+
 class RecapWorker:
     def __init__(
         self,
@@ -1831,7 +1840,9 @@ class RecapWorker:
             )  # (the grader failed on this one)
             # What a reader who was away could still not follow, after the writer's one fix: a
             # note for the DM, never another round (#2680).
-            sentences_now, left = self._away(job.summary, sheet, inputs)
+            sentences_now, left = self._away(
+                job.summary, sheet, inputs, self._given.get((gid, cid, job.session_at))
+            )
             self._count("away_left", len(left))
             return await self._save_loop(
                 gid, cid, job,
@@ -1865,15 +1876,19 @@ class RecapWorker:
         return tuple(n for n in DM_TOLD if n in loop.notes)
 
     def _away_notes(
-        self, summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
+        self,
+        summary: str,
+        sheet: Sequence[bt.Beat],
+        inputs: Inputs,
+        given: rd.Given | None = None,
     ) -> tuple[str, ...]:
         """The DM's notes for what a reader who was away could not follow in this draft."""
-        sentences, found = self._away(summary, sheet, inputs)
+        sentences, found = self._away(summary, sheet, inputs, given)
         return away.notes(found, sentences)
 
     @staticmethod
     def _away(
-        summary: str, sheet: Sequence[bt.Beat], inputs: Inputs
+        summary: str, sheet: Sequence[bt.Beat], inputs: Inputs, given: rd.Given | None = None
     ) -> tuple[list[str], list[away.Finding]]:
         """A draft's sentences and what a reader who was away could not follow in it (#2680).
         Pure and free: no call, so it never touches the job's ceiling or the day's tally."""
@@ -1885,6 +1900,8 @@ class RecapWorker:
             aliases=inputs.aliases,
             previous=inputs.previous,
             present=present,
+            things=away.things_of(given.who_and_what) if given else (),
+            threads=_touched(given.threads, sheet) if given else (),
         )
         return sentences, found
 
@@ -2010,7 +2027,9 @@ class RecapWorker:
         # is left after its fix is a note for the DM (`_away` again at the end), not another round.
         asked_away: list[cr.Change] = []
         if loop.round == 0:
-            sentences_now, found_away = self._away(job.summary, sheet, inputs)
+            sentences_now, found_away = self._away(
+                job.summary, sheet, inputs, self._given.get((gid, cid, job.session_at))
+            )
             asked_away = away.changes(found_away, sentences_now)
             log.info(
                 "Recap: the away-reader check found %d: %s",
@@ -2326,7 +2345,9 @@ class RecapWorker:
                 )  # fmt: skip
             cut = len(best.cuts)
         # (the away notes are read again from the text that is kept, cuts and all)
-        away_left = self._away_notes(prose.summary, sheet, inputs)
+        away_left = self._away_notes(
+            prose.summary, sheet, inputs, self._given.get((gid, cid, job.session_at))
+        )
         self._count("away_left", len(away_left))
         kept_notes = (
             told + tuple(n for n in best.notes if not away.is_note(n) and n not in told) + away_left
