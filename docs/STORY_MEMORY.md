@@ -913,10 +913,23 @@ evidence. This section says how knowledge is kept and who sees what. Names in th
 - a connection ("Bruno → desires → Shela"): a `memory_relations` row, as today;
 - an other name ("Bruno is also known as Rook"): a `memory_aliases` row.
 
-**2. Who knows it.** Individual characters, player characters and NPCs, each through their own point of view
-(section 9a). The DM always knows everything and is never listed. **A group grants nothing by itself:** Tran
-knowing something tells Tran's friend Clyde nothing, and "the party" is not a knower. "Tell all of a faction's
-members" is a DM action that adds each current member.
+**2. Who knows it, and how sure they are.** Individual characters, player characters and NPCs, each through
+their own point of view (section 9a). The DM always knows everything and is never listed. **Each knower holds
+the statement with a confidence** (owner, 2026-10-29: "we are using reification so everything gets a certainty
+from each perspective"): 1.0 is certain it's true, 0.0 is certain it's false, and anything between is a guess or
+a suspicion. **No row means the character doesn't know of it at all.** For example, with Bruno, Shela and Tran
+all NPCs:
+- "Bruno → desires → Shela": Bruno 1.0, Shela 0.95. Tran has no row.
+- "Shela → desires → Bruno": Bruno 0.3 (he hopes so), Shela 0.0 (she doesn't), Tran no row.
+
+A viewer is shown a statement when one of its characters has a row, with that character's confidence, so a guess
+is drawn as uncertain.
+
+**Groups** (owner, 2026-10-29). A group's point of view holds what is **commonly known among its members** ("the
+tower council knows who each member's apprentice is"). Each member's view includes the group's rows, at the
+group's confidence, unless the member has a row of their own, which wins. Nothing spreads beyond membership: Tran
+knowing something tells Tran's **friend** Clyde nothing. **"The party" is never a knower:** what the player
+characters know is always their own rows.
 
 **3. Words, worked out from the list, never stored as flags:**
 
@@ -942,8 +955,19 @@ Most "spoilers" are simply unknown to one or more player characters, not secret.
   about Shela"), the listener learns it at once, with no question to the DM. **Learning a statement means learning
   that the entries it names exist** (Tran now knows Shela exists). It never spreads further (Clyde learns nothing).
 - **Self-knowledge:** a character knows their own desires, plans and memories, never what is hidden even from them.
-- **Uploads:** a character's backstory is known to that character (#2935). A document marked "no spoilers" is known
-  to the player characters (#2959). Anything else is secret until the DM says who knows it.
+- **Uploads** (owner, 2026-10-29). **Before reading, the upload confirms who the player characters are**, and
+  any missing one can be added then, with the player's Discord ID. A character's backstory is known to that
+  character (#2935). For campaign lore the DM chooses one of three:
+  - **A. World general knowledge:** all of it is known to every player character.
+  - **B. Spoilers:** none of it is known to the player characters yet. They can discover it in play.
+  - **C. Smart guess:** the AI decides, passage by passage, what would be common knowledge in the world and what
+    the player characters wouldn't know, using what their backstories say about them. This is tested on generated
+    sample documents.
+
+  **In every case the AI also guesses what NPCs and groups know**, with a confidence ("the council knows who each
+  member's apprentice is"). The player characters know such a thing only when their backstory ties them to it
+  (they worked closely with the council). These are guesses, and every one is an assertion with a confidence that
+  the DM can change.
 - **The DM decides in the end:** "Who knows this?" lists player characters and NPCs and overrides any guess.
 
 **5. After the session, not during it.** One private summary for the DM lists the session's **new names**, **new
