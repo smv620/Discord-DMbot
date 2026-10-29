@@ -22,7 +22,9 @@ import {
   LINK_KINDS,
   edgeKind,
   kindAnchors,
+  NO_QUEST,
   orderedKinds,
+  questGroups,
   linkPairs,
   settle,
   startNodes,
@@ -76,6 +78,13 @@ function Shape({ kind, r }: { kind: string; r: number }) {
   }
 }
 
+/** The groups of names, in the order their areas and anchors are given: kinds people first, quests as the door
+ * sent them with "not part of a quest" last. */
+function areaKeys(groups: string[], mode: LayoutMode): string[] {
+  if (mode === "quests") return [...new Set(groups)].sort((a, b) => Number(a === NO_QUEST) - Number(b === NO_QUEST));
+  return orderedKinds(groups);
+}
+
 const short = (text: string, max = 18): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 const reducedMotion = (): boolean => {
@@ -109,6 +118,9 @@ export default function WebMap({
   children?: ComponentChildren;
 }) {
   const [mode, setMode] = useState<LayoutMode>(readMode);
+  // "Cluster by quest" needs the door's quests, which only a DM in Full View is sent: without them it is the spread layout.
+  const hasQuests = nodes.some((n) => n.quests !== undefined);
+  const modeNow: LayoutMode = mode === "quests" && !hasQuests ? "free" : mode;
   // Full screen (#2981): the map fills the window, for a campaign too big for the page's own space.
   const [full, setFull] = useState(false);
   const [view, setView] = useState<View>({ x: 0, y: 0, k: 1 });
@@ -196,7 +208,7 @@ export default function WebMap({
   const centerRef = useRef(center);
   centerRef.current = center;
   const modeRef = useRef(mode);
-  modeRef.current = mode;
+  modeRef.current = modeNow;
   const linksRef = useRef<[number, number][]>([]);
   const anchorsRef = useRef(new Map<string, { x: number; y: number }>());
 
@@ -209,6 +221,10 @@ export default function WebMap({
     setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
     const next = startNodes(nodes, edges, center, places.current);
+    if (modeNow === "quests") {
+      const by = questGroups(nodes);
+      for (const n of next) n.group = by.get(n.id) ?? NO_QUEST;
+    }
     for (const n of next) {
       const old = before.get(n.id);
       if (old && !n.pinned) {
@@ -218,12 +234,12 @@ export default function WebMap({
     }
     sim.current = next;
     linksRef.current = linkPairs(next, edges);
-    anchorsRef.current = kindAnchors(orderedKinds(next.filter((n) => n.id !== center).map((n) => n.group)));
+    anchorsRef.current = kindAnchors(areaKeys(next.filter((n) => n.id !== center).map((n) => n.group), modeNow));
     if (loop.current) cancelAnimationFrame(loop.current);
     loop.current = 0;
     if (reducedMotion() || next.length > MAX_SIM_NAMES) {
       // Less motion: place the names at once. A very big web keeps its rings and is only moved by hand.
-      settle(next, linksRef.current, next.findIndex((n) => n.id === center), mode, anchorsRef.current);
+      settle(next, linksRef.current, next.findIndex((n) => n.id === center), modeNow, anchorsRef.current);
       setExtent(extentOf(next));
       setFrame((f) => f + 1);
     } else {
@@ -238,7 +254,7 @@ export default function WebMap({
       loop.current = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sig, center, mode]);
+  }, [sig, center, modeNow]);
 
   // The window listeners are added once and removed on unmount, so a drag that ends off the map, or a
   // map that disappears mid-drag, leaves nothing behind. Handlers read the latest values through refs.
@@ -405,6 +421,8 @@ export default function WebMap({
           })),
         )
     : [];
+  // The name of each quest, from the nodes that say they are in it and from the quests drawn.
+  const questNames = new Map<string, string>(nodes.flatMap((n) => [...(n.quests ?? []).map((q): [string, string] => [q.id, q.name]), ...(kindStyle(n.kind) === "quest" ? [[n.id, n.name] as [string, string]] : [])]));
   void frame; // each frame of the settle re-draws the map from the names' new places
 
   return (
@@ -420,12 +438,17 @@ export default function WebMap({
           {words.resetView}
         </button>
         <div class="web-seg" role="group" aria-label={words.layoutLabel}>
-          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={mode === "free"} onClick={() => chooseMode("free")}>
+          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={modeNow === "free"} onClick={() => chooseMode("free")}>
             {words.layoutFree}
           </button>
-          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={mode === "groups"} onClick={() => chooseMode("groups")}>
+          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={modeNow === "groups"} onClick={() => chooseMode("groups")}>
             {words.layoutGroups}
           </button>
+          {hasQuests && (
+            <button type="button" class="button secondary" disabled={tooBig} aria-pressed={modeNow === "quests"} onClick={() => chooseMode("quests")}>
+              {words.layoutQuests}
+            </button>
+          )}
         </div>
         <button type="button" class="button secondary" aria-pressed={full} onClick={() => setFull((f) => !f)}>
           {full ? words.leaveFullScreen : words.fullScreen}
@@ -474,18 +497,19 @@ export default function WebMap({
         }}
       >
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-          {mode === "groups" &&
-            orderedKinds(sim.current.filter((n) => n.id !== center).map((n) => n.group)).map((k) => {
+          {modeNow !== "free" &&
+            areaKeys(sim.current.filter((n) => n.id !== center).map((n) => n.group), modeNow).map((k) => {
               const members = sim.current.filter((n) => n.group === k && n.id !== center);
               if (members.length === 0) return null;
               const cx = members.reduce((t, n) => t + n.x, 0) / members.length;
               const cy = members.reduce((t, n) => t + n.y, 0) / members.length;
               const r = members.reduce((t, n) => Math.max(t, Math.hypot(n.x - cx, n.y - cy) + 60), 64);
+              const quest = modeNow === "quests";
               return (
-                <g key={k} class={`web-area web-kind-${kindStyle(k)}`} aria-hidden="true">
+                <g key={k} class={`web-area web-kind-${quest ? (k === NO_QUEST ? "other" : "quest") : kindStyle(k)}`} aria-hidden="true">
                   <circle cx={cx} cy={cy} r={r} />
                   <text x={cx} y={cy - r - 6} text-anchor="middle" class="web-area-text">
-                    {kindWords(k)}
+                    {quest ? (k === NO_QUEST ? words.noQuest : (questNames.get(k) ?? k)) : kindWords(k)}
                   </text>
                 </g>
               );
@@ -601,6 +625,7 @@ export default function WebMap({
         <aside class="web-side panel stack" aria-labelledby="web-side-h" aria-live="polite">
           <h3 id="web-side-h">{detail.name}</h3>
           <p class="small muted">{kindWords(detail.kind)}</p>
+          {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>
           ) : (
