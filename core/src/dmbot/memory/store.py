@@ -3838,12 +3838,13 @@ class MemoryStore:
         campaign_id: str,
         kind: str,
         statement_id: str,
-        character_ids: Sequence[str],
+        character_ids: Sequence[str] | Mapping[str, float],
         *,
         source: str,
     ) -> Written[list[str]]:
         """Who knows an entry, a property, a connection or an other name (#2995, §9b): exactly
-        these characters, player characters or NPCs; none: only the DM. One change, so Undo takes
+        these characters (player characters, NPCs) or groups, each sure (a list) or with a
+        certainty from 0.0 to 1.0 (a mapping); none: only the DM. One change, so Undo takes
         it back. Only the DM."""
         async with self._write(guild_id, campaign_id, source) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
