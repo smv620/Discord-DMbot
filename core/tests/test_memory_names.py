@@ -2619,6 +2619,59 @@ class Review(NamesTest):
         self.assertIn("Is this a name in your game?", text)
         return kw["view"], it
 
+    async def scan_guess(self, name: str, kind: str) -> str:
+        written = await self.memory.add_entity(
+            GUILD,
+            self.campaign.id,
+            type=kind,
+            name=name,
+            source="scan",
+            description="Heard 3 times",
+        )
+        return written.value.id
+
+    def labels_of(self, view: Any) -> list[str]:
+        return [str(getattr(c, "label", "") or "") for c in view.children]
+
+    async def test_check_new_names_offers_add_all_for_the_scans_guessed_kinds(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        await self.suggest("Kazeth")  # no kind guessed: checked on its own card
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        self.assertIn("Nothing is added until you press a button", text)
+        self.assertIn("✅ Add all 2 places", self.labels_of(kw["view"]))
+        again = self.it()  # "Check them one by one" opens the cards, not this offer again
+        await kw["view"]._open(again)
+        self.assertIsInstance(again.response.sent[0][1]["view"], ui.SuggestionReview)
+
+    async def test_add_all_adds_the_guessed_places_as_places(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        await it.response.sent[0][1]["view"]._all("place", self.it())
+        known = await self.names()
+        self.assertEqual({known["Greyfen"].kind_key, known["Oakvale"].kind_key}, {"place"})
+
+    async def test_a_name_that_sounds_like_a_known_one_is_checked_on_its_own_card(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Hrothgar", "npc", [], [])
+        await self.scan_guess("Rothgar", "npc")
+        await self.scan_guess("Greyfen", "place")
+        await self.scan_guess("Oakvale", "place")
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        labels = self.labels_of(it.response.sent[0][1]["view"])
+        self.assertIn("✅ Add all 2 places", labels)
+        self.assertFalse(any("NPC" in label for label in labels))
+
+    async def test_one_guessed_name_alone_is_just_its_card(self) -> None:
+        await self.scan_guess("Greyfen", "place")
+        view, _ = await self.review()
+        self.assertIn("✅ Yes, a place", self.labels_of(view))
+        self.assertIn("✏️ Something else", self.labels_of(view))
+
     async def test_yes_asks_what_it_is_then_adds_it(self) -> None:
         await self.suggest("Hrothgar")
         view, _ = await self.review()
@@ -2896,7 +2949,7 @@ class Review(NamesTest):
         await self.spelled("Zorgul")
         it = self.it()
         await ui.start_review(it, self.campaign.id)
-        labels = [b.label for b in it.response.sent[0][1]["view"].children]
+        labels = [getattr(b, "label", "") or "" for b in it.response.sent[0][1]["view"].children]
         self.assertFalse(any("Fix spelling" in label for label in labels))
 
     async def test_a_near_match_comes_pre_filled_and_one_press_adds_it(self) -> None:

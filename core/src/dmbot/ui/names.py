@@ -13,6 +13,7 @@ import difflib
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -67,20 +68,20 @@ PC = "player_character"
 
 # What the DM can say a name is, in plain words. Keys are the memory rules' kinds.
 KINDS: dict[str, str] = {
-    "npc": "NPC (a character you play)",
+    "npc": "NPC (the DM plays them)",
     PC: "PC (a player's character)",
     "place": "A place",
-    "faction": "A group (guild, cult, family…)",
+    "faction": "A group (guild, cult)",
     "item": "An item",
-    "event": "Something that happened (event)",
+    "event": "An event",
     "clue": "A clue or secret",
-    "people": "A whole people or kind (tabaxi, elves)",
+    "people": "A people (elves…)",
     "quest": "A quest",
     "mystery": "A mystery",
     "hook": "A hook (a lead)",
     "goal": "A goal",
     "promise": "A promise",
-    "concept": "Something else",
+    "concept": "An idea or other thing",
 }
 KIND_SHORT: dict[str, str] = {
     "npc": "NPC",
@@ -986,9 +987,10 @@ def _heard(entity: Entity) -> str:
 
 
 def background_kind(entity: Entity) -> str:
-    """The kind a suggestion read from the DM's background was given (npc, place…), or "" when
-    it has none to confirm as (an idea, or not from a background)."""
-    if entity.source != BACKGROUND_SOURCE:  # marked by where it came from, not by its words
+    """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
+    confirm as (an idea, or nothing guessed). From the DM's background (#2167) or from the name
+    scan, whose AI guesses a kind from the sentence (#2937)."""
+    if entity.source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
         return ""
     if entity.type == "character":
         return "npc" if entity.role == "npc" else ""
@@ -1059,7 +1061,11 @@ def suggestion_text(
     elif match is not None:
         question = f"Sounds like **{_md(match.name)}**. The same, or new?"
     else:
-        question = "Is this a name in your game?"
+        question = (
+            "Is this a name in your game?"
+            if kind
+            else "Is this a name in your game? Pick what it is to add it, or press 🚫 Not a name."
+        )
     heard = (
         "" if fix_to else _heard(entity)
     )  # the note is the spelling: shown once, in the question
@@ -1094,7 +1100,9 @@ async def _review_match(memory: MemoryStore, campaign: Campaign, entity: Entity)
     return near_match_in(entity.name, (r for r in rows if r[0] != entity.id))
 
 
-async def start_review(interaction: discord.Interaction, campaign_id: str) -> None:
+async def start_review(
+    interaction: discord.Interaction, campaign_id: str, *, bulk: bool = True
+) -> None:
     memory = _memory(interaction)
     if memory is None:
         await _tell(interaction, NOT_AVAILABLE)
@@ -1102,11 +1110,11 @@ async def start_review(interaction: discord.Interaction, campaign_id: str) -> No
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
-    await _review(interaction, memory, campaign)
+    await _review(interaction, memory, campaign, bulk=bulk)
 
 
 async def _review(
-    interaction: discord.Interaction, memory: MemoryStore, campaign: Campaign
+    interaction: discord.Interaction, memory: MemoryStore, campaign: Campaign, *, bulk: bool = True
 ) -> None:
     waiting = await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED])
     if not waiting:
@@ -1116,9 +1124,48 @@ async def _review(
         await offer_ready(interaction, campaign.id)  # a backstory's connections, if ready
         return
     waiting.sort(key=lambda e: (e.created_at, e.name))
+    if bulk and await _offer_add_all(interaction, memory, campaign, waiting):
+        return
     view = SuggestionReview(campaign.id, [e.id for e in waiting])
     text = await view.prepare(interaction, campaign, memory, waiting[0])
     await _send(interaction, text, view)
+
+
+async def _offer_add_all(
+    interaction: discord.Interaction,
+    memory: MemoryStore,
+    campaign: Campaign,
+    waiting: Sequence[Entity],
+) -> bool:
+    """The lore review's "✅ Add all 4 places" for the name scan's suggestions that were given a
+    kind (#2937), opened by the same persistent "Check new names" button, so it works after a
+    restart. Only names with nothing to look at first: one that sounds like a known name, or that
+    someone spelled out, is checked on its own card. True when it was offered (its "Check them one
+    by one" opens the cards); False when there is nothing to add in bulk."""
+    from dmbot.ui.name_background import BulkConfirm  # (it imports this module)
+
+    by_kind: dict[str, list[str]] = {}
+    for entity in waiting:
+        kind = background_kind(entity)
+        if (
+            not kind
+            or entity.source != "scan"
+            or entity.description.startswith(SPELLED_OUT)
+            or spelled_fix(entity)
+            or await _review_match(memory, campaign, entity) is not None
+        ):
+            continue
+        by_kind.setdefault(kind, []).append(entity.id)
+    if not any(len(ids) > 1 for ids in by_kind.values()):  # one name is one press on its card
+        return False
+    count = sum(len(ids) for ids in by_kind.values())
+    await _send(
+        interaction,
+        f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of them "
+        "are. Nothing is added until you press a button.",
+        BulkConfirm(campaign.id, by_kind),
+    )
+    return True
 
 
 class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
@@ -1200,6 +1247,7 @@ class SuggestionReview(_Menu):
         self.later = 0  # left for another time this round
         self.match: Match | None = None  # the known name the current one sounds like
         self.known_kind = ""  # the kind a name from the DM's background already has (#2167)
+        self.name = ""  # the current suggestion's name, for the picker on its card (#2937)
         self.spelled = ""  # the spelling, when the current one was spelled out at the table (#2168)
         self.fix_to = ""  # how someone spelled this pending suggestion, when it differs (#2168)
         self.also: list[str] = []  # names heard with the current one
@@ -1223,6 +1271,7 @@ class SuggestionReview(_Menu):
         self.match = await _review_match(memory, campaign, entity)
         # A name read from the DM's background already has its kind; "Yes" confirms it as that.
         self.known_kind = background_kind(entity)
+        self.name = entity.name
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         self.fix_to = spelled_fix(entity)
         own = name_key(entity.name)
@@ -1341,10 +1390,26 @@ class SuggestionReview(_Menu):
                 (self._same, "🔗 Same as a known name…", discord.ButtonStyle.secondary),
             ]
         else:
-            buttons = [
-                (self._yes, "✅ Yes, add it", discord.ButtonStyle.success),
-                (self._same, "🔗 Same as a known name…", discord.ButtonStyle.primary),
-            ]
+            # No kind was guessed: the picker is on the card itself, so one press still adds it
+            # (#2937). "Same as a known name" waits beside the "not now" answers below.
+            buttons = []
+            self.kind = _Select(
+                self._kind_picked,
+                placeholder=logic.shorten(f"What is {self.name or 'it'}? Pick to add it", 150),
+                options=[
+                    discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
+                ],
+                row=0,
+            )
+            self.add_item(self.kind)
+            self.add_item(
+                _Button(
+                    self._same,
+                    label="🔗 Same as a known name…",
+                    style=discord.ButtonStyle.primary,
+                    row=1,
+                )
+            )
         for handler, label, style in buttons:
             self.add_item(_Button(handler, label=label, style=style, row=0))
         # The two "not now" answers on their own row, so a phone never cuts the labels.
@@ -1525,7 +1590,9 @@ class SuggestionReview(_Menu):
         known = await memory.entities(campaign.guild_id, campaign.id, statuses=[CONFIRMED])
         if not known:
             await _tell(
-                interaction, "DMbot doesn't know any names yet. Press ✅ Yes, add it instead."
+                interaction,
+                "DMbot doesn't know any names yet, so there's nothing to match. "
+                "Add this one as a new name instead.",
             )
             return
         self.clear_items()

@@ -1641,7 +1641,7 @@ class BulkConfirm(_Menu):
     async def _open(self, interaction: discord.Interaction) -> None:
         self.stop()
         await interaction.response.edit_message(view=None)
-        await start_review(interaction, self.campaign_id)
+        await start_review(interaction, self.campaign_id, bulk=False)
 
     async def _connections(self, interaction: discord.Interaction) -> None:
         await ask_connections(interaction, self.campaign_id)
