@@ -2717,3 +2717,8 @@ DEPLOY 6f29673f (2026-10-29, dev1, owner's OK through the prompt "Deploy now"; S
 - Live: 270 migration rows, last 0274_web_sheet_typed_document. Bot connected to 2 servers, ears connected, 0 errors since start. Features line: handover email off, who is he off, recaps on, structured split and beats on, meaning search off, plot checks off, test recordings off. Website restore switch (DMBOT_WEB_RESTORE) stays 0.
 - web-api healthy. Not yet checked: /dmbot in the test server (owner), the lore re-read on #2757, and the website routes behind the off switches.
 - The bot logged two warnings at start-up: .env is missing 13 settings that .env.example has (optional, see the start-up warning), and .env has both AI_MODEL and AI_MODEL_FAST (only AI_MODEL_FAST is used). Both are for the owner to tidy; no change made.
+
+WEBSITE DELETE TEST (2026-10-29, dev1, the owner's run on dev.getdmbot.com, #2838). Counts only.
+- The owner deleted test campaigns from the website ("Delete this campaign", backup taken first, name typed). The owner reports it worked.
+- Database check after the delete: the three recent campaigns from the session (the lore test campaign included) are gone; the campaign table holds 1 row. The owner confirmed the summary.
+- Not yet reported: the backup file count, the restored campaign's session, transcript-line and name counts, and the unreachable-server check (steps 1 and 3 of #2838).
