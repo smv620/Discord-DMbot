@@ -1407,8 +1407,11 @@ so the docs always show names the way Discord does. For the campaign
   story graph, with the same players' view. DMbot stops making both channels and, at each campaign's next
   start, deletes its own (stored id and DMbot's name both match; a renamed one is left alone), then forgets
   the ids. **NPC pages and My notes stay**: `npc_pages` keeps being written from `RecallService.roster` by
-  its own pass, so no NPC is marked "no longer listed" because the channel went, and the story graph links to
-  each NPC's page. Neither channel was ever announced (`RULES_CHANNEL_LIVE`, `NPCS_CHANNEL_LIVE` off). The two
+  its own pass (`dm_screen/npc_pages.refresh`; at most one pass a campaign a minute, at every `/dmbot start` and once
+  for every campaign when the bot starts), so no NPC is marked "no longer listed" because the channel went, and the story
+  graph links to each NPC's page. The clean-up lives in `dm_screen/retired_channels.py`; a failed delete is counted and never
+  stops a start, the audit-log reason is "DMbot no longer uses this channel", and the two id columns and
+  `npcs_channel_messages` stay until every server has run it (#2892), then a migration drops them. Neither channel was ever announced (`RULES_CHANNEL_LIVE`, `NPCS_CHANNEL_LIVE` off). The two
   paragraphs below record what was built and are history.
 - **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
   is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
@@ -1451,21 +1454,13 @@ so the docs always show names the way Discord does. For the campaign
   Organized mode is a separate
   decision and is not changed here.
 - **Every NPC opens its own page, with private notes** (owner, 2026-10-21; details Supervisor's).
-  - **In Discord:** each message in the NPC list gets one small link button, **📖 Open**. It opens
-    that NPC's page on the website. It is a plain link button, so no click is handled by the bot,
-    nothing breaks after a restart, and the message text is unchanged. The link carries the entry's
-    reference in its address, not in the text.
-  - **The name is the button** (owner, 2026-10-22, replacing 📖 Open, which looked sloppy repeated down the
-    list): each NPC's message is the button itself, labelled with the kind's icon, the name and the kind
-    ("👤 Belleros · NPC" style; at most 80 characters, cut with "…"). Its other lines ("Also called: …") sit
-    beside it, as text with the button on the same line, using Discord's newer message layout (a section
-    with a button). With no other lines the message is just the button. With no website address the message
-    stays as it was, the name in bold and no button. Existing messages are replaced once, because a message
-    can't switch to the newer layout by an edit.
+  - **The way in** was a link button on each message of the NPC list in Discord (2026-10-21, then the
+    name as the button, 2026-10-22). The list is gone (#2874): the website's story graph links each NPC
+    to its page instead (#2875, #2887).
   - **Who sees the page:** anyone in the campaign's Discord server, signed in on the website with
     Discord, the same people who may read the transcripts. Someone not in that server gets "This
     page is for the people in that Discord server."
-  - **What the page shows** is the NPC list's own players' view, from `RecallService.roster` with
+  - **What the page shows** is the players' view of the NPCs, from `RecallService.roster` with
     the same rules, not a second copy: the name, what it is, its other names, its groups and close
     ties. It also links the **posted** recaps that mention it, which the table has already seen.
     Never a secret name, a clue, a condition, a thread, the DM's note or anything from the
@@ -1481,8 +1476,8 @@ so the docs always show names the way Discord does. For the campaign
       note is kept for 30 days in "Notes on names no longer listed", then deleted.
     - Notes are never logged, are kept to one campaign and one server, and are protected by
       row-level security.
-  - **Plans:** the same as the NPC list (where the NPC list exists, its pages do too).
-  - **Words:** "📖 Open" on the button. On the page: "My notes: only you can see these." The privacy
+  - **Plans:** unchanged by removing the NPC list (the pages kept the rule the list had).
+  - **Words:** On the page: "My notes: only you can see these." The privacy
     page says what My notes keeps and who sees it.
 - Server owners and admins always see every channel (see above).
 

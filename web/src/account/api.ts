@@ -1314,6 +1314,8 @@ export interface WebNode {
   /** False: the story hasn't revealed it to the players yet (#2405). Only in a view that shows
    * unrevealed things: a DM's full view, or a player's peek. */
   revealed?: boolean;
+  /** True when this name has an NPC page (#2887; core #2893). Absent from an older API. */
+  page?: boolean;
 }
 
 /** How sure the party is of a connection it only suspects (#2405, docs/STORY_MEMORY.md). */
@@ -1381,6 +1383,8 @@ export interface WebGroup {
   center: string;
   centerName: string;
   size: number;
+  /** The centre name has a page. */
+  page?: boolean;
 }
 
 /** Every name the person may see, with the ones that have no connection yet and the groups of linked

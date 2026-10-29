@@ -31,7 +31,6 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.definition_content import valid_definitions
 from dmbot.rules import pack_content, set_diff
-from dmbot.rules.changes import ChangeHook, notifies
 from dmbot.rules.house import (
     HOUSE_RULES_MAX,
     RULE_MAX,
@@ -316,8 +315,6 @@ class RuleSetStore:
         self._db = db
         self._clock = clock
         self._wrong: dict[tuple[int, int], deque[float]] = {}  # (server, person) -> guesses
-        # Told after a change to what a campaign follows or merged in (the rules channel, #1752).
-        self.on_change: ChangeHook | None = None
 
     def _now(self) -> int:
         return int(self._clock())
@@ -564,7 +561,6 @@ class RuleSetStore:
         async with self._db.guild(guild_id) as conn:
             return await _followed(conn, guild_id, campaign_id)
 
-    @notifies
     async def follow(self, guild_id: int, campaign_id: str, user_id: int, offer: Offer) -> Follow:
         """Follow the set in `offer` (from `shared_here` or `by_code`, which the DM has just
         confirmed): the campaign takes its own copy. The set is read again here, in the same
@@ -611,7 +607,6 @@ class RuleSetStore:
             raise RuleSetError(NO_SUCH_SET)
         return fresh
 
-    @notifies
     async def unfollow(self, guild_id: int, campaign_id: str, user_id: int) -> Follow:
         """Stop following the house-rules set. Returns what was removed, so the caller's Undo
         can `restore` it."""
@@ -629,7 +624,6 @@ class RuleSetStore:
             )
         return mine[0]
 
-    @notifies
     async def restore(self, guild_id: int, campaign_id: str, user_id: int, follow: Follow) -> None:
         """Undo an unfollow: the copy comes back as it was (unless the campaign follows
         another set by now)."""
@@ -1106,7 +1100,6 @@ class RuleSetStore:
             )
             return int(cur.rowcount)
 
-    @notifies
     async def take_update(
         self,
         guild_id: int,
@@ -1272,7 +1265,6 @@ class RuleSetStore:
                 raise RuleSetError(NOTHING_TO_UNDO)
             return mine[0]
 
-    @notifies
     async def undo_take(self, guild_id: int, campaign_id: str, user_id: int, taken: Taken) -> int:
         """Put back what `take_update` did: the old copy returns (and, after a merge, the
         rules it added are removed; their numbers are not used again). Returns how many

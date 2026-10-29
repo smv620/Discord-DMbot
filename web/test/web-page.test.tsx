@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BIG_WEB } from "../src/content/web-words";
+import { BIG_WEB, webPage as w } from "../src/content/web-words";
 import type { WebGraph } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web, { webRefFromPath } from "../src/account/Web";
@@ -297,5 +297,43 @@ describe("how many more connections a line has", () => {
     expect(screen.getByText(/Mira owes Garrick/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/Hidden Heir/);
     expect(document.body.textContent).not.toMatch(/fears|hunts/);
+  });
+});
+
+describe("the Open its page link", () => {
+  it("a name marked page true has the Open its page link, pointing at the NPC page address", async () => {
+    await open();
+    const links = screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) });
+    expect(links.length).toBeGreaterThan(0);
+    expect(links[0]!.getAttribute("href")).toMatch(/^\/account\/npc\/100\.cmp1\/[^/]+$/);
+  });
+
+  it("a name without page, or with page false, has no link", async () => {
+    const api = mockApi("table");
+    const real = api.webGraph!.bind(api);
+    api.webGraph = async (...args) => {
+      const got = await real(...args);
+      return { ...got, nodes: got.nodes.map((n) => ({ ...n, page: false })) };
+    };
+    const overview = api.webOverview!.bind(api);
+    api.webOverview = async (...args) => {
+      const got = await overview(...args);
+      return {
+        ...got,
+        tray: got.tray.map((n) => ({ ...n, page: false })),
+        groups: got.groups.map((g) => ({ ...g, page: false })),
+      };
+    };
+    render(<Web api={api} path={at(".web-lonely")} />);
+    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByRole("region", { name: new RegExp(w.trayHeading) });
+    expect(screen.queryAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) })).toHaveLength(0);
+    expect(screen.queryByText(w.openItsPage)).toBeNull();
+  });
+
+  it("the link's words appear once per link and nowhere else on the page", async () => {
+    await open();
+    const shown = (document.body.textContent ?? "").split(w.openItsPage).length - 1;
+    expect(shown).toBe(screen.getAllByRole("link", { name: (label: string) => label.startsWith(w.openItsPage) }).length);
   });
 });

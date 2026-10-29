@@ -824,17 +824,14 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
         self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
         self.assertNotIn("nothing was restored", last)
 
-    async def test_replacing_tells_the_rules_channel_and_a_campaign_error_is_shown(self) -> None:
-        changed = MagicMock()
+    async def test_replacing_says_everything_is_there_and_a_campaign_error_is_shown(self) -> None:
         _e, last = await self.run_restore(
             replace_id="c" * 32,
-            _rules_archive_changed=changed,
             campaigns=SimpleNamespace(
                 import_backup=AsyncMock(return_value=SimpleNamespace(id="c", name="Frostmaiden")),
                 get=AsyncMock(return_value=SimpleNamespace(name="Old")),
             ),
         )
-        changed.assert_called_once()
         self.assertIn("now holds everything", last)
         from dmbot.campaigns import CampaignError
 
@@ -931,14 +928,12 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ask whoever runs DMbot", stalled[-1])
         self.assertIn("waits until the restore ends", stalled[-1])
 
-    async def test_one_tidy_up_step_failing_does_not_skip_the_other(self) -> None:
-        changed = MagicMock()
+    async def test_a_failing_tidy_up_step_is_told_after_the_copy_landed(self) -> None:
         memory = SimpleNamespace(analyze=AsyncMock(side_effect=RuntimeError("x")))
         with self.assertLogs("dmbot.ui.dmbot_commands", "ERROR"):
             _e, last = await self.run_restore(
                 replace_id="c" * 32,
                 memory=memory,
-                _rules_archive_changed=changed,
                 campaigns=SimpleNamespace(
                     import_backup=AsyncMock(
                         return_value=SimpleNamespace(id="c", name="Frostmaiden")
@@ -946,7 +941,6 @@ class RestoreShowsItsProgress(unittest.IsolatedAsyncioTestCase):
                     get=AsyncMock(return_value=SimpleNamespace(name="Old")),
                 ),
             )
-        changed.assert_called_once()
         self.assertIn(cmds.RESTORED_TIDY_FAILED.strip(), last)
 
     async def test_a_cancel_after_the_copy_is_in_still_tells_the_person(self) -> None:

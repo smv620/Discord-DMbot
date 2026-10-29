@@ -770,25 +770,23 @@ class TheBotsOwnSteps(Restoring):
         self.assertFalse(await DMBot.restorer_in_server(me, GUILD, 3))  # type: ignore[arg-type]
         self.assertFalse(await DMBot.restorer_in_server(me, 999, 1))  # type: ignore[arg-type]
 
-    async def test_the_planner_refresh_and_the_rules_channel_are_done_for_a_replace_only(
+    async def test_the_planner_refresh_is_done_always_and_the_npc_pages_view_for_a_replace_only(
         self,
     ) -> None:
         from unittest.mock import AsyncMock, MagicMock
 
         from dmbot.bot import DMBot
 
-        me = SimpleNamespace(
-            memory=SimpleNamespace(analyze=AsyncMock()), _rules_archive_changed=MagicMock()
-        )
+        me = SimpleNamespace(memory=SimpleNamespace(analyze=AsyncMock()), _npcs_changed=MagicMock())
         await DMBot.after_restore(me, GUILD, "c1", True)  # type: ignore[arg-type]
         me.memory.analyze.assert_awaited_once_with(GUILD)
-        me._rules_archive_changed.assert_called_once_with(GUILD, "c1")
+        me._npcs_changed.assert_called_once_with("c1")
         me2 = SimpleNamespace(
-            memory=SimpleNamespace(analyze=AsyncMock()), _rules_archive_changed=MagicMock()
+            memory=SimpleNamespace(analyze=AsyncMock()), _npcs_changed=MagicMock()
         )
         await DMBot.after_restore(me2, GUILD, "c2", False)  # type: ignore[arg-type]
         me2.memory.analyze.assert_awaited_once_with(GUILD)
-        me2._rules_archive_changed.assert_not_called()
+        me2._npcs_changed.assert_not_called()
 
     async def test_a_discord_error_is_not_not_in_the_server(self) -> None:
         import discord
