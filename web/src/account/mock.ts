@@ -866,7 +866,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       nodes,
       edges,
       truncated: false,
-      maxHops: 6,
+      maxHops: 8,
       canEdit: dm && all,
       view: all ? "full" : "players",
       ...(dm ? {} : { visibility, canPeek: visibility !== "private" }),

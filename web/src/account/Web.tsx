@@ -343,6 +343,13 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const nameOf = (id: string): string => nodes.find((n) => n.id === id)?.name ?? id;
   const { own, further } = listLines(edges, center, nameOf);
   const maxHops = graph.maxHops;
+  // The − and + beside the steps box: one step more or fewer, kept between 1 and the most the API allows.
+  const stepHops = (by: number): void => {
+    const next = Math.min(maxHops, Math.max(1, hops + by));
+    if (next === hops) return;
+    setHopsText(String(next));
+    void load(center, next);
+  };
   const chosen = line ? (edges.find((e) => e.a === line.a && e.b === line.b || e.a === line.b && e.b === line.a) ?? null) : null;
 
   return (
@@ -393,9 +400,20 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
 
       <div class="web-tools-form">
         <CentrePicker api={api} refId={ref} current={center ? nameOf(center) : ""} onPick={(id) => void load(id, hops)} />
-        <label class="field">
-          {words.hopsLabel}
+        <div class="field">
+          <label for="web-hops">{words.hopsLabel}</label>
+          <div class="row web-spinner">
+            <button
+              type="button"
+              class="button secondary"
+              aria-label={words.hopsLess}
+              disabled={hops <= 1}
+              onClick={() => stepHops(-1)}
+            >
+              −
+            </button>
           <input
+            id="web-hops"
             type="number"
             inputMode="numeric"
             min={1}
@@ -410,7 +428,17 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
             }}
             onBlur={() => setHopsText(String(hops))}
           />
-        </label>
+            <button
+              type="button"
+              class="button secondary"
+              aria-label={words.hopsMore}
+              disabled={hops >= maxHops}
+              onClick={() => stepHops(1)}
+            >
+              +
+            </button>
+          </div>
+        </div>
         <p id="web-hops-hint" class="small muted">
           {words.hopsHint(maxHops)}
         </p>
@@ -455,9 +483,11 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               {words.skipMap}
             </a>
             <WebMap
+              key={ref}
               nodes={nodes}
               edges={edges}
               center={center}
+              refId={ref}
               selected={line}
               onCenter={(id) => void load(id, hops)}
               onLine={(a, b) => setLine({ a, b })}

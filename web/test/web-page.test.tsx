@@ -288,7 +288,11 @@ describe("how many more connections a line has", () => {
       expect(screen.getByText(new RegExp(w))).toBeTruthy();
     }
     expect(document.body.textContent).not.toContain("↔");
-    expect(document.querySelector(".web-edge-text")?.textContent).toContain("(+3)");
+    // At rest a line with several connections says how many; hovering a name shows that name's lines in words.
+    await waitFor(() => expect(document.querySelector(".web-edge-text")?.textContent ?? "").toContain("4 connections"));
+    const mira = [...document.querySelectorAll(".web-node")].find((n) => n.textContent?.includes("Mira"))!;
+    fireEvent.pointerEnter(mira);
+    await waitFor(() => expect(document.querySelector(".web-edge-text")?.textContent ?? "").toContain("(+3)"));
   });
 
   it("recounts for someone who is not a DM, and drops a secret name", async () => {
