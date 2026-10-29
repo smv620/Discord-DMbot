@@ -77,6 +77,18 @@ export const makeWords = {
     checking: "Checking the recap",
     fetching: "Reading your Google Doc",
     saving: "Saving the recap",
+    // What the API sends while a recap is made on the website (core `recaps/progress.py`, #2636): every
+    // code starts "recap_". The unprefixed words above are the older names and stay as they were.
+    recap_names: "Finding the names in what was said",
+    recap_reading: "Reading what was said",
+    recap_beats: "Working out what happened",
+    recap_writing: "Writing the recap",
+    recap_checking: "Checking the recap",
+    recap_check_waiting: "Written, waiting to be checked",
+    recap_final_read: "Giving it a last read",
+    recap_finishing: "Tidying up",
+    recap_ready: "Ready to read",
+    recap_failed: "Couldn't be made",
   } as Record<string, string>,
   fileTooBig: "That file is over 1 MB. Choose a smaller one.",
   doneNote: "The recap is ready.",

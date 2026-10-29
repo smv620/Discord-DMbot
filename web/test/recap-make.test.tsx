@@ -5,6 +5,7 @@
 // the switch on. Make, make again with the one question, add one someone wrote (the right-to-use box only
 // when the API asks), the shared wait panel, every code in plain words, and nothing at all for a player.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { stageWords, workWords } from "../src/content/work-progress";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type ApiErrorKind } from "../src/account/api";
@@ -522,5 +523,44 @@ describe("a recap that is already being made", () => {
     expect(await screen.findByText(w.failedReason["recap_failed"] as string)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.close }));
     expect(await screen.findByRole("button", { name: w.again })).toBeTruthy();
+  });
+});
+
+describe("the words for every stage the API sends while a recap is made (#2969)", () => {
+  // The codes in core's `recaps/progress.py`: all start "recap_", so each needs its own plain words.
+  const codes = ["recap_names", "recap_reading", "recap_beats", "recap_writing", "recap_checking", "recap_check_waiting", "recap_final_read", "recap_finishing", "recap_ready", "recap_failed"];
+
+  it("has words for each code, not the general fallback", () => {
+    for (const code of codes) expect(stageWords(w.stage, code), code).not.toBe(workWords.unknownStage);
+    expect(stageWords(w.stage, "recap_final_read")).toBe("Giving it a last read");
+  });
+
+  it("shows the stage and its count on the page while a recap is read in parts", async () => {
+    const api = mockApi("table");
+    const now = Math.floor(Date.now() / 1000);
+    api.pastSessions = async () => ({
+      sessions: [
+        {
+          ref: "100.cmp1.1790000000",
+          sessionAt: 1790000000,
+          sessionNumber: 3,
+          sessionSeconds: 7200,
+          hasTranscript: true,
+          held: false,
+          recap: { state: "reading", status: "draft", working: true, approved: false, writtenBy: null, canMakeAgain: true },
+        },
+      ],
+    });
+    api.recap = async (ref) => ({
+      ...(await mockApi("table").recap!("200000000000000001.cmp1.1791000000")),
+      ref,
+      working: true,
+      state: "working",
+      error: "",
+      progress: { stage: "recap_reading", startedAt: now, updatedAt: now, serverNow: now, state: "running", done: 2, total: 5, unit: "parts" },
+    });
+    render(<RecapMake api={api} campaignRef="100.cmp1" />);
+    expect(await screen.findByText("Reading what was said")).toBeTruthy();
+    expect(screen.getByText("2 of 5 parts")).toBeTruthy();
   });
 });
