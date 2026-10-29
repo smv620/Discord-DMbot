@@ -154,13 +154,22 @@ def changed(interaction: discord.Interaction, campaign: Campaign) -> None:
         cache.mark_stale(campaign.guild_id, campaign.id)
 
 
+# The server of a campaign whose cards were opened from a private message (#2976): a private message
+# has no server, so the card's buttons would all answer "Use this in a server". Only the campaign's
+# own DM (checked by `can_run` when the card is opened) puts a campaign here, and every press is
+# checked again below. Lost on a restart: a card from before it asks to be opened again.
+_PRIVATE_SERVERS: dict[str, int] = {}
+
+
 async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> Campaign | None:
     """The campaign, if this person may manage its names; tells them otherwise."""
-    guild = interaction.guild
-    if guild is None:
+    guild_id = interaction.guild.id if interaction.guild is not None else None
+    if guild_id is None:
+        guild_id = _PRIVATE_SERVERS.get(campaign_id)
+    if guild_id is None:
         await _tell(interaction, NOT_IN_SERVER)
         return None
-    campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
+    campaign = await _bot(interaction).campaigns.get(guild_id, campaign_id)
     if campaign is None or not logic.can_run(
         campaign, interaction.user.id, _is_manager(interaction)
     ):
@@ -1896,6 +1905,8 @@ class RecapNamesButton(
         if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
             await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
             return
+        if interaction.guild is None:
+            _PRIVATE_SERVERS[campaign.id] = campaign.guild_id  # so the cards' buttons work here
         await _review(interaction, memory, campaign)
 
 
