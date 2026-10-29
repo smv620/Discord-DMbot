@@ -26,6 +26,7 @@ const lastGraph = (api: ReturnType<typeof mockApi>) => calls(api, "webGraph").po
 describe("a DM's Full View and Players View", () => {
   it("starts in Full View: secrets, and what isn't revealed yet shown dimmed and said", async () => {
     await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     expect((screen.getByLabelText(w.fullView) as HTMLInputElement).checked).toBe(true);
     expect(notRevealed().length).toBeGreaterThan(0);
     expect(screen.getByText(w.legendNotRevealed)).toBeTruthy();
@@ -55,6 +56,7 @@ describe("a DM's Full View and Players View", () => {
 
   it("reveals a name to the players, then reads the web again", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const before = notRevealed().length;
     const button = screen.getAllByRole("button", { name: /^Reveal .* to the players$/ })[0] as HTMLElement;
     fireEvent.click(button);
@@ -66,6 +68,7 @@ describe("a DM's Full View and Players View", () => {
 
   it("says why a name could not be revealed, and keeps the button for another try", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     api.webReveal = async () => {
       throw new ApiError("not-allowed");
     };
@@ -77,6 +80,7 @@ describe("a DM's Full View and Players View", () => {
 
   it("greys a Reveal button while the bot is still working, so it can't be pressed twice", async () => {
     const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: "Expand all" }));
     let finish: () => void = () => {};
     let asked = 0;
     api.webReveal = () => {
