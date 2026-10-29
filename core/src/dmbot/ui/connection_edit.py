@@ -565,9 +565,13 @@ class WhoKnows(_Menu):
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
         c = found.campaign
-        # from what the page showed: a double press, or the answer it is already at, writes nothing
-        if who == self.now and (
-            who != link_edits.SOME_CHARACTERS or sorted(self.picked) == self.opened_with
+        # Read now, not from the page: a double press, a stale page or the answer it is already
+        # at writes nothing (and never turns a hidden connection back into a shown one).
+        live = (await found.memory.connection_knowers(c.guild_id, c.id, [found.relation.id])).get(
+            found.relation.id, []
+        )
+        if who == link_edits.who_knows_now(found.relation, live) and (
+            who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
         ):
             await _tell(
                 interaction, "Already like that. Nothing changed. Press Back to see the card."

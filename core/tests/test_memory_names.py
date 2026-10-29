@@ -966,6 +966,13 @@ class NameCards(NamesTest):
         )
         return brother, stranger
 
+    async def who_view(self, entity_id: str, relation_id: str, who: int = DM) -> Any:
+        """The "Who knows this?" page of one connection, as the DM (or another) opens it."""
+        page = await self.page_of(entity_id, relation_id, who)
+        it = self.it(who)
+        await page._who(it)
+        return it.response.edited[0][1]
+
     async def test_the_secret_toggle_is_for_dms_only_and_flips(self) -> None:
         from dmbot.ui import name_card
 
@@ -989,17 +996,17 @@ class NameCards(NamesTest):
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(rel.secret)
-        view = await self.page_of(corin.id, rel.id)
+        view = await self.who_view(corin.id, rel.id)
         it = self.it()
-        await view._flip(it)
+        await view._only_me(it)
         self.assertIn("Hidden from players", it.response.edited[0][0])
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
         self.assertTrue(now.secret)
-        view = await self.page_of(corin.id, rel.id)
+        view = await self.who_view(corin.id, rel.id)
         again = self.it()
-        await view._flip(again)
+        await view._everyone(again)
         self.assertIn("Players can see it now", again.response.edited[0][0])
         (shown,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(shown.secret)
@@ -1010,16 +1017,16 @@ class NameCards(NamesTest):
         corin, _ = await self.two_names()
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
-        view = await self.page_of(corin.id, rel.id)  # one page, pressed twice (a double tap)
+        view = await self.who_view(corin.id, rel.id)  # one page, pressed twice (a double tap)
         for _ in range(2):
             it = self.it()
-            await view._flip(it)
+            await view._only_me(it)
         (now,) = await self.memory.relations(
             GUILD, self.campaign.id, entity_id=corin.id, include_secret=True
         )
         self.assertTrue(now.secret)
         self.assertIn(
-            "already like that",
+            "Already like that",
             it.response.sent[0][0] if it.response.sent else str(it.followup.send.await_args),
         )
 
@@ -1031,8 +1038,8 @@ class NameCards(NamesTest):
         await card._same(self.it())
         self.assertTrue(card.is_finished())
 
-    async def test_the_page_offers_the_flip_in_the_words_of_what_it_will_do(self) -> None:
-        from dmbot.ui import name_card
+    async def test_the_page_offers_who_knows_and_says_where_it_stands(self) -> None:
+        from dmbot.ui import connection_edit, name_card
 
         corin, _ = await self.two_names()
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
@@ -1041,12 +1048,19 @@ class NameCards(NamesTest):
         def labels(view: Any) -> list[str]:
             return [getattr(c, "label", "") for c in view.children]
 
-        self.assertIn("🤫 Hide from players", labels(await self.page_of(corin.id, rel.id)))
+        self.assertIn(connection_edit.WHO_BUTTON, labels(await self.page_of(corin.id, rel.id)))
+        page = await self.page_of(corin.id, rel.id)
+        it = self.it()
+        await page._who(it)
+        self.assertIn("Players can see this connection.", it.response.edited[0][0])
         await self.memory.update_relation(
             GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
         )
         self.fresh()
-        self.assertIn("👁️ Show to players", labels(await self.page_of(corin.id, rel.id)))
+        page = await self.page_of(corin.id, rel.id)
+        again = self.it()
+        await page._who(again)
+        self.assertIn("Only the DM can see it.", again.response.edited[0][0])
 
     async def test_a_secret_connection_moves_a_name_up_for_a_dm_and_not_for_anyone_else(
         self,
@@ -1100,7 +1114,7 @@ class NameCards(NamesTest):
         )  # past the last page: the last one
         self.assertGreaterEqual(len(later.response.edited[0][1].pick.options), 1)
 
-    async def test_only_a_dm_is_offered_the_flip_and_a_manager_pressing_it_changes_nothing(
+    async def test_only_a_dm_is_offered_who_knows_and_a_manager_pressing_it_changes_nothing(
         self,
     ) -> None:
         from dmbot.ui import name_card
@@ -1109,9 +1123,13 @@ class NameCards(NamesTest):
         await name_card.connect(self.it(), self.campaign.id, self.bell.id, "kin_of", corin.id)
         (rel,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         plain = await self.page_of(corin.id, rel.id, MANAGER)
-        self.assertNotIn("🤫 Hide from players", [getattr(c, "label", "") for c in plain.children])
-        view = await self.page_of(corin.id, rel.id)  # the DM's page, pressed by a manager
-        await view._flip(self.it(MANAGER))
+        from dmbot.ui import connection_edit
+
+        self.assertNotIn(
+            connection_edit.WHO_BUTTON, [getattr(c, "label", "") for c in plain.children]
+        )
+        view = await self.who_view(corin.id, rel.id)  # the DM's page, pressed by a manager
+        await view._only_me(self.it(MANAGER))
         (same,) = await self.memory.relations(GUILD, self.campaign.id, entity_id=corin.id)
         self.assertFalse(same.secret)
 
