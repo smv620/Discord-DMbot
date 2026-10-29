@@ -1,0 +1,70 @@
+/* The relationship web map's free layout (#2934). Kept apart from account.css so only the web page
+   loads it: the other account pages are close to their weight budget. */
+/* The map's free layout (#2934): names fade when the pointer is on another name, a moved name shows a dot,
+   and the layout switch sits in the tools row. The fade is the drawing only: the words stay readable in the list. */
+.account .web-faded {
+  opacity: 0.15;
+}
+
+.account .web-edge,
+.account .web-node {
+  transition: opacity 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account .web-edge,
+  .account .web-node {
+    transition: none;
+  }
+}
+
+.account .web-node {
+  touch-action: none;
+}
+
+.account .web-node:active {
+  cursor: grabbing;
+}
+
+.account .web-node:focus-visible,
+.account .web-hit:focus-visible {
+  outline: 3px solid var(--accent, currentColor);
+  outline-offset: 2px;
+}
+
+.account .web-pin {
+  fill: var(--accent, currentColor);
+  stroke: none;
+}
+
+.account .web-edge-text {
+  stroke: var(--surface, transparent);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.account .web-area circle {
+  fill: var(--accent, currentColor);
+  fill-opacity: 0.06;
+  stroke: var(--accent, currentColor);
+  stroke-opacity: 0.4;
+  stroke-dasharray: 5 5;
+}
+
+.account .web-area-text {
+  fill: var(--muted, currentColor);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.account .web-seg {
+  display: inline-flex;
+  gap: 0;
+}
+
+.account .web-seg .button[aria-pressed="true"] {
+  background: var(--accent, currentColor);
+  color: var(--bg, #fff);
+}

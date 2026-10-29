@@ -30,7 +30,8 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-MAX_HOPS = 4
+# The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
+MAX_HOPS = 8
 MAX_NODES = 1000  # the most names one answer draws, then `truncated`
 OVERVIEW_NAMES = 5000  # the most names the overview lists, then `truncated` (the tray is not drawn)
 OVERVIEW_PAIRS = 20000  # the most connected pairs it reads, in a fixed order, then `truncated`
