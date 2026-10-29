@@ -223,7 +223,7 @@ export default function CampaignSettings({
   }
 
   const settingRows: CampaignSettingName[] = ["visibility", "level", "retention"];
-  const discordOnly: (keyof typeof words.paths)[] = owner ? ["handOver", "delete"] : [];
+  const discordOnly: "handOver"[] = owner ? ["handOver"] : [];
   return (
     <section class="stack" aria-labelledby="settings-heading" id="settings">
       <h2 id="settings-heading">{words.groups.settings}</h2>
@@ -260,7 +260,6 @@ export default function CampaignSettings({
           <li key={key}>
             <span class="campaign-name">{words.settingsLabels[key]}</span>
             <span class="small muted block">{words.doThisInDiscord(words.paths[key])}</span>
-            {key === "delete" && <span class="small muted block">{words.deleteWarning}</span>}
           </li>
         ))}
         {!owner && <li class="small muted">{words.ownerOnlyNote}</li>}

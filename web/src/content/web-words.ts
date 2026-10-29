@@ -129,6 +129,7 @@ export const webPage = {
   // 📌 100% truth (#2448): the DM pins a connection as certainly true. Players never see it.
   pinMark: "📌",
   pinnedWords: "100% truth",
+  checkLine: (check: string): string => `DMbot's check: ${check}`,
   pin: "📌 Pin as 100% truth",
   unpin: "Unpin",
   pinLabel: (n: number): string => `Pin connection ${n} as 100% truth`,

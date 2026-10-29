@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import CharacterSheetsSection from "../src/account/Sheets";
+import { GIVE_UP_MS } from "../src/account/settings-timing";
 import { sheetWords as w } from "../src/content/sheets-words";
 
 afterEach(cleanup);
@@ -417,6 +418,7 @@ describe("Use a document link", () => {
       expect(api.calls).toContain(`chooseSheet:100.other:sh-sorrel:${JSON.stringify({ action: "forget" })}`),
     );
     release();
+    await new Promise((r) => setTimeout(r, 1500)); // let the held choice finish before the next test
   });
 
   it("a read from an earlier visit cannot overwrite a later visit", async () => {
@@ -465,5 +467,102 @@ describe("Use a document link", () => {
     await new Promise((r) => setTimeout(r, 2000));
     expect(asked).toBe(before);
     release();
+  });
+});
+
+describe("one choice at a time per campaign", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a choice held on A, then B, then A: the second press on A sends nothing and says \"A change is still on its way.\"", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref === "100.sh") {
+        asked += 1;
+        await held;
+      }
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByText("A change is still on its way.");
+    const forget = screen.getByRole("button", { name: w.forget });
+    expect(forget.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(forget);
+    expect(calls(api, "chooseSheet")).toHaveLength(1);
+    release();
+    await new Promise((r) => setTimeout(r, 1500)); // let the held choice finish before the next test
+  });
+
+  it("the choice's answer arriving while on B draws nothing on B, and A is free again afterwards", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref === "100.sh") {
+        asked += 1;
+        await held;
+      }
+      return answer(ref, id);
+    };
+    const { rerender } = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.other" />);
+    await screen.findByText(w.mine("Sorrel"));
+    release();
+    await new Promise((r) => setTimeout(r, 1000)); // the answer lands while the page is on B
+    expect(screen.queryByText(w.forgetDone)).toBeNull();
+    expect(screen.queryByText("A change is still on its way.")).toBeNull();
+    rerender(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await waitFor(
+      () =>
+        expect(screen.getByRole("button", { name: w.forget }).getAttribute("aria-disabled")).not.toBe("true"),
+      { timeout: 6000 },
+    );
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    expect(calls(api, "chooseSheet")).toHaveLength(2);
+    await new Promise((r) => setTimeout(r, 1500)); // let this choice finish before the next test
+  });
+
+  it("an entry older than the give-up time no longer blocks", async () => {
+    const api = mockApi("table");
+    const answer = api.sheetAnswer!.bind(api);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let asked = 0;
+    api.sheetAnswer = async (ref, id) => {
+      if (ref === "100.sh") {
+        asked += 1;
+        await held;
+      }
+      return answer(ref, id);
+    };
+    const first = render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(screen.getByRole("button", { name: w.forget }));
+    await waitFor(() => expect(asked).toBe(1), { timeout: 4000 });
+    first.unmount();
+    const later = vi.spyOn(Date, "now").mockReturnValue(Date.now() + GIVE_UP_MS + 1000);
+    render(<CharacterSheetsSection api={api} campaignRef="100.sh" />);
+    await screen.findByRole("heading", { name: w.heading });
+    const forget = screen.getByRole("button", { name: w.forget });
+    expect(forget.getAttribute("aria-disabled")).not.toBe("true");
+    fireEvent.click(forget);
+    expect(calls(api, "chooseSheet")).toHaveLength(2);
+    later.mockRestore();
+    release();
+    await new Promise((r) => setTimeout(r, 1500)); // let the held choice finish before the next test
   });
 });

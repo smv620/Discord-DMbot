@@ -1346,10 +1346,10 @@ so the docs always show names the way Discord does. For the campaign
 | DM screen | `dmb-dm-screen-rime-of-the-frostmaiden` | Phase 1.5 (now) |
 | DM Bot (settings and options, everyone; owner, 2026-10-17) | `dmb-dm-bot-rmfthfrstmdn` | #1666 |
 | Live transcript (cleaned lines, view only) | `dmb-transcript-rmfthfrstmdn` | Phase 1 (#124, built 2026-10-06; misheard names fixed since 2026-10-07, #127) |
-| ~~Rules archive~~ | ~~`dmb-rules-rmfthfrstmdn`~~ | Built in #1752, **removed 2026-10-28 (#2874)**: see below |
-| Game time (the players' clock; owner, 2026-10-13) | `dmb-gametime-rmfthfrstmdn` | Phase 4 |
+| ~~Rules archive~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-rules-rmfthfrstmdn`~~ | Was #1752; see "Two channels removed" below |
+| ~~Game time~~ (removed, owner 2026-10-28, #2877: the clock is a small 🕰️ line in `dmb-chat`) | ~~`dmb-gametime-rmfthfrstmdn`~~ | Was #1116 |
 | DMbot chat (table questions and their answers; owner, 2026-10-14) | `dmb-chat-rmfthfrstmdn` | Phase 4 |
-| ~~NPCs~~ | ~~`dmb-npcs-rmfthfrstmdn`~~ | Built in #1761, **removed 2026-10-28 (#2874)**: see below |
+| ~~NPCs~~ (removed, owner 2026-10-28, #2874) | ~~`dmb-npcs-rmfthfrstmdn`~~ | Was #1761; see "Two channels removed" below |
 | Plot (story beats, places, hooks) | `dmb-plot-rmfthfrstmdn` | Phase 5 |
 
 - **The DM screen uses the full campaign name:** `rime-of-the-frostmaiden`.
@@ -1386,8 +1386,8 @@ so the docs always show names the way Discord does. For the campaign
 
 | Kind | Channels | Players see it |
 |---|---|---|
-| **Controlled** | DM screen, rules, NPCs, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
-| **Unrestricted** | Game time, live transcript | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
+| **Controlled** | DM screen, plot (and, by default, any channel added later) | As the campaign's **DM-screen visibility** says: private, opt-in peek (**default**), or open. The setting applies to all controlled channels at once. |
+| **Unrestricted** | Live transcript, DMbot chat | Always, by everyone in the server (read-only). Withdrawing consent stops recording but doesn't remove access (decided 2026-10-05, #124) |
 
 - Players can **read but never post** in any DMbot channel (no threads or reactions
   either), the same read-only access as a DM-screen peek. **Slash commands are never
@@ -1397,26 +1397,61 @@ so the docs always show names the way Discord does. For the campaign
   blocks are lifted the next time DMbot sets up the channel.
 - Changing the setting (the help-card buttons) updates every controlled channel together.
   Peeking opens all controlled channels for that player; hiding closes them all. Once
-  there's more than one controlled channel besides the DM screen, the peek warning must name
-  every channel a peek opens, so players know exactly what they're agreeing to see. (Today a
-  peek opens only the DM screen.)
-- **The rules and NPC channels are gone (owner, 2026-10-28, #2874).** The owner found the Discord
-  channels messy. Anyone can ask DMbot about the rules in `dmb-chat`, the DM has the rules in their
-  🗂️ Menu, and the house rules and the NPCs are on the website (the House rules page and the story
-  graph). Neither channel was ever announced (`RULES_CHANNEL_LIVE` and `NPCS_CHANNEL_LIVE` stayed off),
-  so no player-facing promise is withdrawn. DMbot no longer makes, repairs or fills either one, and a
-  peek opens only the DM screen. **The ones made before are deleted once**, at each campaign's next
-  `/dmbot start` and in the start-up sweep (`dm_screen/retired_channels.py`): only when the channel is the
-  one stored for the campaign **and** its name still starts `dmb-rules-` or `dmb-npcs-`; a channel
-  renamed to something else is kept. Either way the stored id is cleared, a failed delete is counted
-  and never stops a start, and the audit-log reason is "DMbot no longer uses this channel". The two id
-  columns and `npcs_channel_messages` stay until every server has run the clean-up, then a later
-  migration drops them. Deleting a campaign still removes a leftover channel whose id is set
-  (`retention_channels.py`). **The NPC pages and My notes do not depend on the channel:**
-  `npc_roster` (what each page shows) is now written by its own pass (`dm_screen/npc_pages.refresh`),
-  from the same `RecallService.roster`, when the campaign's memory changes (at most one pass a
-  campaign a minute), at every `/dmbot start` and once for every campaign when the bot starts, so
-  no NPC drifts toward "no longer listed" and no one's notes start their 30-day deletion.
+  there's more than one controlled channel, the peek warning must name every channel a
+  peek opens (rules, NPCs, plot), so players know exactly what they're agreeing to see.
+- **Two channels removed (owner, 2026-10-28, #2874 core, #2875 website): `dmb-rules-<short name>` and
+  `dmb-npcs-<short name>`.** The owner found the channel list messy. Rules: anyone asks DMbot in the
+  `dmb-chat` channel, the DM has them in the 🗂️ Menu, and everyone in the server can read the House rules
+  page on the website. NPCs: players look up the people tied to the characters they know on the website's
+  story graph, with the same players' view. DMbot stops making both channels and, at each campaign's next
+  start, deletes its own (stored id and DMbot's name both match; a renamed one is left alone), then forgets
+  the ids. **NPC pages and My notes stay**: `npc_pages` keeps being written from `RecallService.roster` by
+  its own pass (`dm_screen/npc_pages.refresh`; at most one pass a campaign a minute, at every `/dmbot start` and once
+  for every campaign when the bot starts), so no NPC is marked "no longer listed" because the channel went, and the story
+  graph links to each NPC's page. The clean-up lives in `dm_screen/retired_channels.py`; a failed delete is counted and never
+  stops a start, the audit-log reason is "DMbot no longer uses this channel", and the two id columns and
+  `npcs_channel_messages` stay until every server has run it (#2892), then a migration drops them. Neither channel was ever announced (`RULES_CHANNEL_LIVE`, `NPCS_CHANNEL_LIVE` off). The two
+  paragraphs below record what was built and are history.
+- **The rules archive is built (2026-10-17, #1752), house rules only.** `dmb-rules-<short name>`
+  is made and repaired at every `/dmbot start`, in the DM screen's category, with a topic and a
+  pinned "What's this channel?" card. It is controlled: its overwrites are the DM screen's, the
+  peekers included, except that nobody posts there, the DM too. Every change to the screen's
+  visibility, DMs or peekers is applied to it; a peek and a hide open and close both channels, and
+  the peek warning names both. It shows one message per saved house rule ("🏠 House rule N": the
+  words, what it replaces, where it came from: your DM, said at the table, or a followed set's
+  copy) and one "📚 This campaign follows the house-rule set **<set>**" line per followed house-rules set. Nothing proposed or waiting,
+  no DM-screen content and no rulebook text goes there, and a rule's "what happened" note stays
+  out. Messages are edited in place when a rule is edited and deleted when it is removed; they
+  are found again by their first words, so nothing about them is stored and a restart rebuilds the
+  same list, at most 5 edits or deletes a run (the rest next time). A change reaches the channel a
+  few seconds later; the bot also brings every campaign's channel up to date once at start. A
+  channel deleted by hand is made again at the next `/dmbot start`. Its id is not in a backup.
+- **The NPC list is built (2026-10-17, #1761), a roster with no AI.** `dmb-npcs-<short name>` is
+  made, repaired and kept like the rules channel (own lock, batching, the start-up sweep, edits in
+  place) and is controlled the same way: it follows the DM screen's visibility and peekers, nobody
+  posts there, and a peek and a hide open and close all three channels, with the peek warning
+  naming the rules channel and the NPC list. One message per **confirmed** NPC, god or group
+  (never a player's character or the party): the name, what it is, the other names it goes by,
+  the groups it is in and who it is closely tied to (up to 5, then "+N more"), only from facts the
+  DM confirmed that are true now. Because players can peek here and the list sits in view all
+  session, it is built by `RecallService.roster`, which applies the **players** audience's rules
+  and not a second copy: never a secret name or a name only misheard, an entry the DM marked
+  "Players don't know yet" (#2321, see "Players don't know this one yet" below), a limited clue or anything
+  that points to one, a story thread, a deed or standing, the DM's note (so there is **no
+  description line**: the only description an entry has is the DM's note), a condition such as
+  dead or missing (the table may not know yet), or anything from the adventure plan. Groups
+  come first, then people, alphabetical, at most 200 messages and then "+N more: open a name card
+  for the rest". A new entry is posted at the end, so the order is exact only after a reorder: when 10
+  or more messages are out of place and no session is running for the campaign (at the start of a
+  session, or at its end), whatever follows the first misplaced message is deleted (in bulk) and
+  posted again; a deploy's start-up sweep never does this while a session runs, and never for fewer
+  than 10. A change to the campaign's memory (confirm, merge, reject, rename, secret flags, Undo)
+  refreshes the list a few seconds later, at most one pass a campaign a minute, and a pass sends
+  edits that take a name away before cosmetic ones. Which message shows which entry is a small
+  table (`npcs_channel_messages`, migration 0128), so no id is in the text; it is not in a backup,
+  and a lost row is made good by deleting DMbot's own unrecorded messages and posting them again.
+  Organized mode is a separate
+  decision and is not changed here.
 - **Every NPC opens its own page, with private notes** (owner, 2026-10-21; details Supervisor's).
   - **The way in** was a link button on each message of the NPC list in Discord (2026-10-21, then the
     name as the button, 2026-10-22). The list is gone (#2874): the website's story graph links each NPC
@@ -2909,6 +2944,23 @@ edit has no Undo and no list. A line with a name fix, an answer or an open "Did 
 not edited until that is settled. Nothing goes to the player and nothing is public;
 the DM is checked on every press.
 
+**The same two fixes from the website (decided 2026-10-28, #2858).** On a session's Transcripts page
+(Cleaned version), **Fix this line** is offered on the viewer's own spoken lines, and on every spoken
+line for a DM of the campaign (never a sidebar, typed or skipped line). One route decides which path
+from who asks: the line's speaker who is not a DM **suggests** (it waits for the DM exactly as
+Discord's does, one waiting per line, three per person, the campaign needs a DM screen); a DM
+**rewrites** at once, as `submit_dm` does (a DM who is also the speaker takes this path). The website
+queues the request (`web_line_fixes`, migration 0276) and the bot does what Discord does; the secret
+names, consent and "the line is still as shown" (a hash of the line's cleaned words taken when the
+person asked) are checked by the bot again when it acts. The person's words (200 characters, tidied
+as Discord tidies them) are blanked from the queue row the moment it finishes. The raw transcript
+and what was heard are never touched by the website. A flood guard of 20 waiting fixes per campaign
+answers "Too many fixes are waiting in this campaign. Try again in a few minutes." The outcome is
+"Sent to your DM to check." for a suggestion and "Changed." for a rewrite, with "You can undo it from
+the fix notes in Discord." only while that session still runs (Discord's Undo stops with it). There
+is no Undo on the website. Behind `DMBOT_WEB_LINE_FIX` (routes answer 404 while off) and the site
+switch `FIX_LINE_LIVE`.
+
 **Transcript Cleaner step 3: built (2026-10-16, #127): earlier lines are re-checked after an
 answer.** When the DM answers "Did they mean…?" (by picking a name or by Type it…), the
 spelling they chose is also written into the **earlier lines of the running session** that
@@ -3164,6 +3216,11 @@ is wrong for half the table, so the DM can split it.
   Undo needs); `game_effects.group_position` says which group a timer counts on. Backups carry the groups
   (`ClockSection`, validated) and each timer's group. Deleting the campaign deletes them.
 *The game-time channel (owner, 2026-10-13, after Test F):*
+- **Replaced (owner, 2026-10-28, #2877):** there is no game-time channel any more. Whenever the players' view of the
+  clock changes (the day and its approximate word, never the exact time), DMbot posts one small line in the campaign's
+  `dmb-chat` channel, `-# 🕰️ Day 5, morning`, and the rest and new-day lines go there the same way. If its last 🕰️ line
+  is still the newest message there, it is edited instead, so quick changes stay one line. DMbot deletes its own old
+  game-time channel once, as for #2874. What follows is the history of the channel.
 - **Players see the clock in its own channel.** The players see the clock in a game-time channel,
   `dmb-gametime-<slug>`, without needing the DM screen. Like the transcript channel, everyone
   can read it and only the bot posts in it. `/dmbot start` creates or repairs it, and a failure
