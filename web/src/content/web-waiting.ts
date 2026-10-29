@@ -57,6 +57,8 @@ export const waitingWords = {
 
   savingStage: "Saving your answer",
   keepingStage: (n: number): string => `Keeping ${n} connections`,
+  queuedStage: "Waiting for DMbot",
+  keepingConnections: "Keeping connections",
   done: {
     confirm: "Added to your story as true.",
     confirmSecret: "Added to your story as true, and kept secret.",

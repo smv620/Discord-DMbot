@@ -9,12 +9,29 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { waitingWords as w } from "../content/web-waiting";
-import { ApiError, type AccountApi, type Waiting, type WaitingAnswer } from "./api";
+import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
 import WorkProgress from "./WorkProgress";
 
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
 const sessionDay = (seconds: number): string =>
   new Date(seconds * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" });
+
+/** The wait panel's words and times for an answer on the way (#2921): from the bot's looks once it has sent any, else the
+ * page's own clock, so an older API or the first moments before the first look show what they always did. */
+function waitShown(sending: { since: number; stage: string; look: WaitingLook | null }) {
+  const waits = sending.look?.waits ?? null;
+  const progress = sending.look?.progress ?? null;
+  return {
+    stage: progress ? w.keepingConnections : waits?.stage === "queued" ? w.queuedStage : waits ? w.savingStage : sending.stage,
+    startedAt: waits ? (waits.now ?? sending.since) - waits.waitedSeconds : sending.since,
+    updatedAt: waits?.lastMovedAt,
+    serverNow: waits?.now ?? sending.since,
+    state: waits?.stalled ? ("stalled" as const) : ("running" as const),
+    done: progress?.done,
+    total: progress?.total,
+    unit: progress ? "connections" : undefined,
+  };
+}
 
 /** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
 const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
@@ -40,7 +57,7 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
-  const [sending, setSending] = useState<{ since: number; stage: string } | null>(null);
+  const [sending, setSending] = useState<{ since: number; stage: string; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
@@ -83,10 +100,10 @@ export default function WebWaiting({
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
-    setSending({ since: Math.floor(Date.now() / 1000), stage });
+    setSending({ since: Math.floor(Date.now() / 1000), stage, look: null });
     setSaid(null);
     try {
-      const got = await api.answerWaiting(campaignRef, answer);
+      const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
       setSaid({ ok: true, text: typeof ok === "function" ? ok(got.kept) : ok, n: ++counter.current });
       onChanged?.();
     } catch (error) {
@@ -150,14 +167,21 @@ export default function WebWaiting({
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
-      {sending && (
-        <WorkProgress
-          stage={sending.stage}
-          startedAt={sending.since}
-          serverNow={sending.since}
-          state="running"
-        />
-      )}
+      {sending && (() => {
+        const shown = waitShown(sending);
+        return (
+          <WorkProgress
+            stage={shown.stage}
+            startedAt={shown.startedAt}
+            updatedAt={shown.updatedAt}
+            serverNow={shown.serverNow}
+            state={shown.state}
+            done={shown.done}
+            total={shown.total}
+            unit={shown.unit}
+          />
+        );
+      })()}
 
       {names.length > 0 && (
         <div class="stack">
