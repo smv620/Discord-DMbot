@@ -125,9 +125,6 @@ source_modules = [
 ]
 forbidden_modules = ["dmbot.recaps", "dmbot.web"]
 allow_indirect_imports = true
-ignore_imports = [  # all #2827
-    "dmbot.memory.plot_talk -> dmbot.recaps.feedback",
-]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
