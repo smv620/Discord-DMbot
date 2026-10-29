@@ -483,6 +483,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               {words.skipMap}
             </a>
             <WebMap
+              key={ref}
               nodes={nodes}
               edges={edges}
               center={center}

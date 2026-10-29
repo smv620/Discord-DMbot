@@ -49,6 +49,7 @@ export const webPage = {
   resetView: "Reset the view",
   panHint: "Drag a name to move it. It stays where you drop it. Drag the empty space to look around. Pinch or use the zoom buttons to zoom.",
   layoutLabel: "How the names are laid out",
+  layoutTooBig: "That is too many names to move around. Choose fewer steps out to rearrange them.",
   layoutFree: "Spread out",
   layoutGroups: "Group by kind",
   letGo: "Let everything move again",

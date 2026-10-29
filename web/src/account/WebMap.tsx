@@ -4,7 +4,8 @@
 // was dropped, remembered in this browser only (webPrefs.ts). Lines say their words only for the name
 // the pointer or the keyboard is on, so a crowded map stays readable. Pan by dragging the background, zoom
 // by wheel, pinch or the buttons. The same names and connections are listed under the map for screen
-// readers, so the drawing is one labelled group and not read out shape by shape.
+// readers. For the keyboard each name is a stop (Enter puts it in the middle, arrow keys move it), and
+// the lines of the name in focus become stops too, so a map of hundreds of lines is not hundreds of Tabs.
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { kindWords, webPage as words } from "../content/web-words";
@@ -91,7 +92,8 @@ export default function WebMap({
   const sim = useRef<SimNode[]>([]);
   const heat = useRef({ alpha: 0, steps: 0 });
   const loop = useRef(0);
-  const places = useRef(readPlaces(refId));
+  const [firstPlaces] = useState(() => readPlaces(refId)); // read once, not on every frame
+  const places = useRef(firstPlaces);
   const svg = useRef<SVGSVGElement>(null);
   // A drag is not a tap: after one, the click that follows it is ignored.
   const dragged = useRef(false);
@@ -121,7 +123,8 @@ export default function WebMap({
 
   /** Keep the places of every pinned name, for this campaign, in this browser. */
   const remember = (): void => {
-    const next: Record<string, [number, number]> = {};
+    // Merge, so a moved name that is not on screen now (fewer steps, another middle) keeps its place.
+    const next: Record<string, [number, number]> = { ...places.current };
     for (const n of sim.current) if (n.pinned) next[n.id] = [Math.round(n.x), Math.round(n.y)];
     places.current = next;
     savePlaces(refId, next);
@@ -130,7 +133,16 @@ export default function WebMap({
   /** Warm the settle up again, and run it a couple of steps a frame until the names are calm. */
   const reheat = (alpha: number): void => {
     heat.current = { alpha: Math.max(heat.current.alpha, alpha), steps: 0 };
-    if (loop.current || sim.current.length > MAX_SIM_NAMES) return;
+    if (sim.current.length > MAX_SIM_NAMES) return;
+    if (reducedMotion()) {
+      // Less motion: names move to their new places at once, with no animation, after a drag as at the start.
+      const list = sim.current;
+      settle(list, linksRef.current, list.findIndex((n) => n.id === centerRef.current), modeRef.current, anchorsRef.current);
+      setExtent(extentOf(list));
+      setFrame((f) => f + 1);
+      return;
+    }
+    if (loop.current) return;
     const tick = (): void => {
       const list = sim.current;
       const centreAt = list.findIndex((n) => n.id === centerRef.current);
@@ -161,7 +173,11 @@ export default function WebMap({
 
   // The names are placed again whenever the web, the middle name or the layout changes. A name that is
   // still here keeps where it is, so choosing another middle does not shuffle the whole map.
+  // The parent builds fresh arrays on every render; only a real change to the names or lines may re-place them,
+  // or choosing a line would shake the whole map.
+  const sig = `${nodes.map((n) => n.id).join(",")}|${edges.map((x) => `${x.a}>${x.b}:${x.links.length}`).join(",")}`;
   useEffect(() => {
+    setFocus((f) => (f !== null && nodes.some((n) => n.id === f) ? f : null));
     const before = new Map(sim.current.map((n) => [n.id, n]));
     const next = startNodes(nodes, edges, center, places.current);
     for (const n of next) {
@@ -193,7 +209,7 @@ export default function WebMap({
       loop.current = 0;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, center, mode]);
+  }, [sig, center, mode]);
 
   // The window listeners are added once and removed on unmount, so a drag that ends off the map, or a
   // map that disappears mid-drag, leaves nothing behind. Handlers read the latest values through refs.
@@ -252,7 +268,10 @@ export default function WebMap({
       if (dragName.current) {
         const grab = dragName.current;
         dragName.current = null;
-        if (grab.moved) rememberRef.current();
+        if (grab.moved) {
+          rememberRef.current();
+          setExtent(extentOf(sim.current));
+        }
         setTimeout(() => (dragged.current = false), 0);
         return;
       }
@@ -323,6 +342,7 @@ export default function WebMap({
   const kindsHere = KIND_ORDER.filter((k) => nodes.some((n) => n.kind === k));
   const otherKinds = [...new Set(nodes.map((n) => n.kind))].filter((k) => !KIND_ORDER.includes(k));
   const anyPinned = sim.current.some((n) => n.pinned);
+  const tooBig = nodes.length > MAX_SIM_NAMES;
   void frame; // each frame of the settle re-draws the map from the names' new places
 
   return (
@@ -338,10 +358,10 @@ export default function WebMap({
           {words.resetView}
         </button>
         <div class="web-seg" role="group" aria-label={words.layoutLabel}>
-          <button type="button" class="button secondary" aria-pressed={mode === "free"} onClick={() => chooseMode("free")}>
+          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={mode === "free"} onClick={() => chooseMode("free")}>
             {words.layoutFree}
           </button>
-          <button type="button" class="button secondary" aria-pressed={mode === "groups"} onClick={() => chooseMode("groups")}>
+          <button type="button" class="button secondary" disabled={tooBig} aria-pressed={mode === "groups"} onClick={() => chooseMode("groups")}>
             {words.layoutGroups}
           </button>
         </div>
@@ -349,7 +369,7 @@ export default function WebMap({
           {words.letGo}
         </button>
       </div>
-      <p class="small muted">{words.panHint}</p>
+      <p class="small muted">{tooBig ? words.layoutTooBig : words.panHint}</p>
       <svg
         ref={svg}
         class="web-svg"
@@ -412,7 +432,7 @@ export default function WebMap({
                   x2={q.x}
                   y2={q.y}
                   class="web-hit"
-                  tabIndex={0}
+                  tabIndex={touches ? 0 : -1}
                   role="button"
                   aria-label={words.lineBetween(byId.get(edge.a)?.name ?? "", byId.get(edge.b)?.name ?? "")}
                   onClick={open}

@@ -256,3 +256,102 @@ describe("the map", () => {
     expect(frames).toHaveLength(0);
   });
 });
+
+const withBox = () =>
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, right: 600, bottom: 600, width: 600, height: 600, x: 0, y: 0, toJSON() {} } as DOMRect);
+const drag = (el: Element, to: [number, number]) => {
+  fireEvent.pointerDown(el, { clientX: 300, clientY: 300, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 300 + to[0] / 2, clientY: 300 + to[1] / 2, pointerId: 1 });
+  fireEvent.pointerMove(window, { clientX: 300 + to[0], clientY: 300 + to[1], pointerId: 1 });
+  fireEvent.pointerUp(window, { pointerId: 1 });
+};
+
+describe("moving a name by hand", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a drag moves the name, pins it, remembers it, and is not taken for a tap", async () => {
+    withBox();
+    const onCenter = vi.fn();
+    draw({ onCenter });
+    const before = nodeOf("Garrick").getAttribute("transform");
+    drag(nodeOf("Garrick"), [150, 90]);
+    expect(nodeOf("Garrick").getAttribute("transform")).not.toBe(before);
+    expect(nodeOf("Garrick").querySelector(".web-pin")).not.toBeNull();
+    expect(readPlaces("1.a").g).toBeDefined();
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 5));
+    fireEvent.click(nodeOf("Garrick"));
+    expect(onCenter).toHaveBeenCalledWith("g");
+  });
+
+  it("a small movement is a tap, not a drag", () => {
+    withBox();
+    draw();
+    fireEvent.pointerDown(nodeOf("Garrick"), { clientX: 300, clientY: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 302, clientY: 301, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(nodeOf("Garrick").querySelector(".web-pin")).toBeNull();
+    expect(readPlaces("1.a")).toEqual({});
+  });
+
+  it("moves at once, with no animation frame asked for, when less motion is wanted", () => {
+    withBox();
+    const ask = vi.fn(() => 0);
+    vi.stubGlobal("requestAnimationFrame", ask);
+    draw();
+    drag(nodeOf("Garrick"), [150, 90]);
+    fireEvent.click(document.querySelector(".web-tools button:last-of-type")!);
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("keeps the places of moved names that are not on screen right now", () => {
+    savePlaces("1.a", { gone: [1, 2] });
+    draw();
+    fireEvent.keyDown(nodeOf("Garrick"), { key: "ArrowRight" });
+    expect(readPlaces("1.a").gone).toEqual([1, 2]);
+    expect(readPlaces("1.a").g).toBeDefined();
+  });
+});
+
+describe("keeping the map calm", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("does not settle again when the parent draws the same names and lines in new arrays", () => {
+    setup(false);
+    const ask = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", ask);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const props = { center: "m", refId: "1.a", selected: null, onCenter: () => {}, onLine: () => {} };
+    const { rerender } = render(<WebMap nodes={nodes} edges={edges} {...props} />);
+    const first = ask.mock.calls.length;
+    rerender(<WebMap nodes={[...nodes]} edges={edges.map((e) => ({ ...e }))} {...props} selected={{ a: "m", b: "g" }} />);
+    expect(ask.mock.calls.length).toBe(first);
+  });
+
+  it("forgets a name in focus that is no longer on the map, so nothing stays faded", () => {
+    const props = { center: "m", refId: "1.a", selected: null, onCenter: () => {}, onLine: () => {} };
+    const { rerender } = render(<WebMap nodes={nodes} edges={edges} {...props} />);
+    fireEvent.pointerEnter(nodeOf("Far Hall"));
+    expect(document.querySelectorAll(".web-faded").length).toBeGreaterThan(0);
+    rerender(<WebMap nodes={nodes.filter((n) => n.id !== "h")} edges={edges.filter((e) => e.b !== "h")} {...props} />);
+    expect(document.querySelectorAll(".web-faded")).toHaveLength(0);
+  });
+
+  it("makes only the lines of the name in focus keyboard stops", () => {
+    draw();
+    const stops = () => [...document.querySelectorAll(".web-hit")].filter((l) => (l.getAttribute("tabindex") ?? l.getAttribute("tabIndex")) === "0");
+    expect(stops()).toHaveLength(0);
+    fireEvent.focus(nodeOf("Far Hall"));
+    expect(stops()).toHaveLength(1);
+  });
+
+  it("says so and turns the layout choice off for a web too big to move around", () => {
+    const many = Array.from({ length: MAX_SIM_NAMES + 1 }, (_, i) => ({ id: `n${i}`, name: `N${i}`, kind: "npc" }));
+    render(<WebMap nodes={many} edges={[]} center="n0" refId="1.a" selected={null} onCenter={() => {}} onLine={() => {}} />);
+    const group = document.querySelector(`[role="group"][aria-label="${words.layoutLabel}"]`)!;
+    for (const b of group.querySelectorAll("button")) expect((b as HTMLButtonElement).disabled).toBe(true);
+    expect(document.body.textContent).toContain(words.layoutTooBig);
+  });
+});
+
