@@ -3351,17 +3351,10 @@ export function httpApi(
         `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
       )) as WebGraph;
     },
-    webSize: async (ref, q) => {
-      const params = new URLSearchParams({ hops: String(q.hops) });
-      if (q.center) params.set("center", q.center);
-      // The size is of the web in the view being asked for, so a DM in Players View or a player
-      // peeking must not be told the size of the other one.
-      if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web/size?${params.toString()}`,
-      )) as { names: number };
-    },
+    // The size is of the web in the view being asked for, so a DM in Players View or a player peeking must not be
+    // told the size of the other one.
+    webSize: async (ref, q) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/size?hops=${q.hops}${q.center ? `&center=${encodeURIComponent(q.center)}` : ""}${q.view ? `&view=${q.view}` : ""}`)) as { names: number },
     webOverview: async (ref, q) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/overview${q.view ? `?view=${q.view}` : ""}`)) as WebOverview,
     webFind: async (ref, q) =>
