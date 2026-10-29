@@ -20,6 +20,7 @@ from dmbot.recaps import fixed_lines
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps import significance as sg
 from dmbot.recaps import split as sp
+from dmbot.recaps.approval import text_hash
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 from dmbot.recaps.store import Job, RecapSection, RecapStore
 from dmbot.recaps.text import CUE
@@ -1678,3 +1679,67 @@ class Working(WorkerHarness):
         self.assertIn("Zebulon", housekeeping)
         self.assertIn("<catchup>", housekeeping)
         self.assertNotIn("pizza", "\n".join(fast.sent[1:]))  # and the talk went nowhere
+
+
+class RequireCurrent(Base):
+    """`decide(..., "post", require_current=True)` posts only the text the DM approved, in the
+    same statement as the post (#2545): an edit after approving, or a draft never approved, posts
+    nothing."""
+
+    async def sql(self, statement: str, *args: Any) -> None:
+        async with self.db.guild(1) as conn:
+            await conn.execute(statement, args)
+
+    async def draft(self, campaign: str, at: int, title: str, summary: str) -> None:
+        await self.store.enqueue(1, campaign, at, dm_user_id=fx.DM)
+        await self.store.update(1, campaign, at, state="ready", title=title, summary=summary)
+
+    async def approve(self, campaign: str, at: int, title: str, summary: str) -> None:
+        await self.sql(
+            "UPDATE recap_jobs SET approved_hash = %s WHERE guild_id = 1"
+            " AND campaign_id = %s AND session_at = %s",
+            text_hash(title, summary),
+            campaign,
+            at,
+        )
+
+    async def test_an_approval_of_the_text_as_it_is_now_posts(self) -> None:
+        await self.draft(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.approve(self.one.id, 100, "The vault", "Tessaly opens it.")
+        self.assertTrue(await self.store.decide(1, self.one.id, 100, "post", require_current=True))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.status, "posting")
+
+    async def test_an_edit_after_approving_posts_nothing(self) -> None:
+        await self.draft(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.approve(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.store.update(1, self.one.id, 100, summary="Tessaly never opens it.")
+        self.assertFalse(await self.store.decide(1, self.one.id, 100, "post", require_current=True))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.status, "draft")
+
+    async def test_a_draft_never_approved_posts_nothing(self) -> None:
+        await self.draft(self.one.id, 100, "The vault", "Tessaly opens it.")
+        self.assertFalse(await self.store.decide(1, self.one.id, 100, "post", require_current=True))
+        job = await self.store.get(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.status, "draft")
+
+    async def test_without_the_flag_the_same_edited_draft_still_posts(self) -> None:
+        await self.draft(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.approve(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.store.update(1, self.one.id, 100, summary="Tessaly never opens it.")
+        self.assertTrue(await self.store.decide(1, self.one.id, 100, "post"))
+
+    async def test_another_campaigns_draft_is_untouched(self) -> None:
+        await self.draft(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.approve(self.one.id, 100, "The vault", "Tessaly opens it.")
+        await self.draft(self.two.id, 100, "The vault", "Tessaly opens it.")
+        # Approved too, so the text check alone would not stop it: only the campaign filter does.
+        await self.approve(self.two.id, 100, "The vault", "Tessaly opens it.")
+        self.assertTrue(await self.store.decide(1, self.one.id, 100, "post", require_current=True))
+        job = await self.store.get(1, self.two.id, 100)
+        assert job is not None
+        self.assertEqual(job.status, "draft")

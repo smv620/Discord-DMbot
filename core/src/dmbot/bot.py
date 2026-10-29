@@ -37,6 +37,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from dmbot import (
+    accounts,
     alerts,
     campaign_cap,
     entitlements,
@@ -542,7 +543,6 @@ from dmbot.ui.transcripts import (
     lookup_members,
     transcript_command,
 )
-from dmbot.web import accounts
 
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
@@ -636,6 +636,7 @@ MEANING_WAIT_S = (
 RECALL_WAIT_S = 0.5  # and this long for the confirmed facts around them (#1370): optional context
 NAMES_WAIT_S = 1.0  # the sidebar waits this long for a campaign's names, then answers without
 PLAN_READS_AT_ONCE = 2  # adventures read at the same time, bot-wide: the AI and the bill are shared
+WEB_DOCUMENT_COOLDOWN_S = 60  # per person and campaign: each website document read is an AI read
 GATE_TIMEOUT_S = 2  # a button press must be answered within Discord's 3 s: fail open sooner
 CHAT_BLOCKED_TTL_S = 60  # how long the list of channels never read as chat is kept (#1118)
 CLOCK_PHRASE_GAP_S = 300  # the same rest said twice within this is counted once (#965)
@@ -906,6 +907,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._report_tasks: dict[int, asyncio.Task[None]] = {}  # one running report a server
         self._put_back_tasks: dict[int, asyncio.Task[None]] = {}  # one read a server (#2587)
         self._sheet_tasks: dict[int, asyncio.Task[None]] = {}  # one running choice a server (#2817)
+        self._web_document_last: dict[tuple[int, int, str], float] = {}  # website document reads
         # "Make the report again", asked for on the website (#2805).
         self.report_requests = (
             web_report_requests.RequestStore(recaps.db) if recaps is not None else None
@@ -10324,6 +10326,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild_id in await self.campaigns.guilds_with_campaigns():
             for _ in range(web_backup.PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild_id)
                 if item is None:
                     break
@@ -10341,6 +10346,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store.beat()  # a round began: the worker is alive
         for guild in list(self.guilds):
             for _ in range(web_restore.PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
@@ -10473,6 +10481,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(NAME_ANSWERS_PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 action = await store.claim_next(guild.id)
                 if action is None:
                     break
@@ -10615,6 +10626,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         for guild in list(self.guilds):
             for _ in range(web_settings.SETTINGS_PER_ROUND):
+                # Shutting down: the row is still waiting, so the next start takes it.
+                if self._closing:
+                    return
                 item = await store.claim_next(guild.id)
                 if item is None:
                     break
@@ -10635,6 +10649,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one report at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             req = await store.claim_next(guild.id)
             if req is None:
                 continue
@@ -10642,7 +10659,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = self._track(self._run_report_request(store, gid, req), "web-report-request")
             if task is None:
                 # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
-                # (web_report_requests.py).
+                # (core/src/dmbot/memory/web_report_requests.py).
                 continue
             running[gid] = task
 
@@ -10704,6 +10721,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             item = await store.claim_next(guild.id)
             if item is None:
                 continue
@@ -10749,6 +10769,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             sheets_ui.last_link, (guild_id, user_id), sheets_ui.LINK_COOLDOWN_S
         )
 
+    def document_too_soon(self, guild_id: int, user_id: int, campaign_id: str) -> bool:
+        """The website's document reads: 60 s a person for a campaign (the door's own limit, so
+        this is only a second check). Each one costs an AI read, so it has its own count."""
+        return sheets_ui.too_soon(
+            self._web_document_last, (guild_id, user_id, campaign_id), WEB_DOCUMENT_COOLDOWN_S
+        )
+
     def read_too_soon(self, guild_id: int, campaign_id: str) -> bool:
         return sheets_ui.too_soon(
             sheets_ui.last_refresh, (guild_id, campaign_id), sheets_ui.REFRESH_COOLDOWN_S
@@ -10768,6 +10795,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = running.get(guild.id)
             if task is not None and not task.done():
                 continue  # one at a time for a server; the loop does not wait for it
+            # Shutting down: the row is still waiting, so the next start takes it.
+            if self._closing:
+                return
             item = await store.claim_next(guild.id)
             if item is None:
                 continue
@@ -10775,7 +10805,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             task = self._track(self._run_sheet_choice(store, gid, item), "web-sheet-choice")
             if task is None:
                 # Shutting down: the row stays working and is retaken after RETAKE_AFTER_S
-                # (web_sheets.py).
+                # (core/src/dmbot/memory/web_sheets.py).
                 continue
             running[gid] = task
 

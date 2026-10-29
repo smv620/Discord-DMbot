@@ -21,8 +21,8 @@ from typing import Literal
 
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.db import Database
+from dmbot.email_address import clean_email
 from dmbot.mail import Mailer
-from dmbot.web.email_signin import clean_email
 
 log = logging.getLogger(__name__)
 

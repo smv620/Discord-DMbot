@@ -1310,6 +1310,8 @@ export interface WebLink {
   /** How it reads from the second name when that differs ("has as a member"); null or missing
    * when it reads the same either way or has no fixed reading back (#2666). */
   back?: string | null;
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
   /** False: not revealed to the players yet (#2405). */
   revealed?: boolean;
   /** A theory the party holds rather than a fact (#2405). */
@@ -1633,6 +1635,8 @@ export interface WaitingBackstory {
   /** False while a name in it is not confirmed yet; `waitingOn` says which. */
   ready: boolean;
   waitingOn: string[];
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
 }
 export interface WaitingWhich {
   id: string;
@@ -1647,6 +1651,8 @@ export interface WaitingWhich {
   secret: boolean;
   upload: string;
   candidates: { id: string; name: string; limited: boolean }[];
+  /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
+  check?: string;
 }
 export interface Waiting {
   claims: WaitingClaim[];

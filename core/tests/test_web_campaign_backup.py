@@ -4,12 +4,14 @@ ask, the shared progress shape, the file once, the plan and size refusals, the 1
 from __future__ import annotations
 
 import time
+import unittest
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
 import httpx
 
+from dmbot.bot import DMBot
 from dmbot.campaigns import web_backup
 from dmbot.campaigns.store import BackupTooBig, decode_backup
 from dmbot.campaigns.web_backup import WebBackups
@@ -550,3 +552,13 @@ class TheRoute(Backing):
         self.assertEqual((other.status_code, other.json()["error"]), (404, "not_found"))
         bad = await self.client.get(f"/me/campaigns/{THURSDAY.id}.{self.one.id}/backup/zzz")
         self.assertEqual(bad.status_code, 404)
+
+
+class WhileClosing(unittest.IsolatedAsyncioTestCase):
+    async def test_while_closing_backups_claims_nothing(self) -> None:
+        b: Any = DMBot.__new__(DMBot)
+        b.web_backups = SimpleNamespace(claim_next=mock.AsyncMock(return_value=None))
+        b.campaigns = SimpleNamespace(guilds_with_campaigns=mock.AsyncMock(return_value=[1]))
+        b._closing = True
+        await b.run_web_backups()
+        b.web_backups.claim_next.assert_not_awaited()

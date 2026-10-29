@@ -17,6 +17,7 @@ import discord
 
 from dmbot import account_move
 from dmbot.account_move import IssuedCode, MoveError, Preview
+from dmbot.accounts import payment_email
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -26,7 +27,6 @@ from dmbot.ui.dmbot_commands import (
     _tell,
     dmbot_group,
 )
-from dmbot.web.accounts import payment_email
 
 log = logging.getLogger(__name__)
 
